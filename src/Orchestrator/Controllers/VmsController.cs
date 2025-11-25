@@ -1,0 +1,260 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Orchestrator.Models;
+using Orchestrator.Services;
+
+namespace Orchestrator.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class VmsController : ControllerBase
+{
+    private readonly IVmService _vmService;
+    private readonly INodeService _nodeService;
+    private readonly ILogger<VmsController> _logger;
+
+    public VmsController(
+        IVmService vmService,
+        INodeService nodeService,
+        ILogger<VmsController> logger)
+    {
+        _vmService = vmService;
+        _nodeService = nodeService;
+        _logger = logger;
+    }
+
+    private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+
+    /// <summary>
+    /// Create a new VM
+    /// </summary>
+    [HttpPost]
+    public async Task<ActionResult<ApiResponse<CreateVmResponse>>> Create([FromBody] CreateVmRequest request)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<CreateVmResponse>.Fail("UNAUTHORIZED", "User not authenticated"));
+        }
+
+        try
+        {
+            var response = await _vmService.CreateVmAsync(userId, request);
+            
+            if (string.IsNullOrEmpty(response.VmId))
+            {
+                return BadRequest(ApiResponse<CreateVmResponse>.Fail("CREATE_ERROR", response.Message));
+            }
+
+            return Ok(ApiResponse<CreateVmResponse>.Ok(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating VM");
+            return BadRequest(ApiResponse<CreateVmResponse>.Fail("CREATE_ERROR", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// List VMs for the authenticated user
+    /// </summary>
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<PagedResult<VmSummary>>>> List(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? status = null,
+        [FromQuery] string? search = null,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] bool sortDesc = false)
+    {
+        var userId = GetUserId();
+        
+        var filters = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(status)) filters["status"] = status;
+
+        var queryParams = new ListQueryParams(page, pageSize, sortBy, sortDesc, search, filters);
+        var result = await _vmService.ListVmsAsync(userId, queryParams);
+
+        return Ok(ApiResponse<PagedResult<VmSummary>>.Ok(result));
+    }
+
+    /// <summary>
+    /// Get a specific VM
+    /// </summary>
+    [HttpGet("{vmId}")]
+    public async Task<ActionResult<ApiResponse<VmDetailResponse>>> Get(string vmId)
+    {
+        var userId = GetUserId();
+        var vm = await _vmService.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<VmDetailResponse>.Fail("NOT_FOUND", "VM not found"));
+        }
+
+        // Check ownership (unless admin)
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        // Get host node info
+        Node? hostNode = null;
+        if (!string.IsNullOrEmpty(vm.NodeId))
+        {
+            hostNode = await _nodeService.GetNodeAsync(vm.NodeId);
+        }
+
+        return Ok(ApiResponse<VmDetailResponse>.Ok(new VmDetailResponse(vm, hostNode)));
+    }
+
+    /// <summary>
+    /// Perform an action on a VM (start, stop, restart, etc.)
+    /// </summary>
+    [HttpPost("{vmId}/action")]
+    public async Task<ActionResult<ApiResponse<bool>>> Action(string vmId, [FromBody] VmActionRequest request)
+    {
+        var userId = GetUserId();
+        var vm = await _vmService.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
+        }
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        // Validate action based on current state
+        var validAction = (request.Action, vm.Status) switch
+        {
+            (VmAction.Start, VmStatus.Stopped) => true,
+            (VmAction.Stop, VmStatus.Running) => true,
+            (VmAction.ForceStop, VmStatus.Running) => true,
+            (VmAction.Restart, VmStatus.Running) => true,
+            (VmAction.Pause, VmStatus.Running) => true,
+            (VmAction.Resume, VmStatus.Running) => vm.PowerState == VmPowerState.Paused,
+            _ => false
+        };
+
+        if (!validAction)
+        {
+            return BadRequest(ApiResponse<bool>.Fail(
+                "INVALID_ACTION", 
+                $"Cannot {request.Action} a VM in {vm.Status} state"));
+        }
+
+        var success = await _vmService.PerformVmActionAsync(vmId, request.Action, userId);
+        if (!success)
+        {
+            return BadRequest(ApiResponse<bool>.Fail("ACTION_FAILED", "Failed to perform action"));
+        }
+
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    /// <summary>
+    /// Delete a VM
+    /// </summary>
+    [HttpDelete("{vmId}")]
+    public async Task<ActionResult<ApiResponse<bool>>> Delete(string vmId)
+    {
+        var userId = GetUserId();
+        var vm = await _vmService.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
+        }
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        var success = await _vmService.DeleteVmAsync(vmId, userId);
+        if (!success)
+        {
+            return BadRequest(ApiResponse<bool>.Fail("DELETE_FAILED", "Failed to delete VM"));
+        }
+
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    /// <summary>
+    /// Get VM metrics
+    /// </summary>
+    [HttpGet("{vmId}/metrics")]
+    public async Task<ActionResult<ApiResponse<VmMetrics>>> GetMetrics(string vmId)
+    {
+        var userId = GetUserId();
+        var vm = await _vmService.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<VmMetrics>.Fail("NOT_FOUND", "VM not found"));
+        }
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        if (vm.LatestMetrics == null)
+        {
+            return NotFound(ApiResponse<VmMetrics>.Fail("NO_METRICS", "No metrics available"));
+        }
+
+        return Ok(ApiResponse<VmMetrics>.Ok(vm.LatestMetrics));
+    }
+
+    /// <summary>
+    /// Get console/terminal access info
+    /// </summary>
+    [HttpGet("{vmId}/console")]
+    public async Task<ActionResult<ApiResponse<VmConsoleResponse>>> GetConsole(string vmId)
+    {
+        var userId = GetUserId();
+        var vm = await _vmService.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<VmConsoleResponse>.Fail("NOT_FOUND", "VM not found"));
+        }
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        if (vm.Status != VmStatus.Running)
+        {
+            return BadRequest(ApiResponse<VmConsoleResponse>.Fail("NOT_RUNNING", "VM is not running"));
+        }
+
+        // Return WebSocket URL for terminal
+        var wsUrl = $"/hub/orchestrator?vmId={vmId}";
+        
+        return Ok(ApiResponse<VmConsoleResponse>.Ok(new VmConsoleResponse(
+            vmId,
+            wsUrl,
+            vm.AccessInfo?.SshHost,
+            vm.AccessInfo?.SshPort ?? 22,
+            vm.AccessInfo?.VncHost,
+            vm.AccessInfo?.VncPort ?? 5900
+        )));
+    }
+}
+
+public record VmConsoleResponse(
+    string VmId,
+    string WebSocketUrl,
+    string? SshHost,
+    int SshPort,
+    string? VncHost,
+    int VncPort
+);

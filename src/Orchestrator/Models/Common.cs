@@ -1,0 +1,163 @@
+namespace Orchestrator.Models;
+
+/// <summary>
+/// Standard API response wrapper
+/// </summary>
+public class ApiResponse<T>
+{
+    public bool Success { get; set; }
+    public T? Data { get; set; }
+    public ApiError? Error { get; set; }
+    public Dictionary<string, object>? Metadata { get; set; }
+
+    public static ApiResponse<T> Ok(T data, Dictionary<string, object>? metadata = null) => new()
+    {
+        Success = true,
+        Data = data,
+        Metadata = metadata
+    };
+
+    public static ApiResponse<T> Fail(string code, string message, Dictionary<string, object>? details = null) => new()
+    {
+        Success = false,
+        Error = new ApiError(code, message, details)
+    };
+}
+
+public record ApiError(
+    string Code,
+    string Message,
+    Dictionary<string, object>? Details = null
+);
+
+/// <summary>
+/// Pagination wrapper
+/// </summary>
+public class PagedResult<T>
+{
+    public List<T> Items { get; set; } = new();
+    public int TotalCount { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+    public bool HasNextPage => Page < TotalPages;
+    public bool HasPreviousPage => Page > 1;
+}
+
+/// <summary>
+/// Query parameters for listing resources
+/// </summary>
+public record ListQueryParams(
+    int Page = 1,
+    int PageSize = 20,
+    string? SortBy = null,
+    bool SortDescending = false,
+    string? Search = null,
+    Dictionary<string, string>? Filters = null
+);
+
+/// <summary>
+/// Event for pub/sub notifications
+/// </summary>
+public class OrchestratorEvent
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public EventType Type { get; set; }
+    public string ResourceType { get; set; } = string.Empty;   // "vm", "node", "user"
+    public string ResourceId { get; set; } = string.Empty;
+    public object? Payload { get; set; }
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public string? UserId { get; set; }
+}
+
+public enum EventType
+{
+    // VM events
+    VmCreated,
+    VmScheduled,
+    VmProvisioning,
+    VmStarted,
+    VmStopped,
+    VmDeleted,
+    VmError,
+    VmMetricsUpdated,
+    
+    // Node events
+    NodeRegistered,
+    NodeOnline,
+    NodeOffline,
+    NodeDraining,
+    NodeMetricsUpdated,
+    
+    // User events
+    UserCreated,
+    UserLoggedIn,
+    BalanceUpdated
+}
+
+/// <summary>
+/// System-wide statistics
+/// </summary>
+public record SystemStats(
+    int TotalNodes,
+    int OnlineNodes,
+    int TotalVms,
+    int RunningVms,
+    long TotalCpuCores,
+    long AvailableCpuCores,
+    long TotalMemoryMb,
+    long AvailableMemoryMb,
+    long TotalStorageGb,
+    long AvailableStorageGb,
+    int TotalUsers,
+    decimal TotalRevenue
+);
+
+/// <summary>
+/// Health check response
+/// </summary>
+public record HealthStatus(
+    string Status,
+    DateTime Timestamp,
+    Dictionary<string, ComponentHealth> Components
+);
+
+public record ComponentHealth(
+    string Status,
+    string? Message,
+    Dictionary<string, object>? Details
+);
+
+/// <summary>
+/// Available VM images
+/// </summary>
+public class VmImage
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string OsFamily { get; set; } = string.Empty;        // linux, windows
+    public string OsName { get; set; } = string.Empty;          // ubuntu, debian, etc.
+    public string Version { get; set; } = string.Empty;
+    public string Architecture { get; set; } = "x86_64";
+    public long SizeGb { get; set; }
+    public string? ChecksumSha256 { get; set; }
+    public string? DownloadUrl { get; set; }
+    public bool IsPublic { get; set; } = true;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Pricing tiers
+/// </summary>
+public class VmPricingTier
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;           // e.g., "small", "medium", "large"
+    public int CpuCores { get; set; }
+    public long MemoryMb { get; set; }
+    public long StorageGb { get; set; }
+    public decimal HourlyPriceUsd { get; set; }
+    public decimal HourlyPriceCrypto { get; set; }
+    public string CryptoSymbol { get; set; } = "USDC";
+}
