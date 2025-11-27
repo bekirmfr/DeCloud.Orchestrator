@@ -167,6 +167,10 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
+// Serve static files (dashboard)
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Configure pipeline - Swagger enabled in all environments
 app.UseSwagger();
 app.UseSwaggerUI(c =>
