@@ -192,7 +192,7 @@ app.MapHub<OrchestratorHub>("/hub/orchestrator");
 app.MapHealthChecks("/health");
 
 // Root redirect to Swagger in development
-app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+// app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 
 Log.Information("Orchestrator starting...");
 Log.Information("Swagger UI available at /swagger");
