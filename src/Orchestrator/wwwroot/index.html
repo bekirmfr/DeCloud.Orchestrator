@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeCloud - Decentralized Cloud Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #0a0b0f;
+            --bg-primary: #12141a;
+            --bg-secondary: #1a1d26;
+            --bg-elevated: #22262f;
+            --bg-hover: #2a2f3a;
+            
+            --accent-primary: #00d4aa;
+            --accent-secondary: #00a8ff;
+            --accent-tertiary: #8b5cf6;
+            --accent-warning: #f59e0b;
+            --accent-danger: #ef4444;
+            
+            --text-primary: #f0f2f5;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            
+            --border-subtle: rgba(255,255,255,0.06);
+            --border-default: rgba(255,255,255,0.1);
+            
+            --glow-primary: rgba(0, 212, 170, 0.15);
+            --glow-secondary: rgba(0, 168, 255, 0.15);
+            
+            --font-display: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            
+            --transition-fast: 150ms ease;
+            --transition-normal: 250ms ease;
+            --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-display);
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Background Effects */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.4;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow-1 {
+            top: -200px;
+            right: -100px;
+            background: var(--accent-primary);
+            opacity: 0.15;
+        }
+
+        .bg-glow-2 {
+            bottom: -300px;
+            left: -200px;
+            background: var(--accent-secondary);
+            opacity: 0.1;
+        }
+
+        /* Layout */
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 260px;
+            background: var(--bg-primary);
+            border-right: 1px solid var(--border-subtle);
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+            z-index: 100;
+        }
+
+        .logo {
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            color: var(--bg-deep);
+        }
+
+        .logo-text {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-section {
+            padding: 20px 12px;
+            flex: 1;
+        }
+
+        .nav-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            padding: 0 12px;
+            margin-bottom: 8px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all var(--transition-fast);
+            cursor: pointer;
+            margin-bottom: 4px;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            background: var(--glow-primary);
+            color: var(--accent-primary);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+        }
+
+        .nav-item svg {
+            width: 20px;
+            height: 20px;
+            opacity: 0.8;
+        }
+
+        .nav-item.active svg {
+            opacity: 1;
+        }
+
+        .sidebar-footer {
+            padding: 16px;
+            border-top: 1px solid var(--border-subtle);
+        }
+
+        .wallet-badge {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .wallet-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-primary);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 24px 32px;
+        }
+
+        /* Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .page-title {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .page-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-top: 4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: var(--radius-md);
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 14px;
+            border: none;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), #00b894);
+            color: var(--bg-deep);
+            box-shadow: 0 4px 20px var(--glow-primary);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--glow-primary);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-primary);
+        }
+
+        .btn-icon {
+            padding: 10px;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all var(--transition-normal);
+        }
+
+        .stat-card:hover {
+            border-color: var(--border-default);
+            transform: translateY(-2px);
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            opacity: 0;
+            transition: opacity var(--transition-normal);
+        }
+
+        .stat-card:hover::before {
+            opacity: 1;
+        }
+
+        .stat-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+        }
+
+        .stat-icon.nodes { background: var(--glow-primary); color: var(--accent-primary); }
+        .stat-icon.vms { background: var(--glow-secondary); color: var(--accent-secondary); }
+        .stat-icon.cpu { background: rgba(139, 92, 246, 0.15); color: var(--accent-tertiary); }
+        .stat-icon.memory { background: rgba(245, 158, 11, 0.15); color: var(--accent-warning); }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .stat-change {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+        }
+
+        .stat-change.positive {
+            background: rgba(0, 212, 170, 0.1);
+            color: var(--accent-primary);
+        }
+
+        /* Content Grid */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .card-body {
+            padding: 20px 24px;
+        }
+
+        /* VM Table */
+        .vm-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .vm-table th {
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            background: var(--bg-secondary);
+        }
+
+        .vm-table td {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 14px;
+        }
+
+        .vm-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .vm-table tr:hover td {
+            background: var(--bg-secondary);
+        }
+
+        .vm-name {
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .vm-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .vm-id {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.running {
+            background: rgba(0, 212, 170, 0.1);
+            color: var(--accent-primary);
+        }
+
+        .status-badge.stopped {
+            background: rgba(107, 114, 128, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .status-badge.provisioning {
+            background: rgba(0, 168, 255, 0.1);
+            color: var(--accent-secondary);
+        }
+
+        .status-badge.error {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--accent-danger);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .status-badge.running .status-dot {
+            animation: pulse 2s infinite;
+        }
+
+        .vm-specs {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .vm-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .action-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-default);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition-fast);
+        }
+
+        .action-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+            border-color: var(--accent-primary);
+        }
+
+        .action-btn.danger:hover {
+            border-color: var(--accent-danger);
+            color: var(--accent-danger);
+        }
+
+        /* Nodes List */
+        .node-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            border-radius: var(--radius-md);
+            margin-bottom: 12px;
+            background: var(--bg-secondary);
+            transition: all var(--transition-fast);
+        }
+
+        .node-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .node-status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent-primary);
+            box-shadow: 0 0 10px var(--accent-primary);
+        }
+
+        .node-status-indicator.offline {
+            background: var(--text-muted);
+            box-shadow: none;
+        }
+
+        .node-info {
+            flex: 1;
+        }
+
+        .node-name {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .node-specs {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+        }
+
+        .node-metrics {
+            text-align: right;
+        }
+
+        .node-usage {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+
+        .node-usage-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* Usage Bar */
+        .usage-bar {
+            height: 6px;
+            background: var(--bg-elevated);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .usage-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width var(--transition-slow);
+        }
+
+        .usage-bar-fill.cpu { background: linear-gradient(90deg, var(--accent-tertiary), #a78bfa); }
+        .usage-bar-fill.memory { background: linear-gradient(90deg, var(--accent-warning), #fbbf24); }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all var(--transition-normal);
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-xl);
+            width: 100%;
+            max-width: 520px;
+            transform: translateY(20px) scale(0.95);
+            transition: all var(--transition-slow);
+        }
+
+        .modal-overlay.active .modal {
+            transform: translateY(0) scale(1);
+        }
+
+        .modal-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .modal-close {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            border: none;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition-fast);
+        }
+
+        .modal-close:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            font-family: var(--font-display);
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: all var(--transition-fast);
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px var(--glow-primary);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 40px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .empty-state-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+        }
+
+        .empty-state-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .empty-state-text {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        /* Toast Notification */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1100;
+        }
+
+        .toast {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            margin-top: 12px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(100px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .toast-icon {
+            width: 24px;
+            height: 24px;
+        }
+
+        .toast.success .toast-icon { color: var(--accent-primary); }
+        .toast.error .toast-icon { color: var(--accent-danger); }
+
+        .toast-message {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-default);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Pages */
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* SSH Keys Table */
+        .ssh-key-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            margin-bottom: 12px;
+        }
+
+        .ssh-key-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .ssh-key-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+        }
+
+        .ssh-key-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .ssh-key-fingerprint {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            .main-content {
+                margin-left: 0;
+            }
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">DC</div>
+                <span class="logo-text">DeCloud</span>
+            </div>
+
+            <nav class="nav-section">
+                <div class="nav-label">Overview</div>
+                <a class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="9" rx="1"/>
+                        <rect x="14" y="3" width="7" height="5" rx="1"/>
+                        <rect x="14" y="12" width="7" height="9" rx="1"/>
+                        <rect x="3" y="16" width="7" height="5" rx="1"/>
+                    </svg>
+                    Dashboard
+                </a>
+
+                <div class="nav-label" style="margin-top: 24px;">Resources</div>
+                <a class="nav-item" data-page="vms" onclick="showPage('vms')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8M12 17v4"/>
+                    </svg>
+                    Virtual Machines
+                </a>
+                <a class="nav-item" data-page="nodes" onclick="showPage('nodes')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="6" height="6" rx="1"/>
+                        <rect x="14" y="4" width="6" height="6" rx="1"/>
+                        <rect x="4" y="14" width="6" height="6" rx="1"/>
+                        <rect x="14" y="14" width="6" height="6" rx="1"/>
+                    </svg>
+                    Nodes
+                </a>
+
+                <div class="nav-label" style="margin-top: 24px;">Settings</div>
+                <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                    </svg>
+                    SSH Keys
+                </a>
+                <a class="nav-item" data-page="settings" onclick="showPage('settings')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                    </svg>
+                    Settings
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="wallet-badge">
+                    <div class="wallet-dot"></div>
+                    <span id="wallet-display">0x1234...5678</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Page -->
+            <div id="page-dashboard" class="page active">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Dashboard</h1>
+                        <p class="page-subtitle">Overview of your decentralized cloud resources</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-secondary" onclick="refreshData()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6M1 20v-6h6"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            Refresh
+                        </button>
+                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Create VM
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon nodes">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="4" y="4" width="6" height="6" rx="1"/>
+                                <rect x="14" y="4" width="6" height="6" rx="1"/>
+                                <rect x="4" y="14" width="6" height="6" rx="1"/>
+                                <rect x="14" y="14" width="6" height="6" rx="1"/>
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-nodes">-</div>
+                        <div class="stat-label">Active Nodes</div>
+                        <div class="stat-change positive" id="stat-nodes-change">↑ Online</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon vms">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                <path d="M8 21h8M12 17v4"/>
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-vms">-</div>
+                        <div class="stat-label">Virtual Machines</div>
+                        <div class="stat-change positive" id="stat-vms-running">- running</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon cpu">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                                <rect x="9" y="9" width="6" height="6"/>
+                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/>
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-cpu">-</div>
+                        <div class="stat-label">CPU Cores Available</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon memory">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M6 19v-8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8"/>
+                                <path d="M6 19h12"/>
+                                <path d="M10 5v4M14 5v4"/>
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-memory">-</div>
+                        <div class="stat-label">Memory Available</div>
+                    </div>
+                </div>
+
+                <!-- Content Grid -->
+                <div class="content-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Recent Virtual Machines</h3>
+                            <button class="btn btn-secondary" onclick="showPage('vms')">View All</button>
+                        </div>
+                        <div id="recent-vms-container">
+                            <table class="vm-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Status</th>
+                                        <th>Specs</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recent-vms-table">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Nodes</h3>
+                        </div>
+                        <div class="card-body" id="nodes-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VMs Page -->
+            <div id="page-vms" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Virtual Machines</h1>
+                        <p class="page-subtitle">Manage your cloud instances</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Create VM
+                        </button>
+                    </div>
+                </header>
+
+                <div class="card">
+                    <div id="all-vms-container">
+                        <table class="vm-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Node</th>
+                                    <th>Specs</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="all-vms-table">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nodes Page -->
+            <div id="page-nodes" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Nodes</h1>
+                        <p class="page-subtitle">Network infrastructure providers</p>
+                    </div>
+                </header>
+
+                <div class="card">
+                    <div class="card-body" id="all-nodes-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- SSH Keys Page -->
+            <div id="page-ssh-keys" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">SSH Keys</h1>
+                        <p class="page-subtitle">Manage your SSH keys for VM access</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="openAddSshKeyModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Add SSH Key
+                        </button>
+                    </div>
+                </header>
+
+                <div class="card">
+                    <div class="card-body" id="ssh-keys-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div id="page-settings" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Settings</h1>
+                        <p class="page-subtitle">Configure your DeCloud dashboard</p>
+                    </div>
+                </header>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">Orchestrator URL</label>
+                            <input type="text" class="form-input" id="settings-orchestrator-url" placeholder="http://localhost:5050">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Wallet Address</label>
+                            <input type="text" class="form-input" id="settings-wallet" placeholder="0x...">
+                        </div>
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create VM Modal -->
+    <div class="modal-overlay" id="create-vm-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Create Virtual Machine</h2>
+                <button class="modal-close" onclick="closeModal('create-vm-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">VM Name</label>
+                    <input type="text" class="form-input" id="vm-name" placeholder="my-server">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Operating System</label>
+                    <select class="form-input form-select" id="vm-image">
+                        <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
+                        <option value="ubuntu-22.04" selected>Ubuntu 22.04 LTS</option>
+                        <option value="debian-12">Debian 12</option>
+                        <option value="fedora-40">Fedora 40</option>
+                        <option value="alpine-3.19">Alpine Linux 3.19</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">CPU Cores</label>
+                        <select class="form-input form-select" id="vm-cpu">
+                            <option value="1">1 vCPU</option>
+                            <option value="2">2 vCPUs</option>
+                            <option value="4">4 vCPUs</option>
+                            <option value="8">8 vCPUs</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Memory</label>
+                        <select class="form-input form-select" id="vm-memory">
+                            <option value="512">512 MB</option>
+                            <option value="1024" selected>1 GB</option>
+                            <option value="2048">2 GB</option>
+                            <option value="4096">4 GB</option>
+                            <option value="8192">8 GB</option>
+                            <option value="16384">16 GB</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Disk</label>
+                        <select class="form-input form-select" id="vm-disk">
+                            <option value="10" selected>10 GB</option>
+                            <option value="20">20 GB</option>
+                            <option value="40">40 GB</option>
+                            <option value="80">80 GB</option>
+                            <option value="160">160 GB</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
+                <button class="btn btn-primary" id="create-vm-btn" onclick="createVm()">
+                    Create VM
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add SSH Key Modal -->
+    <div class="modal-overlay" id="add-ssh-key-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Add SSH Key</h2>
+                <button class="modal-close" onclick="closeModal('add-ssh-key-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Key Name</label>
+                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Public Key</label>
+                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addSshKey()">Add Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        // Configuration
+        let CONFIG = {
+            orchestratorUrl: localStorage.getItem('orchestratorUrl') || 'http://localhost:5050',
+            wallet: localStorage.getItem('wallet') || '0x1234567890abcdef1234567890abcdef12345678'
+        };
+
+        let authToken = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            authenticate().then(() => {
+                refreshData();
+                setInterval(refreshData, 30000); // Refresh every 30s
+            });
+        });
+
+        // Settings
+        function loadSettings() {
+            document.getElementById('settings-orchestrator-url').value = CONFIG.orchestratorUrl;
+            document.getElementById('settings-wallet').value = CONFIG.wallet;
+            document.getElementById('wallet-display').textContent = CONFIG.wallet.slice(0, 6) + '...' + CONFIG.wallet.slice(-4);
+        }
+
+        function saveSettings() {
+            CONFIG.orchestratorUrl = document.getElementById('settings-orchestrator-url').value;
+            CONFIG.wallet = document.getElementById('settings-wallet').value;
+            localStorage.setItem('orchestratorUrl', CONFIG.orchestratorUrl);
+            localStorage.setItem('wallet', CONFIG.wallet);
+            loadSettings();
+            authToken = null;
+            authenticate().then(() => refreshData());
+            showToast('Settings saved', 'success');
+        }
+
+        // Authentication
+        async function authenticate() {
+            try {
+                const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        walletAddress: CONFIG.wallet,
+                        signature: '0xmocksig',
+                        message: 'Sign',
+                        timestamp: Math.floor(Date.now() / 1000)
+                    })
+                });
+                const data = await response.json();
+                if (data.data?.accessToken) {
+                    authToken = data.data.accessToken;
+                    return true;
+                }
+            } catch (e) {
+                console.error('Auth failed:', e);
+                showToast('Failed to connect to orchestrator', 'error');
+            }
+            return false;
+        }
+
+        // API Helper
+        async function api(endpoint, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
+            };
+            const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, { ...options, headers });
+            return response.json();
+        }
+
+        // Refresh Data
+        async function refreshData() {
+            await Promise.all([
+                loadStats(),
+                loadVms(),
+                loadNodes(),
+                loadSshKeys()
+            ]);
+        }
+
+        // Load Stats
+        async function loadStats() {
+            try {
+                const data = await api('/api/system/stats');
+                if (data.success) {
+                    const stats = data.data;
+                    document.getElementById('stat-nodes').textContent = `${stats.onlineNodes}/${stats.totalNodes}`;
+                    document.getElementById('stat-vms').textContent = stats.totalVms;
+                    document.getElementById('stat-vms-running').textContent = `${stats.runningVms} running`;
+                    document.getElementById('stat-cpu').textContent = stats.availableCpuCores;
+                    document.getElementById('stat-memory').textContent = formatMemory(stats.availableMemoryMb);
+                }
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        // Load VMs
+        async function loadVms() {
+            try {
+                const data = await api('/api/vms');
+                const vms = data.data?.items || [];
+                
+                const recentHtml = vms.slice(0, 5).map(vm => renderVmRow(vm)).join('');
+                document.getElementById('recent-vms-table').innerHTML = recentHtml || '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted)">No VMs yet</td></tr>';
+                
+                const allHtml = vms.map(vm => renderVmRowFull(vm)).join('');
+                document.getElementById('all-vms-table').innerHTML = allHtml || '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted)">No VMs yet</td></tr>';
+            } catch (e) {
+                console.error('Failed to load VMs:', e);
+            }
+        }
+
+        function renderVmRow(vm) {
+            const statusClass = vm.status.toLowerCase();
+            return `
+                <tr>
+                    <td>
+                        <div class="vm-name">
+                            <div class="vm-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                    <path d="M8 21h8M12 17v4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                ${vm.name}
+                                <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">
+                            <span class="status-dot"></span>
+                            ${vm.status}
+                        </span>
+                    </td>
+                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                    <td class="vm-actions">
+                        ${vm.status === 'Running' ? `
+                            <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            </button>
+                        ` : vm.status === 'Stopped' ? `
+                            <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                            </button>
+                        ` : ''}
+                        <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function renderVmRowFull(vm) {
+            const statusClass = vm.status.toLowerCase();
+            const created = new Date(vm.createdAt).toLocaleDateString();
+            return `
+                <tr>
+                    <td>
+                        <div class="vm-name">
+                            <div class="vm-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                    <path d="M8 21h8M12 17v4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                ${vm.name}
+                                <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">
+                            <span class="status-dot"></span>
+                            ${vm.status}
+                        </span>
+                    </td>
+                    <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
+                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                    <td style="color:var(--text-muted)">${created}</td>
+                    <td class="vm-actions">
+                        ${vm.status === 'Running' ? `
+                            <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            </button>
+                        ` : vm.status === 'Stopped' ? `
+                            <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                            </button>
+                        ` : ''}
+                        <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        // Load Nodes
+        async function loadNodes() {
+            try {
+                const data = await api('/api/nodes');
+                const nodes = data.data || [];
+                
+                const html = nodes.map(node => renderNode(node)).join('');
+                document.getElementById('nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
+                document.getElementById('all-nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
+            } catch (e) {
+                console.error('Failed to load nodes:', e);
+            }
+        }
+
+        function renderNode(node) {
+            const isOnline = node.status === 'Online';
+            const cpuUsage = node.availableResources?.cpuCores || 0;
+            const memUsage = node.availableResources?.memoryMb || 0;
+            return `
+                <div class="node-item">
+                    <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
+                    <div class="node-info">
+                        <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
+                        <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
+                    </div>
+                    <div class="node-metrics">
+                        <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
+                        <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Load SSH Keys
+        async function loadSshKeys() {
+            try {
+                const data = await api('/api/user/me/ssh-keys');
+                const keys = data.data || [];
+                
+                const html = keys.map(key => `
+                    <div class="ssh-key-item">
+                        <div class="ssh-key-info">
+                            <div class="ssh-key-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="ssh-key-name">${key.name}</div>
+                                <div class="ssh-key-fingerprint">${key.fingerprint || key.publicKey?.slice(0, 40) + '...'}</div>
+                            </div>
+                        </div>
+                        <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                `).join('');
+                
+                document.getElementById('ssh-keys-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No SSH keys added yet</div>';
+            } catch (e) {
+                console.error('Failed to load SSH keys:', e);
+            }
+        }
+
+        // VM Actions
+        async function createVm() {
+            const name = document.getElementById('vm-name').value;
+            const image = document.getElementById('vm-image').value;
+            const cpu = parseInt(document.getElementById('vm-cpu').value);
+            const memory = parseInt(document.getElementById('vm-memory').value);
+            const disk = parseInt(document.getElementById('vm-disk').value);
+
+            if (!name) {
+                showToast('Please enter a VM name', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('create-vm-btn');
+            btn.innerHTML = '<div class="spinner"></div> Creating...';
+            btn.disabled = true;
+
+            try {
+                const data = await api('/api/vms', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name,
+                        spec: {
+                            cpuCores: cpu,
+                            memoryMb: memory,
+                            diskGb: disk,
+                            imageId: image,
+                            requiresGpu: false
+                        }
+                    })
+                });
+
+                if (data.success) {
+                    showToast(`VM "${name}" created successfully`, 'success');
+                    closeModal('create-vm-modal');
+                    document.getElementById('vm-name').value = '';
+                    refreshData();
+                } else {
+                    showToast(data.message || 'Failed to create VM', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to create VM', 'error');
+            }
+
+            btn.innerHTML = 'Create VM';
+            btn.disabled = false;
+        }
+
+        async function startVm(vmId) {
+            try {
+                const data = await api(`/api/vms/${vmId}/action`, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'Start' })
+                });
+                if (data.success) {
+                    showToast('VM starting...', 'success');
+                    refreshData();
+                } else {
+                    showToast('Failed to start VM', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to start VM', 'error');
+            }
+        }
+
+        async function stopVm(vmId) {
+            try {
+                const data = await api(`/api/vms/${vmId}/action`, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'Stop' })
+                });
+                if (data.success) {
+                    showToast('VM stopping...', 'success');
+                    refreshData();
+                } else {
+                    showToast('Failed to stop VM', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to stop VM', 'error');
+            }
+        }
+
+        async function deleteVm(vmId) {
+            if (!confirm('Are you sure you want to delete this VM?')) return;
+            
+            try {
+                const data = await api(`/api/vms/${vmId}`, { method: 'DELETE' });
+                if (data.success) {
+                    showToast('VM deleted', 'success');
+                    refreshData();
+                } else {
+                    showToast('Failed to delete VM', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to delete VM', 'error');
+            }
+        }
+
+        // SSH Key Actions
+        async function addSshKey() {
+            const name = document.getElementById('ssh-key-name').value;
+            const publicKey = document.getElementById('ssh-key-value').value;
+
+            if (!name || !publicKey) {
+                showToast('Please fill in all fields', 'error');
+                return;
+            }
+
+            try {
+                const data = await api('/api/user/me/ssh-keys', {
+                    method: 'POST',
+                    body: JSON.stringify({ name, publicKey })
+                });
+
+                if (data.success) {
+                    showToast('SSH key added', 'success');
+                    closeModal('add-ssh-key-modal');
+                    document.getElementById('ssh-key-name').value = '';
+                    document.getElementById('ssh-key-value').value = '';
+                    loadSshKeys();
+                } else {
+                    showToast(data.message || 'Failed to add SSH key', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to add SSH key', 'error');
+            }
+        }
+
+        async function deleteSshKey(keyId) {
+            if (!confirm('Are you sure you want to delete this SSH key?')) return;
+            
+            try {
+                const data = await api(`/api/user/me/ssh-keys/${keyId}`, { method: 'DELETE' });
+                if (data.success) {
+                    showToast('SSH key deleted', 'success');
+                    loadSshKeys();
+                } else {
+                    showToast('Failed to delete SSH key', 'error');
+                }
+            } catch (e) {
+                showToast('Failed to delete SSH key', 'error');
+            }
+        }
+
+        // Navigation
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            
+            document.getElementById(`page-${pageId}`).classList.add('active');
+            document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
+        }
+
+        // Modals
+        function openCreateVmModal() {
+            document.getElementById('create-vm-modal').classList.add('active');
+        }
+
+        function openAddSshKeyModal() {
+            document.getElementById('add-ssh-key-modal').classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        // Close modal on overlay click
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('active');
+                }
+            });
+        });
+
+        // Toast
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${type === 'success' 
+                        ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
+                        : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'}
+                </svg>
+                <span class="toast-message">${message}</span>
+            `;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        // Helpers
+        function formatMemory(mb) {
+            if (!mb) return '-';
+            if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+            return mb + ' MB';
+        }
+    </script>
+</body>
+</html>
