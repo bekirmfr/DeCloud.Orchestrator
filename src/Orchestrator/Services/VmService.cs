@@ -159,8 +159,8 @@ public class VmService : IVmService
         if (!string.IsNullOrEmpty(queryParams.Search))
         {
             var search = queryParams.Search.ToLower();
-            query = query.Where(v => 
-                v.Name.ToLower().Contains(search) || 
+            query = query.Where(v =>
+                v.Name.ToLower().Contains(search) ||
                 v.Id.ToLower().Contains(search));
         }
 
@@ -384,7 +384,22 @@ public class VmService : IVmService
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
-        // Queue creation command
+        // Get user's SSH key if available
+        string? sshPublicKey = vm.Spec.SshPublicKey; // First check if provided in spec
+        if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
+        {
+            // Use user's first SSH key if they have one
+            sshPublicKey = owner.SshKeys.FirstOrDefault()?.PublicKey;
+        }
+
+        // Resolve image URL from imageId
+        string? imageUrl = vm.Spec.ImageUrl;
+        if (string.IsNullOrEmpty(imageUrl) && !string.IsNullOrEmpty(vm.Spec.ImageId))
+        {
+            imageUrl = GetImageUrl(vm.Spec.ImageId);
+        }
+
+        // Queue creation command with full details for Node Agent
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             NodeCommandType.CreateVm,
@@ -392,14 +407,29 @@ public class VmService : IVmService
             {
                 VmId = vm.Id,
                 Name = vm.Name,
-                Spec = vm.Spec,
-                NetworkConfig = vm.NetworkConfig
+                VCpus = vm.Spec.CpuCores,
+                MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
+                DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
+                BaseImageUrl = imageUrl,
+                BaseImageHash = "",
+                SshPublicKey = sshPublicKey ?? "",
+                TenantId = vm.OwnerId,
+                LeaseId = vm.Id,
+                Network = new
+                {
+                    MacAddress = "",
+                    IpAddress = vm.NetworkConfig.PrivateIp,
+                    Gateway = "",
+                    VxlanVni = 0,
+                    AllowedPorts = new List<int>()
+                }
             })
         );
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);
 
-        _logger.LogInformation("VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
+        _logger.LogInformation("VM {VmId} scheduled on node {NodeId} with image {ImageUrl}",
+            vm.Id, selectedNode.Id, imageUrl);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -409,6 +439,22 @@ public class VmService : IVmService
             UserId = vm.OwnerId,
             Payload = new { NodeId = selectedNode.Id }
         });
+    }
+
+    private static string? GetImageUrl(string imageId)
+    {
+        // Map image IDs to cloud image URLs
+        return imageId.ToLower() switch
+        {
+            "ubuntu-24.04" => "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+            "ubuntu-22.04" => "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+            "ubuntu-20.04" => "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img",
+            "debian-12" => "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+            "debian-11" => "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2",
+            "fedora-40" => "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
+            "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-x86_64-bios-cloudinit-r0.qcow2",
+            _ => null
+        };
     }
 
     private decimal CalculateHourlyRate(VmSpec spec)
