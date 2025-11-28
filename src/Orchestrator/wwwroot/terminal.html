@@ -445,8 +445,11 @@
             connectionInfo = { nodeIp, nodePort, vmIp, sshPort, username, password };
             hideConnectForm();
 
+            // Get vmId from URL params or use a default
+            const vmId = autoConnect.vmId || document.getElementById('vm-id')?.value || 'terminal';
+
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/terminal/ssh?ip=${vmIp}&port=${sshPort}&user=${username}`;
+            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/${vmId}/terminal?ip=${vmIp}&port=${sshPort}&user=${username}`;
 
             if (password) {
                 wsUrl += `&password=${encodeURIComponent(password)}`;
