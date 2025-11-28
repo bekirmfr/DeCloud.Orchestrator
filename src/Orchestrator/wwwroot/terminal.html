@@ -446,7 +446,7 @@
             hideConnectForm();
 
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/terminal/terminal?ip=${vmIp}&port=${sshPort}&user=${username}`;
+            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/terminal/ssh?ip=${vmIp}&port=${sshPort}&user=${username}`;
 
             if (password) {
                 wsUrl += `&password=${encodeURIComponent(password)}`;
