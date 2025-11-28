@@ -1598,125 +1598,127 @@
 
         function renderVmRow(vm) {
             const statusClass = vm.status.toLowerCase();
-            const canConnect = vm.status === 'Running' && vm.networkConfig?.privateIp;
+            const vmIp = vm.networkConfig?.privateIp;
+            const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
 
             return `
-                    <tr>
-                        <td>
-                            <div class="vm-name">
-                                <div class="vm-icon">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                        <path d="M8 21h8M12 17v4"/>
-                                    </svg>
+                        <tr>
+                            <td>
+                                <div class="vm-name">
+                                    <div class="vm-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                            <path d="M8 21h8M12 17v4"/>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        ${vm.name}
+                                        <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                                    </div>
                                 </div>
-                                <div>
-                                    ${vm.name}
-                                    <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <span class="status-badge ${statusClass}">
-                                <span class="status-dot"></span>
-                                ${vm.status}
-                            </span>
-                        </td>
-                        <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                        <td class="vm-actions">
-                            ${canConnect && nodeIp ? `
-                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Open Terminal">
+                            </td>
+                            <td>
+                                <span class="status-badge ${statusClass}">
+                                    <span class="status-dot"></span>
+                                    ${vm.status}
+                                </span>
+                            </td>
+                            <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                            <td class="vm-actions">
+                                ${canConnect && nodeIp ? `
+                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}')" title="Open Terminal">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                        </svg>
+                                    </button>
+                                    <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                        </svg>
+                                    </button>
+                                ` : ''}
+                                ${vm.status === 'Running' ? `
+                                    <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                                    </button>
+                                ` : vm.status === 'Stopped' ? `
+                                    <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                                    </button>
+                                ` : ''}
+                                <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                     </svg>
                                 </button>
-                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Connection Info">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
-                                    </svg>
-                                </button>
-                            ` : ''}
-                            ${vm.status === 'Running' ? `
-                                <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                                </button>
-                            ` : vm.status === 'Stopped' ? `
-                                <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                                </button>
-                            ` : ''}
-                            <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                            </button>
-                        </td>
-                    </tr>
-                `;
+                            </td>
+                        </tr>
+                    `;
         }
 
         function renderVmRowFull(vm) {
             const statusClass = vm.status.toLowerCase();
             const created = new Date(vm.createdAt).toLocaleDateString();
-            const canConnect = vm.status === 'Running' && vm.networkConfig?.privateIp;
+            const vmIp = vm.networkConfig?.privateIp;
+            const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
 
             return `
-                    <tr>
-                        <td>
-                            <div class="vm-name">
-                                <div class="vm-icon">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                        <path d="M8 21h8M12 17v4"/>
-                                    </svg>
+                        <tr>
+                            <td>
+                                <div class="vm-name">
+                                    <div class="vm-icon">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                            <path d="M8 21h8M12 17v4"/>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        ${vm.name}
+                                        <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                                    </div>
                                 </div>
-                                <div>
-                                    ${vm.name}
-                                    <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <span class="status-badge ${statusClass}">
-                                <span class="status-dot"></span>
-                                ${vm.status}
-                            </span>
-                        </td>
-                        <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
-                        <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                        <td style="color:var(--text-muted)">${created}</td>
-                        <td class="vm-actions">
-                            ${canConnect && nodeIp ? `
-                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Open Terminal">
+                            </td>
+                            <td>
+                                <span class="status-badge ${statusClass}">
+                                    <span class="status-dot"></span>
+                                    ${vm.status}
+                                </span>
+                            </td>
+                            <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
+                            <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                            <td style="color:var(--text-muted)">${created}</td>
+                            <td class="vm-actions">
+                                ${canConnect && nodeIp ? `
+                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}')" title="Open Terminal">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                        </svg>
+                                    </button>
+                                    <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                        </svg>
+                                    </button>
+                                ` : ''}
+                                ${vm.status === 'Running' ? `
+                                    <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                                    </button>
+                                ` : vm.status === 'Stopped' ? `
+                                    <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                                    </button>
+                                ` : ''}
+                                <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                     </svg>
                                 </button>
-                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Connection Info">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
-                                    </svg>
-                                </button>
-                            ` : ''}
-                            ${vm.status === 'Running' ? `
-                                <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                                </button>
-                            ` : vm.status === 'Stopped' ? `
-                                <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                                </button>
-                            ` : ''}
-                            <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                            </button>
-                        </td>
-                    </tr>
-                `;
+                            </td>
+                        </tr>
+                    `;
         }
 
         // Load Nodes
@@ -1751,18 +1753,18 @@
             const cpuUsage = node.availableResources?.cpuCores || 0;
             const memUsage = node.availableResources?.memoryMb || 0;
             return `
-                    <div class="node-item">
-                        <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
-                        <div class="node-info">
-                            <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
-                            <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
+                        <div class="node-item">
+                            <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
+                            <div class="node-info">
+                                <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
+                                <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
+                            </div>
+                            <div class="node-metrics">
+                                <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
+                                <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
+                            </div>
                         </div>
-                        <div class="node-metrics">
-                            <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
-                            <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
-                        </div>
-                    </div>
-                `;
+                    `;
         }
 
         // Load SSH Keys
@@ -1772,25 +1774,25 @@
                 const keys = data.data || [];
 
                 const html = keys.map(key => `
-                        <div class="ssh-key-item">
-                            <div class="ssh-key-info">
-                                <div class="ssh-key-icon">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                            <div class="ssh-key-item">
+                                <div class="ssh-key-info">
+                                    <div class="ssh-key-icon">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <div class="ssh-key-name">${key.name}</div>
+                                        <div class="ssh-key-fingerprint">${key.fingerprint || key.publicKey?.slice(0, 40) + '...'}</div>
+                                    </div>
+                                </div>
+                                <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                     </svg>
-                                </div>
-                                <div>
-                                    <div class="ssh-key-name">${key.name}</div>
-                                    <div class="ssh-key-fingerprint">${key.fingerprint || key.publicKey?.slice(0, 40) + '...'}</div>
-                                </div>
+                                </button>
                             </div>
-                            <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                            </button>
-                        </div>
-                    `).join('');
+                        `).join('');
 
                 document.getElementById('ssh-keys-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No SSH keys added yet</div>';
             } catch (e) {
@@ -1974,18 +1976,18 @@
             const modal = document.createElement('div');
             modal.className = 'modal-overlay';
             modal.innerHTML = `
-                <div class="modal-content" style="max-width: 500px;">
-                    <h3>⚠️ VM Credentials</h3>
-                    <p>Your VM <strong>${vmName}</strong> was created with a generated password.</p>
-                    <p><strong>Save this password now - it won't be shown again!</strong></p>
-                    <div style="background: #1a1b26; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <p style="margin: 5px 0;">Username: <code>ubuntu</code></p>
-                        <p style="margin: 5px 0;">Password: <code id="vm-password">${password}</code></p>
+                    <div class="modal-content" style="max-width: 500px;">
+                        <h3>⚠️ VM Credentials</h3>
+                        <p>Your VM <strong>${vmName}</strong> was created with a generated password.</p>
+                        <p><strong>Save this password now - it won't be shown again!</strong></p>
+                        <div style="background: #1a1b26; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <p style="margin: 5px 0;">Username: <code>ubuntu</code></p>
+                            <p style="margin: 5px 0;">Password: <code id="vm-password">${password}</code></p>
+                        </div>
+                        <button onclick="copyPassword()" class="btn btn-secondary">Copy Password</button>
+                        <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">I've Saved It</button>
                     </div>
-                    <button onclick="copyPassword()" class="btn btn-secondary">Copy Password</button>
-                    <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">I've Saved It</button>
-                </div>
-            `;
+                `;
             document.body.appendChild(modal);
         }
 
@@ -2004,13 +2006,13 @@
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
             toast.innerHTML = `
-                    <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        ${type === 'success'
+                        <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            ${type === 'success'
                     ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
                     : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'}
-                    </svg>
-                    <span class="toast-message">${message}</span>
-                `;
+                        </svg>
+                        <span class="toast-message">${message}</span>
+                    `;
             container.appendChild(toast);
 
             setTimeout(() => {
