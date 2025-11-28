@@ -1835,6 +1835,11 @@
                     closeModal('create-vm-modal');
                     document.getElementById('vm-name').value = '';
                     refreshData();
+                    const vm = data.data.vm;
+                    if (vm.generatedPassword) {
+                        // Show password modal (one-time display)
+                        showPasswordModal(vm.name, vm.generatedPassword);
+                    }
                 } else {
                     showToast(data.message || 'Failed to create VM', 'error');
                 }
@@ -1964,6 +1969,26 @@
             document.getElementById(modalId).classList.remove('active');
         }
 
+        function showPasswordModal(vmName, password) {
+            // Create modal HTML
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="modal-content" style="max-width: 500px;">
+                    <h3>⚠️ VM Credentials</h3>
+                    <p>Your VM <strong>${vmName}</strong> was created with a generated password.</p>
+                    <p><strong>Save this password now - it won't be shown again!</strong></p>
+                    <div style="background: #1a1b26; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                        <p style="margin: 5px 0;">Username: <code>ubuntu</code></p>
+                        <p style="margin: 5px 0;">Password: <code id="vm-password">${password}</code></p>
+                    </div>
+                    <button onclick="copyPassword()" class="btn btn-secondary">Copy Password</button>
+                    <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">I've Saved It</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
         // Close modal on overlay click
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
             overlay.addEventListener('click', (e) => {
@@ -2029,6 +2054,12 @@
             if (!mb) return '-';
             if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
             return mb + ' MB';
+        }
+
+        function copyPassword() {
+            const password = document.getElementById('vm-password').textContent;
+            navigator.clipboard.writeText(password);
+            showToast('Password copied!', 'success');
         }
     </script>
 

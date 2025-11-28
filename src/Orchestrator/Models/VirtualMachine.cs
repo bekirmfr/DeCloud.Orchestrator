@@ -65,7 +65,9 @@ public class VmSpec
     
     // SSH key for access
     public string? SshPublicKey { get; set; }
-    
+    public string? Password { get; set; }
+    public bool PasswordShownToUser { get; set; } = false;
+
     // Cloud-init / user data
     public string? UserData { get; set; }
 }

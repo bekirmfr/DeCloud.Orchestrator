@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Orchestrator.Data;
 using Orchestrator.Models;
@@ -39,6 +40,25 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request)
     {
+        // In VM creation logic
+        string? generatedPassword = null;
+        string? sshPublicKey = null;
+
+        // Get user's SSH keys
+        var userSshKey = request.Spec.SshPublicKey;
+
+        if (string.IsNullOrWhiteSpace(userSshKey))
+        {
+            // Generate secure random password
+            generatedPassword = GenerateSecurePassword(16);
+            request.Spec.Password = generatedPassword;  // Or store encrypted
+            request.Spec.PasswordShownToUser = false;
+        }
+        else
+        {
+            request.Spec.SshPublicKey = sshPublicKey;
+        }
+
         // Validate image exists
         if (!_dataStore.Images.ContainsKey(request.Spec.ImageId) && string.IsNullOrEmpty(request.Spec.ImageUrl))
         {
@@ -439,6 +459,15 @@ public class VmService : IVmService
             UserId = vm.OwnerId,
             Payload = new { NodeId = selectedNode.Id }
         });
+    }
+
+    private static string GenerateSecurePassword(int length)
+    {
+        const string chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%";
+        var random = RandomNumberGenerator.Create();
+        var bytes = new byte[length];
+        random.GetBytes(bytes);
+        return new string(bytes.Select(b => chars[b % chars.Length]).ToArray());
     }
 
     private static string? GetImageUrl(string imageId)
