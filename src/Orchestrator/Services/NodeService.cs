@@ -98,7 +98,7 @@ public class NodeService : INodeService
                 Region = request.Region,
                 Zone = request.Zone,
                 AgentVersion = request.AgentVersion,
-                RegisteredAt = DateTime.UtcNow,  // FIXED: Was JoinedAt
+                RegisteredAt = DateTime.UtcNow,
                 LastHeartbeat = DateTime.UtcNow
             };
 
@@ -267,7 +267,6 @@ public class NodeService : INodeService
                             "VM {VmId} marked as Running but not reported by node {NodeId}",
                             vm.Id, nodeId);
                         // Don't immediately mark as error - could be transient
-                        // Could add a counter here and mark error after several missed heartbeats
                     }
                     else if (string.Equals(nodeState, "Stopped", StringComparison.OrdinalIgnoreCase))
                     {
@@ -352,6 +351,45 @@ public class NodeService : INodeService
         }
     }
 
+    /// <summary>
+    /// Check health of all nodes - marks nodes as offline if heartbeat timed out.
+    /// Called by NodeHealthMonitorService background service.
+    /// </summary>
+    public async Task CheckNodeHealthAsync()
+    {
+        var now = DateTime.UtcNow;
+        var nodesToCheck = _dataStore.Nodes.Values
+            .Where(n => n.Status == NodeStatus.Online)
+            .ToList();
+
+        foreach (var node in nodesToCheck)
+        {
+            var timeSinceHeartbeat = now - node.LastHeartbeat;
+
+            if (timeSinceHeartbeat > _heartbeatTimeout)
+            {
+                _logger.LogWarning(
+                    "Node {NodeId} ({Name}) heartbeat timeout - last seen {Seconds}s ago",
+                    node.Id, node.Name, timeSinceHeartbeat.TotalSeconds);
+
+                node.Status = NodeStatus.Offline;
+
+                await _eventService.EmitAsync(new OrchestratorEvent
+                {
+                    Type = EventType.NodeOffline,
+                    ResourceType = "node",
+                    ResourceId = node.Id,
+                    Payload = new
+                    {
+                        node.Name,
+                        LastHeartbeat = node.LastHeartbeat,
+                        TimeoutSeconds = timeSinceHeartbeat.TotalSeconds
+                    }
+                });
+            }
+        }
+    }
+
     public Task<Node?> GetNodeAsync(string nodeId)
     {
         _dataStore.Nodes.TryGetValue(nodeId, out var node);
@@ -398,7 +436,6 @@ public class NodeService : INodeService
 
         _dataStore.NodeAuthTokens.TryRemove(nodeId, out _);
 
-        // FIXED: Just log instead of emitting event (NodeRemoved doesn't exist)
         _logger.LogInformation("Node removed: {NodeId} ({Name})", nodeId, node.Name);
 
         return Task.FromResult(true);
