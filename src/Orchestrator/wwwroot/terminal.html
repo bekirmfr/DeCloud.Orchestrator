@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeCloud Terminal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <style>
+        :root {
+            --bg-deep: #0a0b0f;
+            --bg-primary: #12141a;
+            --bg-secondary: #1a1d26;
+            --bg-elevated: #22262f;
+            --accent-primary: #00d4aa;
+            --accent-secondary: #00a8ff;
+            --text-primary: #f0f2f5;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --border-subtle: rgba(255,255,255,0.06);
+            --border-default: rgba(255,255,255,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .terminal-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .terminal-dots {
+            display: flex;
+            gap: 6px;
+        }
+
+        .terminal-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .terminal-dot.red { background: #ff5f56; }
+        .terminal-dot.yellow { background: #ffbd2e; }
+        .terminal-dot.green { background: #27c93f; }
+
+        .terminal-info {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .terminal-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.connected {
+            background: var(--accent-primary);
+            box-shadow: 0 0 8px var(--accent-primary);
+        }
+
+        .status-dot.connecting {
+            background: var(--accent-secondary);
+            animation: pulse 1s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .terminal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-btn {
+            padding: 6px 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 150ms ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .terminal-btn:hover {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border-color: var(--accent-primary);
+        }
+
+        .terminal-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .terminal-body {
+            flex: 1;
+            padding: 8px;
+            overflow: hidden;
+        }
+
+        #terminal {
+            height: 100%;
+        }
+
+        /* Connection form */
+        .connect-form {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: 12px;
+            padding: 24px;
+            width: 100%;
+            max-width: 400px;
+            z-index: 100;
+        }
+
+        .connect-form.hidden {
+            display: none;
+        }
+
+        .connect-form h3 {
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: 600;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .connect-btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--accent-primary);
+            border: none;
+            border-radius: 6px;
+            color: var(--bg-deep);
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 150ms ease;
+        }
+
+        .connect-btn:hover {
+            filter: brightness(1.1);
+        }
+
+        .connect-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="terminal-header">
+        <div class="terminal-title">
+            <div class="terminal-dots">
+                <div class="terminal-dot red"></div>
+                <div class="terminal-dot yellow"></div>
+                <div class="terminal-dot green"></div>
+            </div>
+            <span class="terminal-info" id="terminal-info">DeCloud Terminal</span>
+        </div>
+        <div class="terminal-status">
+            <div class="status-dot" id="status-dot"></div>
+            <span id="status-text">Disconnected</span>
+        </div>
+        <div class="terminal-actions">
+            <button class="terminal-btn" id="reconnect-btn" onclick="reconnect()" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M23 4v6h-6M1 20v-6h6"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                </svg>
+                Reconnect
+            </button>
+            <button class="terminal-btn" onclick="showConnectForm()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/>
+                </svg>
+                Settings
+            </button>
+        </div>
+    </div>
+
+    <div class="terminal-body">
+        <div id="terminal"></div>
+    </div>
+
+    <!-- Connection Form -->
+    <div class="connect-form" id="connect-form">
+        <h3>Connect to VM</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Node IP</label>
+                <input type="text" id="node-ip" placeholder="142.234.200.95">
+            </div>
+            <div class="form-group" style="flex: 0 0 100px;">
+                <label>Node Port</label>
+                <input type="text" id="node-port" value="5100">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>VM IP</label>
+                <input type="text" id="vm-ip" placeholder="192.168.122.111">
+            </div>
+            <div class="form-group" style="flex: 0 0 100px;">
+                <label>SSH Port</label>
+                <input type="text" id="ssh-port" value="22">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" value="ubuntu">
+        </div>
+        <div class="form-group">
+            <label>Password (optional)</label>
+            <input type="password" id="password" placeholder="Leave empty for key-based auth">
+        </div>
+        <button class="connect-btn" onclick="connect()">Connect</button>
+    </div>
+
+    <script>
+        let terminal = null;
+        let socket = null;
+        let fitAddon = null;
+        let connectionInfo = null;
+
+        // Parse URL params for auto-connect
+        const params = new URLSearchParams(window.location.search);
+        const autoConnect = {
+            nodeIp: params.get('nodeIp'),
+            nodePort: params.get('nodePort') || '5100',
+            vmIp: params.get('vmIp'),
+            vmId: params.get('vmId') || 'terminal',
+            username: params.get('user') || 'ubuntu',
+            password: params.get('password')
+        };
+
+        function initTerminal() {
+            terminal = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                theme: {
+                    background: '#0a0b0f',
+                    foreground: '#f0f2f5',
+                    cursor: '#00d4aa',
+                    cursorAccent: '#0a0b0f',
+                    selectionBackground: 'rgba(0, 212, 170, 0.3)',
+                    black: '#1a1d26',
+                    red: '#ef4444',
+                    green: '#00d4aa',
+                    yellow: '#f59e0b',
+                    blue: '#00a8ff',
+                    magenta: '#8b5cf6',
+                    cyan: '#06b6d4',
+                    white: '#f0f2f5',
+                    brightBlack: '#6b7280',
+                    brightRed: '#f87171',
+                    brightGreen: '#34d399',
+                    brightYellow: '#fbbf24',
+                    brightBlue: '#60a5fa',
+                    brightMagenta: '#a78bfa',
+                    brightCyan: '#22d3ee',
+                    brightWhite: '#ffffff'
+                }
+            });
+
+            fitAddon = new FitAddon.FitAddon();
+            terminal.loadAddon(fitAddon);
+            terminal.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+            terminal.open(document.getElementById('terminal'));
+            fitAddon.fit();
+
+            window.addEventListener('resize', () => fitAddon.fit());
+
+            terminal.onResize(({ cols, rows }) => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+                }
+            });
+
+            terminal.onData(data => {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(data);
+                }
+            });
+
+            terminal.writeln('\x1b[36m╔══════════════════════════════════════════════════════════════╗');
+            terminal.writeln('║                    DeCloud Terminal                          ║');
+            terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
+            terminal.writeln('');
+
+            // Auto-connect if params provided
+            if (autoConnect.nodeIp && autoConnect.vmIp) {
+                document.getElementById('connect-form').classList.add('hidden');
+                document.getElementById('node-ip').value = autoConnect.nodeIp;
+                document.getElementById('node-port').value = autoConnect.nodePort;
+                document.getElementById('vm-ip').value = autoConnect.vmIp;
+                document.getElementById('username').value = autoConnect.username;
+                if (autoConnect.password) {
+                    document.getElementById('password').value = autoConnect.password;
+                }
+                connect();
+            } else {
+                terminal.writeln('\x1b[90mEnter connection details to connect to a VM.\x1b[0m');
+                terminal.writeln('');
+            }
+        }
+
+        function setStatus(status) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            
+            dot.className = 'status-dot ' + status;
+            text.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+            
+            document.getElementById('reconnect-btn').disabled = status === 'disconnected' && !connectionInfo;
+        }
+
+        function showConnectForm() {
+            document.getElementById('connect-form').classList.remove('hidden');
+        }
+
+        function hideConnectForm() {
+            document.getElementById('connect-form').classList.add('hidden');
+        }
+
+        function connect() {
+            const nodeIp = document.getElementById('node-ip').value.trim();
+            const nodePort = document.getElementById('node-port').value.trim();
+            const vmIp = document.getElementById('vm-ip').value.trim();
+            const sshPort = document.getElementById('ssh-port').value.trim();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            if (!nodeIp || !vmIp) {
+                alert('Please enter Node IP and VM IP');
+                return;
+            }
+
+            connectionInfo = { nodeIp, nodePort, vmIp, sshPort, username, password };
+            hideConnectForm();
+
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/terminal/terminal?ip=${vmIp}&port=${sshPort}&user=${username}`;
+            
+            if (password) {
+                wsUrl += `&password=${encodeURIComponent(password)}`;
+            }
+
+            setStatus('connecting');
+            terminal.writeln(`\x1b[90mConnecting to ${username}@${vmIp} via ${nodeIp}:${nodePort}...\x1b[0m`);
+
+            document.getElementById('terminal-info').textContent = `${username}@${vmIp}`;
+
+            if (socket) {
+                socket.close();
+            }
+
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                setStatus('connected');
+                fitAddon.fit();
+                socket.send(JSON.stringify({ 
+                    type: 'resize', 
+                    cols: terminal.cols, 
+                    rows: terminal.rows 
+                }));
+            };
+
+            socket.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    event.data.text().then(text => terminal.write(text));
+                } else {
+                    terminal.write(event.data);
+                }
+            };
+
+            socket.onerror = (error) => {
+                setStatus('disconnected');
+                terminal.writeln('\r\n\x1b[31mConnection error\x1b[0m');
+                console.error('WebSocket error:', error);
+            };
+
+            socket.onclose = (event) => {
+                setStatus('disconnected');
+                terminal.writeln(`\r\n\x1b[90mConnection closed (code: ${event.code})\x1b[0m`);
+            };
+        }
+
+        function reconnect() {
+            if (connectionInfo) {
+                terminal.clear();
+                connect();
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', initTerminal);
+    </script>
+</body>
+</html>
