@@ -43,6 +43,18 @@ public class Node
     public string Zone { get; set; } = "default";
 }
 
+/// <summary>
+/// VM information reported by node agent in heartbeat
+/// </summary>
+public class NodeVmInfo
+{
+    public string VmId { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public double CpuUsagePercent { get; set; }
+    public DateTime? StartedAt { get; set; }
+}
+
 public class NodeResources
 {
     public int CpuCores { get; set; }
@@ -105,7 +117,8 @@ public record NodeHeartbeat(
     string NodeId,
     NodeMetrics Metrics,
     NodeResources AvailableResources,
-    List<string> ActiveVmIds
+    List<string> ActiveVmIds,
+    List<NodeVmInfo>? ActiveVms = null  // ADD THIS
 );
 
 public record NodeHeartbeatResponse(
