@@ -1598,7 +1598,7 @@
 
         function renderVmRow(vm) {
             const statusClass = vm.status.toLowerCase();
-            const canConnect = vm.status === 'Running' && vm.ipAddress;
+            const canConnect = vm.status === 'Running' && vm.networkConfig?.privateIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
 
             return `
@@ -1626,12 +1626,12 @@
                         <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
                         <td class="vm-actions">
                             ${canConnect && nodeIp ? `
-                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Open Terminal">
+                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Open Terminal">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
                                     </svg>
                                 </button>
-                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Connection Info">
+                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Connection Info">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
                                     </svg>
@@ -1659,7 +1659,7 @@
         function renderVmRowFull(vm) {
             const statusClass = vm.status.toLowerCase();
             const created = new Date(vm.createdAt).toLocaleDateString();
-            const canConnect = vm.status === 'Running' && vm.ipAddress;
+            const canConnect = vm.status === 'Running' && vm.networkConfig?.privateIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
 
             return `
@@ -1689,12 +1689,12 @@
                         <td style="color:var(--text-muted)">${created}</td>
                         <td class="vm-actions">
                             ${canConnect && nodeIp ? `
-                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Open Terminal">
+                                <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Open Terminal">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
                                     </svg>
                                 </button>
-                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Connection Info">
+                                <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vm.networkConfig?.privateIp}', '${vm.name}')" title="Connection Info">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
                                     </svg>
