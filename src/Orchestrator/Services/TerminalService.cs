@@ -95,7 +95,7 @@ public class TerminalService : ITerminalService
         }
 
         // Get VM IP
-        var vmIp = vm.NetworkConfig.PrivateIp;
+        var vmIp = vm.NetworkConfig?.PrivateIp;
         if (string.IsNullOrEmpty(vmIp))
         {
             return TerminalAccessResult.Fail("VM IP not available");
@@ -155,14 +155,15 @@ public class TerminalService : ITerminalService
                 sessionId, vmId, session.ExpiresAt);
 
             // Build the WebSocket URL for the client
-            var wsUrl = BuildWebSocketUrl(node, vmId, vmIp, setupResult.PrivateKeyBase64);
+            var wsUrl = BuildWebSocketUrl(node, vmId, vmIp);
+            var nodePort = node.AgentPort > 0 ? node.AgentPort : 5100;
 
             return TerminalAccessResult.Ok(new TerminalCredentials
             {
                 SessionId = sessionId,
                 WebSocketUrl = wsUrl,
-                NodeIp = node.PublicIp ?? node.IpAddress,
-                NodePort = node.Port > 0 ? node.Port : 5100,
+                NodeIp = node.PublicIp,
+                NodePort = nodePort,
                 VmIp = vmIp,
                 Username = "ubuntu",
                 PrivateKey = setupResult.PrivateKey,
@@ -233,17 +234,17 @@ public class TerminalService : ITerminalService
         return true;
     }
 
-    private string GetNodeApiUrl(ComputeNode node)
+    private string GetNodeApiUrl(Node node)
     {
-        var port = node.Port > 0 ? node.Port : 5100;
-        var ip = node.PublicIp ?? node.IpAddress;
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+        var ip = node.PublicIp;
         return $"http://{ip}:{port}";
     }
 
-    private string BuildWebSocketUrl(ComputeNode node, string vmId, string vmIp, string privateKeyBase64)
+    private string BuildWebSocketUrl(Node node, string vmId, string vmIp)
     {
-        var port = node.Port > 0 ? node.Port : 5100;
-        var ip = node.PublicIp ?? node.IpAddress;
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+        var ip = node.PublicIp;
 
         // Note: We don't include the private key in the URL for security.
         // The client should add it via header or the private key should be passed separately.
