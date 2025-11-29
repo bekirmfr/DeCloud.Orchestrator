@@ -2355,7 +2355,7 @@ ${lines.join('\n')}
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                        'Authorization': `Bearer ${authToken}`
                     },
                     body: JSON.stringify({ ttlSeconds: 300 })
                 });
