@@ -40,23 +40,23 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request)
     {
-        // In VM creation logic
-        string? generatedPassword = null;
-        string? sshPublicKey = null;
+        // Check for SSH key: first from request, then from user's stored keys
+        string? sshPublicKey = request.Spec.SshPublicKey;
 
-        // Get user's SSH keys
-        var userSshKey = request.Spec.SshPublicKey;
-
-        if (string.IsNullOrWhiteSpace(userSshKey))
+        if (string.IsNullOrWhiteSpace(sshPublicKey))
         {
-            // Generate secure random password
-            generatedPassword = GenerateSecurePassword(16);
-            request.Spec.Password = generatedPassword;  // Or store encrypted
-            request.Spec.PasswordShownToUser = false;
-        }
-        else
-        {
-            request.Spec.SshPublicKey = sshPublicKey;
+            // Check user's stored SSH keys
+            if (_dataStore.Users.TryGetValue(userId, out var existingUser) && existingUser.SshKeys.Count != 0)
+            {
+                sshPublicKey = existingUser.SshKeys.First().PublicKey;
+                request.Spec.SshPublicKey = sshPublicKey;
+            }
+            else
+            {
+                // No SSH key available - generate password
+                request.Spec.Password = GenerateSecurePassword(16);
+                request.Spec.PasswordShownToUser = false;
+            }
         }
 
         // Validate image exists
@@ -408,8 +408,11 @@ public class VmService : IVmService
         string? sshPublicKey = vm.Spec.SshPublicKey; // First check if provided in spec
         if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
         {
-            // Use user's first SSH key if they have one
-            sshPublicKey = owner.SshKeys.FirstOrDefault()?.PublicKey;
+            // Use ALL user's SSH keys (cloud-init supports multiple)
+            if (owner.SshKeys.Any())
+            {
+                sshPublicKey = string.Join("\n", owner.SshKeys.Select(k => k.PublicKey));
+            }
         }
 
         // Resolve image URL from imageId
