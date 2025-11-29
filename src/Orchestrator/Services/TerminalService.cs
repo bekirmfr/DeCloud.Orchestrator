@@ -110,7 +110,9 @@ public class TerminalService : ITerminalService
             var setupRequest = new
             {
                 Username = "ubuntu",
-                TtlSeconds = ttlSeconds
+                TtlSeconds = ttlSeconds,
+                VmIp = vmIp,
+                Port = vm.AccessInfo?.SshPort ?? 22
             };
 
             var response = await _httpClient.PostAsJsonAsync(setupUrl, setupRequest);
