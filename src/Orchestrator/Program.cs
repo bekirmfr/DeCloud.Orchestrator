@@ -155,6 +155,7 @@ builder.Services.AddScoped<INodeService, NodeService>();
 builder.Services.AddScoped<IVmService, VmService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IEventService, EventService>();
+builder.Services.AddScoped<ITerminalService, TerminalService>();
 
 // Background services
 builder.Services.AddHostedService<NodeHealthMonitorService>();

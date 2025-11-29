@@ -2348,13 +2348,55 @@ ${lines.join('\n')}
         }
 
         // Terminal - opens in new window with auto-connect
-        function openTerminal(nodeIp, vmIp, vmName, vmId, password) {
-            let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}&vmIp=${encodeURIComponent(vmIp)}&vmId=${encodeURIComponent(vmId)}&user=ubuntu`;
+        async function openTerminal(nodeIp, vmIp, vmName, vmId, password) {
+            // Request ephemeral key access
+            try {
+                const response = await fetch(`/api/terminal/vms/${vmId}/access`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                    },
+                    body: JSON.stringify({ ttlSeconds: 300 })
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const creds = result.data;
+
+                    // Build WebSocket URL with private key
+                    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    let wsUrl = `${wsProtocol}//${creds.nodeIp}:${creds.nodePort}/api/vms/${vmId}/terminal`;
+                    wsUrl += `?ip=${creds.vmIp}&user=${creds.username}`;
+                    wsUrl += `&privateKey=${encodeURIComponent(creds.privateKeyBase64)}`;
+
+                    // Open terminal window
+                    const terminalUrl = `/terminal.html?wsUrl=${encodeURIComponent(wsUrl)}&vmName=${encodeURIComponent(vmName)}`;
+                    window.open(terminalUrl, `terminal-${vmId}`, 'width=1000,height=700');
+                } else {
+                    showToast(result.error?.message || 'Failed to setup terminal access', 'error');
+
+                    // Fallback to password if available
+                    if (password) {
+                        openTerminalWithPassword(nodeIp, vmIp, vmName, vmId, password);
+                    }
+                }
+            } catch (error) {
+                console.error('Terminal access error:', error);
+                showToast('Failed to connect to terminal service', 'error');
+            }
+        }
+
+        function openTerminalWithPassword(nodeIp, vmIp, vmName, vmId, password) {
+            let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}`;
+            url += `&vmIp=${encodeURIComponent(vmIp)}`;
+            url += `&vmId=${encodeURIComponent(vmId)}`;
+            url += `&user=ubuntu`;
             if (password) {
                 url += `&password=${encodeURIComponent(password)}`;
             }
-            const windowName = `terminal-${vmIp.replace(/\./g, '-')}`;
-            window.open(url, windowName, 'width=1000,height=700,menubar=no,toolbar=no,location=no,status=no');
+            window.open(url, `terminal-${vmId}`, 'width=1000,height=700');
         }
 
         // Connection Info Modal
