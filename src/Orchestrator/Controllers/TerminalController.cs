@@ -69,6 +69,7 @@ public class TerminalController : ControllerBase
             Username = credentials.Username,
             PrivateKey = credentials.PrivateKey,
             PrivateKeyBase64 = credentials.PrivateKeyBase64,
+            Password = credentials.Password,
             ExpiresAt = credentials.ExpiresAt
         }));
     }
@@ -166,6 +167,8 @@ public class TerminalAccessResponse
     /// Base64-encoded private key for easy transport
     /// </summary>
     public string PrivateKeyBase64 { get; init; } = "";
+
+    public string? Password { get; init; }
 
     /// <summary>
     /// When the ephemeral key expires

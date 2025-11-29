@@ -2365,11 +2365,17 @@ ${lines.join('\n')}
                 if (result.success && result.data) {
                     const creds = result.data;
 
-                    // Build WebSocket URL with private key
+                    // Build WebSocket URL with credentials
                     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                     let wsUrl = `${wsProtocol}//${creds.nodeIp}:${creds.nodePort}/api/vms/${vmId}/terminal`;
                     wsUrl += `?ip=${creds.vmIp}&user=${creds.username}`;
-                    wsUrl += `&privateKey=${encodeURIComponent(creds.privateKeyBase64)}`;
+
+                    // Use privateKey if available, otherwise use password
+                    if (creds.privateKeyBase64) {
+                        wsUrl += `&privateKey=${encodeURIComponent(creds.privateKeyBase64)}`;
+                    } else if (creds.password) {
+                        wsUrl += `&password=${encodeURIComponent(creds.password)}`;
+                    }
 
                     // Open terminal window
                     const terminalUrl = `/terminal.html?wsUrl=${encodeURIComponent(wsUrl)}&vmName=${encodeURIComponent(vmName)}`;
