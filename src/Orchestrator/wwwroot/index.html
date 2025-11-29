@@ -2156,9 +2156,9 @@
             btn.innerHTML = '<div class="spinner"></div> Generating...';
 
             try {
-                // Check Ed25519 support
-                if (!crypto.subtle || !('Ed25519' in crypto.subtle.algorithm || true)) {
-                    // Try to generate anyway, will fail gracefully
+                // Check if crypto.subtle is available (requires HTTPS)
+                if (!crypto.subtle) {
+                    throw new Error('HTTPS_REQUIRED');
                 }
 
                 const keyPair = await crypto.subtle.generateKey(
@@ -2193,7 +2193,9 @@
                 showToast('SSH key pair generated!', 'success');
             } catch (err) {
                 console.error('Key generation failed:', err);
-                if (err.name === 'NotSupportedError') {
+                if (err.message === 'HTTPS_REQUIRED') {
+                    showHttpsRequiredMessage();
+                } else if (err.name === 'NotSupportedError') {
                     showToast('Your browser does not support Ed25519. Please use ssh-keygen instead.', 'error');
                 } else {
                     showToast('Failed to generate key: ' + err.message, 'error');
@@ -2201,6 +2203,32 @@
                 btn.disabled = false;
                 btn.innerHTML = '🔐 Generate Key Pair';
             }
+        }
+
+        function showHttpsRequiredMessage() {
+            document.getElementById('ssh-generate-ready').innerHTML = `
+                    <div style="text-align: left; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--accent-danger); border-radius: 8px; padding: 16px;">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                            <strong style="color: var(--accent-danger);">HTTPS Required</strong>
+                        </div>
+                        <p style="margin: 0 0 12px 0; color: var(--text-secondary); font-size: 14px;">
+                            Browser key generation requires a secure (HTTPS) connection.
+                            Please generate a key locally instead:
+                        </p>
+                        <div style="background: var(--bg-deep); border-radius: 6px; padding: 12px; font-family: var(--font-mono); font-size: 12px;">
+                            <div style="color: var(--text-muted); margin-bottom: 4px;"># Generate Ed25519 key:</div>
+                            <div style="color: var(--accent-primary); margin-bottom: 8px;">ssh-keygen -t ed25519 -C "decloud"</div>
+                            <div style="color: var(--text-muted); margin-bottom: 4px;"># Then copy your public key:</div>
+                            <div style="color: var(--accent-primary);">cat ~/.ssh/id_ed25519.pub</div>
+                        </div>
+                        <p style="margin: 12px 0 0 0; color: var(--text-muted); font-size: 13px;">
+                            Paste the public key in the "📋 Paste Key" tab.
+                        </p>
+                    </div>
+                `;
         }
 
         function formatOpenSSHPublicKey(rawPublicKey, comment) {
