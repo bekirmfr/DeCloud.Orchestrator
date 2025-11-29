@@ -112,7 +112,8 @@ public class TerminalService : ITerminalService
                 Username = "ubuntu",
                 TtlSeconds = ttlSeconds,
                 VmIp = vmIp,
-                Port = vm.AccessInfo?.SshPort ?? 22
+                Port = vm.AccessInfo?.SshPort ?? 22,
+                Password = vm.Spec?.Password
             };
 
             var response = await _httpClient.PostAsJsonAsync(setupUrl, setupRequest);
@@ -171,6 +172,7 @@ public class TerminalService : ITerminalService
                 PrivateKey = setupResult.PrivateKey,
                 PrivateKeyBase64 = setupResult.PrivateKeyBase64,
                 Fingerprint = setupResult.Fingerprint,
+                Password = setupResult.Password,
                 ExpiresAt = session.ExpiresAt
             });
         }
@@ -281,6 +283,7 @@ public class TerminalCredentials
     public string PrivateKeyBase64 { get; init; } = "";
     public string Fingerprint { get; init; } = "";
     public DateTime ExpiresAt { get; init; }
+    public string? Password { get; init; }
 }
 
 public class TerminalSessionInfo
@@ -309,6 +312,7 @@ internal class NodeTerminalSetupResponse
     public string Username { get; set; } = "";
     public DateTime? ExpiresAt { get; set; }
     public string? MethodUsed { get; set; }
+    public string? Password { get; set; }
 }
 
 #endregion
