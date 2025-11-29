@@ -105,7 +105,7 @@ public class TerminalService : ITerminalService
         {
             // Call Node Agent to setup terminal access with ephemeral key
             var nodeUrl = GetNodeApiUrl(node);
-            var setupUrl = $"{nodeUrl}/api/vms/{vmId}/terminal/setup";
+            var setupUrl = $"{nodeUrl}/api/vms/{vmId}/terminal/connect";
 
             var setupRequest = new
             {
