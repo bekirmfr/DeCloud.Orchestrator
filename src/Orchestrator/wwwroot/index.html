@@ -1601,6 +1601,7 @@
             const vmIp = vm.networkConfig?.privateIp;
             const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
+            const vmPassword = vm.spec?.password || '';
 
             return `
                         <tr>
@@ -1627,7 +1628,7 @@
                             <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
                             <td class="vm-actions">
                                 ${canConnect && nodeIp ? `
-                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Open Terminal">
+                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
                                         </svg>
@@ -1663,6 +1664,7 @@
             const vmIp = vm.networkConfig?.privateIp;
             const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
+            const vmPassword = vm.spec?.password || '';
 
             return `
                         <tr>
@@ -1691,7 +1693,7 @@
                             <td style="color:var(--text-muted)">${created}</td>
                             <td class="vm-actions">
                                 ${canConnect && nodeIp ? `
-                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Open Terminal">
+                                    <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
                                         </svg>
@@ -2022,8 +2024,11 @@
         }
 
         // Terminal - opens in new window with auto-connect
-        function openTerminal(nodeIp, vmIp, vmName, vmId) {
-            const url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}&vmIp=${encodeURIComponent(vmIp)}&vmId=${encodeURIComponent(vmId)}&user=ubuntu`;
+        function openTerminal(nodeIp, vmIp, vmName, vmId, password) {
+            let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}&vmIp=${encodeURIComponent(vmIp)}&vmId=${encodeURIComponent(vmId)}&user=ubuntu`;
+            if (password) {
+                url += `&password=${encodeURIComponent(password)}`;
+            }
             const windowName = `terminal-${vmIp.replace(/\./g, '-')}`;
             window.open(url, windowName, 'width=1000,height=700,menubar=no,toolbar=no,location=no,status=no');
         }
