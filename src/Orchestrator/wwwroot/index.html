@@ -2364,6 +2364,13 @@ ${lines.join('\n')}
 
                 if (result.success && result.data) {
                     const creds = result.data;
+                    console.log('Terminal credentials:', {
+                        nodeIp: creds.nodeIp,
+                        vmIp: creds.vmIp,
+                        hasPrivateKey: !!creds.privateKeyBase64,
+                        privateKeyLength: creds.privateKeyBase64?.length,
+                        hasPassword: !!creds.password
+                    });
 
                     // Build WebSocket URL with credentials
                     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2373,6 +2380,7 @@ ${lines.join('\n')}
                     // Use privateKey if available, otherwise use password
                     if (creds.privateKeyBase64) {
                         wsUrl += `&privateKey=${encodeURIComponent(creds.privateKeyBase64)}`;
+                        console.log('Private key length:', creds.privateKeyBase64?.length);
                     } else if (creds.password) {
                         wsUrl += `&password=${encodeURIComponent(creds.password)}`;
                     }
