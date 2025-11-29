@@ -442,7 +442,8 @@ public class VmService : IVmService
                     Gateway = "",
                     VxlanVni = 0,
                     AllowedPorts = new List<int>()
-                }
+                },
+                Password = vm.Spec.Password ?? ""
             })
         );
 
