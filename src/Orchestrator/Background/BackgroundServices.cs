@@ -108,7 +108,7 @@ public class BillingService : BackgroundService
             try
             {
                 using var scope = _serviceProvider.CreateScope();
-                var dataStore = scope.ServiceProvider.GetRequiredService<Data.OrchestratorDataStore>();
+                var dataStore = scope.ServiceProvider.GetRequiredService<Data.DataStore>();
                 
                 await ProcessBillingAsync(dataStore);
             }
@@ -121,7 +121,7 @@ public class BillingService : BackgroundService
         }
     }
 
-    private Task ProcessBillingAsync(Data.OrchestratorDataStore dataStore)
+    private Task ProcessBillingAsync(Data.DataStore dataStore)
     {
         var now = DateTime.UtcNow;
         
@@ -178,7 +178,7 @@ public class CleanupService : BackgroundService
             try
             {
                 using var scope = _serviceProvider.CreateScope();
-                var dataStore = scope.ServiceProvider.GetRequiredService<Data.OrchestratorDataStore>();
+                var dataStore = scope.ServiceProvider.GetRequiredService<Data.DataStore>();
                 
                 await CleanupDeletedVmsAsync(dataStore);
                 await TrimEventHistoryAsync(dataStore);
@@ -192,7 +192,7 @@ public class CleanupService : BackgroundService
         }
     }
 
-    private Task CleanupDeletedVmsAsync(Data.OrchestratorDataStore dataStore)
+    private Task CleanupDeletedVmsAsync(Data.DataStore dataStore)
     {
         var cutoff = DateTime.UtcNow - _deletedRetention;
         var toRemove = dataStore.VirtualMachines.Values
@@ -211,7 +211,7 @@ public class CleanupService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private Task TrimEventHistoryAsync(Data.OrchestratorDataStore dataStore)
+    private Task TrimEventHistoryAsync(Data.DataStore dataStore)
     {
         // Event history is already bounded in DataStore, but we can do additional cleanup here
         return Task.CompletedTask;

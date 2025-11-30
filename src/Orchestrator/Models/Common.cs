@@ -82,14 +82,15 @@ public enum EventType
     VmRecovered,
     VmError,
     VmMetricsUpdated,
-    
+    VmStateChanged,     // Added for state synchronization from heartbeats
+
     // Node events
     NodeRegistered,
     NodeOnline,
     NodeOffline,
     NodeDraining,
     NodeMetricsUpdated,
-    
+
     // User events
     UserCreated,
     UserLoggedIn,

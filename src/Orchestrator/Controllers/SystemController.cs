@@ -9,10 +9,10 @@ namespace Orchestrator.Controllers;
 [Route("api/[controller]")]
 public class SystemController : ControllerBase
 {
-    private readonly OrchestratorDataStore _dataStore;
+    private readonly DataStore _dataStore;
     private readonly ILogger<SystemController> _logger;
 
-    public SystemController(OrchestratorDataStore dataStore, ILogger<SystemController> logger)
+    public SystemController(DataStore dataStore, ILogger<SystemController> logger)
     {
         _dataStore = dataStore;
         _logger = logger;

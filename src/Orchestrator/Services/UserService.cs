@@ -10,7 +10,7 @@ namespace Orchestrator.Services;
 
 public interface IUserService
 {
-    Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request);
+    Task<AuthResponse?> AuthenticateAsync(AuthRequest request);
     Task<AuthResponse?> RefreshTokenAsync(string refreshToken);
     Task<User?> GetUserAsync(string userId);
     Task<User?> GetUserByWalletAsync(string walletAddress);
@@ -18,56 +18,40 @@ public interface IUserService
     Task<bool> UpdateUserAsync(User user);
     Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request);
     Task<bool> ValidateApiKeyAsync(string apiKey, out string? userId);
-    Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request);
-    Task<bool> RemoveSshKeyAsync(string userId, string keyId);
 }
 
 public class UserService : IUserService
 {
-    private readonly OrchestratorDataStore _dataStore;
-    private readonly IConfiguration _configuration;
+    private readonly DataStore _dataStore;
     private readonly IEventService _eventService;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<UserService> _logger;
 
     public UserService(
-        OrchestratorDataStore dataStore,
-        IConfiguration configuration,
+        DataStore dataStore,
         IEventService eventService,
+        IConfiguration configuration,
         ILogger<UserService> logger)
     {
         _dataStore = dataStore;
-        _configuration = configuration;
         _eventService = eventService;
+        _configuration = configuration;
         _logger = logger;
     }
 
-    public async Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request)
+    public async Task<AuthResponse?> AuthenticateAsync(AuthRequest request)
     {
-        // Validate timestamp (must be within 5 minutes)
-        var timestamp = DateTimeOffset.FromUnixTimeSeconds(request.Timestamp).UtcDateTime;
-        if (Math.Abs((DateTime.UtcNow - timestamp).TotalMinutes) > 5)
-        {
-            _logger.LogWarning("Auth request timestamp too old for wallet {Wallet}", request.WalletAddress);
-            return null;
-        }
-
-        // In production, verify the signature against the message using the wallet's public key
-        // This is blockchain-specific (Ethereum uses ecrecover, Solana uses ed25519, etc.)
-        // For now, we'll accept valid-looking requests
-        
         if (string.IsNullOrEmpty(request.WalletAddress) || request.WalletAddress.Length < 10)
         {
             return null;
         }
 
-        // Get or create user
         var user = await GetOrCreateUserAsync(request.WalletAddress);
         user.LastLoginAt = DateTime.UtcNow;
+        await _dataStore.SaveUserAsync(user);
 
-        // Generate tokens
         var (accessToken, refreshToken) = GenerateTokens(user);
 
-        // Store refresh token
         var refreshTokenHash = HashString(refreshToken);
         _dataStore.UserSessions[refreshTokenHash] = user.Id;
 
@@ -87,7 +71,7 @@ public class UserService : IUserService
     public async Task<AuthResponse?> RefreshTokenAsync(string refreshToken)
     {
         var refreshTokenHash = HashString(refreshToken);
-        
+
         if (!_dataStore.UserSessions.TryGetValue(refreshTokenHash, out var userId))
         {
             return null;
@@ -99,13 +83,10 @@ public class UserService : IUserService
             return null;
         }
 
-        // Remove old refresh token
         _dataStore.UserSessions.TryRemove(refreshTokenHash, out _);
 
-        // Generate new tokens
         var (newAccessToken, newRefreshToken) = GenerateTokens(user);
 
-        // Store new refresh token
         var newRefreshTokenHash = HashString(newRefreshToken);
         _dataStore.UserSessions[newRefreshTokenHash] = user.Id;
 
@@ -139,10 +120,17 @@ public class UserService : IUserService
             WalletAddress = walletAddress,
             CreatedAt = DateTime.UtcNow,
             LastLoginAt = DateTime.UtcNow,
-            CryptoBalance = 0
+            CryptoBalance = 0,
+            Quotas = new UserQuotas
+            {
+                MaxVms = 10,
+                MaxCpuCores = 32,
+                MaxMemoryMb = 65536,
+                MaxStorageGb = 1000
+            }
         };
 
-        _dataStore.Users.TryAdd(user.Id, user);
+        await _dataStore.SaveUserAsync(user);
 
         _logger.LogInformation("New user created: {UserId} ({Wallet})", user.Id, walletAddress);
 
@@ -157,24 +145,23 @@ public class UserService : IUserService
         return user;
     }
 
-    public Task<bool> UpdateUserAsync(User user)
+    public async Task<bool> UpdateUserAsync(User user)
     {
         if (!_dataStore.Users.ContainsKey(user.Id))
-            return Task.FromResult(false);
+            return false;
 
-        _dataStore.Users[user.Id] = user;
-        return Task.FromResult(true);
+        await _dataStore.SaveUserAsync(user);
+        return true;
     }
 
-    public Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request)
+    public async Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request)
     {
         if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return Task.FromResult<CreateApiKeyResponse?>(null);
+            return null;
 
-        // Generate API key
         var keyBytes = RandomNumberGenerator.GetBytes(32);
         var apiKey = $"sk_{Convert.ToBase64String(keyBytes).Replace("+", "").Replace("/", "").Replace("=", "")}";
-        var keyPrefix = apiKey[..11]; // "sk_" + first 8 chars
+        var keyPrefix = apiKey[..11];
 
         var key = new ApiKey
         {
@@ -188,11 +175,11 @@ public class UserService : IUserService
         };
 
         user.ApiKeys.Add(key);
+        await _dataStore.SaveUserAsync(user);
 
         _logger.LogInformation("API key created for user {UserId}: {KeyId}", userId, key.Id);
 
-        return Task.FromResult<CreateApiKeyResponse?>(
-            new CreateApiKeyResponse(key.Id, apiKey, keyPrefix, key.CreatedAt, key.ExpiresAt));
+        return new CreateApiKeyResponse(key.Id, apiKey, keyPrefix, key.CreatedAt, key.ExpiresAt);
     }
 
     public Task<bool> ValidateApiKeyAsync(string apiKey, out string? userId)
@@ -205,13 +192,11 @@ public class UserService : IUserService
             var key = user.ApiKeys.FirstOrDefault(k => k.KeyHash == keyHash);
             if (key != null)
             {
-                // Check expiration
                 if (key.ExpiresAt.HasValue && key.ExpiresAt.Value < DateTime.UtcNow)
                 {
                     return Task.FromResult(false);
                 }
 
-                key.LastUsedAt = DateTime.UtcNow;
                 userId = user.Id;
                 return Task.FromResult(true);
             }
@@ -220,78 +205,38 @@ public class UserService : IUserService
         return Task.FromResult(false);
     }
 
-    public Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return Task.FromResult<SshKey?>(null);
-
-        // Validate SSH key format
-        if (!request.PublicKey.StartsWith("ssh-") && !request.PublicKey.StartsWith("ecdsa-"))
-        {
-            return Task.FromResult<SshKey?>(null);
-        }
-
-        // Calculate fingerprint (simplified - in production use proper SSH fingerprint)
-        var fingerprint = HashString(request.PublicKey)[..32];
-
-        var sshKey = new SshKey
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = request.Name,
-            PublicKey = request.PublicKey,
-            Fingerprint = fingerprint,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        user.SshKeys.Add(sshKey);
-
-        _logger.LogInformation("SSH key added for user {UserId}: {KeyName}", userId, request.Name);
-
-        return Task.FromResult<SshKey?>(sshKey);
-    }
-
-    public Task<bool> RemoveSshKeyAsync(string userId, string keyId)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return Task.FromResult(false);
-
-        var key = user.SshKeys.FirstOrDefault(k => k.Id == keyId);
-        if (key == null)
-            return Task.FromResult(false);
-
-        user.SshKeys.Remove(key);
-        return Task.FromResult(true);
-    }
-
     private (string accessToken, string refreshToken) GenerateTokens(User user)
     {
         var jwtKey = _configuration["Jwt:Key"] ?? "default-dev-key-change-in-production-min-32-chars!";
         var jwtIssuer = _configuration["Jwt:Issuer"] ?? "orchestrator";
         var jwtAudience = _configuration["Jwt:Audience"] ?? "orchestrator-client";
 
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new Claim("wallet", user.WalletAddress),
-            new Claim(ClaimTypes.Role, "user")
+            new Claim(ClaimTypes.Name, user.WalletAddress),
+            new Claim(ClaimTypes.NameIdentifier, user.Id)
         };
 
-        var accessToken = new JwtSecurityToken(
+        var token = new JwtSecurityToken(
             issuer: jwtIssuer,
             audience: jwtAudience,
             claims: claims,
             expires: DateTime.UtcNow.AddHours(24),
-            signingCredentials: credentials
+            signingCredentials: creds
         );
+
+        var accessToken = new JwtSecurityTokenHandler().WriteToken(token);
 
         var refreshTokenBytes = RandomNumberGenerator.GetBytes(32);
         var refreshToken = Convert.ToBase64String(refreshTokenBytes);
 
-        return (new JwtSecurityTokenHandler().WriteToken(accessToken), refreshToken);
+        return (accessToken, refreshToken);
     }
 
     private static string HashString(string input)

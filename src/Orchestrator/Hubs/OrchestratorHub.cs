@@ -13,7 +13,7 @@ namespace Orchestrator.Hubs;
 /// </summary>
 public class OrchestratorHub : Hub
 {
-    private readonly OrchestratorDataStore _dataStore;
+    private readonly DataStore _dataStore;
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
     private readonly ILogger<OrchestratorHub> _logger;
@@ -22,7 +22,7 @@ public class OrchestratorHub : Hub
     private static readonly ConcurrentDictionary<string, TerminalSession> ActiveTerminals = new();
 
     public OrchestratorHub(
-        OrchestratorDataStore dataStore,
+        DataStore dataStore,
         IVmService vmService,
         INodeService nodeService,
         ILogger<OrchestratorHub> logger)

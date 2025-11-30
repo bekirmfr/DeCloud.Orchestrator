@@ -14,12 +14,12 @@ public interface IEventService
 
 public class EventService : IEventService
 {
-    private readonly OrchestratorDataStore _dataStore;
+    private readonly DataStore _dataStore;
     private readonly IHubContext<OrchestratorHub> _hubContext;
     private readonly ILogger<EventService> _logger;
 
     public EventService(
-        OrchestratorDataStore dataStore,
+        DataStore dataStore,
         IHubContext<OrchestratorHub> hubContext,
         ILogger<EventService> logger)
     {

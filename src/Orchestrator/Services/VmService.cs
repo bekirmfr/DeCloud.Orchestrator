@@ -22,13 +22,13 @@ public interface IVmService
 
 public class VmService : IVmService
 {
-    private readonly OrchestratorDataStore _dataStore;
+    private readonly DataStore _dataStore;
     private readonly INodeService _nodeService;
     private readonly IEventService _eventService;
     private readonly ILogger<VmService> _logger;
 
     public VmService(
-        OrchestratorDataStore dataStore,
+        DataStore dataStore,
         INodeService nodeService,
         IEventService eventService,
         ILogger<VmService> logger)
@@ -41,35 +41,33 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request)
     {
-        // Check for SSH key: first from request, then from user's stored keys
-        string? sshPublicKey = request.Spec.SshPublicKey;
-
-        // ALWAYS generate human-readable password
-        var passwordService = new PasswordService();
-        var password = passwordService.GenerateHumanReadablePassword();
-        request.Spec.Password = password;
-        request.Spec.PasswordSecured = false;
-
-        // Validate image exists
-        if (!_dataStore.Images.ContainsKey(request.Spec.ImageId) && string.IsNullOrEmpty(request.Spec.ImageUrl))
+        // Validate user exists
+        User? user = null;
+        if (_dataStore.Users.TryGetValue(userId, out var existingUser))
         {
-            return new CreateVmResponse(string.Empty, VmStatus.Error, $"Unknown image: {request.Spec.ImageId}");
+            user = existingUser;
         }
 
-        // Get user and check quotas
-        if (_dataStore.Users.TryGetValue(userId, out var user))
+        // Check quotas
+        if (user != null)
         {
             if (user.Quotas.CurrentVms >= user.Quotas.MaxVms)
             {
-                return new CreateVmResponse(string.Empty, VmStatus.Error, "VM quota exceeded");
+                return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                    "VM quota exceeded", "QUOTA_EXCEEDED");
             }
+
             if (user.Quotas.CurrentCpuCores + request.Spec.CpuCores > user.Quotas.MaxCpuCores)
             {
-                return new CreateVmResponse(string.Empty, VmStatus.Error, "CPU quota exceeded");
+                return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                    "CPU quota exceeded", "QUOTA_EXCEEDED");
             }
         }
 
-        // Determine pricing
+        // Generate memorable password
+        var password = GenerateMemorablePassword();
+
+        // Calculate pricing
         var hourlyRate = CalculateHourlyRate(request.Spec);
 
         var vm = new VirtualMachine
@@ -92,7 +90,11 @@ public class VmService : IVmService
             }
         };
 
-        _dataStore.VirtualMachines.TryAdd(vm.Id, vm);
+        // Set password in spec (will be cleared after encryption)
+        vm.Spec.Password = password;
+
+        // Save to DataStore with persistence
+        await _dataStore.SaveVmAsync(vm);
 
         // Update user quotas
         if (user != null)
@@ -101,9 +103,11 @@ public class VmService : IVmService
             user.Quotas.CurrentCpuCores += request.Spec.CpuCores;
             user.Quotas.CurrentMemoryMb += request.Spec.MemoryMb;
             user.Quotas.CurrentStorageGb += request.Spec.DiskGb;
+            await _dataStore.SaveUserAsync(user);
         }
 
-        _logger.LogInformation("VM created: {VmId} ({Name}) for user {UserId}", vm.Id, vm.Name, userId);
+        _logger.LogInformation("VM created: {VmId} ({Name}) for user {UserId}",
+            vm.Id, vm.Name, userId);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -118,9 +122,9 @@ public class VmService : IVmService
         await TryScheduleVmAsync(vm);
 
         return new CreateVmResponse(
-            vm.Id, 
-            vm.Status, 
-            "VM created and queued for scheduling", 
+            vm.Id,
+            vm.Status,
+            "VM created and queued for scheduling",
             password);
     }
 
@@ -132,10 +136,11 @@ public class VmService : IVmService
         if (vm.OwnerId != userId)
             return false;
 
-        // Store encrypted password and clear plaintext
         vm.Spec.EncryptedPassword = encryptedPassword;
-        vm.Spec.Password = null; // Clear plaintext from memory
+        vm.Spec.Password = null;
         vm.Spec.PasswordSecured = true;
+
+        await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation("Password secured for VM {VmId}", vmId);
         return true;
@@ -172,13 +177,11 @@ public class VmService : IVmService
     {
         var query = _dataStore.VirtualMachines.Values.AsEnumerable();
 
-        // Filter by user if specified
         if (!string.IsNullOrEmpty(userId))
         {
             query = query.Where(v => v.OwnerId == userId);
         }
 
-        // Filter by status
         if (queryParams.Filters?.TryGetValue("status", out var status) == true)
         {
             if (Enum.TryParse<VmStatus>(status, true, out var statusEnum))
@@ -187,7 +190,6 @@ public class VmService : IVmService
             }
         }
 
-        // Filter by search term
         if (!string.IsNullOrEmpty(queryParams.Search))
         {
             var search = queryParams.Search.ToLower();
@@ -196,12 +198,10 @@ public class VmService : IVmService
                 v.Id.ToLower().Contains(search));
         }
 
-        // Exclude deleted
         query = query.Where(v => v.Status != VmStatus.Deleted);
 
         var totalCount = query.Count();
 
-        // Sort
         query = queryParams.SortBy?.ToLower() switch
         {
             "name" => queryParams.SortDescending ? query.OrderByDescending(v => v.Name) : query.OrderBy(v => v.Name),
@@ -209,7 +209,6 @@ public class VmService : IVmService
             _ => query.OrderByDescending(v => v.CreatedAt)
         };
 
-        // Paginate
         var items = query
             .Skip((queryParams.Page - 1) * queryParams.PageSize)
             .Take(queryParams.PageSize)
@@ -240,7 +239,6 @@ public class VmService : IVmService
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             return false;
 
-        // Check ownership if userId provided
         if (userId != null && vm.OwnerId != userId)
             return false;
 
@@ -248,7 +246,7 @@ public class VmService : IVmService
         {
             VmAction.Start => NodeCommandType.StartVm,
             VmAction.Stop => NodeCommandType.StopVm,
-            VmAction.Restart => NodeCommandType.StopVm, // Will need follow-up start
+            VmAction.Restart => NodeCommandType.StopVm,
             VmAction.ForceStop => NodeCommandType.StopVm,
             _ => (NodeCommandType?)null
         };
@@ -259,7 +257,6 @@ public class VmService : IVmService
             return false;
         }
 
-        // Queue command to node
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             commandType.Value,
@@ -268,14 +265,14 @@ public class VmService : IVmService
 
         _dataStore.AddPendingCommand(vm.NodeId, command);
 
-        // Update status based on action
         vm.Status = action switch
         {
             VmAction.Start => VmStatus.Provisioning,
             VmAction.Stop or VmAction.ForceStop => VmStatus.Stopping,
             _ => vm.Status
         };
-        vm.UpdatedAt = DateTime.UtcNow;
+
+        await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation("VM action {Action} queued for {VmId}", action, vmId);
 
@@ -290,7 +287,6 @@ public class VmService : IVmService
         if (userId != null && vm.OwnerId != userId)
             return false;
 
-        // If running on a node, queue deletion command
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
             var command = new NodeCommand(
@@ -298,51 +294,44 @@ public class VmService : IVmService
                 NodeCommandType.DeleteVm,
                 JsonSerializer.Serialize(new { VmId = vmId })
             );
-            _dataStore.AddPendingCommand(vm.NodeId, command);
 
-            // Release resources on node
-            if (_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
-            {
-                node.AvailableResources.CpuCores += vm.Spec.CpuCores;
-                node.AvailableResources.MemoryMb += vm.Spec.MemoryMb;
-                node.AvailableResources.StorageGb += vm.Spec.DiskGb;
-            }
+            _dataStore.AddPendingCommand(vm.NodeId, command);
         }
+
+        // Mark as deleted (soft delete with persistence)
+        await _dataStore.DeleteVmAsync(vmId);
 
         // Update user quotas
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
         {
-            user.Quotas.CurrentVms--;
-            user.Quotas.CurrentCpuCores -= vm.Spec.CpuCores;
-            user.Quotas.CurrentMemoryMb -= vm.Spec.MemoryMb;
-            user.Quotas.CurrentStorageGb -= vm.Spec.DiskGb;
+            user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
+            user.Quotas.CurrentCpuCores = Math.Max(0, user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
+            user.Quotas.CurrentMemoryMb = Math.Max(0, user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
+            user.Quotas.CurrentStorageGb = Math.Max(0, user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+            await _dataStore.SaveUserAsync(user);
         }
 
-        vm.Status = VmStatus.Deleted;
-        vm.UpdatedAt = DateTime.UtcNow;
+        _logger.LogInformation("VM {VmId} deleted by user {UserId}", vmId, userId ?? "system");
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmDeleted,
             ResourceType = "vm",
             ResourceId = vmId,
-            UserId = vm.OwnerId
+            UserId = userId
         });
-
-        _logger.LogInformation("VM deleted: {VmId}", vmId);
 
         return true;
     }
 
-    public Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null)
+    public async Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null)
     {
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
-            return Task.FromResult(false);
+            return false;
 
         var oldStatus = vm.Status;
         vm.Status = status;
         vm.StatusMessage = message;
-        vm.UpdatedAt = DateTime.UtcNow;
 
         if (status == VmStatus.Running && oldStatus != VmStatus.Running)
         {
@@ -355,23 +344,25 @@ public class VmService : IVmService
             vm.PowerState = VmPowerState.Off;
         }
 
-        _logger.LogInformation("VM {VmId} status changed: {OldStatus} -> {NewStatus}", vmId, oldStatus, status);
+        await _dataStore.SaveVmAsync(vm);
 
-        return Task.FromResult(true);
+        _logger.LogInformation("VM {VmId} status changed: {OldStatus} -> {NewStatus}",
+            vmId, oldStatus, status);
+
+        return true;
     }
 
-    public Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics)
+    public async Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics)
     {
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
-            return Task.FromResult(false);
+            return false;
 
         vm.LatestMetrics = metrics;
-        return Task.FromResult(true);
+        await _dataStore.SaveVmAsync(vm);
+
+        return true;
     }
 
-    /// <summary>
-    /// Background task to schedule pending VMs
-    /// </summary>
     public async Task SchedulePendingVmsAsync()
     {
         var pendingVms = _dataStore.VirtualMachines.Values
@@ -387,9 +378,8 @@ public class VmService : IVmService
     private async Task TryScheduleVmAsync(VirtualMachine vm)
     {
         vm.Status = VmStatus.Scheduling;
-        vm.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveVmAsync(vm);
 
-        // Find available nodes
         var availableNodes = await _nodeService.GetAvailableNodesForVmAsync(vm.Spec);
 
         if (!availableNodes.Any())
@@ -397,10 +387,10 @@ public class VmService : IVmService
             _logger.LogWarning("No available nodes for VM {VmId}", vm.Id);
             vm.Status = VmStatus.Pending;
             vm.StatusMessage = "Waiting for available resources";
+            await _dataStore.SaveVmAsync(vm);
             return;
         }
 
-        // Pick the best node (first in sorted list)
         var selectedNode = availableNodes.First();
 
         // Reserve resources
@@ -411,30 +401,27 @@ public class VmService : IVmService
         selectedNode.ReservedResources.MemoryMb += vm.Spec.MemoryMb;
         selectedNode.ReservedResources.StorageGb += vm.Spec.DiskGb;
 
-        // Assign VM to node
+        await _dataStore.SaveNodeAsync(selectedNode);
+
         vm.NodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
-        // Get user's SSH key if available
-        string? sshPublicKey = vm.Spec.SshPublicKey; // First check if provided in spec
+        string? sshPublicKey = vm.Spec.SshPublicKey;
         if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
         {
-            // Use ALL user's SSH keys (cloud-init supports multiple)
             if (owner.SshKeys.Any())
             {
                 sshPublicKey = string.Join("\n", owner.SshKeys.Select(k => k.PublicKey));
             }
         }
 
-        // Resolve image URL from imageId
         string? imageUrl = vm.Spec.ImageUrl;
         if (string.IsNullOrEmpty(imageUrl) && !string.IsNullOrEmpty(vm.Spec.ImageId))
         {
             imageUrl = GetImageUrl(vm.Spec.ImageId);
         }
 
-        // Queue creation command with full details for Node Agent
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             NodeCommandType.CreateVm,
@@ -463,9 +450,9 @@ public class VmService : IVmService
         );
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);
+        await _dataStore.SaveVmAsync(vm);
 
-        _logger.LogInformation("VM {VmId} scheduled on node {NodeId} with image {ImageUrl}",
-            vm.Id, selectedNode.Id, imageUrl);
+        _logger.LogInformation("VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -477,40 +464,36 @@ public class VmService : IVmService
         });
     }
 
-    private static string GenerateSecurePassword(int length)
+    private static string GenerateMemorablePassword()
     {
-        const string chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%";
-        var random = RandomNumberGenerator.Create();
-        var bytes = new byte[length];
-        random.GetBytes(bytes);
-        return new string(bytes.Select(b => chars[b % chars.Length]).ToArray());
+        var adjectives = new[] { "happy", "bright", "swift", "calm", "bold", "wise", "brave", "cool", "warm", "kind" };
+        var nouns = new[] { "cloud", "river", "mountain", "forest", "ocean", "tiger", "eagle", "phoenix", "dragon", "wolf" };
+        var verbs = new[] { "runs", "jumps", "flies", "swims", "climbs", "soars", "dances", "sings", "glides", "roars" };
+
+        var random = RandomNumberGenerator.GetInt32(0, int.MaxValue);
+        var adj = adjectives[random % adjectives.Length];
+        var noun = nouns[(random / 10) % nouns.Length];
+        var verb = verbs[(random / 100) % verbs.Length];
+        var num = RandomNumberGenerator.GetInt32(10, 100);
+
+        return $"{adj}-{noun}-{verb}-{num}";
     }
 
-    private static string? GetImageUrl(string imageId)
+    private static decimal CalculateHourlyRate(VmSpec spec)
     {
-        // Map image IDs to cloud image URLs
-        return imageId.ToLower() switch
-        {
-            "ubuntu-24.04" => "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-            "ubuntu-22.04" => "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-            "ubuntu-20.04" => "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img",
-            "debian-12" => "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-            "debian-11" => "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2",
-            "fedora-40" => "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
-            "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-x86_64-bios-cloudinit-r0.qcow2",
-            _ => null
-        };
+        var baseCpuRate = 0.01m;
+        var baseMemoryRate = 0.005m;
+        var baseStorageRate = 0.0001m;
+
+        return (spec.CpuCores * baseCpuRate) +
+               (spec.MemoryMb / 1024m * baseMemoryRate) +
+               (spec.DiskGb * baseStorageRate);
     }
 
-    private decimal CalculateHourlyRate(VmSpec spec)
+    private static string GeneratePrivateIp()
     {
-        // Simple pricing model: base rate per resource
-        decimal cpuRate = 0.005m * spec.CpuCores;
-        decimal memoryRate = 0.002m * (spec.MemoryMb / 1024m);
-        decimal storageRate = 0.0001m * spec.DiskGb;
-        decimal gpuRate = spec.RequiresGpu ? 0.10m : 0;
-
-        return cpuRate + memoryRate + storageRate + gpuRate;
+        var random = RandomNumberGenerator.GetInt32(2, 254);
+        return $"10.100.0.{random}";
     }
 
     private static string SanitizeHostname(string name)
@@ -518,13 +501,22 @@ public class VmService : IVmService
         return new string(name.ToLower()
             .Where(c => char.IsLetterOrDigit(c) || c == '-')
             .Take(63)
-            .ToArray())
-            .Trim('-');
+            .ToArray());
     }
 
-    private static string GeneratePrivateIp()
+    private string? GetImageUrl(string imageId)
     {
-        var random = new Random();
-        return $"10.0.{random.Next(0, 256)}.{random.Next(1, 255)}";
+        if (!_dataStore.Images.TryGetValue(imageId, out var image))
+            return null;
+
+        return imageId switch
+        {
+            "ubuntu-24.04" => "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+            "ubuntu-22.04" => "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+            "debian-12" => "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+            "fedora-40" => "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
+            "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/alpine-virt-3.19.0-x86_64.qcow2",
+            _ => null
+        };
     }
 }
