@@ -246,7 +246,19 @@ if (mongoDatabase != null)
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "❌ Failed to load state from MongoDB - starting with empty state");
+            logger.LogCritical(ex, "❌ CRITICAL: Failed to load state from MongoDB");
+
+            // In production, this should probably fail-fast
+            var isProduction = builder.Environment.IsProduction();
+            if (isProduction)
+            {
+                logger.LogCritical("Production environment detected - cannot start without persistent state");
+                throw;  // Crash the application
+            }
+            else
+            {
+                logger.LogWarning("Development environment - continuing with empty state");
+            }
         }
     }
 }
