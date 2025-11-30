@@ -42,7 +42,7 @@ public class VmsController : ControllerBase
         try
         {
             var response = await _vmService.CreateVmAsync(userId, request);
-            
+
             if (string.IsNullOrEmpty(response.VmId))
             {
                 return BadRequest(ApiResponse<CreateVmResponse>.Fail("CREATE_ERROR", response.Message));
@@ -70,7 +70,7 @@ public class VmsController : ControllerBase
         [FromQuery] bool sortDesc = false)
     {
         var userId = GetUserId();
-        
+
         var filters = new Dictionary<string, string>();
         if (!string.IsNullOrEmpty(status)) filters["status"] = status;
 
@@ -144,7 +144,7 @@ public class VmsController : ControllerBase
         if (!validAction)
         {
             return BadRequest(ApiResponse<bool>.Fail(
-                "INVALID_ACTION", 
+                "INVALID_ACTION",
                 $"Cannot {request.Action} a VM in {vm.Status} state"));
         }
 
@@ -238,7 +238,7 @@ public class VmsController : ControllerBase
 
         // Return WebSocket URL for terminal
         var wsUrl = $"/hub/orchestrator?vmId={vmId}";
-        
+
         return Ok(ApiResponse<VmConsoleResponse>.Ok(new VmConsoleResponse(
             vmId,
             wsUrl,
@@ -284,14 +284,13 @@ public class VmsController : ControllerBase
         if (vm == null || vm.OwnerId != userId)
             return NotFound();
 
-        return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(new EncryptedPasswordResponse
-        {
-            EncryptedPassword = vm.Spec.EncryptedPassword,
-            IsSecured = vm.Spec.PasswordSecured
-        }));
+        // Use positional constructor for the record
+        return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(
+            new EncryptedPasswordResponse(vm.Spec.EncryptedPassword, vm.Spec.PasswordSecured)));
     }
 }
 
+// DTOs
 public record SecurePasswordRequest(string EncryptedPassword);
 public record EncryptedPasswordResponse(string? EncryptedPassword, bool IsSecured);
 

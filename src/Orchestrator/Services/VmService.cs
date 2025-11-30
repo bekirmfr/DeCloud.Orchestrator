@@ -126,7 +126,7 @@ public class VmService : IVmService
 
     public async Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword)
     {
-        if (!_dataStore.Vms.TryGetValue(vmId, out var vm))
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             return false;
 
         if (vm.OwnerId != userId)
