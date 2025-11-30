@@ -12,6 +12,7 @@
     <!-- SignalR for WebSocket/real-time communication -->
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.0" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
+    <PackageReference Include="Nethereum.Signer" Version="5.0.0" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
     
     <!-- JSON handling -->
