@@ -17,6 +17,7 @@ public interface IVmService
     Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null);
     Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics);
     Task SchedulePendingVmsAsync();
+    Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword);
 }
 
 public class VmService : IVmService
@@ -43,21 +44,11 @@ public class VmService : IVmService
         // Check for SSH key: first from request, then from user's stored keys
         string? sshPublicKey = request.Spec.SshPublicKey;
 
-        if (string.IsNullOrWhiteSpace(sshPublicKey))
-        {
-            // Check user's stored SSH keys
-            if (_dataStore.Users.TryGetValue(userId, out var existingUser) && existingUser.SshKeys.Count != 0)
-            {
-                sshPublicKey = existingUser.SshKeys.First().PublicKey;
-                request.Spec.SshPublicKey = sshPublicKey;
-            }
-            else
-            {
-                // No SSH key available - generate password
-                request.Spec.Password = GenerateSecurePassword(16);
-                request.Spec.PasswordShownToUser = false;
-            }
-        }
+        // ALWAYS generate human-readable password
+        var passwordService = new PasswordService();
+        var password = passwordService.GenerateHumanReadablePassword();
+        request.Spec.Password = password;
+        request.Spec.PasswordSecured = false;
 
         // Validate image exists
         if (!_dataStore.Images.ContainsKey(request.Spec.ImageId) && string.IsNullOrEmpty(request.Spec.ImageUrl))
@@ -126,7 +117,28 @@ public class VmService : IVmService
         // Immediately try to schedule
         await TryScheduleVmAsync(vm);
 
-        return new CreateVmResponse(vm.Id, vm.Status, "VM created and queued for scheduling");
+        return new CreateVmResponse(
+            vm.Id, 
+            vm.Status, 
+            "VM created and queued for scheduling", 
+            password);
+    }
+
+    public async Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword)
+    {
+        if (!_dataStore.Vms.TryGetValue(vmId, out var vm))
+            return false;
+
+        if (vm.OwnerId != userId)
+            return false;
+
+        // Store encrypted password and clear plaintext
+        vm.Spec.EncryptedPassword = encryptedPassword;
+        vm.Spec.Password = null; // Clear plaintext from memory
+        vm.Spec.PasswordSecured = true;
+
+        _logger.LogInformation("Password secured for VM {VmId}", vmId);
+        return true;
     }
 
     public Task<VirtualMachine?> GetVmAsync(string vmId)

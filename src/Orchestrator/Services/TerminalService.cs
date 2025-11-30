@@ -282,8 +282,8 @@ public class TerminalCredentials
     public string PrivateKey { get; init; } = "";
     public string PrivateKeyBase64 { get; init; } = "";
     public string Fingerprint { get; init; } = "";
-    public DateTime ExpiresAt { get; init; }
     public string? Password { get; init; }
+    public DateTime ExpiresAt { get; init; }
 }
 
 public class TerminalSessionInfo

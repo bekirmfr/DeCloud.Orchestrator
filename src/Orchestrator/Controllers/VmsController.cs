@@ -248,7 +248,52 @@ public class VmsController : ControllerBase
             vm.AccessInfo?.VncPort ?? 5900
         )));
     }
+
+    /// <summary>
+    /// Store the encrypted password for a VM.
+    /// Called by dashboard after user encrypts the password client-side.
+    /// </summary>
+    [HttpPost("{vmId}/secure-password")]
+    public async Task<ActionResult<ApiResponse<bool>>> SecurePassword(
+        string vmId,
+        [FromBody] SecurePasswordRequest request)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<bool>.Fail("UNAUTHORIZED", "Not authenticated"));
+
+        var result = await _vmService.SecurePasswordAsync(vmId, userId, request.EncryptedPassword);
+
+        if (!result)
+            return BadRequest(ApiResponse<bool>.Fail("SECURE_FAILED", "Failed to secure password"));
+
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    /// <summary>
+    /// Get encrypted password for decryption client-side.
+    /// </summary>
+    [HttpGet("{vmId}/encrypted-password")]
+    public async Task<ActionResult<ApiResponse<EncryptedPasswordResponse>>> GetEncryptedPassword(string vmId)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var vm = await _vmService.GetVmAsync(vmId);
+        if (vm == null || vm.OwnerId != userId)
+            return NotFound();
+
+        return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(new EncryptedPasswordResponse
+        {
+            EncryptedPassword = vm.Spec.EncryptedPassword,
+            IsSecured = vm.Spec.PasswordSecured
+        }));
+    }
 }
+
+public record SecurePasswordRequest(string EncryptedPassword);
+public record EncryptedPasswordResponse(string? EncryptedPassword, bool IsSecured);
 
 public record VmConsoleResponse(
     string VmId,

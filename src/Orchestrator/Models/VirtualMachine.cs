@@ -65,7 +65,21 @@ public class VmSpec
     
     // SSH key for access
     public string? SshPublicKey { get; set; }
+    /// <summary>
+    /// Human-readable plaintext password (only set during creation, then cleared)
+    /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>
+    /// Wallet-encrypted password (stored permanently)
+    /// Format: base64(iv):base64(ciphertext):base64(tag)
+    /// </summary>
+    public string? EncryptedPassword { get; set; }
+
+    /// <summary>
+    /// Whether the password has been encrypted and stored
+    /// </summary>
+    public bool PasswordSecured { get; set; }
     public bool PasswordShownToUser { get; set; } = false;
 
     // Cloud-init / user data
@@ -152,7 +166,9 @@ public record CreateVmRequest(
 public record CreateVmResponse(
     string VmId,
     VmStatus Status,
-    string Message
+    string Message,
+    string? Error = null,
+    string? Password = null
 );
 
 public record VmActionRequest(

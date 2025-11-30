@@ -1719,58 +1719,58 @@
             const vmPassword = vm.spec?.password || '';
 
             return `
-                            <tr>
-                                <td>
-                                    <div class="vm-name">
-                                        <div class="vm-icon">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                                <path d="M8 21h8M12 17v4"/>
-                                            </svg>
-                                        </div>
-                                        <div>
-                                            ${vm.name}
-                                            <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td>
-                                    <span class="status-badge ${statusClass}">
-                                        <span class="status-dot"></span>
-                                        ${vm.status}
-                                    </span>
-                                </td>
-                                <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                                <td class="vm-actions">
-                                    ${canConnect && nodeIp ? `
-                                        <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-                                            </svg>
-                                        </button>
-                                        <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
-                                            </svg>
-                                        </button>
-                                    ` : ''}
-                                    ${vm.status === 'Running' ? `
-                                        <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                                        </button>
-                                    ` : vm.status === 'Stopped' ? `
-                                        <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                                        </button>
-                                    ` : ''}
-                                    <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                        </svg>
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
+                <tr>
+                    <td>
+                        <div class="vm-name">
+                            <div class="vm-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                    <path d="M8 21h8M12 17v4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                ${vm.name}
+                                <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">
+                            <span class="status-dot"></span>
+                            ${vm.status}
+                        </span>
+                    </td>
+                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                    <td class="vm-actions">
+                        ${canConnect && nodeIp ? `
+                            <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                </svg>
+                            </button>
+                            <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                        ${vm.status === 'Running' ? `
+                            <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            </button>
+                        ` : vm.status === 'Stopped' ? `
+                            <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                            </button>
+                        ` : ''}
+                        <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </td>
+                </tr>
+            `;
         }
 
         function renderVmRowFull(vm) {
@@ -1782,60 +1782,60 @@
             const vmPassword = vm.spec?.password || '';
 
             return `
-                            <tr>
-                                <td>
-                                    <div class="vm-name">
-                                        <div class="vm-icon">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                                <path d="M8 21h8M12 17v4"/>
-                                            </svg>
-                                        </div>
-                                        <div>
-                                            ${vm.name}
-                                            <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td>
-                                    <span class="status-badge ${statusClass}">
-                                        <span class="status-dot"></span>
-                                        ${vm.status}
-                                    </span>
-                                </td>
-                                <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
-                                <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                                <td style="color:var(--text-muted)">${created}</td>
-                                <td class="vm-actions">
-                                    ${canConnect && nodeIp ? `
-                                        <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-                                            </svg>
-                                        </button>
-                                        <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
-                                            </svg>
-                                        </button>
-                                    ` : ''}
-                                    ${vm.status === 'Running' ? `
-                                        <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                                        </button>
-                                    ` : vm.status === 'Stopped' ? `
-                                        <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                                        </button>
-                                    ` : ''}
-                                    <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                        </svg>
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
+                <tr>
+                    <td>
+                        <div class="vm-name">
+                            <div class="vm-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                    <path d="M8 21h8M12 17v4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                ${vm.name}
+                                <div class="vm-id">${vm.id.slice(0, 8)}...</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="status-badge ${statusClass}">
+                            <span class="status-dot"></span>
+                            ${vm.status}
+                        </span>
+                    </td>
+                    <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
+                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
+                    <td style="color:var(--text-muted)">${created}</td>
+                    <td class="vm-actions">
+                        ${canConnect && nodeIp ? `
+                            <button class="action-btn terminal" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}', '${vmPassword}')" title="Open Terminal">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                </svg>
+                            </button>
+                            <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                </svg>
+                            </button>
+                        ` : ''}
+                        ${vm.status === 'Running' ? `
+                            <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                            </button>
+                        ` : vm.status === 'Stopped' ? `
+                            <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                            </button>
+                        ` : ''}
+                        <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </td>
+                </tr>
+            `;
         }
 
         // Load Nodes
@@ -1870,18 +1870,18 @@
             const cpuUsage = node.availableResources?.cpuCores || 0;
             const memUsage = node.availableResources?.memoryMb || 0;
             return `
-                            <div class="node-item">
-                                <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
-                                <div class="node-info">
-                                    <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
-                                    <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
-                                </div>
-                                <div class="node-metrics">
-                                    <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
-                                    <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
-                                </div>
-                            </div>
-                        `;
+                <div class="node-item">
+                    <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
+                    <div class="node-info">
+                        <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
+                        <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
+                    </div>
+                    <div class="node-metrics">
+                        <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
+                        <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
+                    </div>
+                </div>
+            `;
         }
 
         // Load SSH Keys
@@ -1919,55 +1919,160 @@
 
         // VM Actions
         async function createVm() {
-            const name = document.getElementById('vm-name').value;
-            const image = document.getElementById('vm-image').value;
-            const cpu = parseInt(document.getElementById('vm-cpu').value);
-            const memory = parseInt(document.getElementById('vm-memory').value);
-            const disk = parseInt(document.getElementById('vm-disk').value);
+            const name = document.getElementById('vm-name').value.trim();
+            const cpuCores = parseInt(document.getElementById('vm-cpu').value);
+            const memoryMb = parseInt(document.getElementById('vm-memory').value);
+            const diskGb = parseInt(document.getElementById('vm-disk').value);
+            const imageId = document.getElementById('vm-image').value;
 
             if (!name) {
                 showToast('Please enter a VM name', 'error');
                 return;
             }
 
-            const btn = document.getElementById('create-vm-btn');
-            btn.innerHTML = '<div class="spinner"></div> Creating...';
-            btn.disabled = true;
-
             try {
-                const data = await api('/api/vms', {
+                // Create VM - server generates human-readable password
+                const response = await api('/api/vms', {
                     method: 'POST',
                     body: JSON.stringify({
                         name,
-                        spec: {
-                            cpuCores: cpu,
-                            memoryMb: memory,
-                            diskGb: disk,
-                            imageId: image,
-                            requiresGpu: false
-                        }
+                        spec: { cpuCores, memoryMb, diskGb, imageId }
                     })
                 });
 
-                if (data.success) {
-                    showToast(`VM "${name}" created successfully`, 'success');
+                if (response.success && response.data) {
+                    const vmId = response.data.vmId;
+                    const password = response.data.password;
+
                     closeModal('create-vm-modal');
-                    document.getElementById('vm-name').value = '';
+
+                    // Show password modal - user MUST acknowledge
+                    await showPasswordModal(vmId, name, password);
+
                     refreshData();
-                    const vm = data.data.vm;
-                    if (vm.generatedPassword) {
-                        // Show password modal (one-time display)
-                        showPasswordModal(vm.name, vm.generatedPassword);
-                    }
                 } else {
-                    showToast(data.message || 'Failed to create VM', 'error');
+                    showToast(response.error?.message || 'Failed to create VM', 'error');
                 }
-            } catch (e) {
+            } catch (error) {
+                console.error('Create VM error:', error);
                 showToast('Failed to create VM', 'error');
             }
+        }
 
-            btn.innerHTML = 'Create VM';
-            btn.disabled = false;
+        /**
+         * Show password modal and handle encryption
+         */
+        async function showPasswordModal(vmId, vmName, password) {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.id = 'password-modal';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 550px;">
+                        <h3>🔐 Save Your VM Password</h3>
+                        <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
+                
+                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
+                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${password}</code>
+                        </div>
+                
+                        <div style="background: #2d1f1f; border: 1px solid #7f1d1d; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <p style="color: #fca5a5; margin: 0;">
+                                <strong>⚠️ Important:</strong> This password will be encrypted with your wallet and stored securely. 
+                                You can always retrieve it by signing with your wallet, but <strong>save it now</strong> as a backup.
+                            </p>
+                        </div>
+                
+                        <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
+                                📋 Copy Password
+                            </button>
+                            <button onclick="secureAndClose('${vmId}', '${password}')" class="btn btn-primary">
+                                🔒 Secure & Continue
+                            </button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+
+                window.secureAndClose = async (vmId, password) => {
+                    try {
+                        // Get encryption key from wallet
+                        const aesKey = await getEncryptionKey();
+
+                        // Encrypt password
+                        const encryptedPassword = await encryptPassword(password, aesKey);
+
+                        // Store encrypted password on server
+                        await api(`/api/vms/${vmId}/secure-password`, {
+                            method: 'POST',
+                            body: JSON.stringify({ encryptedPassword })
+                        });
+
+                        showToast('Password secured with your wallet!', 'success');
+                        modal.remove();
+                        resolve();
+                    } catch (error) {
+                        console.error('Failed to secure password:', error);
+                        showToast('Failed to encrypt - please save password manually!', 'error');
+                    }
+                };
+            });
+        }
+
+        function copyVmPassword(password) {
+            navigator.clipboard.writeText(password);
+            showToast('Password copied!', 'success');
+        }
+
+        /**
+         * Reveal password for a VM (requires wallet signature)
+         */
+        async function revealPassword(vmId, vmName) {
+            try {
+                // Get encrypted password from server
+                const response = await api(`/api/vms/${vmId}/encrypted-password`);
+
+                if (!response.success || !response.data?.encryptedPassword) {
+                    showToast('Password not available', 'error');
+                    return;
+                }
+
+                // Get decryption key from wallet
+                const aesKey = await getEncryptionKey();
+
+                // Decrypt
+                const password = await decryptPassword(response.data.encryptedPassword, aesKey);
+
+                // Show in modal
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 450px;">
+                        <h3>🔑 VM Password</h3>
+                        <p>Password for <strong>${vmName}</strong>:</p>
+                
+                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
+                            <code style="font-size: 1.4em; color: #10b981;">${password}</code>
+                        </div>
+                
+                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                            <button onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');" class="btn btn-secondary">
+                                📋 Copy
+                            </button>
+                            <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                `;  
+                document.body.appendChild(modal);
+                modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+            } catch (error) {
+                console.error('Failed to reveal password:', error);
+                showToast('Failed to decrypt password. Make sure you\'re using the same wallet.', 'error');
+            }
         }
 
         async function startVm(vmId) {
@@ -2064,6 +2169,105 @@
             } catch (e) {
                 showToast('Failed to delete SSH key', 'error');
             }
+        }
+
+        // ============================================
+        // Wallet-Based Password Encryption
+        // ============================================
+
+        const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
+
+        /**
+         * Derive AES-256 key from wallet signature
+         */
+        async function deriveEncryptionKey(signer) {
+            // Sign a deterministic message
+            const signature = await signer.signMessage(ENCRYPTION_MESSAGE);
+
+            // Hash signature to get 32 bytes for AES-256
+            const encoder = new TextEncoder();
+            const sigBytes = encoder.encode(signature);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', sigBytes);
+
+            // Import as AES key
+            return await crypto.subtle.importKey(
+                'raw',
+                hashBuffer,
+                { name: 'AES-GCM' },
+                false,
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        /**
+         * Encrypt password with wallet-derived key
+         * Returns: base64(iv):base64(ciphertext)
+         */
+        async function encryptPassword(password, aesKey) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(password);
+
+            // Generate random IV
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+
+            // Encrypt
+            const ciphertext = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                aesKey,
+                data
+            );
+
+            // Format: iv:ciphertext (both base64)
+            const ivBase64 = btoa(String.fromCharCode(...iv));
+            const ctBase64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+
+            return `${ivBase64}:${ctBase64}`;
+        }
+
+        /**
+         * Decrypt password with wallet-derived key
+         */
+        async function decryptPassword(encryptedData, aesKey) {
+            const [ivBase64, ctBase64] = encryptedData.split(':');
+
+            // Decode base64
+            const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+            const ciphertext = Uint8Array.from(atob(ctBase64), c => c.charCodeAt(0));
+
+            // Decrypt
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                aesKey,
+                ciphertext
+            );
+
+            return new TextDecoder().decode(decrypted);
+        }
+
+        /**
+         * Get or cache the encryption key
+         */
+        let cachedEncryptionKey = null;
+
+        async function getEncryptionKey() {
+            if (cachedEncryptionKey) return cachedEncryptionKey;
+
+            if (!window.ethereum) {
+                throw new Error('No wallet connected');
+            }
+
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+
+            cachedEncryptionKey = await deriveEncryptionKey(signer);
+            return cachedEncryptionKey;
+        }
+
+        // Clear cache on wallet change
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', () => {
+                cachedEncryptionKey = null;
+            });
         }
 
         // Navigation
@@ -2278,19 +2482,19 @@
             const lines = base64.match(/.{1,64}/g) || [];
 
             return `-----BEGIN PRIVATE KEY-----
-${lines.join('\n')}
------END PRIVATE KEY-----
+                ${lines.join('\n')}
+                -----END PRIVATE KEY-----
 
-# DeCloud Generated SSH Key
-#
-# To use this key:
-# 1. Save this file as: ~/.ssh/id_ed25519_decloud
-# 2. Set permissions: chmod 600 ~/.ssh/id_ed25519_decloud
-# 3. Connect: ssh -i ~/.ssh/id_ed25519_decloud ubuntu@<vm-ip>
-#
-# Your public key (already added to DeCloud):
-# ${publicKeyStr}
-`;
+                # DeCloud Generated SSH Key
+                #
+                # To use this key:
+                # 1. Save this file as: ~/.ssh/id_ed25519_decloud
+                # 2. Set permissions: chmod 600 ~/.ssh/id_ed25519_decloud
+                # 3. Connect: ssh -i ~/.ssh/id_ed25519_decloud ubuntu@<vm-ip>
+                #
+                # Your public key (already added to DeCloud):
+                # ${publicKeyStr}
+                `;
         }
 
         function closeModal(modalId) {
@@ -2348,57 +2552,59 @@ ${lines.join('\n')}
         }
 
         // Terminal - opens in new window with auto-connect
-        async function openTerminal(nodeIp, vmIp, vmName, vmId, password) {
-            // Request ephemeral key access
+        async function openTerminal(vmId, vmName) {
             try {
-                const response = await fetch(`/api/terminal/vms/${vmId}/access`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`
-                    },
-                    body: JSON.stringify({ ttlSeconds: 300 })
-                });
-
-                const result = await response.json();
-
-                if (result.success && result.data) {
-                    const creds = result.data;
-                    console.log('Terminal credentials:', {
-                        nodeIp: creds.nodeIp,
-                        vmIp: creds.vmIp,
-                        hasPrivateKey: !!creds.privateKeyBase64,
-                        privateKeyLength: creds.privateKeyBase64?.length,
-                        hasPassword: !!creds.password
-                    });
-
-                    // Build WebSocket URL with credentials
-                    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    let wsUrl = `${wsProtocol}//${creds.nodeIp}:${creds.nodePort}/api/vms/${vmId}/terminal`;
-                    wsUrl += `?ip=${creds.vmIp}&user=${creds.username}`;
-
-                    // Use privateKey if available, otherwise use password
-                    if (creds.privateKeyBase64) {
-                        wsUrl += `&privateKey=${encodeURIComponent(creds.privateKeyBase64)}`;
-                        console.log('Private key length:', creds.privateKeyBase64?.length);
-                    } else if (creds.password) {
-                        wsUrl += `&password=${encodeURIComponent(creds.password)}`;
-                    }
-
-                    // Open terminal window
-                    const terminalUrl = `/terminal.html?wsUrl=${encodeURIComponent(wsUrl)}&vmName=${encodeURIComponent(vmName)}`;
-                    window.open(terminalUrl, `terminal-${vmId}`, 'width=1000,height=700');
-                } else {
-                    showToast(result.error?.message || 'Failed to setup terminal access', 'error');
-
-                    // Fallback to password if available
-                    if (password) {
-                        openTerminalWithPassword(nodeIp, vmIp, vmName, vmId, password);
-                    }
+                // Get VM details including encrypted password
+                const vmResponse = await api(`/api/vms/${vmId}`);
+                if (!vmResponse.success) {
+                    showToast('Failed to get VM details', 'error');
+                    return;
                 }
+
+                const vm = vmResponse.data;
+                const vmIp = vm.networkConfig?.privateIp;
+                const nodeId = vm.nodeId;
+
+                if (!vmIp) {
+                    showToast('VM IP not available yet', 'error');
+                    return;
+                }
+
+                // Get node IP
+                const nodeIp = getNodePublicIp(nodeId);
+                if (!nodeIp) {
+                    showToast('Node not available', 'error');
+                    return;
+                }
+
+                // Get decrypted password
+                let password = null;
+                try {
+                    const pwResponse = await api(`/api/vms/${vmId}/encrypted-password`);
+                    if (pwResponse.success && pwResponse.data?.encryptedPassword) {
+                        const aesKey = await getEncryptionKey();
+                        password = await decryptPassword(pwResponse.data.encryptedPassword, aesKey);
+                    }
+                } catch (e) {
+                    console.warn('Could not decrypt password:', e);
+                }
+
+                if (!password) {
+                    showToast('Could not retrieve password. Please reveal password manually.', 'error');
+                    return;
+                }
+
+                // Build terminal URL with password
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${nodeIp}:5100/api/vms/${vmId}/terminal?ip=${vmIp}&user=ubuntu&password=${encodeURIComponent(password)}`;
+
+                // Open terminal
+                const terminalUrl = `/terminal.html?wsUrl=${encodeURIComponent(wsUrl)}&vmName=${encodeURIComponent(vmName)}`;
+                window.open(terminalUrl, `terminal-${vmId}`, 'width=1000,height=700');
+
             } catch (error) {
-                console.error('Terminal access error:', error);
-                showToast('Failed to connect to terminal service', 'error');
+                console.error('Terminal error:', error);
+                showToast('Failed to open terminal', 'error');
             }
         }
 
