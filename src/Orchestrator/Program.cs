@@ -8,6 +8,7 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Services;
 using Serilog;
 using System.Text;
+using System.Text.Json;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -101,7 +102,15 @@ if (mongoDatabase != null)
 // =====================================================
 // API & Authentication
 // =====================================================
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Make JSON deserialization case-insensitive
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+
+        // Use camelCase for consistency
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {

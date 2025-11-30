@@ -142,9 +142,27 @@ public class HeartbeatVmInfo
     public DateTime? StartedAt { get; set; }
 
     // Optional extended info
+    // Resource specifications
     public int? VCpus { get; set; }
     public long? MemoryBytes { get; set; }
     public long? DiskBytes { get; set; }
+
+    // Complete recovery fields
+    /// <summary>
+    /// VNC port for console access (e.g., "5900")
+    /// </summary>
+    public string? VncPort { get; set; }
+
+    /// <summary>
+    /// MAC address assigned to VM's network interface
+    /// </summary>
+    public string? MacAddress { get; set; }
+
+    /// <summary>
+    /// Wallet-encrypted password for VM access
+    /// Format: base64(iv):base64(ciphertext):base64(tag)
+    /// </summary>
+    public string? EncryptedPassword { get; set; }
 }
 
 public record NodeHeartbeatResponse(
