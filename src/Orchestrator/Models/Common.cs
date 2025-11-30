@@ -101,20 +101,38 @@ public enum EventType
 /// <summary>
 /// System-wide statistics
 /// </summary>
-public record SystemStats(
-    int TotalNodes,
-    int OnlineNodes,
-    int TotalVms,
-    int RunningVms,
-    long TotalCpuCores,
-    long AvailableCpuCores,
-    long TotalMemoryMb,
-    long AvailableMemoryMb,
-    long TotalStorageGb,
-    long AvailableStorageGb,
-    int TotalUsers,
-    decimal TotalRevenue
-);
+public class SystemStats
+{
+    // Node statistics
+    public int TotalNodes { get; set; }
+    public int OnlineNodes { get; set; }
+    public int OfflineNodes { get; set; }
+
+    // VM statistics
+    public int TotalVms { get; set; }
+    public int RunningVms { get; set; }
+    public int StoppedVms { get; set; }
+
+    // User statistics
+    public int TotalUsers { get; set; }
+    public int ActiveUsers { get; set; }
+
+    // Resource statistics
+    public long TotalCpuCores { get; set; }
+    public long AvailableCpuCores { get; set; }
+    public long UsedCpuCores { get; set; }
+    public double CpuUtilizationPercent { get; set; }
+
+    public long TotalMemoryMb { get; set; }
+    public long AvailableMemoryMb { get; set; }
+    public long UsedMemoryMb { get; set; }
+    public double MemoryUtilizationPercent { get; set; }
+
+    public long TotalStorageGb { get; set; }
+    public long AvailableStorageGb { get; set; }
+    public long UsedStorageGb { get; set; }
+    public double StorageUtilizationPercent { get; set; }
+}
 
 /// <summary>
 /// Health check response

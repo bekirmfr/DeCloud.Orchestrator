@@ -37,15 +37,23 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             return AuthenticateResult.NoResult();
         }
 
-        if (!await _userService.ValidateApiKeyAsync(apiKey, out var userId) || userId == null)
+        // Use GetUserByApiKeyAsync instead of ValidateApiKeyAsync
+        var user = await _userService.GetUserByApiKeyAsync(apiKey);
+        if (user == null)
         {
             return AuthenticateResult.Fail("Invalid API key");
         }
 
-        var user = await _userService.GetUserAsync(userId);
-        if (user == null)
+        // Update last used time for the API key
+        var keyHash = Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(apiKey)));
+
+        var apiKeyObj = user.ApiKeys.FirstOrDefault(k => k.KeyHash == keyHash);
+        if (apiKeyObj != null)
         {
-            return AuthenticateResult.Fail("User not found");
+            apiKeyObj.LastUsedAt = DateTime.UtcNow;
+            await _userService.UpdateUserAsync(user);
         }
 
         var claims = new[]

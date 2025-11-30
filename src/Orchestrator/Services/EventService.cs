@@ -1,6 +1,4 @@
-using Microsoft.AspNetCore.SignalR;
 using Orchestrator.Data;
-using Orchestrator.Hubs;
 using Orchestrator.Models;
 
 namespace Orchestrator.Services;
@@ -8,59 +6,59 @@ namespace Orchestrator.Services;
 public interface IEventService
 {
     Task EmitAsync(OrchestratorEvent evt);
-    Task EmitToUserAsync(string userId, OrchestratorEvent evt);
-    Task EmitToNodeAsync(string nodeId, OrchestratorEvent evt);
+    Task<List<OrchestratorEvent>> GetEventsAsync(int limit = 100, EventType? type = null);
 }
 
 public class EventService : IEventService
 {
     private readonly DataStore _dataStore;
-    private readonly IHubContext<OrchestratorHub> _hubContext;
     private readonly ILogger<EventService> _logger;
 
-    public EventService(
-        DataStore dataStore,
-        IHubContext<OrchestratorHub> hubContext,
-        ILogger<EventService> logger)
+    public EventService(DataStore dataStore, ILogger<EventService> logger)
     {
         _dataStore = dataStore;
-        _hubContext = hubContext;
         _logger = logger;
     }
 
+    /// <summary>
+    /// Emit an event to the event stream
+    /// </summary>
     public async Task EmitAsync(OrchestratorEvent evt)
     {
-        // Store in history
-        _dataStore.AddEvent(evt);
+        if (string.IsNullOrEmpty(evt.Id))
+        {
+            evt.Id = Guid.NewGuid().ToString();
+        }
 
-        // Broadcast to all connected clients
-        await _hubContext.Clients.All.SendAsync("Event", evt);
+        if (evt.Timestamp == default)
+        {
+            evt.Timestamp = DateTime.UtcNow;
+        }
 
-        // Also send to resource-specific group
-        await _hubContext.Clients.Group($"{evt.ResourceType}:{evt.ResourceId}")
-            .SendAsync("Event", evt);
+        // Use SaveEventAsync instead of AddEvent
+        await _dataStore.SaveEventAsync(evt);
 
-        _logger.LogDebug("Event emitted: {Type} for {ResourceType}/{ResourceId}", 
-            evt.Type, evt.ResourceType, evt.ResourceId);
+        _logger.LogDebug(
+            "Event emitted: {EventType} - {ResourceType}/{ResourceId}",
+            evt.Type,
+            evt.ResourceType,
+            evt.ResourceId);
     }
 
-    public async Task EmitToUserAsync(string userId, OrchestratorEvent evt)
+    /// <summary>
+    /// Get recent events
+    /// </summary>
+    public Task<List<OrchestratorEvent>> GetEventsAsync(int limit = 100, EventType? type = null)
     {
-        _dataStore.AddEvent(evt);
+        var events = _dataStore.EventHistory
+            .Reverse()
+            .Take(limit);
 
-        // Send to user's group
-        await _hubContext.Clients.Group($"user:{userId}").SendAsync("Event", evt);
+        if (type.HasValue)
+        {
+            events = events.Where(e => e.Type == type.Value);
+        }
 
-        _logger.LogDebug("Event emitted to user {UserId}: {Type}", userId, evt.Type);
-    }
-
-    public async Task EmitToNodeAsync(string nodeId, OrchestratorEvent evt)
-    {
-        _dataStore.AddEvent(evt);
-
-        // Send to node's group
-        await _hubContext.Clients.Group($"node:{nodeId}").SendAsync("Event", evt);
-
-        _logger.LogDebug("Event emitted to node {NodeId}: {Type}", nodeId, evt.Type);
+        return Task.FromResult(events.ToList());
     }
 }

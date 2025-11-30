@@ -416,6 +416,72 @@ public class DataStore
     }
 
     /// <summary>
+    /// Add an event to history (alias for SaveEventAsync for backwards compatibility)
+    /// </summary>
+    public async Task AddEvent(OrchestratorEvent evt)
+    {
+        await SaveEventAsync(evt);
+    }
+
+    /// <summary>
+    /// Get system statistics
+    /// </summary>
+    public SystemStats GetSystemStats()
+    {
+        var totalNodes = Nodes.Count;
+        var onlineNodes = Nodes.Values.Count(n => n.Status == NodeStatus.Online);
+        var totalVms = VirtualMachines.Count;
+        var runningVms = VirtualMachines.Values.Count(v => v.Status == VmStatus.Running);
+        var totalUsers = Users.Count;
+        var activeUsers = Users.Values.Count(u => u.Status == UserStatus.Active);
+
+        // Calculate total resources
+        var totalCpu = Nodes.Values.Sum(n => n.TotalResources.CpuCores);
+        var totalMemoryMb = Nodes.Values.Sum(n => n.TotalResources.MemoryMb);
+        var totalStorageGb = Nodes.Values.Sum(n => n.TotalResources.StorageGb);
+
+        // Calculate available resources (online nodes only)
+        var availableNodes = Nodes.Values.Where(n => n.Status == NodeStatus.Online);
+        var availableCpu = availableNodes.Sum(n => n.AvailableResources.CpuCores);
+        var availableMemoryMb = availableNodes.Sum(n => n.AvailableResources.MemoryMb);
+        var availableStorageGb = availableNodes.Sum(n => n.AvailableResources.StorageGb);
+
+        // Calculate used resources
+        var usedCpu = totalCpu - availableCpu;
+        var usedMemoryMb = totalMemoryMb - availableMemoryMb;
+        var usedStorageGb = totalStorageGb - availableStorageGb;
+
+        // Calculate utilization percentages
+        var cpuUtilization = totalCpu > 0 ? (double)usedCpu / totalCpu * 100 : 0;
+        var memoryUtilization = totalMemoryMb > 0 ? (double)usedMemoryMb / totalMemoryMb * 100 : 0;
+        var storageUtilization = totalStorageGb > 0 ? (double)usedStorageGb / totalStorageGb * 100 : 0;
+
+        return new SystemStats
+        {
+            TotalNodes = totalNodes,
+            OnlineNodes = onlineNodes,
+            OfflineNodes = totalNodes - onlineNodes,
+            TotalVms = totalVms,
+            RunningVms = runningVms,
+            StoppedVms = VirtualMachines.Values.Count(v => v.Status == VmStatus.Stopped),
+            TotalUsers = totalUsers,
+            ActiveUsers = activeUsers,
+            TotalCpuCores = totalCpu,
+            AvailableCpuCores = availableCpu,
+            UsedCpuCores = usedCpu,
+            CpuUtilizationPercent = cpuUtilization,
+            TotalMemoryMb = totalMemoryMb,
+            AvailableMemoryMb = availableMemoryMb,
+            UsedMemoryMb = usedMemoryMb,
+            MemoryUtilizationPercent = memoryUtilization,
+            TotalStorageGb = totalStorageGb,
+            AvailableStorageGb = availableStorageGb,
+            UsedStorageGb = usedStorageGb,
+            StorageUtilizationPercent = storageUtilization
+        };
+    }
+
+    /// <summary>
     /// Retry MongoDB operations with exponential backoff
     /// </summary>
     private async Task RetryMongoOperationAsync(

@@ -9,6 +9,7 @@ public class User
     public string WalletAddress { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? Username { get; set; }
+    public string? DisplayName { get; set; }
 
     public UserStatus Status { get; set; } = UserStatus.Active;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -16,6 +17,7 @@ public class User
 
     // Crypto balance
     public decimal CryptoBalance { get; set; }
+    public string BalanceToken { get; set; } = "USDC";  // Default to USDC
 
     // SSH Keys for VMs
     public List<SshKey> SshKeys { get; set; } = new();
@@ -93,6 +95,11 @@ public record AuthResponse(
     string RefreshToken,
     DateTime ExpiresAt,
     User User
+);
+
+public record AddSshKeyRequest(
+    string Name,
+    string PublicKey
 );
 
 public record CreateApiKeyRequest(
