@@ -1,436 +1,600 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
-using Microsoft.IdentityModel.Tokens;
-using Orchestrator.Data;
-using Orchestrator.Models;
-using Nethereum.Signer;
+#!/bin/bash
+#
+# DeCloud Node Agent Update Script
+#
+# Fetches latest code from GitHub, checks dependencies, rebuilds and restarts.
+# Safe to run multiple times - only installs/updates what's needed.
+#
+# Usage:
+#   sudo ./update.sh              # Normal update
+#   sudo ./update.sh --force      # Force rebuild even if no changes
+#   sudo ./update.sh --deps-only  # Only check/install dependencies
+#
 
-namespace Orchestrator.Services;
+set -e
 
-/// <summary>
-/// User management service interface
-/// </summary>
-public interface IUserService
-{
-    // User CRUD operations
-    Task<User?> GetUserAsync(string userId);
-    Task<User?> GetUserByWalletAsync(string walletAddress);
-    Task<User> CreateUserAsync(string walletAddress);
-    Task UpdateUserAsync(User user);
-    Task<bool> DeleteUserAsync(string userId);
+VERSION="1.2.0"
 
-    // Authentication
-    Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request);
-    Task<AuthResponse?> RefreshTokenAsync(string refreshToken);
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-    // SSH Key Management
-    Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request);
-    Task<bool> RemoveSshKeyAsync(string userId, string keyId);
-    Task<SshKey?> GetSshKeyAsync(string userId, string keyId);
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
+log_error() { echo -e "${RED}[✗]${NC} $1"; }
+log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
-    // API Key Management
-    Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request);
-    Task<bool> DeleteApiKeyAsync(string userId, string keyId);
-    Task<bool> ValidateApiKeyAsync(string apiKey);
-    Task<User?> GetUserByApiKeyAsync(string apiKey);
+# Configuration
+INSTALL_DIR="/opt/decloud"
+REPO_DIR="$INSTALL_DIR/DeCloud.NodeAgent"
+REPO_URL="https://github.com/bekirmfr/DeCloud.NodeAgent.git"
+SERVICE_NAME="decloud-node-agent"
+CONFIG_DIR="/etc/decloud"
+DATA_DIR="/var/lib/decloud"
 
-    // Quota Management
-    Task<bool> CheckQuotaAsync(string userId, int cpuCores, long memoryMb, long storageGb);
-    Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta);
+# Flags
+FORCE_REBUILD=false
+DEPS_ONLY=false
+CHANGES_DETECTED=false
 
-    // Balance Management
-    Task<bool> DeductBalanceAsync(string userId, decimal amount);
-    Task<bool> AddBalanceAsync(string userId, decimal amount);
+# ============================================================
+# Argument Parsing
+# ============================================================
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force|-f)
+                FORCE_REBUILD=true
+                shift
+                ;;
+            --deps-only|-d)
+                DEPS_ONLY=true
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
 }
 
-// <summary>
-/// User management service implementation
-/// This is a REFERENCE IMPLEMENTATION showing the missing methods
-/// </summary>
-public class UserService : IUserService
-{
-    private readonly DataStore _dataStore;
-    private readonly ILogger<UserService> _logger;
-
-    public UserService(DataStore dataStore, ILogger<UserService> logger)
-    {
-        _dataStore = dataStore;
-        _logger = logger;
-    }
-
-    // =====================================================
-    // MISSING METHODS - ADD THESE TO YOUR UserService
-    // =====================================================
-
-    /// <summary>
-    /// Add an SSH key to a user's account
-    /// </summary>
-    public async Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-        {
-            _logger.LogWarning("Cannot add SSH key - user {UserId} not found", userId);
-            return null;
-        }
-
-        // Validate SSH key format
-        if (!IsValidSshPublicKey(request.PublicKey))
-        {
-            _logger.LogWarning("Invalid SSH key format for user {UserId}", userId);
-            return null;
-        }
-
-        // Check for duplicate
-        var fingerprint = GenerateSshKeyFingerprint(request.PublicKey);
-        if (user.SshKeys.Any(k => k.Fingerprint == fingerprint))
-        {
-            _logger.LogWarning("SSH key already exists for user {UserId}", userId);
-            return null;
-        }
-
-        var sshKey = new SshKey
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = request.Name,
-            PublicKey = request.PublicKey.Trim(),
-            Fingerprint = fingerprint,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        user.SshKeys.Add(sshKey);
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("SSH key added for user {UserId}: {KeyName}", userId, request.Name);
-
-        return sshKey;
-    }
-
-    /// <summary>
-    /// Remove an SSH key from a user's account
-    /// </summary>
-    public async Task<bool> RemoveSshKeyAsync(string userId, string keyId)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-        {
-            _logger.LogWarning("Cannot remove SSH key - user {UserId} not found", userId);
-            return false;
-        }
-
-        var key = user.SshKeys.FirstOrDefault(k => k.Id == keyId);
-        if (key == null)
-        {
-            _logger.LogWarning("SSH key {KeyId} not found for user {UserId}", keyId, userId);
-            return false;
-        }
-
-        user.SshKeys.Remove(key);
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("SSH key removed for user {UserId}: {KeyName}", userId, key.Name);
-
-        return true;
-    }
-
-    /// <summary>
-    /// Get a specific SSH key
-    /// </summary>
-    public Task<SshKey?> GetSshKeyAsync(string userId, string keyId)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-        {
-            return Task.FromResult<SshKey?>(null);
-        }
-
-        var key = user.SshKeys.FirstOrDefault(k => k.Id == keyId);
-        return Task.FromResult(key);
-    }
-
-    // =====================================================
-    // SSH KEY VALIDATION HELPERS
-    // =====================================================
-
-    /// <summary>
-    /// Validate SSH public key format
-    /// Supports: ssh-rsa, ssh-ed25519, ecdsa-sha2-nistp256/384/521
-    /// </summary>
-    private bool IsValidSshPublicKey(string publicKey)
-    {
-        if (string.IsNullOrWhiteSpace(publicKey))
-            return false;
-
-        var key = publicKey.Trim();
-
-        // Check for valid SSH key types
-        var validPrefixes = new[]
-        {
-            "ssh-rsa ",
-            "ssh-ed25519 ",
-            "ecdsa-sha2-nistp256 ",
-            "ecdsa-sha2-nistp384 ",
-            "ecdsa-sha2-nistp521 ",
-            "sk-ecdsa-sha2-nistp256@openssh.com ",
-            "sk-ssh-ed25519@openssh.com "
-        };
-
-        if (!validPrefixes.Any(prefix => key.StartsWith(prefix, StringComparison.Ordinal)))
-        {
-            return false;
-        }
-
-        // Basic format check: <type> <base64-key> [optional-comment]
-        var parts = key.Split(' ', 3);
-        if (parts.Length < 2)
-        {
-            return false;
-        }
-
-        // Validate base64 portion
-        try
-        {
-            var base64 = parts[1];
-            if (string.IsNullOrWhiteSpace(base64))
-                return false;
-
-            // Try to decode base64
-            Convert.FromBase64String(base64);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Generate SSH key fingerprint (MD5 hash, OpenSSH format)
-    /// </summary>
-    private string GenerateSshKeyFingerprint(string publicKey)
-    {
-        try
-        {
-            var parts = publicKey.Trim().Split(' ');
-            if (parts.Length < 2)
-                return "invalid";
-
-            var keyData = Convert.FromBase64String(parts[1]);
-            var hash = MD5.HashData(keyData);
-
-            // Format as OpenSSH fingerprint: MD5:xx:xx:xx:...
-            var fingerprint = "MD5:" + string.Join(":", hash.Select(b => b.ToString("x2")));
-            return fingerprint;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to generate SSH key fingerprint");
-            return $"invalid-{Guid.NewGuid().ToString()[..8]}";
-        }
-    }
-
-    // =====================================================
-    // PLACEHOLDER IMPLEMENTATIONS FOR OTHER METHODS
-    // (You should already have these in your UserService)
-    // =====================================================
-
-    public Task<User?> GetUserAsync(string userId)
-    {
-        _dataStore.Users.TryGetValue(userId, out var user);
-        return Task.FromResult(user);
-    }
-
-    public Task<User?> GetUserByWalletAsync(string walletAddress)
-    {
-        var user = _dataStore.Users.Values
-            .FirstOrDefault(u => u.WalletAddress.Equals(walletAddress, StringComparison.OrdinalIgnoreCase));
-        return Task.FromResult(user);
-    }
-
-    public async Task<User> CreateUserAsync(string walletAddress)
-    {
-        var user = new User
-        {
-            Id = Guid.NewGuid().ToString(),
-            WalletAddress = walletAddress,
-            DisplayName = null,
-            Email = null,
-            Status = UserStatus.Active,
-            CreatedAt = DateTime.UtcNow,
-            LastLoginAt = DateTime.UtcNow,
-            CryptoBalance = 0,
-            BalanceToken = "USDC"
-        };
-
-        await _dataStore.SaveUserAsync(user);
-        _logger.LogInformation("User created: {UserId} ({Wallet})", user.Id, walletAddress);
-
-        return user;
-    }
-
-    public async Task UpdateUserAsync(User user)
-    {
-        await _dataStore.SaveUserAsync(user);
-        _logger.LogDebug("User updated: {UserId}", user.Id);
-    }
-
-    public async Task<bool> DeleteUserAsync(string userId)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
-
-        user.Status = UserStatus.Deleted;
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("User deleted: {UserId}", userId);
-        return true;
-    }
-
-    public Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request)
-    {
-        // TODO: Implement wallet signature verification
-        throw new NotImplementedException("Implement wallet signature verification");
-    }
-
-    public Task<AuthResponse?> RefreshTokenAsync(string refreshToken)
-    {
-        // TODO: Implement refresh token logic
-        throw new NotImplementedException("Implement refresh token logic");
-    }
-
-    public async Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return null;
-
-        // Generate API key
-        var apiKeyBytes = new byte[32];
-        RandomNumberGenerator.Fill(apiKeyBytes);
-        var apiKey = $"dc_{Convert.ToBase64String(apiKeyBytes).Replace("+", "").Replace("/", "").Replace("=", "")}";
-
-        // Hash the key
-        var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
-
-        var apiKeyObj = new ApiKey
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = request.Name,
-            KeyHash = keyHash,
-            KeyPrefix = apiKey[..10],
-            Scopes = request.Scopes ?? new List<string> { "read", "write" },
-            CreatedAt = DateTime.UtcNow,
-            ExpiresAt = request.ExpiresAt
-        };
-
-        user.ApiKeys.Add(apiKeyObj);
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("API key created for user {UserId}: {KeyName}", userId, request.Name);
-
-        return new CreateApiKeyResponse(
-            apiKeyObj.Id,
-            apiKey,  // ONLY time the full key is returned!
-            apiKeyObj.KeyPrefix,
-            apiKeyObj.CreatedAt,
-            apiKeyObj.ExpiresAt
-        );
-    }
-
-    public async Task<bool> DeleteApiKeyAsync(string userId, string keyId)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
-
-        var key = user.ApiKeys.FirstOrDefault(k => k.Id == keyId);
-        if (key == null)
-            return false;
-
-        user.ApiKeys.Remove(key);
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("API key deleted for user {UserId}: {KeyName}", userId, key.Name);
-        return true;
-    }
-
-    public Task<bool> ValidateApiKeyAsync(string apiKey)
-    {
-        var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
-
-        var valid = _dataStore.Users.Values.Any(u =>
-            u.ApiKeys.Any(k => k.KeyHash == keyHash &&
-                              (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
-
-        return Task.FromResult(valid);
-    }
-
-    public Task<User?> GetUserByApiKeyAsync(string apiKey)
-    {
-        var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
-
-        var user = _dataStore.Users.Values.FirstOrDefault(u =>
-            u.ApiKeys.Any(k => k.KeyHash == keyHash &&
-                              (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
-
-        return Task.FromResult(user);
-    }
-
-    public Task<bool> CheckQuotaAsync(string userId, int cpuCores, long memoryMb, long storageGb)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return Task.FromResult(false);
-
-        var quotas = user.Quotas;
-        var canCreate = quotas.CurrentVms < quotas.MaxVms &&
-                       quotas.CurrentCpuCores + cpuCores <= quotas.MaxCpuCores &&
-                       quotas.CurrentMemoryMb + memoryMb <= quotas.MaxMemoryMb &&
-                       quotas.CurrentStorageGb + storageGb <= quotas.MaxStorageGb;
-
-        return Task.FromResult(canCreate);
-    }
-
-    public async Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return;
-
-        user.Quotas.CurrentCpuCores += cpuDelta;
-        user.Quotas.CurrentMemoryMb += memoryDelta;
-        user.Quotas.CurrentStorageGb += storageDelta;
-
-        await _dataStore.SaveUserAsync(user);
-    }
-
-    public async Task<bool> DeductBalanceAsync(string userId, decimal amount)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
-
-        if (user.CryptoBalance < amount)
-        {
-            _logger.LogWarning("Insufficient balance for user {UserId}: {Balance} < {Amount}",
-                userId, user.CryptoBalance, amount);
-            return false;
-        }
-
-        user.CryptoBalance -= amount;
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("Deducted {Amount} {Token} from user {UserId}",
-            amount, user.BalanceToken, userId);
-
-        return true;
-    }
-
-    public async Task<bool> AddBalanceAsync(string userId, decimal amount)
-    {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
-
-        user.CryptoBalance += amount;
-        await _dataStore.SaveUserAsync(user);
-
-        _logger.LogInformation("Added {Amount} {Token} to user {UserId}",
-            amount, user.BalanceToken, userId);
-
-        return true;
-    }
+show_help() {
+    cat << EOF
+DeCloud Node Agent Update Script v${VERSION}
+
+Usage: $0 [options]
+
+Options:
+  --force, -f       Force rebuild even if no code changes detected
+  --deps-only, -d   Only check and install dependencies, don't update code
+  --help, -h        Show this help message
+
+Examples:
+  $0                # Normal update
+  $0 --force        # Force rebuild
+  $0 --deps-only    # Only check dependencies
+EOF
 }
+
+# ============================================================
+# Checks
+# ============================================================
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "This script must be run as root (use sudo)"
+        exit 1
+    fi
+}
+
+check_installation() {
+    if [ ! -d "$REPO_DIR" ]; then
+        log_error "Node Agent not installed at $REPO_DIR"
+        log_error "Run the install script first:"
+        log_error "  curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/master/install.sh | sudo bash -s -- --orchestrator <URL>"
+        exit 1
+    fi
+}
+
+# ============================================================
+# Dependency Checks & Installation
+# ============================================================
+check_dependencies() {
+    log_step "Checking dependencies..."
+    
+    local deps_missing=false
+    
+    # Check .NET 8
+    if command -v dotnet &> /dev/null; then
+        DOTNET_VERSION=$(dotnet --version 2>/dev/null | head -1)
+        if [[ "$DOTNET_VERSION" == 8.* ]]; then
+            log_success ".NET 8 SDK: $DOTNET_VERSION"
+        else
+            log_warn ".NET 8 required, found: $DOTNET_VERSION"
+            deps_missing=true
+        fi
+    else
+        log_warn ".NET SDK not found"
+        deps_missing=true
+    fi
+    
+    # Check libvirt
+    if command -v virsh &> /dev/null; then
+        log_success "libvirt: $(virsh --version 2>/dev/null || echo 'installed')"
+    else
+        log_warn "libvirt not found"
+        deps_missing=true
+    fi
+    
+    # Check WireGuard
+    if command -v wg &> /dev/null; then
+        log_success "WireGuard: installed"
+    else
+        log_warn "WireGuard not found"
+        deps_missing=true
+    fi
+    
+    # Check cloud-init tools
+    if command -v cloud-localds &> /dev/null; then
+        log_success "cloud-image-utils: installed"
+    else
+        log_warn "cloud-image-utils not found"
+        deps_missing=true
+    fi
+    
+    # Check libguestfs-tools (for cloud-init state cleaning)
+    if command -v virt-customize &> /dev/null; then
+        log_success "libguestfs-tools: installed"
+    else
+        log_warn "libguestfs-tools not found (needed for cloud-init cleaning)"
+        deps_missing=true
+    fi
+    
+    # Check openssh-client (for ssh-keygen - ephemeral key generation)
+    if command -v ssh-keygen &> /dev/null; then
+        log_success "openssh-client: installed (ssh-keygen available)"
+    else
+        log_warn "openssh-client not found (needed for ephemeral SSH keys)"
+        deps_missing=true
+    fi
+    
+    # Check git
+    if command -v git &> /dev/null; then
+        log_success "git: installed"
+    else
+        log_warn "git not found"
+        deps_missing=true
+    fi
+    
+    if [ "$deps_missing" = true ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+install_dependencies() {
+    log_step "Installing missing dependencies..."
+    
+    # Detect OS
+    if [ ! -f /etc/os-release ]; then
+        log_error "Cannot detect OS"
+        exit 1
+    fi
+    
+    . /etc/os-release
+    OS=$ID
+    
+    apt-get update -qq
+    
+    # Git
+    if ! command -v git &> /dev/null; then
+        log_info "Installing git..."
+        apt-get install -y -qq git > /dev/null 2>&1
+        log_success "git installed"
+    fi
+    
+    # .NET 8
+    if ! command -v dotnet &> /dev/null || [[ "$(dotnet --version 2>/dev/null)" != 8.* ]]; then
+        log_info "Installing .NET 8 SDK..."
+        
+        if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
+            wget -q https://packages.microsoft.com/config/$OS/$VERSION_ID/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
+            dpkg -i /tmp/packages-microsoft-prod.deb > /dev/null 2>&1
+            rm /tmp/packages-microsoft-prod.deb
+            apt-get update -qq
+        fi
+        
+        apt-get install -y -qq dotnet-sdk-8.0 > /dev/null 2>&1
+        log_success ".NET 8 SDK installed"
+    fi
+    
+    # libvirt
+    if ! command -v virsh &> /dev/null; then
+        log_info "Installing libvirt/KVM..."
+        apt-get install -y -qq qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst > /dev/null 2>&1
+        apt-get install -y -qq cloud-image-utils genisoimage qemu-utils > /dev/null 2>&1
+        
+        systemctl enable libvirtd --quiet
+        systemctl start libvirtd
+        
+        # Ensure default network
+        virsh net-autostart default > /dev/null 2>&1 || true
+        virsh net-start default > /dev/null 2>&1 || true
+        
+        log_success "libvirt/KVM installed"
+    fi
+    
+    # WireGuard
+    if ! command -v wg &> /dev/null; then
+        log_info "Installing WireGuard..."
+        apt-get install -y -qq wireguard wireguard-tools > /dev/null 2>&1
+        log_success "WireGuard installed"
+    fi
+    
+    # cloud-image-utils
+    if ! command -v cloud-localds &> /dev/null; then
+        log_info "Installing cloud-image-utils..."
+        apt-get install -y -qq cloud-image-utils genisoimage > /dev/null 2>&1
+        log_success "cloud-image-utils installed"
+    fi
+    
+    # libguestfs-tools (for cleaning cloud-init state from base images)
+    if ! command -v virt-customize &> /dev/null; then
+        log_info "Installing libguestfs-tools..."
+        apt-get install -y -qq libguestfs-tools > /dev/null 2>&1
+        # Load nbd module for qemu-nbd fallback
+        modprobe nbd max_part=8 2>/dev/null || true
+        echo "nbd" >> /etc/modules-load.d/decloud.conf 2>/dev/null || true
+        log_success "libguestfs-tools installed"
+    fi
+    
+    # openssh-client (for ssh-keygen - ephemeral key generation)
+    if ! command -v ssh-keygen &> /dev/null; then
+        log_info "Installing openssh-client..."
+        apt-get install -y -qq openssh-client > /dev/null 2>&1
+        log_success "openssh-client installed"
+    fi
+}
+
+# ============================================================
+# Database Backup
+# ============================================================
+backup_database() {
+    log_step "Backing up VM database..."
+    
+    local db_path="$DATA_DIR/vms/vms.db"
+    local backup_dir="$DATA_DIR/backups"
+    
+    if [ ! -f "$db_path" ]; then
+        log_info "No database found to backup (new installation)"
+        return 0
+    fi
+    
+    # Create backup directory
+    mkdir -p "$backup_dir"
+    
+    # Create timestamped backup
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_path="$backup_dir/vms_${timestamp}.db"
+    
+    cp "$db_path" "$backup_path"
+    
+    # Keep only last 5 backups
+    ls -t "$backup_dir"/vms_*.db 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+    
+    local db_size=$(du -h "$db_path" | cut -f1)
+    log_success "Database backed up: $db_size to ${backup_path##*/}"
+}
+
+# ============================================================
+# Update Functions
+# ============================================================
+fetch_updates() {
+    log_step "Fetching updates from GitHub..."
+    
+    cd "$REPO_DIR"
+    
+    # Store current commit
+    CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    
+    # Fetch updates
+    git fetch origin --quiet
+    
+    # ====================================================
+    # FIX: Detect which branch exists and use it
+    # ====================================================
+    local remote_branch=""
+    if git show-ref --verify --quiet refs/remotes/origin/master; then
+        remote_branch="master"
+    elif git show-ref --verify --quiet refs/remotes/origin/main; then
+        remote_branch="main"
+    else
+        log_error "Could not find master or main branch"
+        exit 1
+    fi
+    
+    # Check if there are updates
+    LOCAL=$(git rev-parse HEAD)
+    REMOTE=$(git rev-parse origin/$remote_branch)
+    
+    if [ "$LOCAL" = "$REMOTE" ]; then
+        log_info "Already up to date (commit: ${LOCAL:0:8})"
+        CHANGES_DETECTED=false
+    else
+        log_info "Updates available"
+        log_info "  Current: ${LOCAL:0:8}"
+        log_info "  Latest:  ${REMOTE:0:8}"
+        
+        # Show what changed
+        echo ""
+        log_info "Changes:"
+        git log --oneline HEAD..origin/$remote_branch | head -10
+        echo ""
+        
+        # ====================================================
+        # Check for local modifications
+        # ====================================================
+        if ! git diff-index --quiet HEAD --; then
+            log_warn "Local modifications detected"
+            
+            # Show what files are modified
+            local modified_files=$(git diff --name-only)
+            log_info "Modified files:"
+            echo "$modified_files" | sed 's/^/  - /'
+            echo ""
+            
+            log_info "Stashing local changes..."
+            git stash push -m "Auto-stash before update $(date +%Y%m%d_%H%M%S)" --quiet
+            log_success "Local changes stashed"
+        fi
+        
+        # Backup database before pulling
+        backup_database
+        
+        # Pull updates (disable set -e temporarily)
+        set +e
+        git pull --quiet origin $remote_branch
+        local pull_result=$?
+        set -e
+        
+        if [ $pull_result -ne 0 ]; then
+            log_error "Failed to pull updates"
+            log_error "Try manually: cd $REPO_DIR && git reset --hard && git pull"
+            exit 1
+        fi
+        
+        CHANGES_DETECTED=true
+        log_success "Code updated to ${REMOTE:0:8}"
+        
+        # Check if we stashed anything
+        if git stash list | grep -q "Auto-stash before update"; then
+            log_info ""
+            log_warn "Local changes were stashed (may contain important config)"
+            log_info "To review stashed changes: cd $REPO_DIR && git stash show"
+            log_info "To restore stashed changes: cd $REPO_DIR && git stash pop"
+        fi
+    fi
+}
+
+build_agent() {
+    log_step "Building Node Agent..."
+    
+    cd "$REPO_DIR"
+    
+    # Clean previous build
+    log_info "Cleaning previous build..."
+    dotnet clean --verbosity quiet > /dev/null 2>&1 || true
+    rm -rf src/DeCloud.NodeAgent/bin src/DeCloud.NodeAgent/obj 2>/dev/null || true
+    
+    # Restore packages
+    log_info "Restoring packages..."
+    dotnet restore --verbosity quiet
+    
+    # Build
+    log_info "Compiling..."
+    dotnet build -c Release --verbosity quiet --no-restore
+    
+    log_success "Build completed"
+}
+
+restart_service() {
+    log_step "Restarting Node Agent service..."
+    
+    # Check if service exists
+    if ! systemctl list-unit-files | grep -q "$SERVICE_NAME"; then
+        log_warn "Service $SERVICE_NAME not found, skipping restart"
+        return
+    fi
+    
+    # Stop service
+    log_info "Stopping service..."
+    systemctl stop $SERVICE_NAME 2>/dev/null || true
+    
+    # Wait a moment
+    sleep 2
+    
+    # Start service
+    log_info "Starting service..."
+    systemctl start $SERVICE_NAME
+    
+    # Wait and verify
+    sleep 3
+    
+    if systemctl is-active --quiet $SERVICE_NAME; then
+        log_success "Service restarted successfully"
+    else
+        log_error "Service failed to start"
+        log_error "Check logs: journalctl -u $SERVICE_NAME -n 50"
+        exit 1
+    fi
+}
+
+verify_health() {
+    log_step "Verifying Node Agent health..."
+    
+    # Get port from config
+    local port=5100
+    if [ -f "$CONFIG_DIR/appsettings.Production.json" ]; then
+        port=$(grep -oP '"Url":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/appsettings.Production.json" 2>/dev/null || echo "5100")
+    fi
+    
+    # Wait for service to be ready
+    local max_attempts=10
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s --max-time 2 "http://localhost:$port/health" > /dev/null 2>&1; then
+            log_success "Node Agent is healthy (port $port)"
+            return 0
+        fi
+        
+        log_info "Waiting for service to be ready... ($attempt/$max_attempts)"
+        sleep 2
+        ((attempt++))
+    done
+    
+    log_warn "Health check timed out, but service may still be starting"
+    log_info "Check status: systemctl status $SERVICE_NAME"
+}
+
+show_database_info() {
+    local db_path="$DATA_DIR/vms/vms.db"
+    
+    if [ ! -f "$db_path" ]; then
+        return
+    fi
+    
+    local db_size=$(du -h "$db_path" | cut -f1)
+    log_info "VM Database: $db_size"
+    
+    # Check if sqlite3 is available for stats
+    if command -v sqlite3 &> /dev/null; then
+        local vm_count=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM VmRecords WHERE State != 'Deleted'" 2>/dev/null || echo "0")
+        if [ "$vm_count" != "0" ]; then
+            log_info "VMs in database: $vm_count"
+        fi
+    fi
+}
+
+show_status() {
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║                    Node Agent Status                         ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # Service status
+    if systemctl is-active --quiet $SERVICE_NAME; then
+        log_success "Service: running"
+    else
+        log_error "Service: stopped"
+    fi
+    
+    # Current version/commit
+    if [ -d "$REPO_DIR/.git" ]; then
+        cd "$REPO_DIR"
+        COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        log_info "Version: $BRANCH @ $COMMIT"
+        
+        # Check for stashed changes
+        local stash_count=$(git stash list 2>/dev/null | wc -l)
+        if [ "$stash_count" -gt 0 ]; then
+            log_warn "Git stash: $stash_count stashed change(s)"
+            log_info "  View: cd $REPO_DIR && git stash list"
+        fi
+    fi
+    
+    # Database info
+    show_database_info
+    
+    # WireGuard status
+    if command -v wg &> /dev/null && wg show wg-decloud &> /dev/null; then
+        local peers=$(wg show wg-decloud peers 2>/dev/null | wc -l)
+        log_success "WireGuard: running ($peers peers)"
+    else
+        log_warn "WireGuard: not running"
+    fi
+    
+    # Get config info
+    if [ -f "$CONFIG_DIR/appsettings.Production.json" ]; then
+        local orchestrator=$(grep -oP '"BaseUrl":\s*"\K[^"]+' "$CONFIG_DIR/appsettings.Production.json" 2>/dev/null | head -1)
+        if [ -n "$orchestrator" ]; then
+            log_info "Orchestrator: $orchestrator"
+        fi
+        
+        # Check encryption status
+        local wallet=$(grep -oP '"WalletAddress":\s*"\K[^"]+' "$CONFIG_DIR/appsettings.Production.json" 2>/dev/null | head -1)
+        if [ -n "$wallet" ] && [ "$wallet" != "0x0000000000000000000000000000000000000000" ]; then
+            log_success "Database encryption: enabled"
+        else
+            log_warn "Database encryption: disabled (no wallet configured)"
+        fi
+    fi
+    
+    echo ""
+}
+
+# ============================================================
+# Main
+# ============================================================
+main() {
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║         DeCloud Node Agent Update Script v${VERSION}              ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    parse_args "$@"
+    check_root
+    
+    # Check dependencies
+    if ! check_dependencies; then
+        log_info "Some dependencies are missing, installing..."
+        install_dependencies
+        log_success "Dependencies installed"
+        echo ""
+    fi
+    
+    # If deps-only, stop here
+    if [ "$DEPS_ONLY" = true ]; then
+        log_success "Dependency check complete"
+        exit 0
+    fi
+    
+    check_installation
+    
+    # Fetch updates
+    fetch_updates
+    
+    # Build if changes detected or forced
+    if [ "$CHANGES_DETECTED" = true ] || [ "$FORCE_REBUILD" = true ]; then
+        if [ "$FORCE_REBUILD" = true ] && [ "$CHANGES_DETECTED" = false ]; then
+            log_info "Force rebuild requested"
+        fi
+        
+        build_agent
+        restart_service
+        verify_health
+    else
+        log_info "No changes detected, skipping build"
+        log_info "Use --force to rebuild anyway"
+    fi
+    
+    show_status
+    
+    log_success "Update complete!"
+}
+
+main "$@"
