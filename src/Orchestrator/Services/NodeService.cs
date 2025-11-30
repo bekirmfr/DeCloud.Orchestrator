@@ -137,6 +137,7 @@ public class NodeService : INodeService
     {
         if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
         {
+            _logger.LogWarning("Heartbeat from unknown node {NodeId}", nodeId);
             return new NodeHeartbeatResponse(false, null);
         }
 
@@ -154,12 +155,13 @@ public class NodeService : INodeService
             {
                 Type = EventType.NodeOnline,
                 ResourceType = "node",
-                ResourceId = nodeId
+                ResourceId = nodeId,
+                Payload = new { node.Name, WasOffline = true }
             });
         }
 
         // =====================================================
-        // NEW: Sync VM state from heartbeat
+        //  Sync VM state from heartbeat
         // =====================================================
         await SyncVmStateFromHeartbeatAsync(nodeId, heartbeat);
 
@@ -170,185 +172,323 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// Synchronize VM state based on heartbeat data from node agent.
-    /// This updates VMs that are in Provisioning state to Running when the node reports them as running.
+    /// Synchronize VM state between orchestrator and node agent.
+    /// Handles three scenarios:
+    /// 1. State updates for known VMs (Provisioning -> Running)
+    /// 2. Recovery of VMs that exist on node but not in orchestrator (after restart)
+    /// 3. Detection of missing VMs that should be on the node
     /// </summary>
     private async Task SyncVmStateFromHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
     {
-        // Get all VMs assigned to this node
-        var nodeVms = _dataStore.VirtualMachines.Values
-            .Where(v => v.NodeId == nodeId && v.Status != VmStatus.Deleted)
-            .ToList();
-
-        if (!nodeVms.Any())
-            return;
-
-        // Create a lookup of reported VMs from the node
-        var reportedVmIds = new HashSet<string>(heartbeat.ActiveVmIds ?? new List<string>());
-
-        // Create a lookup of VM details if provided
-        var vmDetails = new Dictionary<string, NodeVmInfo>();
-        if (heartbeat.ActiveVms != null)
+        try
         {
-            foreach (var vmInfo in heartbeat.ActiveVms)
+            // Get all VMs assigned to this node in our records
+            var orchestratorVms = _dataStore.VirtualMachines.Values
+                .Where(v => v.NodeId == nodeId && v.Status != VmStatus.Deleted)
+                .ToDictionary(v => v.Id);
+
+            // Build lookup of VMs reported by the node
+            var reportedVms = new Dictionary<string, HeartbeatVmInfo>();
+
+            // Support both old format (activeVmIds) and new format (activeVms)
+            if (heartbeat.ActiveVms != null && heartbeat.ActiveVms.Any())
             {
-                if (!string.IsNullOrEmpty(vmInfo.VmId))
+                foreach (var vm in heartbeat.ActiveVms)
                 {
-                    vmDetails[vmInfo.VmId] = vmInfo;
+                    reportedVms[vm.VmId] = vm;
+                }
+            }
+
+            _logger.LogDebug("Node {NodeId} reports {Count} active VMs", nodeId, reportedVms.Count);
+
+            // ===================================================================
+            // SCENARIO 1: Update state for VMs we know about
+            // ===================================================================
+            foreach (var (vmId, vm) in orchestratorVms)
+            {
+                if (reportedVms.TryGetValue(vmId, out var reported))
+                {
+                    await UpdateKnownVmStateAsync(vm, reported, nodeId);
+                }
+                else
+                {
+                    // VM exists in our records but node doesn't report it
+                    await HandleMissingVmAsync(vm, nodeId);
+                }
+            }
+
+            // ===================================================================
+            // SCENARIO 2: Recover VMs that node has but we don't know about
+            // This handles orchestrator restart without MongoDB persistence
+            // ===================================================================
+            foreach (var (vmId, reported) in reportedVms)
+            {
+                if (!orchestratorVms.ContainsKey(vmId))
+                {
+                    await RecoverOrphanedVmAsync(vmId, reported, nodeId);
                 }
             }
         }
-
-        foreach (var vm in nodeVms)
+        catch (Exception ex)
         {
-            var isReportedByNode = reportedVmIds.Contains(vm.Id);
-            vmDetails.TryGetValue(vm.Id, out var nodeVmInfo);
+            _logger.LogError(ex, "Failed to sync VM state from heartbeat for node {NodeId}", nodeId);
+        }
+    }
 
-            // Determine node-reported state
-            var nodeState = nodeVmInfo?.State;
-            var nodeIpAddress = nodeVmInfo?.IpAddress;
+    /// <summary>
+    /// Update state for VMs we're already tracking
+    /// </summary>
+    private async Task UpdateKnownVmStateAsync(VirtualMachine vm, HeartbeatVmInfo reported, string nodeId)
+    {
+        var reportedState = ParseVmStatus(reported.State);
+        var stateChanged = false;
 
-            switch (vm.Status)
+        // Transition from Provisioning to Running when node confirms it's up
+        if (vm.Status == VmStatus.Provisioning && reportedState == VmStatus.Running)
+        {
+            vm.Status = VmStatus.Running;
+            vm.PowerState = VmPowerState.Running;
+            vm.StartedAt ??= reported.StartedAt ?? DateTime.UtcNow;
+            stateChanged = true;
+
+            _logger.LogInformation("VM {VmId} ({Name}) transitioned to Running on node {NodeId}",
+                vm.Id, vm.Name, nodeId);
+
+            await _eventService.EmitAsync(new OrchestratorEvent
             {
-                case VmStatus.Provisioning:
-                    // VM was being created - check if node reports it as running
-                    if (isReportedByNode &&
-                        (string.Equals(nodeState, "Running", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(nodeState, "Started", StringComparison.OrdinalIgnoreCase)))
+                Type = EventType.VmStarted,  // FIXED: Use VmStarted instead of VmRunning
+                ResourceType = "vm",
+                ResourceId = vm.Id,
+                UserId = vm.OwnerId,
+                Payload = new
+                {
+                    vm.Name,
+                    IpAddress = reported.IpAddress,
+                    NodeId = nodeId  // FIXED: NodeId in Payload, not as direct property
+                }
+            });
+        }
+        // Update IP address if we don't have it
+        else if (string.IsNullOrEmpty(vm.NetworkConfig.PrivateIp) && !string.IsNullOrEmpty(reported.IpAddress))
+        {
+            vm.NetworkConfig.PrivateIp = reported.IpAddress;
+            stateChanged = true;
+
+            _logger.LogInformation("VM {VmId} IP address updated to {Ip}", vm.Id, reported.IpAddress);
+        }
+        // Handle state mismatches
+        else if (vm.Status == VmStatus.Running && reportedState != VmStatus.Running)
+        {
+            _logger.LogWarning("VM {VmId} state mismatch - Orchestrator: {OurState}, Node: {NodeState}",
+                vm.Id, vm.Status, reportedState);
+
+            // Trust the node's state for running VMs
+            vm.Status = reportedState;
+            vm.PowerState = ParsePowerState(reported.State);
+            stateChanged = true;
+        }
+
+        if (stateChanged)
+        {
+            vm.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Handle VMs that should be on the node but aren't reported
+    /// </summary>
+    private async Task HandleMissingVmAsync(VirtualMachine vm, string nodeId)
+    {
+        // Only flag as error if we expected it to be running
+        if (vm.Status == VmStatus.Running || vm.Status == VmStatus.Provisioning)
+        {
+            _logger.LogWarning(
+                "VM {VmId} ({Name}) expected on node {NodeId} but not reported in heartbeat - marking as error",
+                vm.Id, vm.Name, nodeId);
+
+            vm.Status = VmStatus.Error;
+            vm.PowerState = VmPowerState.Off;
+            vm.StatusMessage = "VM not found on assigned node during heartbeat";
+            vm.UpdatedAt = DateTime.UtcNow;
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmError,
+                ResourceType = "vm",
+                ResourceId = vm.Id,
+                UserId = vm.OwnerId,
+                Payload = new
+                {
+                    vm.Name,
+                    NodeId = nodeId,  // FIXED: NodeId in Payload, not as direct property
+                    Error = "VM missing from node",
+                    ExpectedState = vm.Status.ToString()
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Recover VMs that exist on node but not in orchestrator records
+    /// This is critical for state recovery after orchestrator restart
+    /// </summary>
+    private async Task RecoverOrphanedVmAsync(string vmId, HeartbeatVmInfo reported, string nodeId)
+    {
+        _logger.LogWarning(
+            "Discovered unknown VM {VmId} on node {NodeId} - attempting state recovery",
+            vmId, nodeId);
+
+        try
+        {
+            // Validate the VM ID is a proper GUID
+            if (!Guid.TryParse(vmId, out _))
+            {
+                _logger.LogWarning("Rejecting VM recovery for {VmId} - invalid ID format", vmId);
+                return;
+            }
+
+            // Get node info for context
+            if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+            {
+                _logger.LogError("Cannot recover VM {VmId} - node {NodeId} not found", vmId, nodeId);
+                return;
+            }
+
+            // Create recovered VM record with information from heartbeat
+            var recoveredVm = new VirtualMachine
+            {
+                Id = vmId,
+                Name = reported.Name ?? $"recovered-vm-{vmId.Substring(0, 8)}",
+                NodeId = nodeId,
+
+                // Ownership - try to extract from heartbeat, otherwise mark as unknown
+                OwnerId = reported.TenantId ?? "unknown",
+                OwnerWallet = "unknown",  // Will need to be corrected manually or via user lookup
+
+                // State based on what node reports
+                Status = ParseVmStatus(reported.State),
+                PowerState = ParsePowerState(reported.State),
+                StatusMessage = "Recovered from node agent after orchestrator restart",
+
+                // Timestamps
+                CreatedAt = reported.StartedAt ?? DateTime.UtcNow.AddHours(-1), // Best guess
+                StartedAt = reported.StartedAt,
+                UpdatedAt = DateTime.UtcNow,
+
+                // Network configuration
+                NetworkConfig = new VmNetworkConfig
+                {
+                    PrivateIp = reported.IpAddress,
+                    Hostname = reported.Name
+                },
+
+                // Spec - use defaults or info from heartbeat if available
+                Spec = new VmSpec
+                {
+                    CpuCores = reported.VCpus ?? 2,
+                    MemoryMb = (reported.MemoryBytes ?? 2147483648L) / 1024 / 1024,
+                    DiskGb = (reported.DiskBytes ?? 21474836480L) / 1024 / 1024 / 1024,
+                    ImageId = "unknown",  // Can't recover this
+                },
+
+                // Billing - initialize with defaults
+                BillingInfo = new VmBillingInfo
+                {
+                    HourlyRateCrypto = 0.001m, // Default rate
+                    CryptoSymbol = "USDC",
+                    LastBillingAt = DateTime.UtcNow
+                },
+
+                // Add recovery label
+                Labels = new Dictionary<string, string>
+                {
+                    { "recovered", "true" },
+                    { "recovery-time", DateTime.UtcNow.ToString("O") },
+                    { "recovery-node", nodeId }
+                }
+            };
+
+            // Add to datastore
+            if (_dataStore.VirtualMachines.TryAdd(vmId, recoveredVm))
+            {
+                _logger.LogInformation(
+                    "Successfully recovered VM {VmId} ({Name}) on node {NodeId} - State: {State}, IP: {Ip}",
+                    vmId, recoveredVm.Name, nodeId, recoveredVm.Status, reported.IpAddress ?? "none");
+
+                // Emit recovery event
+                await _eventService.EmitAsync(new OrchestratorEvent
+                {
+                    Type = EventType.VmRecovered,
+                    ResourceType = "vm",
+                    ResourceId = vmId,
+                    UserId = recoveredVm.OwnerId,
+                    Payload = new
                     {
-                        _logger.LogInformation(
-                            "VM {VmId} transitioned from Provisioning to Running (reported by node {NodeId})",
-                            vm.Id, nodeId);
-
-                        vm.Status = VmStatus.Running;
-                        vm.PowerState = VmPowerState.Running;
-                        vm.StartedAt = DateTime.UtcNow;
-                        vm.UpdatedAt = DateTime.UtcNow;
-                        vm.StatusMessage = null;
-
-                        // Update IP address if reported
-                        if (!string.IsNullOrEmpty(nodeIpAddress))
-                        {
-                            vm.NetworkConfig.PrivateIp = nodeIpAddress;
-                            _logger.LogInformation("VM {VmId} IP address: {IpAddress}", vm.Id, nodeIpAddress);
-                        }
-
-                        await _eventService.EmitAsync(new OrchestratorEvent
-                        {
-                            Type = EventType.VmStarted,
-                            ResourceType = "vm",
-                            ResourceId = vm.Id,
-                            Payload = new { NodeId = nodeId, IpAddress = nodeIpAddress }
-                        });
+                        recoveredVm.Name,
+                        NodeId = nodeId,
+                        State = recoveredVm.Status.ToString(),
+                        IpAddress = reported.IpAddress,
+                        VCpus = recoveredVm.Spec.CpuCores,
+                        MemoryMb = recoveredVm.Spec.MemoryMb,
+                        RecoveryReason = "Found on node but not in orchestrator",
+                        Recovered = true  // Flag to indicate this is a recovery
                     }
-                    else if (string.Equals(nodeState, "Failed", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogWarning("VM {VmId} failed to provision on node {NodeId}", vm.Id, nodeId);
-                        vm.Status = VmStatus.Error;
-                        vm.StatusMessage = "VM creation failed on node";
-                        vm.UpdatedAt = DateTime.UtcNow;
+                });
 
-                        await _eventService.EmitAsync(new OrchestratorEvent
-                        {
-                            Type = EventType.VmError,
-                            ResourceType = "vm",
-                            ResourceId = vm.Id,
-                            Payload = new { NodeId = nodeId, Error = "Provisioning failed" }
-                        });
-                    }
-                    break;
-
-                case VmStatus.Running:
-                    // VM should be running - verify with node
-                    if (!isReportedByNode)
-                    {
-                        // Node doesn't know about this VM - might have crashed or been deleted
-                        _logger.LogWarning(
-                            "VM {VmId} marked as Running but not reported by node {NodeId}",
-                            vm.Id, nodeId);
-                        // Don't immediately mark as error - could be transient
-                    }
-                    else if (string.Equals(nodeState, "Stopped", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogInformation("VM {VmId} stopped (reported by node {NodeId})", vm.Id, nodeId);
-                        vm.Status = VmStatus.Stopped;
-                        vm.PowerState = VmPowerState.Off;
-                        vm.StoppedAt = DateTime.UtcNow;
-                        vm.UpdatedAt = DateTime.UtcNow;
-
-                        await _eventService.EmitAsync(new OrchestratorEvent
-                        {
-                            Type = EventType.VmStopped,
-                            ResourceType = "vm",
-                            ResourceId = vm.Id,
-                            Payload = new { NodeId = nodeId }
-                        });
-                    }
-                    else
-                    {
-                        // Update IP if changed
-                        if (!string.IsNullOrEmpty(nodeIpAddress) &&
-                            vm.NetworkConfig.PrivateIp != nodeIpAddress)
-                        {
-                            _logger.LogInformation(
-                                "VM {VmId} IP address updated: {OldIp} -> {NewIp}",
-                                vm.Id, vm.NetworkConfig.PrivateIp, nodeIpAddress);
-                            vm.NetworkConfig.PrivateIp = nodeIpAddress;
-                            vm.UpdatedAt = DateTime.UtcNow;
-                        }
-                    }
-                    break;
-
-                case VmStatus.Stopping:
-                    // VM is being stopped - check if node reports it as stopped
-                    if (!isReportedByNode ||
-                        string.Equals(nodeState, "Stopped", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogInformation("VM {VmId} stopped (reported by node {NodeId})", vm.Id, nodeId);
-                        vm.Status = VmStatus.Stopped;
-                        vm.PowerState = VmPowerState.Off;
-                        vm.StoppedAt = DateTime.UtcNow;
-                        vm.UpdatedAt = DateTime.UtcNow;
-
-                        await _eventService.EmitAsync(new OrchestratorEvent
-                        {
-                            Type = EventType.VmStopped,
-                            ResourceType = "vm",
-                            ResourceId = vm.Id,
-                            Payload = new { NodeId = nodeId }
-                        });
-                    }
-                    break;
-
-                case VmStatus.Stopped:
-                    // VM is stopped - check if node reports it as running (manual start?)
-                    if (isReportedByNode &&
-                        string.Equals(nodeState, "Running", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogInformation(
-                            "VM {VmId} started (reported by node {NodeId}, was stopped)",
-                            vm.Id, nodeId);
-                        vm.Status = VmStatus.Running;
-                        vm.PowerState = VmPowerState.Running;
-                        vm.StartedAt = DateTime.UtcNow;
-                        vm.UpdatedAt = DateTime.UtcNow;
-
-                        if (!string.IsNullOrEmpty(nodeIpAddress))
-                        {
-                            vm.NetworkConfig.PrivateIp = nodeIpAddress;
-                        }
-
-                        await _eventService.EmitAsync(new OrchestratorEvent
-                        {
-                            Type = EventType.VmStarted,
-                            ResourceType = "vm",
-                            ResourceId = vm.Id,
-                            Payload = new { NodeId = nodeId, IpAddress = nodeIpAddress }
-                        });
-                    }
-                    break;
+                // If owner is unknown, try to notify admins
+                if (recoveredVm.OwnerId == "unknown")
+                {
+                    _logger.LogWarning(
+                        "Recovered VM {VmId} has unknown owner - manual intervention may be required",
+                        vmId);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Failed to add recovered VM {VmId} to datastore", vmId);
             }
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to recover VM {VmId} from node {NodeId}", vmId, nodeId);
+        }
+    }
+
+    /// <summary>
+    /// Parse VM state string to VmStatus enum
+    /// </summary>
+    private VmStatus ParseVmStatus(string? state)
+    {
+        if (string.IsNullOrEmpty(state)) return VmStatus.Error;
+
+        return state.ToLower() switch
+        {
+            "running" => VmStatus.Running,
+            "stopped" => VmStatus.Stopped,
+            "paused" => VmStatus.Running,  // Paused VMs are still considered running
+            "stopping" => VmStatus.Stopping,
+            "starting" => VmStatus.Provisioning,
+            "creating" => VmStatus.Provisioning,
+            "failed" => VmStatus.Error,
+            _ => VmStatus.Error
+        };
+    }
+
+    /// <summary>
+    /// Parse VM state string to VmPowerState enum
+    /// </summary>
+    private VmPowerState ParsePowerState(string? state)
+    {
+        if (string.IsNullOrEmpty(state)) return VmPowerState.Off;
+
+        return state.ToLower() switch
+        {
+            "running" => VmPowerState.Running,
+            "paused" => VmPowerState.Paused,
+            "stopping" => VmPowerState.ShuttingDown,
+            "starting" => VmPowerState.Starting,
+            _ => VmPowerState.Off
+        };
     }
 
     /// <summary>
