@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using MongoDB.Driver;
 using Orchestrator.Models;
 
@@ -71,6 +71,102 @@ public class DataStore
     }
 
     /// <summary>
+    /// Create MongoDB indexes for optimal query performance
+    /// </summary>
+    private void CreateIndexes()
+    {
+        if (!_useMongoDB) return;
+
+        try
+        {
+            // Nodes indexes
+            NodesCollection!.Indexes.CreateMany(new[]
+            {
+                new CreateIndexModel<Node>(
+                    Builders<Node>.IndexKeys.Ascending(n => n.WalletAddress),
+                    new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
+                new CreateIndexModel<Node>(
+                    Builders<Node>.IndexKeys.Ascending(n => n.Status),
+                    new CreateIndexOptions { Name = "idx_status" }),
+                new CreateIndexModel<Node>(
+                    Builders<Node>.IndexKeys.Ascending(n => n.LastHeartbeat),
+                    new CreateIndexOptions { Name = "idx_heartbeat" }),
+                new CreateIndexModel<Node>(
+                    Builders<Node>.IndexKeys.Ascending(n => n.Region).Ascending(n => n.Zone),
+                    new CreateIndexOptions { Name = "idx_region_zone" })
+            });
+
+            // VMs indexes
+            VmsCollection!.Indexes.CreateMany(new[]
+            {
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerId),
+                    new CreateIndexOptions { Name = "idx_owner" }),
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.NodeId),
+                    new CreateIndexOptions { Name = "idx_node" }),
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.Status),
+                    new CreateIndexOptions { Name = "idx_status" }),
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerWallet),
+                    new CreateIndexOptions { Name = "idx_wallet" }),
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys.Descending(v => v.CreatedAt),
+                    new CreateIndexOptions { Name = "idx_created" }),
+                new CreateIndexModel<VirtualMachine>(
+                    Builders<VirtualMachine>.IndexKeys
+                        .Ascending(v => v.OwnerId)
+                        .Descending(v => v.CreatedAt),
+                    new CreateIndexOptions { Name = "idx_owner_created" })
+            });
+
+            // Users indexes
+            UsersCollection!.Indexes.CreateMany(new[]
+            {
+                new CreateIndexModel<User>(
+                    Builders<User>.IndexKeys.Ascending(u => u.WalletAddress),
+                    new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
+                new CreateIndexModel<User>(
+                    Builders<User>.IndexKeys.Ascending(u => u.Email),
+                    new CreateIndexOptions
+                    {
+                        Name = "idx_email",
+                        Unique = true,
+                        Sparse = true // Allow null emails
+                    }),
+                new CreateIndexModel<User>(
+                    Builders<User>.IndexKeys.Ascending(u => u.Status),
+                    new CreateIndexOptions { Name = "idx_status" })
+            });
+
+            // Events indexes
+            EventsCollection!.Indexes.CreateMany(new[]
+            {
+                new CreateIndexModel<OrchestratorEvent>(
+                    Builders<OrchestratorEvent>.IndexKeys.Descending(e => e.Timestamp),
+                    new CreateIndexOptions { Name = "idx_timestamp" }),
+                new CreateIndexModel<OrchestratorEvent>(
+                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.Type),
+                    new CreateIndexOptions { Name = "idx_type" }),
+                new CreateIndexModel<OrchestratorEvent>(
+                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.ResourceId),
+                    new CreateIndexOptions { Name = "idx_resource" }),
+                new CreateIndexModel<OrchestratorEvent>(
+                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.UserId),
+                    new CreateIndexOptions { Name = "idx_user" })
+            });
+
+            _logger.LogInformation("✓ MongoDB indexes created successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create MongoDB indexes");
+            // Don't throw - indexes are optimization, not critical
+        }
+    }
+
+    /// <summary>
     /// Load state from MongoDB on startup
     /// </summary>
     public async Task LoadStateFromDatabaseAsync()
@@ -125,7 +221,7 @@ public class DataStore
 
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             _logger.LogInformation(
-                "State loaded from MongoDB in {Elapsed}ms: {Nodes} nodes, {VMs} VMs, {Users} users",
+                "✓ State loaded from MongoDB in {Elapsed}ms: {Nodes} nodes, {VMs} VMs, {Users} users",
                 elapsed, nodes.Count, vms.Count, users.Count);
         }
         catch (Exception ex)
@@ -136,7 +232,7 @@ public class DataStore
     }
 
     /// <summary>
-    /// Save or update a node (write-through to MongoDB)
+    /// Save or update a node (write-through to MongoDB with retry)
     /// </summary>
     public async Task SaveNodeAsync(Node node)
     {
@@ -144,18 +240,13 @@ public class DataStore
 
         if (_useMongoDB)
         {
-            try
+            await RetryMongoOperationAsync(async () =>
             {
                 await NodesCollection!.ReplaceOneAsync(
                     n => n.Id == node.Id,
                     node,
                     new ReplaceOptions { IsUpsert = true });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to persist node {NodeId} to MongoDB", node.Id);
-                // Continue - in-memory update succeeded
-            }
+            }, $"persist node {node.Id}");
         }
     }
 
@@ -169,19 +260,15 @@ public class DataStore
 
         if (_useMongoDB)
         {
-            try
+            await RetryMongoOperationAsync(async () =>
             {
                 await NodesCollection!.DeleteOneAsync(n => n.Id == nodeId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to delete node {NodeId} from MongoDB", nodeId);
-            }
+            }, $"delete node {nodeId}");
         }
     }
 
     /// <summary>
-    /// Save or update a VM (write-through to MongoDB)
+    /// Save or update a VM (write-through to MongoDB with retry)
     /// </summary>
     public async Task SaveVmAsync(VirtualMachine vm)
     {
@@ -190,18 +277,13 @@ public class DataStore
 
         if (_useMongoDB)
         {
-            try
+            await RetryMongoOperationAsync(async () =>
             {
                 await VmsCollection!.ReplaceOneAsync(
                     v => v.Id == vm.Id,
                     vm,
                     new ReplaceOptions { IsUpsert = true });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to persist VM {VmId} to MongoDB", vm.Id);
-                // Continue - in-memory update succeeded
-            }
+            }, $"persist VM {vm.Id}");
         }
     }
 
@@ -217,17 +299,13 @@ public class DataStore
 
             if (_useMongoDB)
             {
-                try
+                await RetryMongoOperationAsync(async () =>
                 {
                     await VmsCollection!.ReplaceOneAsync(
                         v => v.Id == vmId,
                         vm,
                         new ReplaceOptions { IsUpsert = true });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to mark VM {VmId} as deleted in MongoDB", vmId);
-                }
+                }, $"mark VM {vmId} as deleted");
             }
         }
     }
@@ -241,17 +319,13 @@ public class DataStore
 
         if (_useMongoDB)
         {
-            try
+            await RetryMongoOperationAsync(async () =>
             {
                 await UsersCollection!.ReplaceOneAsync(
                     u => u.Id == user.Id,
                     user,
                     new ReplaceOptions { IsUpsert = true });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to persist user {UserId} to MongoDB", user.Id);
-            }
+            }, $"persist user {user.Id}");
         }
     }
 
@@ -270,14 +344,10 @@ public class DataStore
 
         if (_useMongoDB)
         {
-            try
+            await RetryMongoOperationAsync(async () =>
             {
                 await EventsCollection!.InsertOneAsync(evt);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to persist event {EventId} to MongoDB", evt.Id);
-            }
+            }, $"persist event {evt.Id}", maxRetries: 2); // Events are less critical
         }
     }
 
@@ -341,56 +411,80 @@ public class DataStore
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to sync state to MongoDB");
+            throw;
         }
     }
 
     /// <summary>
-    /// Create MongoDB indexes for performance
+    /// Retry MongoDB operations with exponential backoff
     /// </summary>
-    private void CreateIndexes()
+    private async Task RetryMongoOperationAsync(
+        Func<Task> operation,
+        string operationName,
+        int maxRetries = 3)
     {
-        try
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
         {
-            // Node indexes
-            NodesCollection?.Indexes.CreateOne(
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.Status)));
-            NodesCollection?.Indexes.CreateOne(
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.WalletAddress)));
+            try
+            {
+                await operation();
+                return;
+            }
+            catch (MongoException ex) when (attempt < maxRetries)
+            {
+                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
+                _logger.LogWarning(ex,
+                    "MongoDB operation '{Operation}' failed (attempt {Attempt}/{Max}) - retrying in {Delay}ms",
+                    operationName, attempt, maxRetries, delay.TotalMilliseconds);
 
-            // VM indexes
-            VmsCollection?.Indexes.CreateOne(
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerId)));
-            VmsCollection?.Indexes.CreateOne(
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.NodeId)));
-            VmsCollection?.Indexes.CreateOne(
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.Status)));
+                await Task.Delay(delay);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to {Operation} to MongoDB (attempt {Attempt}/{Max})",
+                    operationName, attempt, maxRetries);
 
-            // User indexes
-            UsersCollection?.Indexes.CreateOne(
-                new CreateIndexModel<User>(
-                    Builders<User>.IndexKeys.Ascending(u => u.WalletAddress),
-                    new CreateIndexOptions { Unique = true }));
-
-            // Event indexes
-            EventsCollection?.Indexes.CreateOne(
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Descending(e => e.Timestamp)));
-            EventsCollection?.Indexes.CreateOne(
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.ResourceId)));
-
-            _logger.LogDebug("MongoDB indexes created successfully");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to create some MongoDB indexes");
+                if (attempt == maxRetries)
+                {
+                    // Log but don't throw - in-memory update succeeded
+                    _logger.LogWarning(
+                        "MongoDB persistence failed for {Operation} - continuing with in-memory state only",
+                        operationName);
+                }
+            }
         }
     }
+
+    // =====================================================
+    // Pending Commands Queue Management
+    // =====================================================
+
+    public void AddPendingCommand(string nodeId, NodeCommand command)
+    {
+        var queue = PendingNodeCommands.GetOrAdd(nodeId, _ => new ConcurrentQueue<NodeCommand>());
+        queue.Enqueue(command);
+    }
+
+    public List<NodeCommand> GetAndClearPendingCommands(string nodeId)
+    {
+        if (!PendingNodeCommands.TryRemove(nodeId, out var queue))
+        {
+            return new List<NodeCommand>();
+        }
+
+        var commands = new List<NodeCommand>();
+        while (queue.TryDequeue(out var cmd))
+        {
+            commands.Add(cmd);
+        }
+
+        return commands;
+    }
+
+    // =====================================================
+    // Default Data Seeding
+    // =====================================================
 
     private void SeedDefaultData()
     {
@@ -425,35 +519,11 @@ public class DataStore
             {
                 Id = "debian-12",
                 Name = "Debian 12 (Bookworm)",
-                Description = "Debian stable release",
+                Description = "Debian Bookworm - Stable Release",
                 OsFamily = "linux",
                 OsName = "debian",
                 Version = "12",
-                SizeGb = 2,
-                IsPublic = true,
-                CreatedAt = DateTime.UtcNow
-            },
-            new VmImage
-            {
-                Id = "fedora-40",
-                Name = "Fedora 40",
-                Description = "Fedora Workstation",
-                OsFamily = "linux",
-                OsName = "fedora",
-                Version = "40",
                 SizeGb = 3,
-                IsPublic = true,
-                CreatedAt = DateTime.UtcNow
-            },
-            new VmImage
-            {
-                Id = "alpine-3.19",
-                Name = "Alpine Linux 3.19",
-                Description = "Lightweight Linux distribution",
-                OsFamily = "linux",
-                OsName = "alpine",
-                Version = "3.19",
-                SizeGb = 1,
                 IsPublic = true,
                 CreatedAt = DateTime.UtcNow
             }
@@ -469,63 +539,23 @@ public class DataStore
         {
             new VmPricingTier
             {
-                Id = "nano",
-                Name = "Nano",
+                Id = "standard-small",
+                Name = "Standard Small",
                 CpuCores = 1,
-                MemoryMb = 512,
-                StorageGb = 10,
-                HourlyPriceUsd = 0.005m,
-                HourlyPriceCrypto = 0.005m
+                MemoryMb = 2048,
+                DiskGb = 20,
+                HourlyRateCrypto = 0.01m,
+                CryptoSymbol = "USDC"
             },
             new VmPricingTier
             {
-                Id = "small",
-                Name = "Small",
-                CpuCores = 1,
-                MemoryMb = 1024,
-                StorageGb = 20,
-                HourlyPriceUsd = 0.01m,
-                HourlyPriceCrypto = 0.01m
-            },
-            new VmPricingTier
-            {
-                Id = "medium",
-                Name = "Medium",
+                Id = "standard-medium",
+                Name = "Standard Medium",
                 CpuCores = 2,
                 MemoryMb = 4096,
-                StorageGb = 40,
-                HourlyPriceUsd = 0.04m,
-                HourlyPriceCrypto = 0.04m
-            },
-            new VmPricingTier
-            {
-                Id = "large",
-                Name = "Large",
-                CpuCores = 4,
-                MemoryMb = 8192,
-                StorageGb = 80,
-                HourlyPriceUsd = 0.08m,
-                HourlyPriceCrypto = 0.08m
-            },
-            new VmPricingTier
-            {
-                Id = "xl",
-                Name = "Extra Large",
-                CpuCores = 8,
-                MemoryMb = 16384,
-                StorageGb = 160,
-                HourlyPriceUsd = 0.16m,
-                HourlyPriceCrypto = 0.16m
-            },
-            new VmPricingTier
-            {
-                Id = "2xl",
-                Name = "2X Large",
-                CpuCores = 16,
-                MemoryMb = 32768,
-                StorageGb = 320,
-                HourlyPriceUsd = 0.32m,
-                HourlyPriceCrypto = 0.32m
+                DiskGb = 40,
+                HourlyRateCrypto = 0.02m,
+                CryptoSymbol = "USDC"
             }
         };
 
@@ -533,34 +563,5 @@ public class DataStore
         {
             PricingTiers.TryAdd(tier.Id, tier);
         }
-    }
-
-    // =====================================================
-    // Legacy methods for backward compatibility
-    // =====================================================
-
-    public void AddEvent(OrchestratorEvent evt)
-    {
-        _ = SaveEventAsync(evt); // Fire and forget
-    }
-
-    public void AddPendingCommand(string nodeId, NodeCommand command)
-    {
-        var queue = PendingNodeCommands.GetOrAdd(nodeId, _ => new ConcurrentQueue<NodeCommand>());
-        queue.Enqueue(command);
-    }
-
-    public List<NodeCommand> GetAndClearPendingCommands(string nodeId)
-    {
-        if (!PendingNodeCommands.TryRemove(nodeId, out var queue))
-            return new List<NodeCommand>();
-
-        var commands = new List<NodeCommand>();
-        while (queue.TryDequeue(out var cmd))
-        {
-            commands.Add(cmd);
-        }
-
-        return commands;
     }
 }

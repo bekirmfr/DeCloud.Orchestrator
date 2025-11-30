@@ -65,9 +65,10 @@ public class OrchestratorEvent
     public EventType Type { get; set; }
     public string ResourceType { get; set; } = string.Empty;   // "vm", "node", "user"
     public string ResourceId { get; set; } = string.Empty;
+    public string? NodeId { get; set; }                        // FIXED: Added for node/VM event association
+    public string? UserId { get; set; }                        // Associated user ID
     public object? Payload { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-    public string? UserId { get; set; }
 }
 
 public enum EventType
@@ -158,8 +159,8 @@ public class VmPricingTier
     public string Name { get; set; } = string.Empty;           // e.g., "small", "medium", "large"
     public int CpuCores { get; set; }
     public long MemoryMb { get; set; }
-    public long StorageGb { get; set; }
+    public long DiskGb { get; set; }                           // FIXED: Changed from StorageGb to match DataStore usage
     public decimal HourlyPriceUsd { get; set; }
-    public decimal HourlyPriceCrypto { get; set; }
+    public decimal HourlyRateCrypto { get; set; }              // FIXED: Changed from HourlyPriceCrypto to match DataStore usage
     public string CryptoSymbol { get; set; } = "USDC";
 }
