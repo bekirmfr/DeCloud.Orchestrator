@@ -295,6 +295,13 @@ public class NodeService : INodeService
             "Discovered unknown VM {VmId} on node {NodeId} - attempting state recovery",
             vmId, nodeId);
 
+        // ✅ Check if already recovered
+        if (_dataStore.VirtualMachines.ContainsKey(vmId))
+        {
+            _logger.LogDebug("VM {VmId} already recovered, skipping duplicate recovery", vmId);
+            return;
+        }
+
         try
         {
             // =====================================================
