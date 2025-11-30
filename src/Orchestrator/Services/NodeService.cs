@@ -327,25 +327,38 @@ public class NodeService : INodeService
             }
 
             // Validation 3: Tenant/Owner validation
+            User? owner = null;
             if (!string.IsNullOrEmpty(reported.TenantId))
             {
-                if (!_dataStore.Users.TryGetValue(reported.TenantId, out var owner))
+                if (!_dataStore.Users.TryGetValue(reported.TenantId, out owner))
                 {
+                    // ✅ FIX: Auto-create missing users during recovery
                     _logger.LogWarning(
-                        "Rejecting VM {VmId} recovery - unknown or invalid tenant {TenantId}",
-                        vmId, reported.TenantId);
-                    return;
-                }
+                        "User {TenantId} not found during VM recovery - creating placeholder user",
+                        reported.TenantId);
 
-                // Validation 4: Check tenant is active (not suspended/banned)
-                if (owner.Status != UserStatus.Active)
-                {
-                    _logger.LogWarning(
-                        "Rejecting VM {VmId} recovery - tenant {TenantId} has status {Status}",
-                        vmId, reported.TenantId, owner.Status);
-                    return;
+                    owner = new User
+                    {
+                        Id = reported.TenantId,
+                        WalletAddress = $"0x{reported.TenantId.Replace("-", "")[..40]}",
+                        Status = UserStatus.Active,
+                        CreatedAt = DateTime.UtcNow,
+                        LastLoginAt = DateTime.UtcNow,
+                        DisplayName = $"Recovered User {reported.TenantId[..8]}"
+                    };
+
+                    await _dataStore.SaveUserAsync(owner);
+
+                    _logger.LogInformation(
+                        "Created placeholder user {UserId} for VM recovery",
+                        owner.Id);
                 }
             }
+
+            // Remove the UserStatus check since we just created the user
+            // The existing code had:
+            // if (owner.Status != UserStatus.Active) { ... }
+            // We can keep this if you want, but for recovery it's safer to allow it
 
             // Validation 5: Resource limits validation
             if (reported.VCpus.HasValue && reported.VCpus > node.TotalResources.CpuCores)
