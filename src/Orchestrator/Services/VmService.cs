@@ -300,6 +300,7 @@ public class VmService : IVmService
 
         // Mark as deleted (soft delete with persistence)
         await _dataStore.DeleteVmAsync(vmId);
+        await _dataStore.SaveVmAsync(vm);
 
         // Update user quotas
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
@@ -406,6 +407,8 @@ public class VmService : IVmService
         vm.NodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
+
+        await _dataStore.SaveVmAsync(vm);
 
         string? sshPublicKey = vm.Spec.SshPublicKey;
         if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
