@@ -14,6 +14,7 @@ public interface INodeService
     Task<List<Node>> GetAvailableNodesForVmAsync(VmSpec spec);
     Task<bool> UpdateNodeStatusAsync(string nodeId, NodeStatus status);
     Task<bool> RemoveNodeAsync(string nodeId);
+    Task CheckNodeHealthAsync();
 }
 
 public class NodeService : INodeService
@@ -533,5 +534,86 @@ public class NodeService : INodeService
         var bytes = System.Text.Encoding.UTF8.GetBytes(token);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash);
+    }
+
+    /// <summary>
+    /// Check health of all nodes and mark offline if heartbeat timeout exceeded
+    /// Called periodically by NodeHealthMonitorService background service
+    /// </summary>
+    public async Task CheckNodeHealthAsync()
+    {
+        var heartbeatTimeout = TimeSpan.FromMinutes(2); // 2 minutes without heartbeat = offline
+        var now = DateTime.UtcNow;
+
+        var onlineNodes = _dataStore.Nodes.Values
+            .Where(n => n.Status == NodeStatus.Online)
+            .ToList();
+
+        foreach (var node in onlineNodes)
+        {
+            var timeSinceLastHeartbeat = now - node.LastHeartbeat;
+
+            if (timeSinceLastHeartbeat > heartbeatTimeout)
+            {
+                _logger.LogWarning(
+                    "Node {NodeId} ({Name}) marked as offline - no heartbeat for {Minutes:F1} minutes",
+                    node.Id, node.Name, timeSinceLastHeartbeat.TotalMinutes);
+
+                node.Status = NodeStatus.Offline;
+                await _dataStore.SaveNodeAsync(node);
+
+                await _eventService.EmitAsync(new OrchestratorEvent
+                {
+                    Type = EventType.NodeOffline,
+                    ResourceType = "node",
+                    ResourceId = node.Id,
+                    Payload = new
+                    {
+                        LastHeartbeat = node.LastHeartbeat,
+                        TimeoutMinutes = timeSinceLastHeartbeat.TotalMinutes
+                    }
+                });
+
+                // Mark all VMs on this node as in error state
+                await MarkNodeVmsAsErrorAsync(node.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mark all VMs on an offline node as in error state
+    /// </summary>
+    private async Task MarkNodeVmsAsErrorAsync(string nodeId)
+    {
+        var nodeVms = _dataStore.VirtualMachines.Values
+            .Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
+            .ToList();
+
+        foreach (var vm in nodeVms)
+        {
+            _logger.LogWarning(
+                "VM {VmId} on offline node {NodeId} marked as error",
+                vm.Id, nodeId);
+
+            vm.Status = VmStatus.Error;
+            vm.StatusMessage = "Node went offline";
+            vm.UpdatedAt = DateTime.UtcNow;
+
+            await _dataStore.SaveVmAsync(vm);
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmError,
+                ResourceType = "vm",
+                ResourceId = vm.Id,
+                UserId = vm.OwnerId,
+                NodeId = nodeId,
+                Payload = new
+                {
+                    Reason = "Node offline",
+                    NodeId = nodeId
+                }
+            });
+        }
     }
 }

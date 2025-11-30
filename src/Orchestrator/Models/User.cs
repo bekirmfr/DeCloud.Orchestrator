@@ -71,6 +71,16 @@ public enum UserStatus
     Deleted
 }
 
+/// <summary>
+/// Request to authenticate with crypto wallet signature
+/// </summary>
+public record WalletAuthRequest(
+    string WalletAddress,
+    string Signature,
+    string Message,
+    long Timestamp
+);
+
 // DTOs for API
 public record AuthRequest(
     string WalletAddress,

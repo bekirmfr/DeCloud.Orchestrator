@@ -5,12 +5,14 @@ using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Data;
 using Orchestrator.Models;
+using Nethereum.Signer;
 
 namespace Orchestrator.Services;
 
 public interface IUserService
 {
     Task<AuthResponse?> AuthenticateAsync(AuthRequest request);
+    Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request);  // ADDED
     Task<AuthResponse?> RefreshTokenAsync(string refreshToken);
     Task<User?> GetUserAsync(string userId);
     Task<User?> GetUserByWalletAsync(string walletAddress);
@@ -66,6 +68,117 @@ public class UserService : IUserService
         var expiresAt = DateTime.UtcNow.AddHours(24);
 
         return new AuthResponse(accessToken, refreshToken, expiresAt, user);
+    }
+
+    /// <summary>
+    /// Authenticate user with crypto wallet signature verification
+    /// SECURITY: Verifies the signature was created by the wallet owner
+    /// </summary>
+    public async Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request)
+    {
+        try
+        {
+            // Validation 1: Wallet address format
+            if (string.IsNullOrEmpty(request.WalletAddress) ||
+                !request.WalletAddress.StartsWith("0x") ||
+                request.WalletAddress.Length != 42)
+            {
+                _logger.LogWarning("Invalid wallet address format: {Wallet}", request.WalletAddress);
+                return null;
+            }
+
+            // Validation 2: Timestamp (prevent replay attacks)
+            var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var timestampDifference = Math.Abs(currentTimestamp - request.Timestamp);
+
+            if (timestampDifference > 300) // 5 minutes tolerance
+            {
+                _logger.LogWarning(
+                    "Timestamp too old or in future for wallet {Wallet}: difference {Diff}s",
+                    request.WalletAddress, timestampDifference);
+                return null;
+            }
+
+            // Validation 3: Verify signature
+            if (!VerifyWalletSignature(request.WalletAddress, request.Message, request.Signature))
+            {
+                _logger.LogWarning(
+                    "Invalid signature for wallet {Wallet}",
+                    request.WalletAddress);
+                return null;
+            }
+
+            _logger.LogInformation(
+                "Wallet signature verified successfully for {Wallet}",
+                request.WalletAddress);
+
+            // Create or get user
+            var user = await GetOrCreateUserAsync(request.WalletAddress);
+            user.LastLoginAt = DateTime.UtcNow;
+            await _dataStore.SaveUserAsync(user);
+
+            // Generate tokens
+            var (accessToken, refreshToken) = GenerateTokens(user);
+
+            var refreshTokenHash = HashString(refreshToken);
+            _dataStore.UserSessions[refreshTokenHash] = user.Id;
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.UserLoggedIn,
+                ResourceType = "user",
+                ResourceId = user.Id,
+                UserId = user.Id,
+                Payload = new
+                {
+                    AuthMethod = "wallet-signature",
+                    WalletAddress = request.WalletAddress
+                }
+            });
+
+            var expiresAt = DateTime.UtcNow.AddHours(24);
+
+            return new AuthResponse(accessToken, refreshToken, expiresAt, user);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during wallet authentication for {Wallet}", request.WalletAddress);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Verify that the signature was created by the wallet owner
+    /// Uses Nethereum library for Ethereum signature verification
+    /// </summary>
+    private bool VerifyWalletSignature(string walletAddress, string message, string signature)
+    {
+        try
+        {
+            // Use Nethereum's EthereumMessageSigner to verify the signature
+            var signer = new EthereumMessageSigner();
+            var recoveredAddress = signer.EncodeUTF8AndEcRecover(message, signature);
+
+            // Compare addresses (case-insensitive)
+            var isValid = string.Equals(
+                recoveredAddress,
+                walletAddress,
+                StringComparison.OrdinalIgnoreCase);
+
+            if (!isValid)
+            {
+                _logger.LogWarning(
+                    "Signature verification failed: expected {Expected}, got {Actual}",
+                    walletAddress, recoveredAddress);
+            }
+
+            return isValid;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception during signature verification");
+            return false;
+        }
     }
 
     public async Task<AuthResponse?> RefreshTokenAsync(string refreshToken)
