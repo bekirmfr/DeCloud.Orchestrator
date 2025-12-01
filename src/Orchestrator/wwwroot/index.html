@@ -7,7 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
+    <!-- WalletConnect Provider for mobile wallet support -->
+    <script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.11.2/dist/index.umd.min.js"></script>
+    <!-- Ethers.js for Ethereum interactions -->
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
     <style>
         :root {
             --bg-deep: #0a0b0f;
@@ -177,6 +180,8 @@
             border-radius: 8px;
             font-size: 14px;
             display: none;
+            line-height: 1.5;
+            word-wrap: break-word;
         }
 
         .login-status.error {
@@ -200,6 +205,8 @@
             color: #10b981;
         }
 
+        .login-status a { color: #10b981; text-decoration: underline; }
+
         .login-footer {
             margin-top: 32px;
             font-size: 12px;
@@ -219,6 +226,136 @@
         }
 
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* =============================================
+           WALLET OPTIONS MODAL (for desktop choice)
+           ============================================= */
+        .wallet-options-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .wallet-options-modal {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 360px;
+            width: 90%;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .wallet-options-title {
+            color: var(--text-primary);
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0 0 8px 0;
+            text-align: center;
+        }
+
+        .wallet-options-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin: 0 0 24px 0;
+            text-align: center;
+        }
+
+        .wallet-options-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .wallet-option {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            width: 100%;
+            padding: 16px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-default);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .wallet-option:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-primary);
+            transform: translateY(-2px);
+        }
+
+        .wallet-option:active { transform: translateY(0); }
+
+        .wallet-option-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-elevated);
+            border-radius: 12px;
+            color: var(--text-primary);
+        }
+
+        .wallet-option-icon svg { width: 28px; height: 28px; }
+        .wallet-option-icon.walletconnect-icon { background: linear-gradient(135deg, #3b99fc 0%, #2d7dd2 100%); }
+
+        .wallet-option-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            text-align: left;
+        }
+
+        .wallet-option-name {
+            color: var(--text-primary);
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .wallet-option-desc {
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .wallet-options-cancel {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .wallet-options-cancel:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
 
         /* Connected wallet display */
         .wallet-badge.connected {
@@ -514,75 +651,71 @@
         }
         .vm-table tr { border-bottom: 1px solid var(--border-subtle); transition: background var(--transition-fast); }
         .vm-table tr:hover { background: var(--bg-secondary); }
-        .vm-table tr:last-child { border-bottom: none; }
 
         .vm-name { display: flex; align-items: center; gap: 12px; }
 
         .vm-icon {
             width: 36px;
             height: 36px;
-            background: var(--bg-secondary);
+            background: var(--glow-secondary);
             border-radius: var(--radius-sm);
             display: flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-secondary);
+            color: var(--accent-secondary);
         }
 
         .vm-id { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 
-        /* Status Badges */
         .status-badge {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 10px;
+            padding: 6px 12px;
             border-radius: 20px;
             font-size: 12px;
             font-weight: 600;
         }
 
-        .status-badge.running { background: rgba(0, 212, 170, 0.1); color: var(--accent-primary); }
-        .status-badge.stopped { background: rgba(107, 114, 128, 0.2); color: var(--text-muted); }
-        .status-badge.provisioning { background: rgba(0, 168, 255, 0.1); color: var(--accent-secondary); }
-        .status-badge.error { background: rgba(239, 68, 68, 0.1); color: var(--accent-danger); }
-
         .status-dot {
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: currentColor;
         }
 
-        .status-badge.running .status-dot { animation: pulse 2s infinite; }
+        .status-badge.running { background: rgba(0, 212, 170, 0.1); color: var(--accent-primary); }
+        .status-badge.running .status-dot { background: var(--accent-primary); }
+        .status-badge.stopped { background: rgba(107, 114, 128, 0.1); color: var(--text-muted); }
+        .status-badge.stopped .status-dot { background: var(--text-muted); }
+        .status-badge.provisioning { background: rgba(0, 168, 255, 0.1); color: var(--accent-secondary); }
+        .status-badge.provisioning .status-dot { background: var(--accent-secondary); }
+        .status-badge.error { background: rgba(239, 68, 68, 0.1); color: var(--accent-danger); }
+        .status-badge.error .status-dot { background: var(--accent-danger); }
 
-        /* Action Buttons */
         .action-btn {
-            padding: 6px;
             background: var(--bg-secondary);
-            border: 1px solid var(--border-subtle);
+            border: 1px solid var(--border-default);
             border-radius: var(--radius-sm);
+            padding: 8px;
             color: var(--text-secondary);
             cursor: pointer;
             transition: all var(--transition-fast);
+            margin-right: 4px;
         }
 
-        .action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-default); }
-        .action-btn.danger:hover { color: var(--accent-danger); border-color: var(--accent-danger); }
+        .action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-primary); }
+        .action-btn.danger:hover { border-color: var(--accent-danger); color: var(--accent-danger); }
 
         /* Node Items */
         .node-item {
             display: flex;
             align-items: center;
             gap: 16px;
-            padding: 16px;
-            border-radius: var(--radius-md);
-            margin-bottom: 12px;
-            background: var(--bg-secondary);
-            transition: all var(--transition-fast);
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border-subtle);
         }
 
-        .node-item:hover { background: var(--bg-hover); }
+        .node-item:last-child { border-bottom: none; }
 
         .node-status-indicator {
             width: 10px;
@@ -675,15 +808,18 @@
             box-shadow: 0 0 0 3px var(--glow-primary);
         }
 
-        .form-input::placeholder { color: var(--text-muted); }
         .form-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+        /* Pages */
+        .page { display: none; }
+        .page.active { display: block; }
 
         /* Toast */
         .toast-container {
             position: fixed;
             bottom: 24px;
             right: 24px;
-            z-index: 2000;
+            z-index: 10000;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -697,11 +833,14 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
             animation: slideIn 0.3s ease;
+            min-width: 300px;
         }
 
-        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
 
         .toast.success { border-left: 3px solid var(--accent-primary); }
         .toast.error { border-left: 3px solid var(--accent-danger); }
@@ -709,145 +848,14 @@
         .toast-icon { width: 20px; height: 20px; }
         .toast.success .toast-icon { color: var(--accent-primary); }
         .toast.error .toast-icon { color: var(--accent-danger); }
+        .toast.info .toast-icon { color: var(--accent-secondary); }
 
-        /* Page visibility */
-        .page { display: none; }
-        .page.active { display: block; }
-
-        /* SSH Key styles */
-        .ssh-key-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 16px;
-            background: var(--bg-secondary);
-            border-radius: var(--radius-md);
-            margin-bottom: 12px;
-        }
-
-        .ssh-key-info { display: flex; align-items: center; gap: 12px; }
-
-        .ssh-key-icon {
-            width: 40px;
-            height: 40px;
-            background: var(--bg-elevated);
-            border-radius: var(--radius-sm);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-secondary);
-        }
-
-        .ssh-key-name { font-weight: 600; margin-bottom: 4px; }
-        .ssh-key-fingerprint { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
-
-        /* SSH Tab styles */
-        .ssh-tab-btn {
-            flex: 1;
-            padding: 10px 12px;
-            font-size: 13px;
-            transition: all var(--transition-fast);
-        }
-
-        .ssh-tab-btn.active {
-            background: var(--accent-primary);
-            color: var(--bg-deep);
-            border-color: var(--accent-primary);
-        }
-
-        .ssh-dropzone {
-            border: 2px dashed var(--border-default);
-            border-radius: var(--radius-md);
-            padding: 40px 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: all var(--transition-fast);
-            background: var(--bg-secondary);
-        }
-
-        .ssh-dropzone:hover, .ssh-dropzone.dragover {
-            border-color: var(--accent-primary);
-            background: rgba(0, 212, 170, 0.05);
-        }
-
-        .ssh-dropzone code {
-            background: var(--bg-elevated);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: var(--font-mono);
-        }
-
-        /* Connection modal */
-        .connect-modal-content {
-            background: var(--bg-primary);
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-xl);
-            width: 100%;
-            max-width: 550px;
-            overflow: hidden;
-        }
-
-        .connect-modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-        .connect-modal-body { padding: 24px; overflow-y: auto; }
-
-        .connect-info-box {
-            background: var(--bg-secondary);
-            border-radius: var(--radius-md);
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-
-        .connect-info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-        .connect-info-row:last-child { border-bottom: none; }
-        .connect-info-label { color: var(--text-muted); font-size: 13px; }
-        .connect-info-value { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); }
-
+        /* Connect Info Modal */
+        .connect-info { font-family: var(--font-mono); font-size: 13px; }
         .connect-section { margin-bottom: 20px; }
-        .connect-section h4 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
-
-        .connect-code {
-            background: var(--bg-deep);
-            border-radius: var(--radius-md);
-            padding: 14px 16px;
-            position: relative;
-            margin-bottom: 8px;
-        }
-
-        .connect-code code {
-            font-family: var(--font-mono);
-            font-size: 13px;
-            color: var(--accent-primary);
-            word-break: break-all;
-        }
-
-        .connect-code-copy {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            padding: 4px 10px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-sm);
-            color: var(--text-muted);
-            font-size: 11px;
-            cursor: pointer;
-            transition: all var(--transition-fast);
-        }
-
+        .connect-section-title { font-family: var(--font-display); font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .connect-code { background: var(--bg-deep); padding: 16px; border-radius: var(--radius-md); position: relative; color: var(--accent-primary); word-break: break-all; }
+        .connect-code-copy { position: absolute; top: 8px; right: 8px; padding: 4px 10px; background: var(--bg-elevated); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 11px; cursor: pointer; transition: all var(--transition-fast); }
         .connect-code-copy:hover { background: var(--bg-hover); color: var(--text-primary); }
         .connect-note { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
 
@@ -862,6 +870,14 @@
             .main-content { margin-left: 0; }
             .stats-grid { grid-template-columns: 1fr; }
             .form-row { grid-template-columns: 1fr; }
+            .login-card { padding: 32px 24px; margin: 16px; }
+            .wallet-options-modal { width: 95%; padding: 20px; }
+        }
+
+        @media (max-width: 480px) {
+            .wallet-option { padding: 14px; }
+            .wallet-option-icon { width: 42px; height: 42px; }
+            .wallet-option-icon svg { width: 24px; height: 24px; }
         }
     </style>
 </head>
@@ -1004,9 +1020,7 @@
                         </div>
                         <div class="stat-value" id="stat-nodes">-</div>
                         <div class="stat-label">Active Nodes</div>
-                        <div class="stat-change positive" id="stat-nodes-change">↑ Online</div>
                     </div>
-
                     <div class="stat-card">
                         <div class="stat-icon vms">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1016,21 +1030,19 @@
                         </div>
                         <div class="stat-value" id="stat-vms">-</div>
                         <div class="stat-label">Virtual Machines</div>
-                        <div class="stat-change positive" id="stat-vms-running">0 running</div>
+                        <div class="stat-change positive" id="stat-vms-running">-</div>
                     </div>
-
                     <div class="stat-card">
                         <div class="stat-icon cpu">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="4" y="4" width="16" height="16" rx="2" />
                                 <rect x="9" y="9" width="6" height="6" />
-                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
+                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
                             </svg>
                         </div>
                         <div class="stat-value" id="stat-cpu">-</div>
                         <div class="stat-label">CPU Cores Available</div>
                     </div>
-
                     <div class="stat-card">
                         <div class="stat-icon memory">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1199,49 +1211,29 @@
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label">VM Name</label>
-                    <input type="text" class="form-input" id="vm-name" placeholder="my-server">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Operating System</label>
-                    <select class="form-input form-select" id="vm-image">
-                        <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
-                        <option value="ubuntu-22.04" selected>Ubuntu 22.04 LTS</option>
-                        <option value="debian-12">Debian 12</option>
-                        <option value="fedora-40">Fedora 40</option>
-                        <option value="alpine-3.19">Alpine Linux 3.19</option>
-                    </select>
+                    <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">CPU Cores</label>
-                        <select class="form-input form-select" id="vm-cpu">
-                            <option value="1">1 vCPU</option>
-                            <option value="2">2 vCPUs</option>
-                            <option value="4">4 vCPUs</option>
-                            <option value="8">8 vCPUs</option>
-                        </select>
+                        <input type="number" class="form-input" id="vm-cpu" value="2" min="1" max="16">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Memory</label>
-                        <select class="form-input form-select" id="vm-memory">
-                            <option value="512">512 MB</option>
-                            <option value="1024" selected>1 GB</option>
-                            <option value="2048">2 GB</option>
-                            <option value="4096">4 GB</option>
-                            <option value="8192">8 GB</option>
-                            <option value="16384">16 GB</option>
-                        </select>
+                        <label class="form-label">Memory (MB)</label>
+                        <input type="number" class="form-input" id="vm-memory" value="2048" min="512" step="512">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Disk</label>
-                        <select class="form-input form-select" id="vm-disk">
-                            <option value="10">10 GB</option>
-                            <option value="20" selected>20 GB</option>
-                            <option value="40">40 GB</option>
-                            <option value="80">80 GB</option>
-                            <option value="160">160 GB</option>
-                        </select>
+                        <label class="form-label">Disk (GB)</label>
+                        <input type="number" class="form-input" id="vm-disk" value="20" min="10">
                     </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Image</label>
+                    <select class="form-input" id="vm-image">
+                        <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
+                        <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
+                        <option value="debian-12">Debian 12</option>
+                    </select>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1266,66 +1258,16 @@
             <div class="modal-body">
                 <div class="form-group">
                     <label class="form-label">Key Name</label>
-                    <input type="text" class="form-input" id="ssh-key-name" placeholder="My Laptop">
+                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Public Key</label>
-                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..."></textarea>
+                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA..."></textarea>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="addSshKey()" id="add-ssh-key-btn">Add Key</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Connection Info Modal -->
-    <div class="modal-overlay" id="connect-modal-overlay">
-        <div class="connect-modal-content">
-            <div class="connect-modal-header">
-                <h3>Connect to <span id="connect-vm-name">VM</span></h3>
-                <button class="modal-close" onclick="closeConnectModal()">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="connect-modal-body">
-                <div class="connect-info-box">
-                    <div class="connect-info-row">
-                        <span class="connect-info-label">VM IP Address</span>
-                        <span class="connect-info-value" id="connect-vm-ip">-</span>
-                    </div>
-                    <div class="connect-info-row">
-                        <span class="connect-info-label">Node IP</span>
-                        <span class="connect-info-value" id="connect-node-ip">-</span>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 1: Jump Host (Recommended)</h4>
-                    <p class="connect-note">Works from anywhere.</p>
-                    <div class="connect-code">
-                        <code id="connect-jump-cmd">ssh -J root@NODE ubuntu@VM</code>
-                        <button class="connect-code-copy" onclick="copyCommand('connect-jump-cmd', this)">Copy</button>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 2: Direct SSH (Requires WireGuard)</h4>
-                    <p class="connect-note">If you have WireGuard VPN set up to the node.</p>
-                    <div class="connect-code">
-                        <code id="connect-direct-cmd">ssh ubuntu@VM</code>
-                        <button class="connect-code-copy" onclick="copyCommand('connect-direct-cmd', this)">Copy</button>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 3: Web Terminal</h4>
-                    <p class="connect-note">Click the terminal button (>_) in the VM actions to open a browser-based terminal.</p>
-                </div>
+                <button class="btn btn-primary" onclick="addSshKey()">Add Key</button>
             </div>
         </div>
     </div>
@@ -1337,137 +1279,337 @@
         // ============================================
         // CONFIGURATION
         // ============================================
-        let CONFIG = {
+        const CONFIG = {
             orchestratorUrl: localStorage.getItem('orchestratorUrl') || window.location.origin,
             wallet: null
         };
 
+        // ============================================
+        // WALLETCONNECT CONFIGURATION
+        // ============================================
+        // IMPORTANT: Get your free projectId from https://cloud.walletconnect.com
+        const WALLETCONNECT_PROJECT_ID = 'YOUR_PROJECT_ID_HERE'; // <-- REPLACE THIS!
+
+        const WALLET_CONFIG = {
+            projectId: WALLETCONNECT_PROJECT_ID,
+            chains: [1], // Mainnet
+            optionalChains: [1, 137, 42161, 10], // Mainnet, Polygon, Arbitrum, Optimism
+            metadata: {
+                name: 'DeCloud',
+                description: 'Decentralized Cloud Computing Platform',
+                url: window.location.origin,
+                icons: [window.location.origin + '/favicon.ico']
+            },
+            showQrModal: true,
+            qrModalOptions: {
+                themeMode: 'dark',
+                themeVariables: {
+                    '--wcm-accent-color': '#10b981',
+                    '--wcm-background-color': '#111827'
+                }
+            }
+        };
+
+        // ============================================
+        // STATE
+        // ============================================
         let authToken = null;
         let refreshToken = null;
         let currentUser = null;
         let tokenRefreshTimer = null;
         let nodesCache = {};
+        
+        // Wallet connection state
+        let ethersProvider = null;
+        let ethersSigner = null;
+        let connectedAddress = null;
+        let walletConnectProvider = null;
 
         // ============================================
         // INITIALIZATION
         // ============================================
         document.addEventListener('DOMContentLoaded', async () => {
+            const sessionRestored = await restoreSession();
+            if (!sessionRestored) {
+                showLogin();
+            }
+            loadSettings();
+        });
+
+        // ============================================
+        // SESSION RESTORATION
+        // ============================================
+        async function restoreSession() {
             const savedToken = localStorage.getItem('authToken');
             const savedRefreshToken = localStorage.getItem('refreshToken');
             const savedWallet = localStorage.getItem('wallet');
+            const connectionType = localStorage.getItem('connectionType');
             
             if (savedToken && savedRefreshToken && savedWallet) {
                 authToken = savedToken;
                 refreshToken = savedRefreshToken;
                 CONFIG.wallet = savedWallet;
+                connectedAddress = savedWallet;
                 
                 try {
                     const response = await api('/api/user/me');
                     if (response.success) {
                         currentUser = response.data;
+                        
+                        // Try to restore the provider connection
+                        if (connectionType === 'walletconnect' && WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE') {
+                            try {
+                                walletConnectProvider = await window.EthereumProvider.init({
+                                    projectId: WALLET_CONFIG.projectId,
+                                    chains: WALLET_CONFIG.chains,
+                                    optionalChains: WALLET_CONFIG.optionalChains,
+                                    showQrModal: false,
+                                    metadata: WALLET_CONFIG.metadata
+                                });
+                                
+                                if (walletConnectProvider.session) {
+                                    ethersProvider = new ethers.BrowserProvider(walletConnectProvider);
+                                    ethersSigner = await ethersProvider.getSigner();
+                                    setupWalletConnectListeners();
+                                }
+                            } catch (e) {
+                                console.log('WalletConnect session expired');
+                            }
+                        } else if (window.ethereum) {
+                            ethersProvider = new ethers.BrowserProvider(window.ethereum);
+                            ethersSigner = await ethersProvider.getSigner();
+                            setupInjectedProviderListeners();
+                        }
+                        
                         showDashboard();
                         setupTokenRefresh();
                         refreshData();
+                        return true;
                     } else {
                         const refreshed = await refreshAuthToken();
                         if (refreshed) {
                             showDashboard();
                             refreshData();
-                        } else {
-                            showLogin();
+                            return true;
                         }
                     }
                 } catch (e) {
                     console.error('Session verification failed:', e);
-                    showLogin();
                 }
-            } else {
-                showLogin();
             }
-
-            if (window.ethereum) {
-                window.ethereum.on('accountsChanged', handleAccountsChanged);
-                window.ethereum.on('disconnect', handleDisconnect);
-            }
-
-            loadSettings();
-        });
+            return false;
+        }
 
         // ============================================
-        // WALLET CONNECTION
+        // WALLET CONNECTION - UNIFIED APPROACH
         // ============================================
         async function connectWallet() {
             const btn = document.getElementById('connect-wallet-btn');
-            const status = document.getElementById('login-status');
             
-            if (!window.ethereum) {
-                showLoginStatus('error', 'No wallet detected. Please install MetaMask or another Web3 wallet.');
-                return;
-            }
-
             try {
                 btn.disabled = true;
                 btn.innerHTML = '<div class="spinner"></div> Connecting...';
-                showLoginStatus('info', 'Requesting wallet connection...');
-
-                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                showLoginStatus('info', 'Initializing wallet connection...');
                 
-                if (!accounts || accounts.length === 0) {
-                    throw new Error('No accounts found');
-                }
-
-                const walletAddress = accounts[0];
-                CONFIG.wallet = walletAddress;
+                // Check if WalletConnect is properly configured
+                const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
                 
-                showLoginStatus('info', 'Wallet connected. Requesting signature...');
-                btn.innerHTML = '<div class="spinner"></div> Sign Message...';
-
-                const authResult = await authenticateWithWallet(walletAddress);
+                // Check if we have an injected provider (desktop browser extension)
+                const hasInjectedProvider = typeof window.ethereum !== 'undefined';
                 
-                if (authResult.success) {
-                    showLoginStatus('success', 'Authentication successful!');
-                    
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('refreshToken', refreshToken);
-                    localStorage.setItem('wallet', walletAddress);
-                    
-                    await new Promise(r => setTimeout(r, 500));
-                    
-                    showDashboard();
-                    setupTokenRefresh();
-                    refreshData();
+                // Detect if mobile device
+                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                
+                if (isMobile && walletConnectConfigured) {
+                    // Mobile - use WalletConnect
+                    await connectWithWalletConnect();
+                } else if (!hasInjectedProvider && walletConnectConfigured) {
+                    // Desktop without extension - use WalletConnect QR
+                    await connectWithWalletConnect();
+                } else if (hasInjectedProvider && walletConnectConfigured) {
+                    // Desktop with extension - show choice
+                    await showConnectionOptions();
+                } else if (hasInjectedProvider) {
+                    // Desktop with extension, WalletConnect not configured
+                    await connectWithInjectedProvider();
                 } else {
-                    throw new Error(authResult.error || 'Authentication failed');
+                    // No options available
+                    showLoginStatus('error', 'No wallet detected. Please install MetaMask or another Web3 wallet.');
                 }
-
+                
             } catch (error) {
                 console.error('Connection error:', error);
-                
-                let errorMsg = 'Connection failed. ';
-                if (error.code === 4001) {
-                    errorMsg = 'Connection rejected. Please approve the connection request.';
-                } else if (error.message) {
-                    errorMsg += error.message;
-                }
-                
-                showLoginStatus('error', errorMsg);
-                
+                handleConnectionError(error);
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-                        <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
-                        <circle cx="18" cy="15" r="1" />
-                    </svg>
-                    Connect Wallet
-                `;
+                resetConnectButton(btn);
             }
         }
 
         // ============================================
-        // AUTHENTICATION WITH SIGNATURE
+        // WALLETCONNECT CONNECTION
         // ============================================
+        async function connectWithWalletConnect() {
+            showLoginStatus('info', 'Opening wallet selector...');
+            
+            walletConnectProvider = await window.EthereumProvider.init({
+                projectId: WALLET_CONFIG.projectId,
+                chains: WALLET_CONFIG.chains,
+                optionalChains: WALLET_CONFIG.optionalChains,
+                showQrModal: WALLET_CONFIG.showQrModal,
+                metadata: WALLET_CONFIG.metadata,
+                qrModalOptions: WALLET_CONFIG.qrModalOptions
+            });
+            
+            await walletConnectProvider.enable();
+            
+            const accounts = walletConnectProvider.accounts;
+            if (!accounts || accounts.length === 0) {
+                throw new Error('No accounts found');
+            }
+            
+            connectedAddress = accounts[0];
+            
+            ethersProvider = new ethers.BrowserProvider(walletConnectProvider);
+            ethersSigner = await ethersProvider.getSigner();
+            
+            setupWalletConnectListeners();
+            
+            await proceedWithAuthentication(connectedAddress, 'walletconnect');
+        }
+
+        // ============================================
+        // INJECTED PROVIDER (MetaMask, etc.)
+        // ============================================
+        async function connectWithInjectedProvider() {
+            showLoginStatus('info', 'Requesting wallet connection...');
+            
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            
+            if (!accounts || accounts.length === 0) {
+                throw new Error('No accounts found');
+            }
+            
+            connectedAddress = accounts[0];
+            
+            ethersProvider = new ethers.BrowserProvider(window.ethereum);
+            ethersSigner = await ethersProvider.getSigner();
+            
+            setupInjectedProviderListeners();
+            
+            await proceedWithAuthentication(connectedAddress, 'injected');
+        }
+
+        // ============================================
+        // CONNECTION OPTIONS MODAL (Desktop)
+        // ============================================
+        async function showConnectionOptions() {
+            const modal = document.createElement('div');
+            modal.id = 'wallet-options-modal';
+            modal.className = 'wallet-options-overlay';
+            modal.innerHTML = `
+                <div class="wallet-options-modal">
+                    <h3 class="wallet-options-title">Connect Wallet</h3>
+                    <p class="wallet-options-subtitle">Choose how you want to connect</p>
+                    
+                    <div class="wallet-options-list">
+                        <button class="wallet-option" id="opt-injected">
+                            <div class="wallet-option-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path d="M6 8h12M6 12h12M6 16h6"/>
+                                </svg>
+                            </div>
+                            <div class="wallet-option-info">
+                                <span class="wallet-option-name">Browser Wallet</span>
+                                <span class="wallet-option-desc">MetaMask, Coinbase, etc.</span>
+                            </div>
+                        </button>
+                        
+                        <button class="wallet-option" id="opt-walletconnect">
+                            <div class="wallet-option-icon walletconnect-icon">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6.09 10.11c3.3-3.23 8.65-3.23 11.95 0l.4.39c.16.16.16.42 0 .58l-1.36 1.33c-.08.08-.21.08-.3 0l-.55-.53c-2.3-2.25-6.03-2.25-8.33 0l-.59.57c-.08.08-.21.08-.3 0L5.65 11.1c-.16-.16-.16-.42 0-.58l.44-.41zm14.77 2.74l1.21 1.18c.16.16.16.42 0 .58l-5.46 5.34c-.16.16-.43.16-.59 0l-3.88-3.79c-.04-.04-.11-.04-.15 0l-3.88 3.79c-.16.16-.43.16-.59 0L2.07 14.6c-.16-.16-.16-.42 0-.58l1.21-1.18c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.15.43-.15.59 0z"/>
+                                </svg>
+                            </div>
+                            <div class="wallet-option-info">
+                                <span class="wallet-option-name">WalletConnect</span>
+                                <span class="wallet-option-desc">Scan with mobile wallet</span>
+                            </div>
+                        </button>
+                    </div>
+                    
+                    <button class="wallet-options-cancel" id="opt-cancel">Cancel</button>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            return new Promise((resolve, reject) => {
+                document.getElementById('opt-injected').onclick = async () => {
+                    modal.remove();
+                    try {
+                        await connectWithInjectedProvider();
+                        resolve();
+                    } catch (e) {
+                        reject(e);
+                    }
+                };
+                
+                document.getElementById('opt-walletconnect').onclick = async () => {
+                    modal.remove();
+                    try {
+                        await connectWithWalletConnect();
+                        resolve();
+                    } catch (e) {
+                        reject(e);
+                    }
+                };
+                
+                document.getElementById('opt-cancel').onclick = () => {
+                    modal.remove();
+                    reject(new Error('Connection cancelled'));
+                };
+                
+                modal.onclick = (e) => {
+                    if (e.target === modal) {
+                        modal.remove();
+                        reject(new Error('Connection cancelled'));
+                    }
+                };
+            });
+        }
+
+        // ============================================
+        // AUTHENTICATION FLOW
+        // ============================================
+        async function proceedWithAuthentication(walletAddress, connectionType) {
+            const btn = document.getElementById('connect-wallet-btn');
+            
+            CONFIG.wallet = walletAddress;
+            
+            showLoginStatus('info', 'Wallet connected. Requesting signature...');
+            btn.innerHTML = '<div class="spinner"></div> Sign Message...';
+            
+            const authResult = await authenticateWithWallet(walletAddress);
+            
+            if (authResult.success) {
+                showLoginStatus('success', 'Authentication successful!');
+                
+                localStorage.setItem('authToken', authToken);
+                localStorage.setItem('refreshToken', refreshToken);
+                localStorage.setItem('wallet', walletAddress);
+                localStorage.setItem('connectionType', connectionType);
+                
+                await new Promise(r => setTimeout(r, 500));
+                
+                showDashboard();
+                setupTokenRefresh();
+                refreshData();
+            } else {
+                throw new Error(authResult.error || 'Authentication failed');
+            }
+        }
+
         async function authenticateWithWallet(walletAddress) {
             try {
                 const messageResponse = await fetch(
@@ -1481,61 +1623,118 @@
 
                 const { message, timestamp } = messageData.data;
 
-                const provider = new ethers.BrowserProvider(window.ethereum);
-                const signer = await provider.getSigner();
-                const signature = await signer.signMessage(message);
+                // Use the unified signer (works for both WalletConnect and injected)
+                const signature = await ethersSigner.signMessage(message);
 
                 const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        walletAddress: walletAddress,
-                        signature: signature,
-                        message: message,
-                        timestamp: timestamp
+                        walletAddress,
+                        signature,
+                        message,
+                        timestamp
                     })
                 });
 
                 const authData = await authResponse.json();
-
+                
                 if (authData.success && authData.data) {
                     authToken = authData.data.accessToken;
                     refreshToken = authData.data.refreshToken;
                     currentUser = authData.data.user;
                     return { success: true };
                 } else {
-                    return { success: false, error: authData.message || 'Authentication failed' };
+                    return { success: false, error: authData.error };
                 }
 
             } catch (error) {
                 console.error('Authentication error:', error);
-                
-                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-                    return { success: false, error: 'Signature rejected' };
-                }
-                
                 return { success: false, error: error.message };
             }
+        }
+
+        // ============================================
+        // EVENT LISTENERS
+        // ============================================
+        function setupWalletConnectListeners() {
+            if (!walletConnectProvider) return;
+            
+            walletConnectProvider.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    disconnect();
+                } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
+                    showToast('Wallet changed. Please reconnect.', 'info');
+                    disconnect();
+                }
+            });
+            
+            walletConnectProvider.on('chainChanged', (chainId) => {
+                console.log('Chain changed to:', chainId);
+            });
+            
+            walletConnectProvider.on('disconnect', () => {
+                disconnect();
+            });
+        }
+
+        function setupInjectedProviderListeners() {
+            if (!window.ethereum) return;
+            
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    disconnect();
+                } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
+                    showToast('Wallet changed. Please reconnect.', 'info');
+                    disconnect();
+                }
+            });
+            
+            window.ethereum.on('disconnect', () => {
+                disconnect();
+            });
+        }
+
+        // ============================================
+        // ERROR HANDLING
+        // ============================================
+        function handleConnectionError(error) {
+            let errorMsg = 'Connection failed. ';
+            
+            if (error.code === 4001 || error.message?.includes('rejected')) {
+                errorMsg = 'Connection rejected. Please approve the connection request.';
+            } else if (error.message?.includes('cancelled')) {
+                errorMsg = 'Connection cancelled.';
+            } else if (error.message?.includes('projectId')) {
+                errorMsg = 'WalletConnect not configured. Please set up a Project ID.';
+            } else if (error.message) {
+                errorMsg += error.message;
+            }
+            
+            showLoginStatus('error', errorMsg);
+        }
+
+        function resetConnectButton(btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+                    <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+                    <circle cx="18" cy="15" r="1" />
+                </svg>
+                Connect Wallet
+            `;
         }
 
         // ============================================
         // TOKEN REFRESH
         // ============================================
         function setupTokenRefresh() {
-            const refreshInterval = 55 * 60 * 1000; // 55 minutes
-            
-            if (tokenRefreshTimer) {
-                clearInterval(tokenRefreshTimer);
-            }
-            
-            tokenRefreshTimer = setInterval(async () => {
-                await refreshAuthToken();
-            }, refreshInterval);
+            if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+            tokenRefreshTimer = setInterval(refreshAuthToken, 45 * 60 * 1000);
         }
 
         async function refreshAuthToken() {
-            if (!refreshToken) return false;
-
             try {
                 const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
                     method: 'POST',
@@ -1601,7 +1800,21 @@
         // ============================================
         // DISCONNECT / LOGOUT
         // ============================================
-        function disconnect() {
+        async function disconnect() {
+            // Disconnect WalletConnect if active
+            if (walletConnectProvider) {
+                try {
+                    await walletConnectProvider.disconnect();
+                } catch (e) {
+                    console.log('WalletConnect disconnect error:', e);
+                }
+                walletConnectProvider = null;
+            }
+            
+            ethersProvider = null;
+            ethersSigner = null;
+            connectedAddress = null;
+            
             clearSession();
             showLogin();
             showToast('Disconnected', 'info');
@@ -1617,6 +1830,7 @@
             localStorage.removeItem('authToken');
             localStorage.removeItem('refreshToken');
             localStorage.removeItem('wallet');
+            localStorage.removeItem('connectionType');
             
             if (tokenRefreshTimer) {
                 clearInterval(tokenRefreshTimer);
@@ -1630,19 +1844,6 @@
             if (walletDisplay) walletDisplay.textContent = 'Not connected';
             if (walletBadge) walletBadge.classList.remove('connected');
             if (disconnectBtn) disconnectBtn.style.display = 'none';
-        }
-
-        function handleAccountsChanged(accounts) {
-            if (accounts.length === 0) {
-                disconnect();
-            } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
-                showToast('Wallet changed. Please reconnect.', 'info');
-                disconnect();
-            }
-        }
-
-        function handleDisconnect() {
-            disconnect();
         }
 
         // ============================================
@@ -1757,29 +1958,32 @@
                         <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
                         <div class="node-info">
                             <div class="node-name">${node.name}</div>
-                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} RAM</div>
+                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)}</div>
                         </div>
                         <div class="node-metrics">
-                            <div class="node-usage">${node.currentMetrics?.cpuUsagePercent?.toFixed(0) || 0}%</div>
-                            <div class="node-usage-label">CPU</div>
+                            <div class="node-usage">${node.activeVms || 0}</div>
+                            <div class="node-usage-label">VMs</div>
                         </div>
                     </div>
                 `).join('');
 
-                document.getElementById('nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes online</div>';
-                document.getElementById('all-nodes-list').innerHTML = nodes.map(node => `
+                document.getElementById('nodes-list').innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No nodes available</p>';
+
+                const allHtml = nodes.map(node => `
                     <div class="node-item">
                         <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
                         <div class="node-info">
                             <div class="node-name">${node.name}</div>
-                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} RAM • ${node.publicIp || 'N/A'}</div>
+                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} • ${node.region || 'Unknown'}</div>
                         </div>
                         <div class="node-metrics">
-                            <div class="node-usage">${node.currentMetrics?.cpuUsagePercent?.toFixed(0) || 0}%</div>
-                            <div class="node-usage-label">CPU</div>
+                            <div class="node-usage">${node.activeVms || 0}</div>
+                            <div class="node-usage-label">Active VMs</div>
                         </div>
                     </div>
-                `).join('') || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
+                `).join('');
+
+                document.getElementById('all-nodes-list').innerHTML = allHtml || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No nodes available</p>';
             } catch (e) {
                 console.error('Failed to load nodes:', e);
             }
@@ -1789,49 +1993,37 @@
             try {
                 const data = await api('/api/user/me/ssh-keys');
                 const keys = data.data || [];
-                
+
                 const html = keys.map(key => `
-                    <div class="ssh-key-item">
-                        <div class="ssh-key-info">
-                            <div class="ssh-key-icon">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="ssh-key-name">${key.name}</div>
-                                <div class="ssh-key-fingerprint">${key.fingerprint}</div>
-                            </div>
+                    <div class="node-item">
+                        <div class="node-info">
+                            <div class="node-name">${key.name}</div>
+                            <div class="node-specs">${key.fingerprint}</div>
                         </div>
-                        <div>
-                            <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                </svg>
-                            </button>
-                        </div>
+                        <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
                     </div>
                 `).join('');
 
-                document.getElementById('ssh-keys-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No SSH keys added yet</div>';
+                document.getElementById('ssh-keys-list').innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No SSH keys added yet</p>';
             } catch (e) {
                 console.error('Failed to load SSH keys:', e);
             }
         }
 
+        function getNodePublicIp(nodeId) {
+            const node = nodesCache[nodeId];
+            return node?.publicIp || null;
+        }
+
         // ============================================
         // VM RENDERING
         // ============================================
-        function getNodePublicIp(nodeId) {
-            return nodesCache[nodeId]?.publicIp || null;
-        }
-
         function renderVmRow(vm) {
             const statusClass = vm.status.toLowerCase();
-            const vmIp = vm.networkConfig?.privateIp;
-            const canConnect = vm.status === 'Running' && vmIp;
-            const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
-
             return `
                 <tr>
                     <td>
@@ -1854,21 +2046,8 @@
                             ${vm.status}
                         </span>
                     </td>
-                    <td class="vm-id">${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)}</td>
+                    <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)}</td>
                     <td>
-                        ${canConnect && nodeIp ? `
-                            <button class="action-btn" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connect">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
-                                </svg>
-                            </button>
-                            <button class="action-btn" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Terminal">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="4,17 10,11 4,5"/>
-                                    <line x1="12" y1="19" x2="20" y2="19"/>
-                                </svg>
-                            </button>
-                        ` : ''}
                         ${vm.status === 'Running' ? `
                             <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
@@ -2135,10 +2314,8 @@
 
         async function getEncryptionKey() {
             if (cachedEncryptionKey) return cachedEncryptionKey;
-            if (!window.ethereum) throw new Error('No wallet connected');
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            const signer = await provider.getSigner();
-            cachedEncryptionKey = await deriveEncryptionKey(signer);
+            if (!ethersSigner) throw new Error('No wallet connected');
+            cachedEncryptionKey = await deriveEncryptionKey(ethersSigner);
             return cachedEncryptionKey;
         }
 
@@ -2234,57 +2411,47 @@
         }
 
         // ============================================
-        // TERMINAL & CONNECT
+        // CONNECT INFO & TERMINAL
         // ============================================
-        async function openTerminal(nodeIp, vmIp, vmName, vmId) {
-            try {
-                const response = await api(`/api/vms/${vmId}/encrypted-password`);
-                let password = '';
-
-                if (response.success && response.data?.encryptedPassword) {
-                    try {
-                        const aesKey = await getEncryptionKey();
-                        password = await decryptPassword(response.data.encryptedPassword, aesKey);
-                    } catch (e) {
-                        console.error('Failed to decrypt password:', e);
-                    }
-                }
-
-                let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}`;
-                url += `&vmIp=${encodeURIComponent(vmIp)}`;
-                url += `&vmId=${encodeURIComponent(vmId)}`;
-                url += `&user=ubuntu`;
-                if (password) {
-                    url += `&password=${encodeURIComponent(password)}`;
-                }
-                window.open(url, `terminal-${vmId}`, 'width=1000,height=700');
-
-            } catch (error) {
-                console.error('Terminal error:', error);
-                showToast('Failed to open terminal', 'error');
-            }
-        }
-
         function showConnectInfo(nodeIp, vmIp, vmName) {
-            document.getElementById('connect-vm-name').textContent = vmName;
-            document.getElementById('connect-vm-ip').textContent = vmIp;
-            document.getElementById('connect-node-ip').textContent = nodeIp;
-            document.getElementById('connect-jump-cmd').textContent = `ssh -J root@${nodeIp} ubuntu@${vmIp}`;
-            document.getElementById('connect-direct-cmd').textContent = `ssh ubuntu@${vmIp}`;
-            document.getElementById('connect-modal-overlay').classList.add('active');
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay active';
+            modal.innerHTML = `
+                <div class="modal" style="max-width: 600px;">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Connect to ${vmName}</h2>
+                        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="modal-body connect-info">
+                        <div class="connect-section">
+                            <div class="connect-section-title">SSH via Jump Host</div>
+                            <div class="connect-code">
+                                ssh -J decloud@${nodeIp} decloud@${vmIp}
+                                <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'">Copy</button>
+                            </div>
+                        </div>
+                        <div class="connect-section">
+                            <div class="connect-section-title">VM Details</div>
+                            <p class="connect-note">
+                                <strong>Node IP:</strong> ${nodeIp}<br>
+                                <strong>VM IP:</strong> ${vmIp}<br>
+                                <strong>Username:</strong> decloud
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
         }
 
-        function closeConnectModal() {
-            document.getElementById('connect-modal-overlay').classList.remove('active');
-        }
-
-        function copyCommand(elementId, btn) {
-            const text = document.getElementById(elementId).textContent;
-            navigator.clipboard.writeText(text).then(() => {
-                const original = btn.textContent;
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = original, 1500);
-            });
+        function openTerminal(nodeIp, vmIp, vmName, vmId) {
+            const terminalUrl = `${CONFIG.orchestratorUrl}/terminal.html?nodeIp=${nodeIp}&vmIp=${vmIp}&vmName=${encodeURIComponent(vmName)}&vmId=${vmId}`;
+            window.open(terminalUrl, '_blank', 'width=900,height=600');
         }
 
         // ============================================
@@ -2345,13 +2512,6 @@
             `;
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 4000);
-        }
-
-        // Clear encryption key cache on wallet change
-        if (window.ethereum) {
-            window.ethereum.on('accountsChanged', () => {
-                cachedEncryptionKey = null;
-            });
         }
     </script>
 </body>
