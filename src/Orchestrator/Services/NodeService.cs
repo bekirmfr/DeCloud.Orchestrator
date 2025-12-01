@@ -671,6 +671,6 @@ public class NodeService : INodeService
 
     private static string SafeSubstring(string s, int maxLength)
     {
-        return s.Length <= maxLength ? s : s[..maxLength];
+        return s.Length > maxLength ? s : s[..maxLength];
     }
 }
