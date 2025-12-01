@@ -262,15 +262,47 @@ public class NodeService : INodeService
 
     private async Task HandleMissingVmAsync(VirtualMachine vm, string nodeId)
     {
-        // Only flag as error if we expected it to be running
-        if (vm.Status == VmStatus.Running || vm.Status == VmStatus.Provisioning)
+        // Grace period for newly scheduled VMs (they need time to provision)
+        const int ProvisioningGraceSeconds = 120; // 2 minutes
+
+        if (vm.Status == VmStatus.Provisioning)
+        {
+            var timeSinceUpdate = DateTime.UtcNow - vm.UpdatedAt;
+            if (timeSinceUpdate.TotalSeconds < ProvisioningGraceSeconds)
+            {
+                _logger.LogDebug(
+                    "VM {VmId} provisioning on node {NodeId} - {Seconds}s elapsed (grace: {Grace}s)",
+                    vm.Id, nodeId, (int)timeSinceUpdate.TotalSeconds, ProvisioningGraceSeconds);
+                return; // Don't mark as error yet, still within grace period
+            }
+
+            _logger.LogWarning(
+                "VM {VmId} provisioning timeout on node {NodeId} after {Seconds}s",
+                vm.Id, nodeId, (int)timeSinceUpdate.TotalSeconds);
+
+            vm.Status = VmStatus.Error;
+            vm.StatusMessage = "Provisioning timeout - VM was not created on node";
+            vm.UpdatedAt = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(vm);
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmError,
+                ResourceType = "vm",
+                ResourceId = vm.Id,
+                UserId = vm.OwnerId,
+                Payload = new { NodeId = nodeId, Error = vm.StatusMessage }
+            });
+        }
+        else if (vm.Status == VmStatus.Running)
         {
             _logger.LogWarning(
-                "VM {VmId} expected on node {NodeId} but not reported in heartbeat - marking as error",
+                "VM {VmId} expected on node {NodeId} but not reported - marking as error",
                 vm.Id, nodeId);
 
             vm.Status = VmStatus.Error;
             vm.StatusMessage = "VM not found on assigned node";
+            vm.UpdatedAt = DateTime.UtcNow;
             await _dataStore.SaveVmAsync(vm);
 
             await _eventService.EmitAsync(new OrchestratorEvent
@@ -398,7 +430,7 @@ public class NodeService : INodeService
             var recoveredVm = new VirtualMachine
             {
                 Id = vmId,
-                Name = reported.Name ?? $"recovered-vm-{vmId[..8]}",
+                Name = reported.Name ?? $"recovered-vm-{SafeSubstring(vmId, 8)}",
                 NodeId = nodeId,
                 OwnerId = reported.TenantId ?? "unknown",
                 OwnerWallet = "recovered",
@@ -409,7 +441,7 @@ public class NodeService : INodeService
                 NetworkConfig = new VmNetworkConfig
                 {
                     PrivateIp = reported.IpAddress,
-                    Hostname = reported.Name ?? $"vm-{vmId[..8]}"
+                    Hostname = reported.Name ?? $"vm-{SafeSubstring(vmId, 8)}"
                 },
                 Spec = new VmSpec
                 {
@@ -635,5 +667,10 @@ public class NodeService : INodeService
                 }
             });
         }
+    }
+
+    private static string SafeSubstring(string s, int maxLength)
+    {
+        return s.Length <= maxLength ? s : s[..maxLength];
     }
 }
