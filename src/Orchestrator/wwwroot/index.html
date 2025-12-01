@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.9.0/ethers.umd.min.js"></script>
     <style>
         :root {
             --bg-deep: #0a0b0f;
@@ -37,11 +38,7 @@
             --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: var(--font-display);
@@ -72,21 +69,181 @@
             z-index: 0;
         }
 
-        .bg-glow-1 {
-            top: -200px;
-            right: -100px;
-            background: var(--accent-primary);
-            opacity: 0.15;
+        .bg-glow-1 { top: -200px; right: -100px; background: var(--accent-primary); opacity: 0.15; }
+        .bg-glow-2 { bottom: -300px; left: -200px; background: var(--accent-secondary); opacity: 0.1; }
+
+        /* =============================================
+           LOGIN OVERLAY STYLES
+           ============================================= */
+        .login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1b2e 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
         }
 
-        .bg-glow-2 {
-            bottom: -300px;
-            left: -200px;
-            background: var(--accent-secondary);
-            opacity: 0.1;
+        .login-overlay.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
         }
 
-        /* Layout */
+        .login-card {
+            background: #1e1f2e;
+            border-radius: 16px;
+            padding: 48px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid #2d2e3d;
+            text-align: center;
+        }
+
+        .login-logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .login-logo-icon {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 20px;
+            color: white;
+        }
+
+        .login-logo-text {
+            font-size: 28px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .login-title {
+            font-size: 22px;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+
+        .login-subtitle {
+            font-size: 14px;
+            color: #9ca3af;
+            margin-bottom: 32px;
+        }
+
+        .connect-wallet-btn {
+            width: 100%;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .connect-wallet-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(16, 185, 129, 0.3);
+        }
+
+        .connect-wallet-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+        .connect-wallet-btn svg { width: 24px; height: 24px; }
+
+        .login-status {
+            margin-top: 24px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .login-status.error {
+            display: block;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+        }
+
+        .login-status.info {
+            display: block;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+        }
+
+        .login-status.success {
+            display: block;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #10b981;
+        }
+
+        .login-footer {
+            margin-top: 32px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .login-footer a { color: #10b981; text-decoration: none; }
+        .login-footer a:hover { text-decoration: underline; }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Connected wallet display */
+        .wallet-badge.connected {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .wallet-badge.connected .wallet-dot { background: #10b981; }
+
+        .disconnect-btn {
+            background: none;
+            border: none;
+            color: #ef4444;
+            font-size: 11px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-left: auto;
+        }
+
+        .disconnect-btn:hover { background: rgba(239, 68, 68, 0.1); }
+
+        /* =============================================
+           LAYOUT
+           ============================================= */
         .app-container {
             display: flex;
             min-height: 100vh;
@@ -136,10 +293,7 @@
             letter-spacing: -0.5px;
         }
 
-        .nav-section {
-            padding: 20px 12px;
-            flex: 1;
-        }
+        .nav-section { padding: 20px 12px; flex: 1; }
 
         .nav-label {
             font-size: 11px;
@@ -166,26 +320,16 @@
             margin-bottom: 4px;
         }
 
-            .nav-item:hover {
-                background: var(--bg-hover);
-                color: var(--text-primary);
-            }
+        .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-            .nav-item.active {
-                background: var(--glow-primary);
-                color: var(--accent-primary);
-                border: 1px solid rgba(0, 212, 170, 0.2);
-            }
+        .nav-item.active {
+            background: var(--glow-primary);
+            color: var(--accent-primary);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+        }
 
-            .nav-item svg {
-                width: 20px;
-                height: 20px;
-                opacity: 0.8;
-            }
-
-            .nav-item.active svg {
-                opacity: 1;
-            }
+        .nav-item svg { width: 20px; height: 20px; opacity: 0.8; }
+        .nav-item.active svg { opacity: 1; }
 
         .sidebar-footer {
             padding: 16px;
@@ -212,22 +356,10 @@
             animation: pulse 2s infinite;
         }
 
-        @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.5;
-            }
-        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
         /* Main Content */
-        .main-content {
-            flex: 1;
-            margin-left: 260px;
-            padding: 24px 32px;
-        }
+        .main-content { flex: 1; margin-left: 260px; padding: 24px 32px; }
 
         /* Header */
         .page-header {
@@ -237,22 +369,9 @@
             margin-bottom: 32px;
         }
 
-        .page-title {
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-        }
-
-        .page-subtitle {
-            color: var(--text-secondary);
-            font-size: 14px;
-            margin-top: 4px;
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 12px;
-        }
+        .page-title { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+        .page-subtitle { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
+        .header-actions { display: flex; gap: 12px; }
 
         /* Buttons */
         .btn {
@@ -275,10 +394,10 @@
             box-shadow: 0 4px 20px var(--glow-primary);
         }
 
-            .btn-primary:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 30px var(--glow-primary);
-            }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px var(--glow-primary);
+        }
 
         .btn-secondary {
             background: var(--bg-secondary);
@@ -286,14 +405,12 @@
             border: 1px solid var(--border-default);
         }
 
-            .btn-secondary:hover {
-                background: var(--bg-hover);
-                border-color: var(--accent-primary);
-            }
-
-        .btn-icon {
-            padding: 10px;
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent-primary);
         }
+
+        .btn-icon { padding: 10px; }
 
         /* Stats Grid */
         .stats-grid {
@@ -313,26 +430,24 @@
             transition: all var(--transition-normal);
         }
 
-            .stat-card:hover {
-                border-color: var(--border-default);
-                transform: translateY(-2px);
-            }
+        .stat-card:hover {
+            border-color: var(--border-default);
+            transform: translateY(-2px);
+        }
 
-            .stat-card::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 3px;
-                background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
-                opacity: 0;
-                transition: opacity var(--transition-normal);
-            }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            opacity: 0;
+            transition: opacity var(--transition-normal);
+        }
 
-            .stat-card:hover::before {
-                opacity: 1;
-            }
+        .stat-card:hover::before { opacity: 1; }
 
         .stat-icon {
             width: 44px;
@@ -344,38 +459,13 @@
             margin-bottom: 16px;
         }
 
-            .stat-icon.nodes {
-                background: var(--glow-primary);
-                color: var(--accent-primary);
-            }
+        .stat-icon.nodes { background: var(--glow-primary); color: var(--accent-primary); }
+        .stat-icon.vms { background: var(--glow-secondary); color: var(--accent-secondary); }
+        .stat-icon.cpu { background: rgba(139, 92, 246, 0.15); color: var(--accent-tertiary); }
+        .stat-icon.memory { background: rgba(245, 158, 11, 0.15); color: var(--accent-warning); }
 
-            .stat-icon.vms {
-                background: var(--glow-secondary);
-                color: var(--accent-secondary);
-            }
-
-            .stat-icon.cpu {
-                background: rgba(139, 92, 246, 0.15);
-                color: var(--accent-tertiary);
-            }
-
-            .stat-icon.memory {
-                background: rgba(245, 158, 11, 0.15);
-                color: var(--accent-warning);
-            }
-
-        .stat-value {
-            font-size: 32px;
-            font-weight: 700;
-            letter-spacing: -1px;
-            margin-bottom: 4px;
-        }
-
-        .stat-label {
-            font-size: 13px;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
+        .stat-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; margin-bottom: 4px; }
+        .stat-label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
 
         .stat-change {
             position: absolute;
@@ -387,17 +477,10 @@
             border-radius: var(--radius-sm);
         }
 
-            .stat-change.positive {
-                background: rgba(0, 212, 170, 0.1);
-                color: var(--accent-primary);
-            }
+        .stat-change.positive { background: rgba(0, 212, 170, 0.1); color: var(--accent-primary); }
 
         /* Content Grid */
-        .content-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 24px;
-        }
+        .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
 
         /* Cards */
         .card {
@@ -415,98 +498,54 @@
             border-bottom: 1px solid var(--border-subtle);
         }
 
-        .card-title {
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        .card-body {
-            padding: 20px 24px;
-        }
+        .card-title { font-size: 16px; font-weight: 600; }
+        .card-body { padding: 20px 24px; }
 
         /* VM Table */
-        .vm-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-            .vm-table th {
-                text-align: left;
-                padding: 12px 16px;
-                font-size: 11px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                color: var(--text-muted);
-                background: var(--bg-secondary);
-            }
-
-            .vm-table td {
-                padding: 16px;
-                border-bottom: 1px solid var(--border-subtle);
-                font-size: 14px;
-            }
-
-            .vm-table tr:last-child td {
-                border-bottom: none;
-            }
-
-            .vm-table tr:hover td {
-                background: var(--bg-secondary);
-            }
-
-        .vm-name {
+        .vm-table { width: 100%; border-collapse: collapse; }
+        .vm-table th, .vm-table td { padding: 16px; text-align: left; }
+        .vm-table th {
+            font-size: 11px;
             font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-subtle);
         }
+        .vm-table tr { border-bottom: 1px solid var(--border-subtle); transition: background var(--transition-fast); }
+        .vm-table tr:hover { background: var(--bg-secondary); }
+        .vm-table tr:last-child { border-bottom: none; }
+
+        .vm-name { display: flex; align-items: center; gap: 12px; }
 
         .vm-icon {
-            width: 32px;
-            height: 32px;
-            background: var(--bg-elevated);
+            width: 36px;
+            height: 36px;
+            background: var(--bg-secondary);
             border-radius: var(--radius-sm);
             display: flex;
             align-items: center;
             justify-content: center;
+            color: var(--text-secondary);
         }
 
-        .vm-id {
-            font-family: var(--font-mono);
-            font-size: 12px;
-            color: var(--text-muted);
-        }
+        .vm-id { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
 
+        /* Status Badges */
         .status-badge {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 6px 12px;
+            padding: 4px 10px;
             border-radius: 20px;
             font-size: 12px;
             font-weight: 600;
         }
 
-            .status-badge.running {
-                background: rgba(0, 212, 170, 0.1);
-                color: var(--accent-primary);
-            }
-
-            .status-badge.stopped {
-                background: rgba(107, 114, 128, 0.2);
-                color: var(--text-secondary);
-            }
-
-            .status-badge.provisioning {
-                background: rgba(0, 168, 255, 0.1);
-                color: var(--accent-secondary);
-            }
-
-            .status-badge.error {
-                background: rgba(239, 68, 68, 0.1);
-                color: var(--accent-danger);
-            }
+        .status-badge.running { background: rgba(0, 212, 170, 0.1); color: var(--accent-primary); }
+        .status-badge.stopped { background: rgba(107, 114, 128, 0.2); color: var(--text-muted); }
+        .status-badge.provisioning { background: rgba(0, 168, 255, 0.1); color: var(--accent-secondary); }
+        .status-badge.error { background: rgba(239, 68, 68, 0.1); color: var(--accent-danger); }
 
         .status-dot {
             width: 6px;
@@ -515,190 +554,23 @@
             background: currentColor;
         }
 
-        .status-badge.running .status-dot {
-            animation: pulse 2s infinite;
-        }
+        .status-badge.running .status-dot { animation: pulse 2s infinite; }
 
-        .vm-specs {
-            font-family: var(--font-mono);
-            font-size: 12px;
-            color: var(--text-secondary);
-        }
-
-        .vm-actions {
-            display: flex;
-            gap: 8px;
-        }
-
+        /* Action Buttons */
         .action-btn {
-            width: 32px;
-            height: 32px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border-default);
-            background: transparent;
-            color: var(--text-secondary);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all var(--transition-fast);
-        }
-
-            .action-btn:hover {
-                background: var(--bg-hover);
-                color: var(--text-primary);
-                border-color: var(--accent-primary);
-            }
-
-            .action-btn.danger:hover {
-                border-color: var(--accent-danger);
-                color: var(--accent-danger);
-            }
-
-            .action-btn.terminal {
-                color: var(--accent-secondary);
-            }
-
-                .action-btn.terminal:hover {
-                    background: rgba(0, 168, 255, 0.1);
-                    border-color: var(--accent-secondary);
-                }
-
-            .action-btn.connect {
-                color: var(--accent-tertiary);
-            }
-
-                .action-btn.connect:hover {
-                    background: rgba(139, 92, 246, 0.1);
-                    border-color: var(--accent-tertiary);
-                }
-
-        /* Connection Info Modal */
-        .connect-modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(4px);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-
-            .connect-modal-overlay.active {
-                display: flex;
-            }
-
-        .connect-modal {
-            background: var(--bg-primary);
-            border-radius: var(--radius-lg);
-            border: 1px solid var(--border-default);
-            width: 100%;
-            max-width: 500px;
-            max-height: 90vh;
-            overflow: hidden;
-        }
-
-        .connect-modal-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-            .connect-modal-header h3 {
-                font-size: 18px;
-                font-weight: 600;
-            }
-
-        .connect-modal-body {
-            padding: 24px;
-            overflow-y: auto;
-        }
-
-        .connect-info-box {
+            padding: 6px;
             background: var(--bg-secondary);
-            border-radius: var(--radius-md);
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-
-        .connect-info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border-subtle);
-        }
-
-            .connect-info-row:last-child {
-                border-bottom: none;
-            }
-
-        .connect-info-label {
-            color: var(--text-muted);
-            font-size: 13px;
-        }
-
-        .connect-info-value {
-            font-family: var(--font-mono);
-            font-size: 13px;
-            color: var(--text-primary);
-        }
-
-        .connect-section {
-            margin-bottom: 20px;
-        }
-
-            .connect-section h4 {
-                font-size: 14px;
-                font-weight: 600;
-                margin-bottom: 12px;
-                color: var(--text-primary);
-            }
-
-        .connect-code {
-            background: var(--bg-deep);
-            border-radius: var(--radius-md);
-            padding: 14px 16px;
-            position: relative;
-            margin-bottom: 8px;
-        }
-
-            .connect-code code {
-                font-family: var(--font-mono);
-                font-size: 13px;
-                color: var(--accent-primary);
-                word-break: break-all;
-            }
-
-        .connect-code-copy {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            padding: 4px 10px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border-default);
+            border: 1px solid var(--border-subtle);
             border-radius: var(--radius-sm);
-            color: var(--text-muted);
-            font-size: 11px;
+            color: var(--text-secondary);
             cursor: pointer;
             transition: all var(--transition-fast);
         }
 
-            .connect-code-copy:hover {
-                background: var(--bg-hover);
-                color: var(--text-primary);
-            }
+        .action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-default); }
+        .action-btn.danger:hover { color: var(--accent-danger); border-color: var(--accent-danger); }
 
-        .connect-note {
-            font-size: 13px;
-            color: var(--text-secondary);
-            line-height: 1.5;
-        }
-
-        /* Nodes List */
+        /* Node Items */
         .node-item {
             display: flex;
             align-items: center;
@@ -710,9 +582,7 @@
             transition: all var(--transition-fast);
         }
 
-            .node-item:hover {
-                background: var(--bg-hover);
-            }
+        .node-item:hover { background: var(--bg-hover); }
 
         .node-status-indicator {
             width: 10px;
@@ -722,65 +592,14 @@
             box-shadow: 0 0 10px var(--accent-primary);
         }
 
-            .node-status-indicator.offline {
-                background: var(--text-muted);
-                box-shadow: none;
-            }
+        .node-status-indicator.offline { background: var(--text-muted); box-shadow: none; }
 
-        .node-info {
-            flex: 1;
-        }
-
-        .node-name {
-            font-weight: 600;
-            font-size: 14px;
-            margin-bottom: 4px;
-        }
-
-        .node-specs {
-            font-size: 12px;
-            color: var(--text-secondary);
-            font-family: var(--font-mono);
-        }
-
-        .node-metrics {
-            text-align: right;
-        }
-
-        .node-usage {
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--accent-primary);
-        }
-
-        .node-usage-label {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-        }
-
-        /* Usage Bar */
-        .usage-bar {
-            height: 6px;
-            background: var(--bg-elevated);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 8px;
-        }
-
-        .usage-bar-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width var(--transition-slow);
-        }
-
-            .usage-bar-fill.cpu {
-                background: linear-gradient(90deg, var(--accent-tertiary), #a78bfa);
-            }
-
-            .usage-bar-fill.memory {
-                background: linear-gradient(90deg, var(--accent-warning), #fbbf24);
-            }
+        .node-info { flex: 1; }
+        .node-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+        .node-specs { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+        .node-metrics { text-align: right; }
+        .node-usage { font-size: 20px; font-weight: 700; color: var(--accent-primary); }
+        .node-usage-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
 
         /* Modal */
         .modal-overlay {
@@ -797,10 +616,7 @@
             transition: all var(--transition-normal);
         }
 
-            .modal-overlay.active {
-                opacity: 1;
-                visibility: visible;
-            }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
 
         .modal {
             background: var(--bg-primary);
@@ -812,57 +628,34 @@
             transition: all var(--transition-slow);
         }
 
-        .modal-overlay.active .modal {
-            transform: translateY(0) scale(1);
-        }
+        .modal-overlay.active .modal { transform: translateY(0) scale(1); }
 
         .modal-header {
-            padding: 24px;
-            border-bottom: 1px solid var(--border-subtle);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            padding: 24px;
+            border-bottom: 1px solid var(--border-subtle);
         }
 
-        .modal-title {
-            font-size: 20px;
-            font-weight: 700;
-        }
+        .modal-title { font-size: 18px; font-weight: 600; }
 
         .modal-close {
-            width: 36px;
-            height: 36px;
-            border-radius: var(--radius-sm);
+            background: none;
             border: none;
-            background: var(--bg-secondary);
-            color: var(--text-secondary);
+            color: var(--text-muted);
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all var(--transition-fast);
+            padding: 4px;
+            transition: color var(--transition-fast);
         }
 
-            .modal-close:hover {
-                background: var(--bg-hover);
-                color: var(--text-primary);
-            }
+        .modal-close:hover { color: var(--text-primary); }
+        .modal-body { padding: 24px; }
+        .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border-subtle); display: flex; gap: 12px; justify-content: flex-end; }
 
-        .modal-body {
-            padding: 24px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-secondary);
-        }
+        /* Forms */
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); }
 
         .form-input {
             width: 100%;
@@ -870,80 +663,30 @@
             background: var(--bg-secondary);
             border: 1px solid var(--border-default);
             border-radius: var(--radius-md);
+            color: var(--text-primary);
             font-family: var(--font-display);
             font-size: 14px;
-            color: var(--text-primary);
             transition: all var(--transition-fast);
         }
 
-            .form-input:focus {
-                outline: none;
-                border-color: var(--accent-primary);
-                box-shadow: 0 0 0 3px var(--glow-primary);
-            }
-
-            .form-input::placeholder {
-                color: var(--text-muted);
-            }
-
-        .form-select {
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 12px center;
-            padding-right: 40px;
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px var(--glow-primary);
         }
 
-        .form-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-        }
+        .form-input::placeholder { color: var(--text-muted); }
+        .form-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 
-        .modal-footer {
-            padding: 20px 24px;
-            border-top: 1px solid var(--border-subtle);
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-        }
-
-        .empty-state-icon {
-            width: 80px;
-            height: 80px;
-            margin: 0 auto 20px;
-            background: var(--bg-secondary);
-            border-radius: var(--radius-lg);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-        }
-
-        .empty-state-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .empty-state-text {
-            color: var(--text-secondary);
-            font-size: 14px;
-            margin-bottom: 24px;
-        }
-
-        /* Toast Notification */
+        /* Toast */
         .toast-container {
             position: fixed;
             bottom: 24px;
             right: 24px;
-            z-index: 1100;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
 
         .toast {
@@ -954,80 +697,24 @@
             display: flex;
             align-items: center;
             gap: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-            margin-top: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
             animation: slideIn 0.3s ease;
         }
 
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(100px);
-            }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } }
 
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
+        .toast.success { border-left: 3px solid var(--accent-primary); }
+        .toast.error { border-left: 3px solid var(--accent-danger); }
+        .toast.info { border-left: 3px solid var(--accent-secondary); }
+        .toast-icon { width: 20px; height: 20px; }
+        .toast.success .toast-icon { color: var(--accent-primary); }
+        .toast.error .toast-icon { color: var(--accent-danger); }
 
-        .toast-icon {
-            width: 24px;
-            height: 24px;
-        }
+        /* Page visibility */
+        .page { display: none; }
+        .page.active { display: block; }
 
-        .toast.success .toast-icon {
-            color: var(--accent-primary);
-        }
-
-        .toast.error .toast-icon {
-            color: var(--accent-danger);
-        }
-
-        .toast-message {
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        /* Loading Spinner */
-        .spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--border-default);
-            border-top-color: var(--accent-primary);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        /* Pages */
-        .page {
-            display: none;
-        }
-
-            .page.active {
-                display: block;
-                animation: fadeIn 0.3s ease;
-            }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        /* SSH Keys Table */
+        /* SSH Key styles */
         .ssh-key-item {
             display: flex;
             align-items: center;
@@ -1038,11 +725,7 @@
             margin-bottom: 12px;
         }
 
-        .ssh-key-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+        .ssh-key-info { display: flex; align-items: center; gap: 12px; }
 
         .ssh-key-icon {
             width: 40px;
@@ -1055,47 +738,10 @@
             color: var(--text-secondary);
         }
 
-        .ssh-key-name {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
+        .ssh-key-name { font-weight: 600; margin-bottom: 4px; }
+        .ssh-key-fingerprint { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
 
-        .ssh-key-fingerprint {
-            font-family: var(--font-mono);
-            font-size: 12px;
-            color: var(--text-muted);
-        }
-
-        /* Responsive */
-        @media (max-width: 1200px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-
-            .main-content {
-                margin-left: 0;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        /* SSH Key Modal Styles */
+        /* SSH Tab styles */
         .ssh-tab-btn {
             flex: 1;
             padding: 10px 12px;
@@ -1103,11 +749,11 @@
             transition: all var(--transition-fast);
         }
 
-            .ssh-tab-btn.active {
-                background: var(--accent-primary);
-                color: var(--bg-deep);
-                border-color: var(--accent-primary);
-            }
+        .ssh-tab-btn.active {
+            background: var(--accent-primary);
+            color: var(--bg-deep);
+            border-color: var(--accent-primary);
+        }
 
         .ssh-dropzone {
             border: 2px dashed var(--border-default);
@@ -1119,23 +765,141 @@
             background: var(--bg-secondary);
         }
 
-            .ssh-dropzone:hover, .ssh-dropzone.dragover {
-                border-color: var(--accent-primary);
-                background: rgba(0, 212, 170, 0.05);
-            }
+        .ssh-dropzone:hover, .ssh-dropzone.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 212, 170, 0.05);
+        }
 
-            .ssh-dropzone code {
-                background: var(--bg-elevated);
-                padding: 2px 6px;
-                border-radius: 4px;
-                font-family: var(--font-mono);
-            }
+        .ssh-dropzone code {
+            background: var(--bg-elevated);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+        }
+
+        /* Connection modal */
+        .connect-modal-content {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-xl);
+            width: 100%;
+            max-width: 550px;
+            overflow: hidden;
+        }
+
+        .connect-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .connect-modal-body { padding: 24px; overflow-y: auto; }
+
+        .connect-info-box {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .connect-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .connect-info-row:last-child { border-bottom: none; }
+        .connect-info-label { color: var(--text-muted); font-size: 13px; }
+        .connect-info-value { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); }
+
+        .connect-section { margin-bottom: 20px; }
+        .connect-section h4 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+
+        .connect-code {
+            background: var(--bg-deep);
+            border-radius: var(--radius-md);
+            padding: 14px 16px;
+            position: relative;
+            margin-bottom: 8px;
+        }
+
+        .connect-code code {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--accent-primary);
+            word-break: break-all;
+        }
+
+        .connect-code-copy {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 4px 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+
+        .connect-code-copy:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .connect-note { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .content-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .main-content { margin-left: 0; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .form-row { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="bg-grid"></div>
     <div class="bg-glow bg-glow-1"></div>
     <div class="bg-glow bg-glow-2"></div>
+
+    <!-- =============================================
+         LOGIN OVERLAY
+         ============================================= -->
+    <div class="login-overlay" id="login-overlay">
+        <div class="login-card">
+            <div class="login-logo">
+                <div class="login-logo-icon">DC</div>
+                <span class="login-logo-text">DeCloud</span>
+            </div>
+            
+            <h1 class="login-title">Welcome to DeCloud</h1>
+            <p class="login-subtitle">Connect your wallet to access decentralized cloud computing</p>
+            
+            <button class="connect-wallet-btn" id="connect-wallet-btn" onclick="connectWallet()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+                    <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+                    <circle cx="18" cy="15" r="1" />
+                </svg>
+                Connect Wallet
+            </button>
+            
+            <div class="login-status" id="login-status"></div>
+            
+            <div class="login-footer">
+                <p>By connecting, you agree to our <a href="#">Terms of Service</a></p>
+                <p style="margin-top: 8px;">Need help? <a href="#">Documentation</a></p>
+            </div>
+        </div>
+    </div>
 
     <div class="app-container">
         <!-- Sidebar -->
@@ -1192,9 +956,10 @@
             </nav>
 
             <div class="sidebar-footer">
-                <div class="wallet-badge">
+                <div class="wallet-badge" id="wallet-badge">
                     <div class="wallet-dot"></div>
-                    <span id="wallet-display">0x1234...5678</span>
+                    <span id="wallet-display">Not connected</span>
+                    <button class="disconnect-btn" id="disconnect-btn" onclick="disconnect()" style="display: none;">×</button>
                 </div>
             </div>
         </aside>
@@ -1241,6 +1006,7 @@
                         <div class="stat-label">Active Nodes</div>
                         <div class="stat-change positive" id="stat-nodes-change">↑ Online</div>
                     </div>
+
                     <div class="stat-card">
                         <div class="stat-icon vms">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1250,25 +1016,25 @@
                         </div>
                         <div class="stat-value" id="stat-vms">-</div>
                         <div class="stat-label">Virtual Machines</div>
-                        <div class="stat-change positive" id="stat-vms-running">- running</div>
+                        <div class="stat-change positive" id="stat-vms-running">0 running</div>
                     </div>
+
                     <div class="stat-card">
                         <div class="stat-icon cpu">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="4" y="4" width="16" height="16" rx="2" />
                                 <rect x="9" y="9" width="6" height="6" />
-                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
+                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
                             </svg>
                         </div>
                         <div class="stat-value" id="stat-cpu">-</div>
                         <div class="stat-label">CPU Cores Available</div>
                     </div>
+
                     <div class="stat-card">
                         <div class="stat-icon memory">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M6 19v-8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8" />
-                                <path d="M6 19h12" />
-                                <path d="M10 5v4M14 5v4" />
+                                <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
                             </svg>
                         </div>
                         <div class="stat-value" id="stat-memory">-</div>
@@ -1280,10 +1046,10 @@
                 <div class="content-grid">
                     <div class="card">
                         <div class="card-header">
-                            <h3 class="card-title">Recent Virtual Machines</h3>
+                            <h3 class="card-title">Recent VMs</h3>
                             <button class="btn btn-secondary" onclick="showPage('vms')">View All</button>
                         </div>
-                        <div id="recent-vms-container">
+                        <div>
                             <table class="vm-table">
                                 <thead>
                                     <tr>
@@ -1407,10 +1173,11 @@
                             <input type="text" class="form-input" id="settings-orchestrator-url" placeholder="http://localhost:5050">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Wallet Address</label>
-                            <input type="text" class="form-input" id="settings-wallet" placeholder="0x...">
+                            <label class="form-label">Connected Wallet</label>
+                            <input type="text" class="form-input" id="settings-wallet" placeholder="Connect wallet to see address" disabled>
                         </div>
                         <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                        <button class="btn btn-secondary" onclick="disconnect()" style="margin-left: 12px;">Disconnect Wallet</button>
                     </div>
                 </div>
             </div>
@@ -1468,8 +1235,8 @@
                     <div class="form-group">
                         <label class="form-label">Disk</label>
                         <select class="form-input form-select" id="vm-disk">
-                            <option value="10" selected>10 GB</option>
-                            <option value="20">20 GB</option>
+                            <option value="10">10 GB</option>
+                            <option value="20" selected>20 GB</option>
                             <option value="40">40 GB</option>
                             <option value="80">80 GB</option>
                             <option value="160">160 GB</option>
@@ -1479,16 +1246,14 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
-                <button class="btn btn-primary" id="create-vm-btn" onclick="createVm()">
-                    Create VM
-                </button>
+                <button class="btn btn-primary" onclick="createVm()">Create VM</button>
             </div>
         </div>
     </div>
 
     <!-- Add SSH Key Modal -->
     <div class="modal-overlay" id="add-ssh-key-modal">
-        <div class="modal" style="max-width: 550px;">
+        <div class="modal">
             <div class="modal-header">
                 <h2 class="modal-title">Add SSH Key</h2>
                 <button class="modal-close" onclick="closeModal('add-ssh-key-modal')">
@@ -1499,92 +1264,13 @@
                 </button>
             </div>
             <div class="modal-body">
-                <!-- Tab buttons -->
-                <div style="display: flex; gap: 8px; margin-bottom: 20px;">
-                    <button class="btn btn-secondary ssh-tab-btn active" onclick="showSshTab('paste')" id="ssh-tab-paste">
-                        📋 Paste Key
-                    </button>
-                    <button class="btn btn-secondary ssh-tab-btn" onclick="showSshTab('upload')" id="ssh-tab-upload">
-                        📁 Upload File
-                    </button>
-                    <button class="btn btn-secondary ssh-tab-btn" onclick="showSshTab('generate')" id="ssh-tab-generate">
-                        🔐 Generate New
-                    </button>
-                </div>
-
-                <!-- Key Name (common to all tabs) -->
                 <div class="form-group">
                     <label class="form-label">Key Name</label>
-                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
+                    <input type="text" class="form-input" id="ssh-key-name" placeholder="My Laptop">
                 </div>
-
-                <!-- Tab: Paste Key -->
-                <div id="ssh-panel-paste" class="ssh-panel">
-                    <div class="form-group">
-                        <label class="form-label">Public Key</label>
-                        <textarea class="form-input" id="ssh-key-value" rows="4"
-                                  placeholder="ssh-ed25519 AAAA... or ssh-rsa AAAA..."></textarea>
-                        <small style="color: var(--text-muted); margin-top: 4px; display: block;">
-                            Paste your public key (usually found in ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub)
-                        </small>
-                    </div>
-                </div>
-
-                <!-- Tab: Upload File -->
-                <div id="ssh-panel-upload" class="ssh-panel" style="display: none;">
-                    <div class="form-group">
-                        <label class="form-label">Upload Public Key File</label>
-                        <div id="ssh-dropzone" class="ssh-dropzone" onclick="document.getElementById('ssh-file-input').click()">
-                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 12px; opacity: 0.5;">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="17 8 12 3 7 8" />
-                                <line x1="12" y1="3" x2="12" y2="15" />
-                            </svg>
-                            <div>Drag & drop your <code>.pub</code> file here</div>
-                            <div style="color: var(--text-muted); margin-top: 8px;">or click to browse</div>
-                        </div>
-                        <input type="file" id="ssh-file-input" accept=".pub,.txt" style="display: none;" onchange="handleSshFileSelect(event)">
-                        <div id="ssh-file-name" style="margin-top: 8px; color: var(--accent-primary);"></div>
-                    </div>
-                </div>
-
-                <!-- Tab: Generate New -->
-                <div id="ssh-panel-generate" class="ssh-panel" style="display: none;">
-                    <div style="background: rgba(0, 212, 170, 0.1); border: 1px solid var(--accent-primary); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary)" stroke-width="2">
-                                <circle cx="12" cy="12" r="10" />
-                                <line x1="12" y1="16" x2="12" y2="12" />
-                                <line x1="12" y1="8" x2="12.01" y2="8" />
-                            </svg>
-                            <strong style="color: var(--accent-primary);">Important</strong>
-                        </div>
-                        <p style="margin: 0; color: var(--text-secondary); line-height: 1.5;">
-                            A new Ed25519 keypair will be generated in your browser.
-                            <strong>You must download and save the private key</strong> — it cannot be recovered later!
-                        </p>
-                    </div>
-
-                    <div id="ssh-generate-ready" style="text-align: center; padding: 20px 0;">
-                        <button class="btn btn-primary" onclick="generateSshKeyPair()" id="generate-key-btn">
-                            🔐 Generate Key Pair
-                        </button>
-                    </div>
-
-                    <div id="ssh-generate-result" style="display: none;">
-                        <div class="form-group">
-                            <label class="form-label" style="color: var(--accent-primary);">✓ Key pair generated!</label>
-                            <div style="background: var(--bg-secondary); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-                                <code id="generated-pubkey-preview" style="font-size: 12px; word-break: break-all; color: var(--text-secondary);"></code>
-                            </div>
-                        </div>
-                        <button class="btn btn-secondary" onclick="downloadPrivateKey()" style="width: 100%; margin-bottom: 8px;">
-                            ⬇️ Download Private Key (REQUIRED)
-                        </button>
-                        <small style="color: var(--text-muted); display: block; text-align: center;">
-                            Save as <code>~/.ssh/id_ed25519_decloud</code> and run <code>chmod 600</code> on it
-                        </small>
-                    </div>
+                <div class="form-group">
+                    <label class="form-label">Public Key</label>
+                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..."></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1594,81 +1280,431 @@
         </div>
     </div>
 
+    <!-- Connection Info Modal -->
+    <div class="modal-overlay" id="connect-modal-overlay">
+        <div class="connect-modal-content">
+            <div class="connect-modal-header">
+                <h3>Connect to <span id="connect-vm-name">VM</span></h3>
+                <button class="modal-close" onclick="closeConnectModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="connect-modal-body">
+                <div class="connect-info-box">
+                    <div class="connect-info-row">
+                        <span class="connect-info-label">VM IP Address</span>
+                        <span class="connect-info-value" id="connect-vm-ip">-</span>
+                    </div>
+                    <div class="connect-info-row">
+                        <span class="connect-info-label">Node IP</span>
+                        <span class="connect-info-value" id="connect-node-ip">-</span>
+                    </div>
+                </div>
+
+                <div class="connect-section">
+                    <h4>Option 1: Jump Host (Recommended)</h4>
+                    <p class="connect-note">Works from anywhere.</p>
+                    <div class="connect-code">
+                        <code id="connect-jump-cmd">ssh -J root@NODE ubuntu@VM</code>
+                        <button class="connect-code-copy" onclick="copyCommand('connect-jump-cmd', this)">Copy</button>
+                    </div>
+                </div>
+
+                <div class="connect-section">
+                    <h4>Option 2: Direct SSH (Requires WireGuard)</h4>
+                    <p class="connect-note">If you have WireGuard VPN set up to the node.</p>
+                    <div class="connect-code">
+                        <code id="connect-direct-cmd">ssh ubuntu@VM</code>
+                        <button class="connect-code-copy" onclick="copyCommand('connect-direct-cmd', this)">Copy</button>
+                    </div>
+                </div>
+
+                <div class="connect-section">
+                    <h4>Option 3: Web Terminal</h4>
+                    <p class="connect-note">Click the terminal button (>_) in the VM actions to open a browser-based terminal.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
     <script>
-        // Configuration
+        // ============================================
+        // CONFIGURATION
+        // ============================================
         let CONFIG = {
-            orchestratorUrl: localStorage.getItem('orchestratorUrl') || 'http://localhost:5050',
-            wallet: localStorage.getItem('wallet') || '0x1234567890abcdef1234567890abcdef12345678'
+            orchestratorUrl: localStorage.getItem('orchestratorUrl') || window.location.origin,
+            wallet: null
         };
 
         let authToken = null;
+        let refreshToken = null;
+        let currentUser = null;
+        let tokenRefreshTimer = null;
+        let nodesCache = {};
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        document.addEventListener('DOMContentLoaded', async () => {
+            const savedToken = localStorage.getItem('authToken');
+            const savedRefreshToken = localStorage.getItem('refreshToken');
+            const savedWallet = localStorage.getItem('wallet');
+            
+            if (savedToken && savedRefreshToken && savedWallet) {
+                authToken = savedToken;
+                refreshToken = savedRefreshToken;
+                CONFIG.wallet = savedWallet;
+                
+                try {
+                    const response = await api('/api/user/me');
+                    if (response.success) {
+                        currentUser = response.data;
+                        showDashboard();
+                        setupTokenRefresh();
+                        refreshData();
+                    } else {
+                        const refreshed = await refreshAuthToken();
+                        if (refreshed) {
+                            showDashboard();
+                            refreshData();
+                        } else {
+                            showLogin();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Session verification failed:', e);
+                    showLogin();
+                }
+            } else {
+                showLogin();
+            }
+
+            if (window.ethereum) {
+                window.ethereum.on('accountsChanged', handleAccountsChanged);
+                window.ethereum.on('disconnect', handleDisconnect);
+            }
+
             loadSettings();
-            authenticate().then(() => {
-                refreshData();
-                setInterval(refreshData, 30000); // Refresh every 30s
-            });
         });
 
-        // Settings
-        function loadSettings() {
-            document.getElementById('settings-orchestrator-url').value = CONFIG.orchestratorUrl;
-            document.getElementById('settings-wallet').value = CONFIG.wallet;
-            document.getElementById('wallet-display').textContent = CONFIG.wallet.slice(0, 6) + '...' + CONFIG.wallet.slice(-4);
-        }
+        // ============================================
+        // WALLET CONNECTION
+        // ============================================
+        async function connectWallet() {
+            const btn = document.getElementById('connect-wallet-btn');
+            const status = document.getElementById('login-status');
+            
+            if (!window.ethereum) {
+                showLoginStatus('error', 'No wallet detected. Please install MetaMask or another Web3 wallet.');
+                return;
+            }
 
-        function saveSettings() {
-            CONFIG.orchestratorUrl = document.getElementById('settings-orchestrator-url').value;
-            CONFIG.wallet = document.getElementById('settings-wallet').value;
-            localStorage.setItem('orchestratorUrl', CONFIG.orchestratorUrl);
-            localStorage.setItem('wallet', CONFIG.wallet);
-            loadSettings();
-            authToken = null;
-            authenticate().then(() => refreshData());
-            showToast('Settings saved', 'success');
-        }
-
-        // Authentication
-        async function authenticate() {
             try {
-                const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
+                btn.disabled = true;
+                btn.innerHTML = '<div class="spinner"></div> Connecting...';
+                showLoginStatus('info', 'Requesting wallet connection...');
+
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                
+                if (!accounts || accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                const walletAddress = accounts[0];
+                CONFIG.wallet = walletAddress;
+                
+                showLoginStatus('info', 'Wallet connected. Requesting signature...');
+                btn.innerHTML = '<div class="spinner"></div> Sign Message...';
+
+                const authResult = await authenticateWithWallet(walletAddress);
+                
+                if (authResult.success) {
+                    showLoginStatus('success', 'Authentication successful!');
+                    
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('refreshToken', refreshToken);
+                    localStorage.setItem('wallet', walletAddress);
+                    
+                    await new Promise(r => setTimeout(r, 500));
+                    
+                    showDashboard();
+                    setupTokenRefresh();
+                    refreshData();
+                } else {
+                    throw new Error(authResult.error || 'Authentication failed');
+                }
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                
+                let errorMsg = 'Connection failed. ';
+                if (error.code === 4001) {
+                    errorMsg = 'Connection rejected. Please approve the connection request.';
+                } else if (error.message) {
+                    errorMsg += error.message;
+                }
+                
+                showLoginStatus('error', errorMsg);
+                
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+                        <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+                        <circle cx="18" cy="15" r="1" />
+                    </svg>
+                    Connect Wallet
+                `;
+            }
+        }
+
+        // ============================================
+        // AUTHENTICATION WITH SIGNATURE
+        // ============================================
+        async function authenticateWithWallet(walletAddress) {
+            try {
+                const messageResponse = await fetch(
+                    `${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`
+                );
+                const messageData = await messageResponse.json();
+                
+                if (!messageData.success || !messageData.data) {
+                    throw new Error('Failed to get authentication message');
+                }
+
+                const { message, timestamp } = messageData.data;
+
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const signer = await provider.getSigner();
+                const signature = await signer.signMessage(message);
+
+                const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        walletAddress: CONFIG.wallet,
-                        signature: '0xmocksig',
-                        message: 'Sign',
-                        timestamp: Math.floor(Date.now() / 1000)
+                        walletAddress: walletAddress,
+                        signature: signature,
+                        message: message,
+                        timestamp: timestamp
                     })
                 });
+
+                const authData = await authResponse.json();
+
+                if (authData.success && authData.data) {
+                    authToken = authData.data.accessToken;
+                    refreshToken = authData.data.refreshToken;
+                    currentUser = authData.data.user;
+                    return { success: true };
+                } else {
+                    return { success: false, error: authData.message || 'Authentication failed' };
+                }
+
+            } catch (error) {
+                console.error('Authentication error:', error);
+                
+                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+                    return { success: false, error: 'Signature rejected' };
+                }
+                
+                return { success: false, error: error.message };
+            }
+        }
+
+        // ============================================
+        // TOKEN REFRESH
+        // ============================================
+        function setupTokenRefresh() {
+            const refreshInterval = 55 * 60 * 1000; // 55 minutes
+            
+            if (tokenRefreshTimer) {
+                clearInterval(tokenRefreshTimer);
+            }
+            
+            tokenRefreshTimer = setInterval(async () => {
+                await refreshAuthToken();
+            }, refreshInterval);
+        }
+
+        async function refreshAuthToken() {
+            if (!refreshToken) return false;
+
+            try {
+                const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refreshToken: refreshToken })
+                });
+
                 const data = await response.json();
-                if (data.data?.accessToken) {
+
+                if (data.success && data.data) {
                     authToken = data.data.accessToken;
+                    refreshToken = data.data.refreshToken;
+                    currentUser = data.data.user;
+                    
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('refreshToken', refreshToken);
+                    
+                    console.log('Token refreshed successfully');
                     return true;
                 }
-            } catch (e) {
-                console.error('Auth failed:', e);
-                showToast('Failed to connect to orchestrator', 'error');
+            } catch (error) {
+                console.error('Token refresh failed:', error);
             }
+
             return false;
         }
 
-        // API Helper
+        // ============================================
+        // UI STATE MANAGEMENT
+        // ============================================
+        function showLogin() {
+            document.getElementById('login-overlay').classList.remove('hidden');
+            clearSession();
+        }
+
+        function showDashboard() {
+            document.getElementById('login-overlay').classList.add('hidden');
+            updateWalletDisplay();
+        }
+
+        function showLoginStatus(type, message) {
+            const status = document.getElementById('login-status');
+            status.className = `login-status ${type}`;
+            status.textContent = message;
+        }
+
+        function updateWalletDisplay() {
+            const walletDisplay = document.getElementById('wallet-display');
+            const walletBadge = document.getElementById('wallet-badge');
+            const disconnectBtn = document.getElementById('disconnect-btn');
+            const settingsWallet = document.getElementById('settings-wallet');
+            
+            if (CONFIG.wallet && walletDisplay) {
+                const shortWallet = CONFIG.wallet.slice(0, 6) + '...' + CONFIG.wallet.slice(-4);
+                walletDisplay.textContent = shortWallet;
+                
+                if (walletBadge) walletBadge.classList.add('connected');
+                if (disconnectBtn) disconnectBtn.style.display = 'block';
+                if (settingsWallet) settingsWallet.value = CONFIG.wallet;
+            }
+        }
+
+        // ============================================
+        // DISCONNECT / LOGOUT
+        // ============================================
+        function disconnect() {
+            clearSession();
+            showLogin();
+            showToast('Disconnected', 'info');
+        }
+
+        function clearSession() {
+            authToken = null;
+            refreshToken = null;
+            currentUser = null;
+            CONFIG.wallet = null;
+            cachedEncryptionKey = null;
+            
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('wallet');
+            
+            if (tokenRefreshTimer) {
+                clearInterval(tokenRefreshTimer);
+                tokenRefreshTimer = null;
+            }
+
+            const walletDisplay = document.getElementById('wallet-display');
+            const walletBadge = document.getElementById('wallet-badge');
+            const disconnectBtn = document.getElementById('disconnect-btn');
+            
+            if (walletDisplay) walletDisplay.textContent = 'Not connected';
+            if (walletBadge) walletBadge.classList.remove('connected');
+            if (disconnectBtn) disconnectBtn.style.display = 'none';
+        }
+
+        function handleAccountsChanged(accounts) {
+            if (accounts.length === 0) {
+                disconnect();
+            } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
+                showToast('Wallet changed. Please reconnect.', 'info');
+                disconnect();
+            }
+        }
+
+        function handleDisconnect() {
+            disconnect();
+        }
+
+        // ============================================
+        // API HELPER
+        // ============================================
         async function api(endpoint, options = {}) {
             const headers = {
                 'Content-Type': 'application/json',
-                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
+                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+                ...options.headers
             };
-            const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, { ...options, headers });
-            return response.json();
+
+            try {
+                const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+                    ...options,
+                    headers
+                });
+
+                if (response.status === 401) {
+                    const refreshed = await refreshAuthToken();
+                    if (refreshed) {
+                        headers['Authorization'] = `Bearer ${authToken}`;
+                        const retryResponse = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+                            ...options,
+                            headers
+                        });
+                        return await retryResponse.json();
+                    } else {
+                        disconnect();
+                        throw new Error('Session expired');
+                    }
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('API error:', error);
+                throw error;
+            }
         }
 
-        // Refresh Data
+        // ============================================
+        // SETTINGS
+        // ============================================
+        function loadSettings() {
+            const urlInput = document.getElementById('settings-orchestrator-url');
+            if (urlInput) urlInput.value = CONFIG.orchestratorUrl;
+            updateWalletDisplay();
+        }
+
+        function saveSettings() {
+            const urlInput = document.getElementById('settings-orchestrator-url');
+            if (urlInput) {
+                CONFIG.orchestratorUrl = urlInput.value;
+                localStorage.setItem('orchestratorUrl', CONFIG.orchestratorUrl);
+                showToast('Settings saved', 'success');
+                refreshData();
+            }
+        }
+
+        // ============================================
+        // DATA LOADING
+        // ============================================
         async function refreshData() {
             await Promise.all([
                 loadStats(),
@@ -1678,7 +1714,6 @@
             ]);
         }
 
-        // Load Stats
         async function loadStats() {
             try {
                 const data = await api('/api/system/stats');
@@ -1695,7 +1730,6 @@
             }
         }
 
-        // Load VMs
         async function loadVms() {
             try {
                 const data = await api('/api/vms');
@@ -1711,12 +1745,92 @@
             }
         }
 
+        async function loadNodes() {
+            try {
+                const data = await api('/api/nodes');
+                const nodes = data.data || [];
+                
+                nodes.forEach(n => { nodesCache[n.id] = n; });
+
+                const html = nodes.slice(0, 5).map(node => `
+                    <div class="node-item">
+                        <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
+                        <div class="node-info">
+                            <div class="node-name">${node.name}</div>
+                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} RAM</div>
+                        </div>
+                        <div class="node-metrics">
+                            <div class="node-usage">${node.currentMetrics?.cpuUsagePercent?.toFixed(0) || 0}%</div>
+                            <div class="node-usage-label">CPU</div>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes online</div>';
+                document.getElementById('all-nodes-list').innerHTML = nodes.map(node => `
+                    <div class="node-item">
+                        <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
+                        <div class="node-info">
+                            <div class="node-name">${node.name}</div>
+                            <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} RAM • ${node.publicIp || 'N/A'}</div>
+                        </div>
+                        <div class="node-metrics">
+                            <div class="node-usage">${node.currentMetrics?.cpuUsagePercent?.toFixed(0) || 0}%</div>
+                            <div class="node-usage-label">CPU</div>
+                        </div>
+                    </div>
+                `).join('') || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
+            } catch (e) {
+                console.error('Failed to load nodes:', e);
+            }
+        }
+
+        async function loadSshKeys() {
+            try {
+                const data = await api('/api/user/me/ssh-keys');
+                const keys = data.data || [];
+                
+                const html = keys.map(key => `
+                    <div class="ssh-key-item">
+                        <div class="ssh-key-info">
+                            <div class="ssh-key-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="ssh-key-name">${key.name}</div>
+                                <div class="ssh-key-fingerprint">${key.fingerprint}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('ssh-keys-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No SSH keys added yet</div>';
+            } catch (e) {
+                console.error('Failed to load SSH keys:', e);
+            }
+        }
+
+        // ============================================
+        // VM RENDERING
+        // ============================================
+        function getNodePublicIp(nodeId) {
+            return nodesCache[nodeId]?.publicIp || null;
+        }
+
         function renderVmRow(vm) {
             const statusClass = vm.status.toLowerCase();
             const vmIp = vm.networkConfig?.privateIp;
             const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
-            const vmPassword = vm.spec?.password || '';
 
             return `
                 <tr>
@@ -1740,17 +1854,18 @@
                             ${vm.status}
                         </span>
                     </td>
-                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                    <td class="vm-actions">
+                    <td class="vm-id">${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)}</td>
+                    <td>
                         ${canConnect && nodeIp ? `
-                            <button class="action-btn terminal" onclick="openTerminal('${vm.id}', '${vm.name}')" title="Open Terminal">
+                            <button class="action-btn" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connect">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
                                 </svg>
                             </button>
-                            <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                            <button class="action-btn" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Terminal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                    <polyline points="4,17 10,11 4,5"/>
+                                    <line x1="12" y1="19" x2="20" y2="19"/>
                                 </svg>
                             </button>
                         ` : ''}
@@ -1779,7 +1894,6 @@
             const vmIp = vm.networkConfig?.privateIp;
             const canConnect = vm.status === 'Running' && vmIp;
             const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
-            const vmPassword = vm.spec?.password || '';
 
             return `
                 <tr>
@@ -1804,18 +1918,24 @@
                         </span>
                     </td>
                     <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
-                    <td class="vm-specs">${vm.spec?.cpuCores || '-'} vCPU · ${formatMemory(vm.spec?.memoryMb)} · ${vm.spec?.diskGb}GB</td>
-                    <td style="color:var(--text-muted)">${created}</td>
-                    <td class="vm-actions">
+                    <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)} • ${vm.spec?.diskGb || 20} GB</td>
+                    <td>${created}</td>
+                    <td>
                         ${canConnect && nodeIp ? `
-                            <button class="action-btn terminal" onclick="openTerminal('${vm.id}', '${vm.name}')" title="Open Terminal">
+                            <button class="action-btn" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connect">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
                                 </svg>
                             </button>
-                            <button class="action-btn connect" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connection Info">
+                            <button class="action-btn" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Terminal">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                                    <polyline points="4,17 10,11 4,5"/>
+                                    <line x1="12" y1="19" x2="20" y2="19"/>
+                                </svg>
+                            </button>
+                            <button class="action-btn" onclick="revealPassword('${vm.id}', '${vm.name}')" title="Show Password">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
                                 </svg>
                             </button>
                         ` : ''}
@@ -1838,86 +1958,9 @@
             `;
         }
 
-        // Load Nodes
-        let nodesCache = {}; // Cache nodes by ID for quick lookup
-
-        async function loadNodes() {
-            try {
-                const data = await api('/api/nodes');
-                const nodes = data.data || [];
-
-                // Cache nodes by ID
-                nodesCache = {};
-                nodes.forEach(node => {
-                    nodesCache[node.id] = node;
-                });
-
-                const html = nodes.map(node => renderNode(node)).join('');
-                document.getElementById('nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
-                document.getElementById('all-nodes-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No nodes registered</div>';
-            } catch (e) {
-                console.error('Failed to load nodes:', e);
-            }
-        }
-
-        function getNodePublicIp(nodeId) {
-            const node = nodesCache[nodeId];
-            return node?.publicIp || null;
-        }
-
-        function renderNode(node) {
-            const isOnline = node.status === 'Online';
-            const cpuUsage = node.availableResources?.cpuCores || 0;
-            const memUsage = node.availableResources?.memoryMb || 0;
-            return `
-                <div class="node-item">
-                    <div class="node-status-indicator ${isOnline ? '' : 'offline'}"></div>
-                    <div class="node-info">
-                        <div class="node-name">${node.name || node.id.slice(0, 12)}</div>
-                        <div class="node-specs">${node.publicIp || 'Unknown IP'} · ${cpuUsage} vCPUs · ${formatMemory(memUsage)}</div>
-                    </div>
-                    <div class="node-metrics">
-                        <div class="node-usage">${isOnline ? 'Online' : 'Offline'}</div>
-                        <div class="node-usage-label">${node.activeVmIds?.length || 0} VMs</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Load SSH Keys
-        async function loadSshKeys() {
-            try {
-                const data = await api('/api/user/me/ssh-keys');
-                const keys = data.data || [];
-
-                const html = keys.map(key => `
-                                <div class="ssh-key-item">
-                                    <div class="ssh-key-info">
-                                        <div class="ssh-key-icon">
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
-                                            </svg>
-                                        </div>
-                                        <div>
-                                            <div class="ssh-key-name">${key.name}</div>
-                                            <div class="ssh-key-fingerprint">${key.fingerprint || key.publicKey?.slice(0, 40) + '...'}</div>
-                                        </div>
-                                    </div>
-                                    <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                                        </svg>
-                                    </button>
-                                </div>
-                            `).join('');
-
-                document.getElementById('ssh-keys-list').innerHTML = html || '<div style="text-align:center;padding:40px;color:var(--text-muted)">No SSH keys added yet</div>';
-            } catch (e) {
-                console.error('Failed to load SSH keys:', e);
-            }
-        }
-
-        // VM Actions
+        // ============================================
+        // VM ACTIONS
+        // ============================================
         async function createVm() {
             const name = document.getElementById('vm-name').value.trim();
             const cpuCores = parseInt(document.getElementById('vm-cpu').value);
@@ -1931,7 +1974,6 @@
             }
 
             try {
-                // Create VM - server generates human-readable password
                 const response = await api('/api/vms', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -1946,132 +1988,18 @@
 
                     closeModal('create-vm-modal');
 
-                    // Show password modal - user MUST acknowledge
-                    await showPasswordModal(vmId, name, password);
+                    if (password) {
+                        await showPasswordModal(vmId, name, password);
+                    }
 
                     refreshData();
+                    showToast('VM created successfully', 'success');
                 } else {
-                    showToast(response.error?.message || 'Failed to create VM', 'error');
+                    showToast(response.message || 'Failed to create VM', 'error');
                 }
             } catch (error) {
                 console.error('Create VM error:', error);
                 showToast('Failed to create VM', 'error');
-            }
-        }
-
-        /**
-         * Show password modal and handle encryption
-         */
-        async function showPasswordModal(vmId, vmName, password) {
-            return new Promise((resolve) => {
-                const modal = document.createElement('div');
-                modal.className = 'modal-overlay active';
-                modal.id = 'password-modal';
-                modal.innerHTML = `
-                    <div class="modal-content" style="max-width: 550px;">
-                        <h3>🔐 Save Your VM Password</h3>
-                        <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
-                
-                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${password}</code>
-                        </div>
-                
-                        <div style="background: #2d1f1f; border: 1px solid #7f1d1d; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                            <p style="color: #fca5a5; margin: 0;">
-                                <strong>⚠️ Important:</strong> This password will be encrypted with your wallet and stored securely. 
-                                You can always retrieve it by signing with your wallet, but <strong>save it now</strong> as a backup.
-                            </p>
-                        </div>
-                
-                        <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
-                                📋 Copy Password
-                            </button>
-                            <button onclick="secureAndClose('${vmId}', '${password}')" class="btn btn-primary">
-                                🔒 Secure & Continue
-                            </button>
-                        </div>
-                    </div>
-                `;
-                document.body.appendChild(modal);
-
-                window.secureAndClose = async (vmId, password) => {
-                    try {
-                        // Get encryption key from wallet
-                        const aesKey = await getEncryptionKey();
-
-                        // Encrypt password
-                        const encryptedPassword = await encryptPassword(password, aesKey);
-
-                        // Store encrypted password on server
-                        await api(`/api/vms/${vmId}/secure-password`, {
-                            method: 'POST',
-                            body: JSON.stringify({ encryptedPassword })
-                        });
-
-                        showToast('Password secured with your wallet!', 'success');
-                        modal.remove();
-                        resolve();
-                    } catch (error) {
-                        console.error('Failed to secure password:', error);
-                        showToast('Failed to encrypt - please save password manually!', 'error');
-                    }
-                };
-            });
-        }
-
-        function copyVmPassword(password) {
-            navigator.clipboard.writeText(password);
-            showToast('Password copied!', 'success');
-        }
-
-        /**
-         * Reveal password for a VM (requires wallet signature)
-         */
-        async function revealPassword(vmId, vmName) {
-            try {
-                // Get encrypted password from server
-                const response = await api(`/api/vms/${vmId}/encrypted-password`);
-
-                if (!response.success || !response.data?.encryptedPassword) {
-                    showToast('Password not available', 'error');
-                    return;
-                }
-
-                // Get decryption key from wallet
-                const aesKey = await getEncryptionKey();
-
-                // Decrypt
-                const password = await decryptPassword(response.data.encryptedPassword, aesKey);
-
-                // Show in modal
-                const modal = document.createElement('div');
-                modal.className = 'modal-overlay active';
-                modal.innerHTML = `
-                    <div class="modal-content" style="max-width: 450px;">
-                        <h3>🔑 VM Password</h3>
-                        <p>Password for <strong>${vmName}</strong>:</p>
-                
-                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
-                            <code style="font-size: 1.4em; color: #10b981;">${password}</code>
-                        </div>
-                
-                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');" class="btn btn-secondary">
-                                📋 Copy
-                            </button>
-                            <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                `;  
-                document.body.appendChild(modal);
-                modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-
-            } catch (error) {
-                console.error('Failed to reveal password:', error);
-                showToast('Failed to decrypt password. Make sure you\'re using the same wallet.', 'error');
             }
         }
 
@@ -2125,7 +2053,9 @@
             }
         }
 
-        // SSH Key Actions
+        // ============================================
+        // SSH KEY ACTIONS
+        // ============================================
         async function addSshKey() {
             const name = document.getElementById('ssh-key-name').value;
             const publicKey = document.getElementById('ssh-key-value').value;
@@ -2172,435 +2102,162 @@
         }
 
         // ============================================
-        // Wallet-Based Password Encryption
+        // WALLET-BASED PASSWORD ENCRYPTION
         // ============================================
-
         const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
+        let cachedEncryptionKey = null;
 
-        /**
-         * Derive AES-256 key from wallet signature
-         */
         async function deriveEncryptionKey(signer) {
-            // Sign a deterministic message
             const signature = await signer.signMessage(ENCRYPTION_MESSAGE);
-
-            // Hash signature to get 32 bytes for AES-256
             const encoder = new TextEncoder();
             const sigBytes = encoder.encode(signature);
             const hashBuffer = await crypto.subtle.digest('SHA-256', sigBytes);
-
-            // Import as AES key
-            return await crypto.subtle.importKey(
-                'raw',
-                hashBuffer,
-                { name: 'AES-GCM' },
-                false,
-                ['encrypt', 'decrypt']
-            );
+            return await crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
         }
 
-        /**
-         * Encrypt password with wallet-derived key
-         * Returns: base64(iv):base64(ciphertext)
-         */
         async function encryptPassword(password, aesKey) {
             const encoder = new TextEncoder();
             const data = encoder.encode(password);
-
-            // Generate random IV
             const iv = crypto.getRandomValues(new Uint8Array(12));
-
-            // Encrypt
-            const ciphertext = await crypto.subtle.encrypt(
-                { name: 'AES-GCM', iv: iv },
-                aesKey,
-                data
-            );
-
-            // Format: iv:ciphertext (both base64)
+            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, data);
             const ivBase64 = btoa(String.fromCharCode(...iv));
             const ctBase64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
-
             return `${ivBase64}:${ctBase64}`;
         }
 
-        /**
-         * Decrypt password with wallet-derived key
-         */
         async function decryptPassword(encryptedData, aesKey) {
             const [ivBase64, ctBase64] = encryptedData.split(':');
-
-            // Decode base64
             const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
             const ciphertext = Uint8Array.from(atob(ctBase64), c => c.charCodeAt(0));
-
-            // Decrypt
-            const decrypted = await crypto.subtle.decrypt(
-                { name: 'AES-GCM', iv: iv },
-                aesKey,
-                ciphertext
-            );
-
+            const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, ciphertext);
             return new TextDecoder().decode(decrypted);
         }
 
-        /**
-         * Get or cache the encryption key
-         */
-        let cachedEncryptionKey = null;
-
         async function getEncryptionKey() {
             if (cachedEncryptionKey) return cachedEncryptionKey;
-
-            if (!window.ethereum) {
-                throw new Error('No wallet connected');
-            }
-
+            if (!window.ethereum) throw new Error('No wallet connected');
             const provider = new ethers.BrowserProvider(window.ethereum);
             const signer = await provider.getSigner();
-
             cachedEncryptionKey = await deriveEncryptionKey(signer);
             return cachedEncryptionKey;
         }
 
-        // Clear cache on wallet change
-        if (window.ethereum) {
-            window.ethereum.on('accountsChanged', () => {
-                cachedEncryptionKey = null;
-            });
-        }
-
-        // Navigation
-        function showPage(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-
-            document.getElementById(`page-${pageId}`).classList.add('active');
-            document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
-        }
-
-        // Modals
-        function openCreateVmModal() {
-            document.getElementById('create-vm-modal').classList.add('active');
-        }
-
-        function openAddSshKeyModal() {
-            document.getElementById('add-ssh-key-modal').classList.add('active');
-            // Reset modal state
-            document.getElementById('ssh-key-name').value = '';
-            document.getElementById('ssh-key-value').value = '';
-            document.getElementById('ssh-file-name').textContent = '';
-            document.getElementById('ssh-generate-ready').style.display = 'block';
-            document.getElementById('ssh-generate-result').style.display = 'none';
-            const genBtn = document.getElementById('generate-key-btn');
-            if (genBtn) {
-                genBtn.disabled = false;
-                genBtn.innerHTML = '🔐 Generate Key Pair';
-            }
-            generatedKeyPair = null;
-            showSshTab('paste');
-            initSshDropzone();
-        }
-
-        // SSH Key Tab Management
-        function showSshTab(tab) {
-            document.querySelectorAll('.ssh-tab-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById(`ssh-tab-${tab}`).classList.add('active');
-            document.querySelectorAll('.ssh-panel').forEach(panel => panel.style.display = 'none');
-            document.getElementById(`ssh-panel-${tab}`).style.display = 'block';
-        }
-
-        // File Upload Handling
-        function handleSshFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) readSshFile(file);
-        }
-
-        function readSshFile(file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const content = e.target.result.trim();
-                if (content.startsWith('ssh-') || content.startsWith('ecdsa-')) {
-                    document.getElementById('ssh-key-value').value = content;
-                    document.getElementById('ssh-file-name').textContent = `✓ Loaded: ${file.name}`;
-                    if (!document.getElementById('ssh-key-name').value) {
-                        const baseName = file.name.replace(/\.pub$/, '').replace(/^id_/, '');
-                        document.getElementById('ssh-key-name').value = baseName || 'uploaded-key';
-                    }
-                    showToast('SSH key loaded from file', 'success');
-                } else {
-                    showToast('Invalid SSH public key file', 'error');
-                    document.getElementById('ssh-file-name').textContent = '';
-                }
-            };
-            reader.readAsText(file);
-        }
-
-        // Initialize Drag & Drop
-        function initSshDropzone() {
-            const dropzone = document.getElementById('ssh-dropzone');
-            if (!dropzone) return;
-
-            dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('dragover'); };
-            dropzone.ondragleave = () => { dropzone.classList.remove('dragover'); };
-            dropzone.ondrop = (e) => {
-                e.preventDefault();
-                dropzone.classList.remove('dragover');
-                const file = e.dataTransfer.files[0];
-                if (file) readSshFile(file);
-            };
-        }
-
-        // SSH Key Generation
-        let generatedKeyPair = null;
-
-        async function generateSshKeyPair() {
-            const btn = document.getElementById('generate-key-btn');
-            btn.disabled = true;
-            btn.innerHTML = '<div class="spinner"></div> Generating...';
-
-            try {
-                // Check if crypto.subtle is available (requires HTTPS)
-                if (!crypto.subtle) {
-                    throw new Error('HTTPS_REQUIRED');
-                }
-
-                const keyPair = await crypto.subtle.generateKey(
-                    { name: 'Ed25519' },
-                    true,
-                    ['sign', 'verify']
-                );
-
-                const publicKeyRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
-                const privateKeyPkcs8 = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
-
-                const keyName = document.getElementById('ssh-key-name').value || 'decloud-key';
-                const sshPubKey = formatOpenSSHPublicKey(new Uint8Array(publicKeyRaw), keyName);
-
-                generatedKeyPair = {
-                    publicKey: sshPubKey,
-                    privateKeyPkcs8: privateKeyPkcs8,
-                    name: keyName
-                };
-
-                document.getElementById('ssh-key-value').value = sshPubKey;
-                document.getElementById('generated-pubkey-preview').textContent =
-                    sshPubKey.substring(0, 60) + '...' + sshPubKey.substring(sshPubKey.length - 30);
-
-                document.getElementById('ssh-generate-ready').style.display = 'none';
-                document.getElementById('ssh-generate-result').style.display = 'block';
-
-                if (!document.getElementById('ssh-key-name').value) {
-                    document.getElementById('ssh-key-name').value = 'decloud-key';
-                }
-
-                showToast('SSH key pair generated!', 'success');
-            } catch (err) {
-                console.error('Key generation failed:', err);
-                if (err.message === 'HTTPS_REQUIRED') {
-                    showHttpsRequiredMessage();
-                } else if (err.name === 'NotSupportedError') {
-                    showToast('Your browser does not support Ed25519. Please use ssh-keygen instead.', 'error');
-                } else {
-                    showToast('Failed to generate key: ' + err.message, 'error');
-                }
-                btn.disabled = false;
-                btn.innerHTML = '🔐 Generate Key Pair';
-            }
-        }
-
-        function showHttpsRequiredMessage() {
-            document.getElementById('ssh-generate-ready').innerHTML = `
-                    <div style="text-align: left; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--accent-danger); border-radius: 8px; padding: 16px;">
-                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="2">
-                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                            </svg>
-                            <strong style="color: var(--accent-danger);">HTTPS Required</strong>
+        async function showPasswordModal(vmId, vmName, password) {
+            return new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.innerHTML = `
+                    <div class="modal" style="max-width: 500px;">
+                        <div class="modal-header">
+                            <h2 class="modal-title">🔐 Save Your VM Password</h2>
                         </div>
-                        <p style="margin: 0 0 12px 0; color: var(--text-secondary); font-size: 14px;">
-                            Browser key generation requires a secure (HTTPS) connection.
-                            Please generate a key locally instead:
-                        </p>
-                        <div style="background: var(--bg-deep); border-radius: 6px; padding: 12px; font-family: var(--font-mono); font-size: 12px;">
-                            <div style="color: var(--text-muted); margin-bottom: 4px;"># Generate Ed25519 key:</div>
-                            <div style="color: var(--accent-primary); margin-bottom: 8px;">ssh-keygen -t ed25519 -C "decloud"</div>
-                            <div style="color: var(--text-muted); margin-bottom: 4px;"># Then copy your public key:</div>
-                            <div style="color: var(--accent-primary);">cat ~/.ssh/id_ed25519.pub</div>
+                        <div class="modal-body">
+                            <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
+                            <div style="background: var(--bg-deep); padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
+                                <code style="font-size: 1.5em; color: var(--accent-primary); letter-spacing: 1px;">${password}</code>
+                            </div>
+                            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px; margin: 15px 0;">
+                                <p style="color: #fca5a5; margin: 0;">
+                                    <strong>⚠️ Important:</strong> Save this password now. It will be encrypted with your wallet for later retrieval.
+                                </p>
+                            </div>
                         </div>
-                        <p style="margin: 12px 0 0 0; color: var(--text-muted); font-size: 13px;">
-                            Paste the public key in the "📋 Paste Key" tab.
-                        </p>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');">📋 Copy</button>
+                            <button class="btn btn-primary" id="encrypt-save-btn">🔒 Encrypt & Save</button>
+                        </div>
                     </div>
                 `;
-        }
+                document.body.appendChild(modal);
 
-        function formatOpenSSHPublicKey(rawPublicKey, comment) {
-            const keyType = 'ssh-ed25519';
-            const keyTypeBytes = new TextEncoder().encode(keyType);
-
-            const buffer = new ArrayBuffer(4 + keyTypeBytes.length + 4 + rawPublicKey.length);
-            const view = new DataView(buffer);
-            const bytes = new Uint8Array(buffer);
-
-            let offset = 0;
-            view.setUint32(offset, keyTypeBytes.length, false);
-            offset += 4;
-            bytes.set(keyTypeBytes, offset);
-            offset += keyTypeBytes.length;
-            view.setUint32(offset, rawPublicKey.length, false);
-            offset += 4;
-            bytes.set(rawPublicKey, offset);
-
-            const base64Key = btoa(String.fromCharCode(...bytes));
-            return `${keyType} ${base64Key} ${comment}@decloud`;
-        }
-
-        function downloadPrivateKey() {
-            if (!generatedKeyPair) {
-                showToast('No key pair generated', 'error');
-                return;
-            }
-
-            const privateKeyPem = formatPrivateKeyPem(generatedKeyPair.privateKeyPkcs8, generatedKeyPair.publicKey);
-
-            const blob = new Blob([privateKeyPem], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `id_ed25519_${generatedKeyPair.name}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            showToast('Private key downloaded! Keep it safe.', 'success');
-        }
-
-        function formatPrivateKeyPem(pkcs8Key, publicKeyStr) {
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(pkcs8Key)));
-            const lines = base64.match(/.{1,64}/g) || [];
-
-            return `-----BEGIN PRIVATE KEY-----
-                ${lines.join('\n')}
-                -----END PRIVATE KEY-----
-
-                # DeCloud Generated SSH Key
-                #
-                # To use this key:
-                # 1. Save this file as: ~/.ssh/id_ed25519_decloud
-                # 2. Set permissions: chmod 600 ~/.ssh/id_ed25519_decloud
-                # 3. Connect: ssh -i ~/.ssh/id_ed25519_decloud ubuntu@<vm-ip>
-                #
-                # Your public key (already added to DeCloud):
-                # ${publicKeyStr}
-                `;
-        }
-
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('active');
-        }
-
-        function showPasswordModal(vmName, password) {
-            // Create modal HTML
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.innerHTML = `
-                        <div class="modal-content" style="max-width: 500px;">
-                            <h3>⚠️ VM Credentials</h3>
-                            <p>Your VM <strong>${vmName}</strong> was created with a generated password.</p>
-                            <p><strong>Save this password now - it won't be shown again!</strong></p>
-                            <div style="background: #1a1b26; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                                <p style="margin: 5px 0;">Username: <code>ubuntu</code></p>
-                                <p style="margin: 5px 0;">Password: <code id="vm-password">${password}</code></p>
-                            </div>
-                            <button onclick="copyPassword()" class="btn btn-secondary">Copy Password</button>
-                            <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">I've Saved It</button>
-                        </div>
-                    `;
-            document.body.appendChild(modal);
-        }
-
-        // Close modal on overlay click
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay) {
-                    overlay.classList.remove('active');
-                }
-            });
-        });
-
-        // Toast
-        function showToast(message, type = 'success') {
-            const container = document.getElementById('toast-container');
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `
-                            <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                ${type === 'success'
-                    ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
-                    : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'}
-                            </svg>
-                            <span class="toast-message">${message}</span>
-                        `;
-            container.appendChild(toast);
-
-            setTimeout(() => {
-                toast.style.opacity = '0';
-                setTimeout(() => toast.remove(), 300);
-            }, 4000);
-        }
-
-        // Terminal - opens in new window with auto-connect
-        async function openTerminal(vmId, vmName) {
-            try {
-                // Get VM details including encrypted password
-                const vmResponse = await api(`/api/vms/${vmId}`);
-                if (!vmResponse.success) {
-                    showToast('Failed to get VM details', 'error');
-                    return;
-                }
-
-                const vm = vmResponse.data;
-                const vmIp = vm.networkConfig?.privateIp;
-                const nodeId = vm.nodeId;
-
-                if (!vmIp) {
-                    showToast('VM IP not available yet', 'error');
-                    return;
-                }
-
-                // Get node IP
-                const nodeIp = getNodePublicIp(nodeId);
-                if (!nodeIp) {
-                    showToast('Node not available', 'error');
-                    return;
-                }
-
-                // Get decrypted password
-                let password = null;
-                try {
-                    const pwResponse = await api(`/api/vms/${vmId}/encrypted-password`);
-                    if (pwResponse.success && pwResponse.data?.encryptedPassword) {
+                document.getElementById('encrypt-save-btn').onclick = async () => {
+                    try {
                         const aesKey = await getEncryptionKey();
-                        password = await decryptPassword(pwResponse.data.encryptedPassword, aesKey);
+                        const encrypted = await encryptPassword(password, aesKey);
+                        
+                        await api(`/api/vms/${vmId}/encrypted-password`, {
+                            method: 'POST',
+                            body: JSON.stringify({ encryptedPassword: encrypted })
+                        });
+                        
+                        showToast('Password encrypted and saved', 'success');
+                        modal.remove();
+                        resolve();
+                    } catch (error) {
+                        console.error('Failed to encrypt:', error);
+                        showToast('Failed to encrypt - save password manually!', 'error');
                     }
-                } catch (e) {
-                    console.warn('Could not decrypt password:', e);
-                }
+                };
 
-                if (!password) {
-                    showToast('Could not retrieve password. Please reveal password manually.', 'error');
+                modal.onclick = (e) => { if (e.target === modal) { modal.remove(); resolve(); } };
+            });
+        }
+
+        async function revealPassword(vmId, vmName) {
+            try {
+                const response = await api(`/api/vms/${vmId}/encrypted-password`);
+
+                if (!response.success || !response.data?.encryptedPassword) {
+                    showToast('Password not available', 'error');
                     return;
                 }
 
-                // Build terminal URL with password
-                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${wsProtocol}//${nodeIp}:5100/api/vms/${vmId}/terminal?ip=${vmIp}&user=ubuntu&password=${encodeURIComponent(password)}`;
+                const aesKey = await getEncryptionKey();
+                const password = await decryptPassword(response.data.encryptedPassword, aesKey);
 
-                // Open terminal
-                const terminalUrl = `/terminal.html?wsUrl=${encodeURIComponent(wsUrl)}&vmName=${encodeURIComponent(vmName)}`;
-                window.open(terminalUrl, `terminal-${vmId}`, 'width=1000,height=700');
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay active';
+                modal.innerHTML = `
+                    <div class="modal" style="max-width: 450px;">
+                        <div class="modal-header">
+                            <h2 class="modal-title">🔑 VM Password</h2>
+                        </div>
+                        <div class="modal-body">
+                            <p>Password for <strong>${vmName}</strong>:</p>
+                            <div style="background: var(--bg-deep); padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
+                                <code style="font-size: 1.4em; color: var(--accent-primary);">${password}</code>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');">📋 Copy</button>
+                            <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
+                        </div>
+                    </div>
+                `;  
+                document.body.appendChild(modal);
+                modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+            } catch (error) {
+                console.error('Failed to reveal password:', error);
+                showToast('Failed to decrypt password. Ensure same wallet is connected.', 'error');
+            }
+        }
+
+        // ============================================
+        // TERMINAL & CONNECT
+        // ============================================
+        async function openTerminal(nodeIp, vmIp, vmName, vmId) {
+            try {
+                const response = await api(`/api/vms/${vmId}/encrypted-password`);
+                let password = '';
+
+                if (response.success && response.data?.encryptedPassword) {
+                    try {
+                        const aesKey = await getEncryptionKey();
+                        password = await decryptPassword(response.data.encryptedPassword, aesKey);
+                    } catch (e) {
+                        console.error('Failed to decrypt password:', e);
+                    }
+                }
+
+                let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}`;
+                url += `&vmIp=${encodeURIComponent(vmIp)}`;
+                url += `&vmId=${encodeURIComponent(vmId)}`;
+                url += `&user=ubuntu`;
+                if (password) {
+                    url += `&password=${encodeURIComponent(password)}`;
+                }
+                window.open(url, `terminal-${vmId}`, 'width=1000,height=700');
 
             } catch (error) {
                 console.error('Terminal error:', error);
@@ -2608,18 +2265,6 @@
             }
         }
 
-        function openTerminalWithPassword(nodeIp, vmIp, vmName, vmId, password) {
-            let url = `/terminal.html?nodeIp=${encodeURIComponent(nodeIp)}`;
-            url += `&vmIp=${encodeURIComponent(vmIp)}`;
-            url += `&vmId=${encodeURIComponent(vmId)}`;
-            url += `&user=ubuntu`;
-            if (password) {
-                url += `&password=${encodeURIComponent(password)}`;
-            }
-            window.open(url, `terminal-${vmId}`, 'width=1000,height=700');
-        }
-
-        // Connection Info Modal
         function showConnectInfo(nodeIp, vmIp, vmName) {
             document.getElementById('connect-vm-name').textContent = vmName;
             document.getElementById('connect-vm-ip').textContent = vmIp;
@@ -2642,71 +2287,72 @@
             });
         }
 
-        // Helpers
+        // ============================================
+        // NAVIGATION & MODALS
+        // ============================================
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+            document.getElementById(`page-${pageId}`).classList.add('active');
+            document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
+        }
+
+        function openCreateVmModal() {
+            document.getElementById('create-vm-modal').classList.add('active');
+        }
+
+        function openAddSshKeyModal() {
+            document.getElementById('add-ssh-key-modal').classList.add('active');
+            document.getElementById('ssh-key-name').value = '';
+            document.getElementById('ssh-key-value').value = '';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('active');
+                }
+            });
+        });
+
+        // ============================================
+        // HELPERS
+        // ============================================
         function formatMemory(mb) {
             if (!mb) return '-';
             if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
             return mb + ' MB';
         }
 
-        function copyPassword() {
-            const password = document.getElementById('vm-password').textContent;
-            navigator.clipboard.writeText(password);
-            showToast('Password copied!', 'success');
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    ${type === 'success' 
+                        ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
+                        : type === 'error'
+                        ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
+                        : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
+                </svg>
+                <span>${message}</span>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        // Clear encryption key cache on wallet change
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', () => {
+                cachedEncryptionKey = null;
+            });
         }
     </script>
-
-    <!-- Connection Info Modal -->
-    <div id="connect-modal-overlay" class="connect-modal-overlay" onclick="if(event.target === this) closeConnectModal()">
-        <div class="connect-modal">
-            <div class="connect-modal-header">
-                <h3>Connect to <span id="connect-vm-name">VM</span></h3>
-                <button class="modal-close" onclick="closeConnectModal()">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-            <div class="connect-modal-body">
-                <div class="connect-info-box">
-                    <div class="connect-info-row">
-                        <span class="connect-info-label">VM IP Address</span>
-                        <span class="connect-info-value" id="connect-vm-ip">-</span>
-                    </div>
-                    <div class="connect-info-row">
-                        <span class="connect-info-label">Node IP</span>
-                        <span class="connect-info-value" id="connect-node-ip">-</span>
-                    </div>
-                    <div class="connect-info-row">
-                        <span class="connect-info-label">Username</span>
-                        <span class="connect-info-value">ubuntu</span>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 1: SSH Jump Host (Recommended)</h4>
-                    <p class="connect-note">Connect through the node server as a jump host. Works from anywhere.</p>
-                    <div class="connect-code">
-                        <code id="connect-jump-cmd">ssh -J root@NODE ubuntu@VM</code>
-                        <button class="connect-code-copy" onclick="copyCommand('connect-jump-cmd', this)">Copy</button>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 2: Direct SSH (Requires WireGuard)</h4>
-                    <p class="connect-note">If you have WireGuard VPN set up to the node, you can connect directly.</p>
-                    <div class="connect-code">
-                        <code id="connect-direct-cmd">ssh ubuntu@VM</code>
-                        <button class="connect-code-copy" onclick="copyCommand('connect-direct-cmd', this)">Copy</button>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <h4>Option 3: Web Terminal</h4>
-                    <p class="connect-note">Click the terminal button (>_) in the VM actions to open a browser-based terminal.</p>
-                </div>
-            </div>
-        </div>
-    </div>
 </body>
 </html>
