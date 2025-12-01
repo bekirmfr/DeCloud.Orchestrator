@@ -430,7 +430,7 @@ public class NodeService : INodeService
             var recoveredVm = new VirtualMachine
             {
                 Id = vmId,
-                Name = reported.Name ?? $"recovered-vm-{SafeSubstring(vmId, 8)}",
+                Name = reported.Name ?? $"recovered-vm-{(vmId.Length > 8 ? vmId[..8] : vmId)}",
                 NodeId = nodeId,
                 OwnerId = reported.TenantId ?? "unknown",
                 OwnerWallet = "recovered",
@@ -441,7 +441,7 @@ public class NodeService : INodeService
                 NetworkConfig = new VmNetworkConfig
                 {
                     PrivateIp = reported.IpAddress,
-                    Hostname = reported.Name ?? $"vm-{SafeSubstring(vmId, 8)}"
+                    Hostname = reported.Name ?? $"vm-{(vmId.Length > 8 ? vmId[..8] : vmId)}"
                 },
                 Spec = new VmSpec
                 {
