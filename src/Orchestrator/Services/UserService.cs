@@ -2,10 +2,12 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Nethereum.Signer;
+using Nethereum.Util;
 using Orchestrator.Data;
 using Orchestrator.Models;
-using Nethereum.Signer;
 
 namespace Orchestrator.Services;
 
@@ -46,219 +48,157 @@ public interface IUserService
 }
 
 /// <summary>
-/// User management service implementation with complete authentication
+/// User management service implementation with crypto wallet authentication
 /// </summary>
 public class UserService : IUserService
 {
     private readonly DataStore _dataStore;
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
-    private readonly string _jwtKey;
-    private readonly string _jwtIssuer;
-    private readonly string _jwtAudience;
-    private readonly bool _isDevelopment;
-
+    
     // Refresh token storage (in production, use Redis or database)
-    private static readonly Dictionary<string, RefreshTokenData> _refreshTokens = new();
-    private static readonly SemaphoreSlim _refreshTokenLock = new(1, 1);
+    private static readonly Dictionary<string, RefreshTokenInfo> _refreshTokens = new();
+    private static readonly object _refreshTokenLock = new();
 
-    public UserService(
-        DataStore dataStore,
-        ILogger<UserService> logger,
-        IConfiguration configuration,
-        IWebHostEnvironment environment)
+    // Configuration constants
+    private const int MaxTimestampAgeSeconds = 300; // 5 minutes for signature validity
+    private const int AccessTokenExpiryMinutes = 60; // 1 hour
+    private const int RefreshTokenExpiryDays = 7;
+
+    public UserService(DataStore dataStore, ILogger<UserService> logger, IConfiguration configuration)
     {
         _dataStore = dataStore;
         _logger = logger;
         _configuration = configuration;
-        _isDevelopment = environment.IsDevelopment();
-
-        // Load JWT configuration
-        _jwtKey = configuration["Jwt:Key"]
-            ?? "default-dev-key-change-in-production-min-32-chars!";
-        _jwtIssuer = configuration["Jwt:Issuer"] ?? "orchestrator";
-        _jwtAudience = configuration["Jwt:Audience"] ?? "orchestrator-client";
     }
 
     // =====================================================
-    // Authentication Implementation
+    // WALLET AUTHENTICATION - CORE IMPLEMENTATION
     // =====================================================
 
+    /// <summary>
+    /// Authenticate user with Ethereum wallet signature
+    /// Uses EIP-191 signature verification via Nethereum
+    /// </summary>
     public async Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request)
     {
         try
         {
-            // Normalize wallet address
-            var walletAddress = request.WalletAddress.ToLowerInvariant();
+            _logger.LogInformation("Wallet auth attempt for: {Wallet}", request.WalletAddress);
 
-            // Validate timestamp (prevent replay attacks)
+            // 1. Validate timestamp to prevent replay attacks
             var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var timeDiff = Math.Abs(currentTimestamp - request.Timestamp);
-
-            if (timeDiff > 300) // 5 minutes tolerance
+            
+            if (timeDiff > MaxTimestampAgeSeconds)
             {
-                _logger.LogWarning(
-                    "Authentication rejected: timestamp too old or in future ({Diff}s)",
-                    timeDiff);
+                _logger.LogWarning("Timestamp too old/future: {Diff}s (max: {Max}s)", timeDiff, MaxTimestampAgeSeconds);
                 return null;
             }
 
-            // Verify signature
-            var isValidSignature = VerifySignature(
-                request.Message,
-                request.Signature,
-                walletAddress);
-
-            if (!isValidSignature)
+            // 2. Verify the signature
+            var recoveredAddress = RecoverAddressFromSignature(request.Message, request.Signature);
+            
+            if (string.IsNullOrEmpty(recoveredAddress))
             {
-                _logger.LogWarning(
-                    "Authentication failed: invalid signature for wallet {Wallet}",
-                    walletAddress);
+                _logger.LogWarning("Failed to recover address from signature");
                 return null;
             }
 
-            // Get or create user
-            var user = await GetUserByWalletAsync(walletAddress);
+            // 3. Compare addresses (case-insensitive, checksum-aware)
+            var providedAddress = request.WalletAddress.ToLowerInvariant();
+            var recovered = recoveredAddress.ToLowerInvariant();
+            
+            if (providedAddress != recovered)
+            {
+                _logger.LogWarning("Address mismatch: provided={Provided}, recovered={Recovered}", 
+                    providedAddress, recovered);
+                return null;
+            }
+
+            // 4. Verify the message contains the correct wallet address (additional security)
+            if (!request.Message.Contains(request.WalletAddress, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Message does not contain wallet address");
+                return null;
+            }
+
+            // 5. Get or create user
+            var user = await GetUserByWalletAsync(request.WalletAddress);
             if (user == null)
             {
-                _logger.LogInformation("Creating new user for wallet {Wallet}", walletAddress);
-                user = await CreateUserAsync(walletAddress);
+                _logger.LogInformation("Creating new user for wallet: {Wallet}", request.WalletAddress);
+                user = await CreateUserAsync(request.WalletAddress);
             }
 
-            // Update last login
+            // 6. Update last login
             user.LastLoginAt = DateTime.UtcNow;
-            await _dataStore.SaveUserAsync(user);
+            await UpdateUserAsync(user);
 
-            // Generate tokens
-            var accessToken = GenerateAccessToken(user);
-            var refreshToken = await GenerateRefreshTokenAsync(user.Id);
+            // 7. Generate tokens
+            var accessToken = GenerateJwtToken(user);
+            var refreshToken = GenerateRefreshToken(user.Id);
+            var expiresAt = DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes);
 
-            var expiresAt = DateTime.UtcNow.AddHours(1);
-
-            _logger.LogInformation(
-                "User authenticated successfully: {UserId} ({Wallet})",
-                user.Id, user.WalletAddress);
+            _logger.LogInformation("Wallet auth successful for: {Wallet} (User: {UserId})", 
+                request.WalletAddress, user.Id);
 
             return new AuthResponse(accessToken, refreshToken, expiresAt, user);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during wallet authentication");
+            _logger.LogError(ex, "Error during wallet authentication for: {Wallet}", request.WalletAddress);
             return null;
         }
     }
 
-    public async Task<AuthResponse?> RefreshTokenAsync(string refreshToken)
-    {
-        await _refreshTokenLock.WaitAsync();
-        try
-        {
-            // Validate refresh token
-            if (!_refreshTokens.TryGetValue(refreshToken, out var tokenData))
-            {
-                _logger.LogWarning("Refresh token not found or expired");
-                return null;
-            }
-
-            // Check expiration
-            if (tokenData.ExpiresAt < DateTime.UtcNow)
-            {
-                _refreshTokens.Remove(refreshToken);
-                _logger.LogWarning("Refresh token expired");
-                return null;
-            }
-
-            // Get user
-            var user = await GetUserAsync(tokenData.UserId);
-            if (user == null || user.Status != UserStatus.Active)
-            {
-                _refreshTokens.Remove(refreshToken);
-                _logger.LogWarning("User not found or inactive for refresh token");
-                return null;
-            }
-
-            // Remove old refresh token
-            _refreshTokens.Remove(refreshToken);
-
-            // Generate new tokens
-            var newAccessToken = GenerateAccessToken(user);
-            var newRefreshToken = await GenerateRefreshTokenAsync(user.Id);
-
-            var expiresAt = DateTime.UtcNow.AddHours(1);
-
-            _logger.LogInformation("Tokens refreshed for user {UserId}", user.Id);
-
-            return new AuthResponse(newAccessToken, newRefreshToken, expiresAt, user);
-        }
-        finally
-        {
-            _refreshTokenLock.Release();
-        }
-    }
-
     /// <summary>
-    /// Verify Ethereum signature
-    /// In development mode, accepts mock signatures for testing
+    /// Recover Ethereum address from signed message using Nethereum
     /// </summary>
-    private bool VerifySignature(string message, string signature, string walletAddress)
+    private string? RecoverAddressFromSignature(string message, string signature)
     {
-        // DEVELOPMENT MODE: Accept mock signatures
-        if (_isDevelopment && signature.StartsWith("0xmock", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogDebug("Accepting mock signature in development mode");
-            return true;
-        }
-
         try
         {
-            // Use Nethereum to verify the signature
+            // Nethereum's EthereumMessageSigner handles EIP-191 prefix automatically
             var signer = new EthereumMessageSigner();
             var recoveredAddress = signer.EncodeUTF8AndEcRecover(message, signature);
-
-            // Compare addresses (case-insensitive)
-            var isValid = string.Equals(
-                recoveredAddress,
-                walletAddress,
-                StringComparison.OrdinalIgnoreCase);
-
-            if (!isValid)
-            {
-                _logger.LogWarning(
-                    "Signature verification failed: expected {Expected}, got {Actual}",
-                    walletAddress, recoveredAddress);
-            }
-
-            return isValid;
+            
+            // Normalize to checksum address
+            return new AddressUtil().ConvertToChecksumAddress(recoveredAddress);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error verifying signature");
-            return false;
+            _logger.LogError(ex, "Failed to recover address from signature");
+            return null;
         }
     }
 
     /// <summary>
     /// Generate JWT access token
     /// </summary>
-    private string GenerateAccessToken(User user)
+    private string GenerateJwtToken(User user)
     {
+        var jwtKey = _configuration["Jwt:Key"] ?? "default-dev-key-change-in-production-min-32-chars!";
+        var jwtIssuer = _configuration["Jwt:Issuer"] ?? "orchestrator";
+        var jwtAudience = _configuration["Jwt:Audience"] ?? "orchestrator-client";
+
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, user.Id),
             new Claim("wallet", user.WalletAddress),
             new Claim(ClaimTypes.Role, "user"),
-            new Claim(ClaimTypes.AuthenticationMethod, "Wallet"),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
         var token = new JwtSecurityToken(
-            issuer: _jwtIssuer,
-            audience: _jwtAudience,
+            issuer: jwtIssuer,
+            audience: jwtAudience,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(1),
+            expires: DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes),
             signingCredentials: credentials
         );
 
@@ -266,52 +206,97 @@ public class UserService : IUserService
     }
 
     /// <summary>
-    /// Generate refresh token
+    /// Generate secure refresh token
     /// </summary>
-    private async Task<string> GenerateRefreshTokenAsync(string userId)
+    private string GenerateRefreshToken(string userId)
     {
-        await _refreshTokenLock.WaitAsync();
-        try
+        var tokenBytes = new byte[64];
+        RandomNumberGenerator.Fill(tokenBytes);
+        var token = Convert.ToBase64String(tokenBytes)
+            .Replace("+", "-")
+            .Replace("/", "_")
+            .TrimEnd('=');
+
+        var info = new RefreshTokenInfo
         {
-            var tokenBytes = new byte[32];
-            RandomNumberGenerator.Fill(tokenBytes);
-            var refreshToken = Convert.ToBase64String(tokenBytes);
+            UserId = userId,
+            Token = token,
+            ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
+            CreatedAt = DateTime.UtcNow
+        };
 
-            var tokenData = new RefreshTokenData
+        lock (_refreshTokenLock)
+        {
+            // Clean up expired tokens
+            var expiredTokens = _refreshTokens
+                .Where(kvp => kvp.Value.ExpiresAt < DateTime.UtcNow)
+                .Select(kvp => kvp.Key)
+                .ToList();
+            
+            foreach (var expired in expiredTokens)
             {
-                UserId = userId,
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddDays(30)
-            };
-
-            _refreshTokens[refreshToken] = tokenData;
-
-            // Clean up expired tokens (simple cleanup strategy)
-            if (_refreshTokens.Count > 10000)
-            {
-                var expiredTokens = _refreshTokens
-                    .Where(t => t.Value.ExpiresAt < DateTime.UtcNow)
-                    .Select(t => t.Key)
-                    .ToList();
-
-                foreach (var expired in expiredTokens)
-                {
-                    _refreshTokens.Remove(expired);
-                }
-
-                _logger.LogInformation("Cleaned up {Count} expired refresh tokens", expiredTokens.Count);
+                _refreshTokens.Remove(expired);
             }
 
-            return refreshToken;
+            _refreshTokens[token] = info;
         }
-        finally
+
+        return token;
+    }
+
+    /// <summary>
+    /// Refresh access token using refresh token
+    /// </summary>
+    public async Task<AuthResponse?> RefreshTokenAsync(string refreshToken)
+    {
+        try
         {
-            _refreshTokenLock.Release();
+            RefreshTokenInfo? tokenInfo;
+            
+            lock (_refreshTokenLock)
+            {
+                if (!_refreshTokens.TryGetValue(refreshToken, out tokenInfo))
+                {
+                    _logger.LogWarning("Refresh token not found");
+                    return null;
+                }
+
+                if (tokenInfo.ExpiresAt < DateTime.UtcNow)
+                {
+                    _refreshTokens.Remove(refreshToken);
+                    _logger.LogWarning("Refresh token expired");
+                    return null;
+                }
+
+                // Remove old token (one-time use)
+                _refreshTokens.Remove(refreshToken);
+            }
+
+            var user = await GetUserAsync(tokenInfo.UserId);
+            if (user == null || user.Status != UserStatus.Active)
+            {
+                _logger.LogWarning("User not found or inactive: {UserId}", tokenInfo.UserId);
+                return null;
+            }
+
+            // Generate new tokens
+            var newAccessToken = GenerateJwtToken(user);
+            var newRefreshToken = GenerateRefreshToken(user.Id);
+            var expiresAt = DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes);
+
+            _logger.LogInformation("Token refreshed for user: {UserId}", user.Id);
+
+            return new AuthResponse(newAccessToken, newRefreshToken, expiresAt, user);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error refreshing token");
+            return null;
         }
     }
 
     // =====================================================
-    // User CRUD Operations
+    // USER CRUD OPERATIONS
     // =====================================================
 
     public Task<User?> GetUserAsync(string userId)
@@ -323,19 +308,21 @@ public class UserService : IUserService
     public Task<User?> GetUserByWalletAsync(string walletAddress)
     {
         var user = _dataStore.Users.Values
-            .FirstOrDefault(u => string.Equals(
-                u.WalletAddress,
-                walletAddress,
-                StringComparison.OrdinalIgnoreCase));
-
+            .FirstOrDefault(u => u.WalletAddress.Equals(walletAddress, StringComparison.OrdinalIgnoreCase));
         return Task.FromResult(user);
     }
 
     public async Task<User> CreateUserAsync(string walletAddress)
     {
+        // Normalize wallet address to checksum format
+        var normalizedAddress = new AddressUtil().ConvertToChecksumAddress(walletAddress);
+        
         var user = new User
         {
-            WalletAddress = walletAddress.ToLowerInvariant(),
+            Id = Guid.NewGuid().ToString(),
+            WalletAddress = normalizedAddress,
+            DisplayName = null,
+            Email = null,
             Status = UserStatus.Active,
             CreatedAt = DateTime.UtcNow,
             LastLoginAt = DateTime.UtcNow,
@@ -344,7 +331,7 @@ public class UserService : IUserService
         };
 
         await _dataStore.SaveUserAsync(user);
-        _logger.LogInformation("User created: {UserId} ({Wallet})", user.Id, walletAddress);
+        _logger.LogInformation("User created: {UserId} ({Wallet})", user.Id, normalizedAddress);
 
         return user;
     }
@@ -368,7 +355,7 @@ public class UserService : IUserService
     }
 
     // =====================================================
-    // SSH Key Management
+    // SSH KEY MANAGEMENT
     // =====================================================
 
     public async Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request)
@@ -376,14 +363,26 @@ public class UserService : IUserService
         if (!_dataStore.Users.TryGetValue(userId, out var user))
             return null;
 
-        // Generate fingerprint
-        var fingerprint = GenerateSshKeyFingerprint(request.PublicKey);
+        // Validate SSH key format
+        if (!ValidateSshKeyFormat(request.PublicKey))
+        {
+            _logger.LogWarning("Invalid SSH key format for user {UserId}", userId);
+            return null;
+        }
+
+        // Check for duplicate
+        if (user.SshKeys.Any(k => k.PublicKey == request.PublicKey.Trim()))
+        {
+            _logger.LogWarning("Duplicate SSH key for user {UserId}", userId);
+            return null;
+        }
 
         var sshKey = new SshKey
         {
+            Id = Guid.NewGuid().ToString(),
             Name = request.Name,
-            PublicKey = request.PublicKey,
-            Fingerprint = fingerprint,
+            PublicKey = request.PublicKey.Trim(),
+            Fingerprint = GenerateSshKeyFingerprint(request.PublicKey),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -418,25 +417,61 @@ public class UserService : IUserService
             return Task.FromResult<SshKey?>(null);
 
         var key = user.SshKeys.FirstOrDefault(k => k.Id == keyId);
-        return Task.FromResult<SshKey?>(key);
+        return Task.FromResult(key);
+    }
+
+    private bool ValidateSshKeyFormat(string publicKey)
+    {
+        if (string.IsNullOrWhiteSpace(publicKey))
+            return false;
+
+        var parts = publicKey.Trim().Split(' ');
+        if (parts.Length < 2)
+            return false;
+
+        // Check key type
+        var validTypes = new[] { "ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521" };
+        if (!validTypes.Contains(parts[0]))
+            return false;
+
+        // Check base64 encoding
+        try
+        {
+            var base64 = parts[1];
+            if (string.IsNullOrWhiteSpace(base64))
+                return false;
+
+            Convert.FromBase64String(base64);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private string GenerateSshKeyFingerprint(string publicKey)
     {
         try
         {
-            var keyBytes = Encoding.UTF8.GetBytes(publicKey);
-            var hash = SHA256.HashData(keyBytes);
-            return Convert.ToBase64String(hash);
+            var parts = publicKey.Trim().Split(' ');
+            if (parts.Length < 2)
+                return "invalid";
+
+            var keyData = Convert.FromBase64String(parts[1]);
+            var hash = MD5.HashData(keyData);
+
+            return "MD5:" + string.Join(":", hash.Select(b => b.ToString("x2")));
         }
-        catch
+        catch (Exception ex)
         {
-            return $"fp-{Guid.NewGuid():N}";
+            _logger.LogError(ex, "Failed to generate SSH key fingerprint");
+            return $"invalid-{Guid.NewGuid().ToString()[..8]}";
         }
     }
 
     // =====================================================
-    // API Key Management
+    // API KEY MANAGEMENT
     // =====================================================
 
     public async Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request)
@@ -444,12 +479,10 @@ public class UserService : IUserService
         if (!_dataStore.Users.TryGetValue(userId, out var user))
             return null;
 
-        // Generate API key
         var apiKeyBytes = new byte[32];
         RandomNumberGenerator.Fill(apiKeyBytes);
         var apiKey = $"dc_{Convert.ToBase64String(apiKeyBytes).Replace("+", "").Replace("/", "").Replace("=", "")}";
 
-        // Hash the key
         var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
 
         var apiKeyObj = new ApiKey
@@ -470,7 +503,7 @@ public class UserService : IUserService
 
         return new CreateApiKeyResponse(
             apiKeyObj.Id,
-            apiKey,  // ONLY time the full key is returned!
+            apiKey,
             apiKeyObj.KeyPrefix,
             apiKeyObj.CreatedAt,
             apiKeyObj.ExpiresAt
@@ -497,9 +530,10 @@ public class UserService : IUserService
     public Task<bool> ValidateApiKeyAsync(string apiKey)
     {
         var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
-
-        var user = _dataStore.Users.Values.FirstOrDefault(u =>
-            u.ApiKeys.Any(k => k.KeyHash == keyHash && (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
+        
+        var user = _dataStore.Users.Values
+            .FirstOrDefault(u => u.ApiKeys.Any(k => k.KeyHash == keyHash && 
+                (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
 
         return Task.FromResult(user != null);
     }
@@ -507,15 +541,16 @@ public class UserService : IUserService
     public Task<User?> GetUserByApiKeyAsync(string apiKey)
     {
         var keyHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)));
-
-        var user = _dataStore.Users.Values.FirstOrDefault(u =>
-            u.ApiKeys.Any(k => k.KeyHash == keyHash && (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
+        
+        var user = _dataStore.Users.Values
+            .FirstOrDefault(u => u.ApiKeys.Any(k => k.KeyHash == keyHash && 
+                (k.ExpiresAt == null || k.ExpiresAt > DateTime.UtcNow)));
 
         return Task.FromResult(user);
     }
 
     // =====================================================
-    // Quota Management
+    // QUOTA MANAGEMENT
     // =====================================================
 
     public Task<bool> CheckQuotaAsync(string userId, int cpuCores, long memoryMb, long storageGb)
@@ -524,14 +559,13 @@ public class UserService : IUserService
             return Task.FromResult(false);
 
         var quotas = user.Quotas;
+        
+        var cpuOk = quotas.CurrentCpuCores + cpuCores <= quotas.MaxCpuCores;
+        var memOk = quotas.CurrentMemoryMb + memoryMb <= quotas.MaxMemoryMb;
+        var storageOk = quotas.CurrentStorageGb + storageGb <= quotas.MaxStorageGb;
+        var vmOk = quotas.CurrentVms < quotas.MaxVms;
 
-        var hasQuota =
-            quotas.CurrentVms < quotas.MaxVms &&
-            quotas.CurrentCpuCores + cpuCores <= quotas.MaxCpuCores &&
-            quotas.CurrentMemoryMb + memoryMb <= quotas.MaxMemoryMb &&
-            quotas.CurrentStorageGb + storageGb <= quotas.MaxStorageGb;
-
-        return Task.FromResult(hasQuota);
+        return Task.FromResult(cpuOk && memOk && storageOk && vmOk);
     }
 
     public async Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta)
@@ -539,20 +573,18 @@ public class UserService : IUserService
         if (!_dataStore.Users.TryGetValue(userId, out var user))
             return;
 
-        user.Quotas.CurrentCpuCores += cpuDelta;
-        user.Quotas.CurrentMemoryMb += memoryDelta;
-        user.Quotas.CurrentStorageGb += storageDelta;
-
-        // Ensure non-negative
-        user.Quotas.CurrentCpuCores = Math.Max(0, user.Quotas.CurrentCpuCores);
-        user.Quotas.CurrentMemoryMb = Math.Max(0, user.Quotas.CurrentMemoryMb);
-        user.Quotas.CurrentStorageGb = Math.Max(0, user.Quotas.CurrentStorageGb);
+        user.Quotas.CurrentCpuCores = Math.Max(0, user.Quotas.CurrentCpuCores + cpuDelta);
+        user.Quotas.CurrentMemoryMb = Math.Max(0, user.Quotas.CurrentMemoryMb + memoryDelta);
+        user.Quotas.CurrentStorageGb = Math.Max(0, user.Quotas.CurrentStorageGb + storageDelta);
+        
+        if (cpuDelta > 0) user.Quotas.CurrentVms++;
+        else if (cpuDelta < 0) user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
 
         await _dataStore.SaveUserAsync(user);
     }
 
     // =====================================================
-    // Balance Management
+    // BALANCE MANAGEMENT
     // =====================================================
 
     public async Task<bool> DeductBalanceAsync(string userId, decimal amount)
@@ -566,8 +598,6 @@ public class UserService : IUserService
         user.CryptoBalance -= amount;
         await _dataStore.SaveUserAsync(user);
 
-        _logger.LogInformation("Balance deducted for user {UserId}: {Amount}", userId, amount);
-
         return true;
     }
 
@@ -579,18 +609,17 @@ public class UserService : IUserService
         user.CryptoBalance += amount;
         await _dataStore.SaveUserAsync(user);
 
-        _logger.LogInformation("Balance added for user {UserId}: {Amount}", userId, amount);
-
         return true;
     }
 }
 
 /// <summary>
-/// Refresh token data (in production, store in Redis/database)
+/// Refresh token info for storage
 /// </summary>
-internal class RefreshTokenData
+internal class RefreshTokenInfo
 {
     public string UserId { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; }
+    public string Token { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
