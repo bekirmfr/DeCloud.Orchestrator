@@ -2,7 +2,9 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Nethereum.Signer;
 using Nethereum.Util;
@@ -55,6 +57,7 @@ public class UserService : IUserService
     private readonly DataStore _dataStore;
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IWebHostEnvironment _environment;
     
     // Refresh token storage (in production, use Redis or database)
     private static readonly Dictionary<string, RefreshTokenInfo> _refreshTokens = new();
@@ -65,11 +68,19 @@ public class UserService : IUserService
     private const int AccessTokenExpiryMinutes = 60; // 1 hour
     private const int RefreshTokenExpiryDays = 7;
 
-    public UserService(DataStore dataStore, ILogger<UserService> logger, IConfiguration configuration)
+    /// <summary>
+    /// Constructor matching Program.cs registration (4 parameters)
+    /// </summary>
+    public UserService(
+        DataStore dataStore, 
+        ILogger<UserService> logger, 
+        IConfiguration configuration,
+        IWebHostEnvironment environment)
     {
         _dataStore = dataStore;
         _logger = logger;
         _configuration = configuration;
+        _environment = environment;
     }
 
     // =====================================================
@@ -79,6 +90,7 @@ public class UserService : IUserService
     /// <summary>
     /// Authenticate user with Ethereum wallet signature
     /// Uses EIP-191 signature verification via Nethereum
+    /// In Development mode, allows mock signatures for testing
     /// </summary>
     public async Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request)
     {
@@ -96,34 +108,53 @@ public class UserService : IUserService
                 return null;
             }
 
-            // 2. Verify the signature
-            var recoveredAddress = RecoverAddressFromSignature(request.Message, request.Signature);
+            // 2. Verify the signature (or bypass in development mode)
+            bool signatureValid = false;
             
-            if (string.IsNullOrEmpty(recoveredAddress))
+            if (_environment.IsDevelopment() && IsMockSignature(request.Signature))
             {
-                _logger.LogWarning("Failed to recover address from signature");
+                // Development mode: allow mock signatures for testing
+                _logger.LogWarning("DEV MODE: Accepting mock signature for wallet {Wallet}", request.WalletAddress);
+                signatureValid = true;
+            }
+            else
+            {
+                // Production mode: verify real signature
+                var recoveredAddress = RecoverAddressFromSignature(request.Message, request.Signature);
+                
+                if (string.IsNullOrEmpty(recoveredAddress))
+                {
+                    _logger.LogWarning("Failed to recover address from signature");
+                    return null;
+                }
+
+                // Compare addresses (case-insensitive)
+                var providedAddress = request.WalletAddress.ToLowerInvariant();
+                var recovered = recoveredAddress.ToLowerInvariant();
+                
+                if (providedAddress != recovered)
+                {
+                    _logger.LogWarning("Address mismatch: provided={Provided}, recovered={Recovered}", 
+                        providedAddress, recovered);
+                    return null;
+                }
+
+                // Verify the message contains the correct wallet address
+                if (!request.Message.Contains(request.WalletAddress, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Message does not contain wallet address");
+                    return null;
+                }
+
+                signatureValid = true;
+            }
+
+            if (!signatureValid)
+            {
                 return null;
             }
 
-            // 3. Compare addresses (case-insensitive, checksum-aware)
-            var providedAddress = request.WalletAddress.ToLowerInvariant();
-            var recovered = recoveredAddress.ToLowerInvariant();
-            
-            if (providedAddress != recovered)
-            {
-                _logger.LogWarning("Address mismatch: provided={Provided}, recovered={Recovered}", 
-                    providedAddress, recovered);
-                return null;
-            }
-
-            // 4. Verify the message contains the correct wallet address (additional security)
-            if (!request.Message.Contains(request.WalletAddress, StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning("Message does not contain wallet address");
-                return null;
-            }
-
-            // 5. Get or create user
+            // 3. Get or create user
             var user = await GetUserByWalletAsync(request.WalletAddress);
             if (user == null)
             {
@@ -131,11 +162,11 @@ public class UserService : IUserService
                 user = await CreateUserAsync(request.WalletAddress);
             }
 
-            // 6. Update last login
+            // 4. Update last login
             user.LastLoginAt = DateTime.UtcNow;
             await UpdateUserAsync(user);
 
-            // 7. Generate tokens
+            // 5. Generate tokens
             var accessToken = GenerateJwtToken(user);
             var refreshToken = GenerateRefreshToken(user.Id);
             var expiresAt = DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes);
@@ -150,6 +181,19 @@ public class UserService : IUserService
             _logger.LogError(ex, "Error during wallet authentication for: {Wallet}", request.WalletAddress);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Check if signature is a mock/test signature (dev mode only)
+    /// </summary>
+    private bool IsMockSignature(string signature)
+    {
+        if (string.IsNullOrEmpty(signature))
+            return false;
+            
+        // Common mock signatures used in testing
+        var mockSignatures = new[] { "0xmocksig", "0xmocksignature", "0xtest", "mock" };
+        return mockSignatures.Any(m => signature.StartsWith(m, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
