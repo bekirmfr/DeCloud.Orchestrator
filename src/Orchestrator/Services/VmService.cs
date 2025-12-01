@@ -125,7 +125,8 @@ public class VmService : IVmService
             vm.Id,
             vm.Status,
             "VM created and queued for scheduling",
-            password);
+            Error: null,
+            Password: password);
     }
 
     public async Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword)
