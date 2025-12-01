@@ -2727,29 +2727,84 @@
         const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
         let cachedEncryptionKey = null;
 
+        // Check if we're in a secure context (HTTPS or localhost)
+        function isSecureContext() {
+            return window.isSecureContext ||
+                location.protocol === 'https:' ||
+                location.hostname === 'localhost' ||
+                location.hostname === '127.0.0.1';
+        }
+
+        // Simple XOR-based obfuscation for non-secure contexts (DEV ONLY)
+        // NOT cryptographically secure - only for development/testing
+        function simpleObfuscate(text, key) {
+            let result = '';
+            for (let i = 0; i < text.length; i++) {
+                result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+            }
+            return btoa(result); // Base64 encode
+        }
+
+        function simpleDeobfuscate(encoded, key) {
+            const text = atob(encoded); // Base64 decode
+            let result = '';
+            for (let i = 0; i < text.length; i++) {
+                result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+            }
+            return result;
+        }
+
         async function deriveEncryptionKey(signer) {
             const signature = await signer.signMessage(ENCRYPTION_MESSAGE);
+
+            // If not in secure context, return the signature as a simple key
+            if (!isSecureContext() || !crypto.subtle) {
+                console.warn('⚠️ Not in secure context - using basic obfuscation (NOT secure for production)');
+                return { type: 'simple', key: signature };
+            }
+
+            // Secure context - use proper AES encryption
             const encoder = new TextEncoder();
             const sigBytes = encoder.encode(signature);
             const hashBuffer = await crypto.subtle.digest('SHA-256', sigBytes);
-            return await crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            const aesKey = await crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+            return { type: 'aes', key: aesKey };
         }
 
-        async function encryptPassword(password, aesKey) {
+        async function encryptPassword(password, keyObj) {
+            if (keyObj.type === 'simple') {
+                // Simple obfuscation for dev/HTTP
+                return 'SIMPLE:' + simpleObfuscate(password, keyObj.key);
+            }
+
+            // AES-GCM encryption for production/HTTPS
             const encoder = new TextEncoder();
             const data = encoder.encode(password);
             const iv = crypto.getRandomValues(new Uint8Array(12));
-            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, aesKey, data);
+            const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, keyObj.key, data);
             const ivBase64 = btoa(String.fromCharCode(...iv));
             const ctBase64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
             return `${ivBase64}:${ctBase64}`;
         }
 
-        async function decryptPassword(encryptedData, aesKey) {
+        async function decryptPassword(encryptedData, keyObj) {
+            // Check if it's simple obfuscation
+            if (encryptedData.startsWith('SIMPLE:')) {
+                if (keyObj.type !== 'simple') {
+                    throw new Error('Password was encrypted in dev mode, need same wallet to decrypt');
+                }
+                return simpleDeobfuscate(encryptedData.substring(7), keyObj.key);
+            }
+
+            // AES-GCM decryption
+            if (keyObj.type === 'simple') {
+                throw new Error('Password was encrypted with HTTPS. Please access via HTTPS to decrypt.');
+            }
+
             const [ivBase64, ctBase64] = encryptedData.split(':');
             const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
             const ciphertext = Uint8Array.from(atob(ctBase64), c => c.charCodeAt(0));
-            const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, aesKey, ciphertext);
+            const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, keyObj.key, ciphertext);
             return new TextDecoder().decode(decrypted);
         }
 
@@ -2761,6 +2816,16 @@
         }
 
         async function showPasswordModal(vmId, vmName, password) {
+            const isSecure = isSecureContext();
+            const securityWarning = !isSecure ? `
+                    <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px; border-radius: 8px; margin: 10px 0;">
+                        <p style="color: #fbbf24; margin: 0; font-size: 13px;">
+                            <strong>⚠️ Development Mode:</strong> Using basic encryption over HTTP.
+                            Use HTTPS in production for secure encryption.
+                        </p>
+                    </div>
+                ` : '';
+
             return new Promise((resolve) => {
                 const modal = document.createElement('div');
                 modal.className = 'modal-overlay active';
@@ -2774,6 +2839,7 @@
                                 <div style="background: var(--bg-deep); padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
                                     <code style="font-size: 1.5em; color: var(--accent-primary); letter-spacing: 1px;">${password}</code>
                                 </div>
+                                ${securityWarning}
                                 <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px; margin: 15px 0;">
                                     <p style="color: #fca5a5; margin: 0;">
                                         <strong>⚠️ Important:</strong> Save this password now. It will be encrypted with your wallet for later retrieval.
@@ -2790,10 +2856,10 @@
 
                 document.getElementById('encrypt-save-btn').onclick = async () => {
                     try {
-                        const aesKey = await getEncryptionKey();
-                        const encrypted = await encryptPassword(password, aesKey);
+                        const keyObj = await getEncryptionKey();
+                        const encrypted = await encryptPassword(password, keyObj);
 
-                        await api(`/api/vms/${vmId}/encrypted-password`, {
+                        await api(`/api/vms/${vmId}/secure-password`, {
                             method: 'POST',
                             body: JSON.stringify({ encryptedPassword: encrypted })
                         });
@@ -2820,8 +2886,8 @@
                     return;
                 }
 
-                const aesKey = await getEncryptionKey();
-                const password = await decryptPassword(response.data.encryptedPassword, aesKey);
+                const keyObj = await getEncryptionKey();
+                const password = await decryptPassword(response.data.encryptedPassword, keyObj);
 
                 const modal = document.createElement('div');
                 modal.className = 'modal-overlay active';
