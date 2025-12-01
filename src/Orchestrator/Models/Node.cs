@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Orchestrator.Models;
 
 /// <summary>
@@ -170,8 +172,10 @@ public record NodeHeartbeatResponse(
     List<NodeCommand>? PendingCommands
 );
 
+
 public record NodeCommand(
     string CommandId,
+    [property: JsonConverter(typeof(JsonStringEnumConverter))]
     NodeCommandType Type,
     string Payload
 );
