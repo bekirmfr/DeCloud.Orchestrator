@@ -364,19 +364,24 @@ public class NodeService : INodeService
             {
                 if (!_dataStore.Users.TryGetValue(reported.TenantId, out owner))
                 {
-                    // ✅ FIX: Auto-create missing users during recovery
+                    // Auto-create missing users during recovery
                     _logger.LogWarning(
                         "User {TenantId} not found during VM recovery - creating placeholder user",
                         reported.TenantId);
 
+                    // Generate a valid-looking wallet address from TenantId
+                    // GUIDs are 32 hex chars when dashes removed, pad to 40 for ETH address format
+                    var tenantHex = reported.TenantId.Replace("-", "");
+                    var paddedAddress = tenantHex.PadRight(40, '0');
+
                     owner = new User
                     {
                         Id = reported.TenantId,
-                        WalletAddress = $"0x{reported.TenantId.Replace("-", "")[..40]}",
+                        WalletAddress = $"0x{paddedAddress}",
                         Status = UserStatus.Active,
                         CreatedAt = DateTime.UtcNow,
                         LastLoginAt = DateTime.UtcNow,
-                        DisplayName = $"Recovered User {reported.TenantId[..8]}"
+                        DisplayName = $"Recovered User {SafeSubstring(reported.TenantId, 8)}"
                     };
 
                     await _dataStore.SaveUserAsync(owner);
@@ -430,7 +435,7 @@ public class NodeService : INodeService
             var recoveredVm = new VirtualMachine
             {
                 Id = vmId,
-                Name = reported.Name ?? $"recovered-vm-{(vmId.Length > 8 ? vmId[..8] : vmId)}",
+                Name = reported.Name ?? $"recovered-vm-{SafeSubstring(vmId, 8)}",
                 NodeId = nodeId,
                 OwnerId = reported.TenantId ?? "unknown",
                 OwnerWallet = "recovered",
@@ -441,7 +446,7 @@ public class NodeService : INodeService
                 NetworkConfig = new VmNetworkConfig
                 {
                     PrivateIp = reported.IpAddress,
-                    Hostname = reported.Name ?? $"vm-{(vmId.Length > 8 ? vmId[..8] : vmId)}"
+                    Hostname = reported.Name ?? $"vm-{SafeSubstring(vmId, 8)}"
                 },
                 Spec = new VmSpec
                 {
@@ -669,8 +674,12 @@ public class NodeService : INodeService
         }
     }
 
-    private static string SafeSubstring(string s, int maxLength)
+    /// <summary>
+    /// Safely truncate a string to maxLength characters
+    /// </summary>
+    private static string SafeSubstring(string? s, int maxLength)
     {
-        return s.Length > maxLength ? s : s[..maxLength];
+        if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+        return s.Length > maxLength ? s[..maxLength] : s;
     }
 }
