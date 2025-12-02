@@ -4,9 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeCloud - Decentralized Cloud Platform</title>
+    
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- External Stylesheet -->
+    <link rel="stylesheet" href="styles.css">
     
     <!-- 
         LAZY INITIALIZATION: Wallet SDKs (ethers.js, WalletConnect) are loaded on-demand
@@ -16,431 +21,6 @@
         - Better UX for users without wallets
         - Improved mobile performance
     -->
-    
-    <style>
-        :root {
-            --bg-deep: #0a0b0f;
-            --bg-primary: #12141a;
-            --bg-secondary: #1a1d26;
-            --bg-elevated: #22262f;
-            --bg-hover: #2a2f3a;
-            --accent-primary: #00d4aa;
-            --accent-secondary: #00a8ff;
-            --accent-tertiary: #8b5cf6;
-            --accent-warning: #f59e0b;
-            --accent-danger: #ef4444;
-            --text-primary: #f0f2f5;
-            --text-secondary: #9ca3af;
-            --text-muted: #6b7280;
-            --border-subtle: rgba(255,255,255,0.06);
-            --border-default: rgba(255,255,255,0.1);
-            --glow-primary: rgba(0, 212, 170, 0.15);
-            --glow-secondary: rgba(0, 168, 255, 0.15);
-            --font-display: 'Outfit', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-            --radius-sm: 6px;
-            --radius-md: 10px;
-            --radius-lg: 16px;
-            --radius-xl: 24px;
-            --transition-fast: 150ms ease;
-            --transition-normal: 250ms ease;
-            --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: var(--font-display);
-            background: var(--bg-deep);
-            color: var(--text-primary);
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-
-        /* Background Effects */
-        .bg-grid {
-            position: fixed;
-            inset: 0;
-            background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-            background-size: 60px 60px;
-            pointer-events: none;
-        }
-
-        .bg-glow {
-            position: fixed;
-            width: 600px;
-            height: 600px;
-            border-radius: 50%;
-            filter: blur(120px);
-            opacity: 0.4;
-            pointer-events: none;
-        }
-
-        .bg-glow-1 {
-            top: -200px;
-            right: -100px;
-            background: var(--accent-primary);
-        }
-
-        .bg-glow-2 {
-            bottom: -200px;
-            left: -100px;
-            background: var(--accent-secondary);
-        }
-
-        /* Login Container */
-        .login-container {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-
-        .login-card {
-            background: linear-gradient(135deg, rgba(26, 29, 38, 0.9) 0%, rgba(18, 20, 26, 0.95) 100%);
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-xl);
-            padding: 48px;
-            max-width: 420px;
-            width: 100%;
-            text-align: center;
-            backdrop-filter: blur(20px);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            margin-bottom: 32px;
-        }
-
-        .logo-icon {
-            width: 56px;
-            height: 56px;
-            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-            border-radius: var(--radius-md);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 20px;
-            color: white;
-        }
-
-        .logo-text {
-            font-size: 32px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .login-title {
-            font-size: 24px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .login-subtitle {
-            color: var(--text-secondary);
-            margin-bottom: 32px;
-            font-size: 15px;
-        }
-
-        .connect-btn {
-            width: 100%;
-            padding: 16px 24px;
-            background: linear-gradient(135deg, var(--accent-primary), #00b894);
-            border: none;
-            border-radius: var(--radius-md);
-            color: white;
-            font-family: var(--font-display);
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            transition: all var(--transition-normal);
-        }
-
-        .connect-btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px -10px var(--accent-primary);
-        }
-
-        .connect-btn:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-        }
-
-        .connect-btn svg {
-            width: 20px;
-            height: 20px;
-        }
-
-        .spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .login-status {
-            margin-top: 16px;
-            padding: 12px 16px;
-            border-radius: var(--radius-md);
-            font-size: 14px;
-            display: none;
-        }
-
-        .login-status.error {
-            background: rgba(239, 68, 68, 0.15);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #fca5a5;
-            display: block;
-        }
-
-        .login-status.info {
-            background: rgba(0, 168, 255, 0.15);
-            border: 1px solid rgba(0, 168, 255, 0.3);
-            color: #7dd3fc;
-            display: block;
-        }
-
-        .login-status.success {
-            background: rgba(0, 212, 170, 0.15);
-            border: 1px solid rgba(0, 212, 170, 0.3);
-            color: #6ee7b7;
-            display: block;
-        }
-
-        .login-footer {
-            margin-top: 24px;
-            font-size: 13px;
-            color: var(--text-muted);
-        }
-
-        .login-footer a {
-            color: var(--accent-primary);
-            text-decoration: none;
-        }
-
-        .login-footer a:hover {
-            text-decoration: underline;
-        }
-
-        /* Wallet Options Modal */
-        .wallet-options-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            padding: 20px;
-            backdrop-filter: blur(4px);
-        }
-
-        .wallet-options-modal {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-xl);
-            padding: 32px;
-            max-width: 400px;
-            width: 100%;
-        }
-
-        .wallet-options-title {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            text-align: center;
-        }
-
-        .wallet-options-subtitle {
-            color: var(--text-secondary);
-            font-size: 14px;
-            text-align: center;
-            margin-bottom: 24px;
-        }
-
-        .wallet-options-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .wallet-option {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            padding: 16px;
-            background: var(--bg-elevated);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-md);
-            cursor: pointer;
-            transition: all var(--transition-fast);
-            width: 100%;
-            text-align: left;
-            color: var(--text-primary);
-            font-family: var(--font-display);
-        }
-
-        .wallet-option:hover {
-            background: var(--bg-hover);
-            border-color: var(--accent-primary);
-        }
-
-        .wallet-option-icon {
-            width: 40px;
-            height: 40px;
-            background: var(--bg-secondary);
-            border-radius: var(--radius-sm);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .wallet-option-icon svg {
-            width: 24px;
-            height: 24px;
-            color: var(--text-secondary);
-        }
-
-        .wallet-option-icon.walletconnect-icon {
-            background: #3b99fc;
-        }
-
-        .wallet-option-icon.walletconnect-icon svg {
-            color: white;
-        }
-
-        .wallet-option-info {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .wallet-option-name {
-            font-weight: 500;
-            font-size: 15px;
-        }
-
-        .wallet-option-desc {
-            font-size: 13px;
-            color: var(--text-muted);
-        }
-
-        .wallet-options-cancel {
-            width: 100%;
-            margin-top: 16px;
-            padding: 12px;
-            background: transparent;
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-md);
-            color: var(--text-secondary);
-            font-family: var(--font-display);
-            font-size: 14px;
-            cursor: pointer;
-            transition: all var(--transition-fast);
-        }
-
-        .wallet-options-cancel:hover {
-            background: var(--bg-elevated);
-            color: var(--text-primary);
-        }
-
-        /* Dashboard styles */
-        .dashboard-container {
-            display: none;
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        /* Toast notifications */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .toast {
-            padding: 14px 20px;
-            border-radius: var(--radius-md);
-            font-size: 14px;
-            animation: slideIn 0.3s ease;
-            max-width: 350px;
-        }
-
-        .toast.success {
-            background: rgba(0, 212, 170, 0.9);
-            color: white;
-        }
-
-        .toast.error {
-            background: rgba(239, 68, 68, 0.9);
-            color: white;
-        }
-
-        .toast.info {
-            background: rgba(0, 168, 255, 0.9);
-            color: white;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        /* Loading progress bar for SDK loading */
-        .sdk-loading-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 3px;
-            background: var(--bg-secondary);
-            z-index: 10000;
-            display: none;
-        }
-
-        .sdk-loading-bar.active {
-            display: block;
-        }
-
-        .sdk-loading-bar-progress {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-    </style>
 </head>
 <body>
     <div class="bg-grid"></div>
@@ -452,23 +32,27 @@
         <div class="sdk-loading-bar-progress" id="sdk-loading-progress"></div>
     </div>
 
+    <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <!-- Login Screen -->
-    <div class="login-container" id="login-screen">
+    <!-- =============================================
+         LOGIN OVERLAY
+         ============================================= -->
+    <div class="login-overlay" id="login-overlay">
         <div class="login-card">
-            <div class="logo">
-                <div class="logo-icon">DC</div>
-                <span class="logo-text">DeCloud</span>
+            <div class="login-logo">
+                <div class="login-logo-icon">DC</div>
+                <span class="login-logo-text">DeCloud</span>
             </div>
+
             <h1 class="login-title">Welcome to DeCloud</h1>
             <p class="login-subtitle">Connect your wallet to access decentralized cloud computing</p>
-            
-            <button class="connect-btn" id="connect-wallet-btn" onclick="connectWallet()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="2" y="4" width="20" height="16" rx="2"/>
-                    <path d="M2 10h20"/>
-                    <circle cx="17" cy="14" r="2"/>
+
+            <button class="connect-wallet-btn" id="connect-wallet-btn" onclick="connectWallet()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+                    <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+                    <circle cx="18" cy="15" r="1" />
                 </svg>
                 Connect Wallet
             </button>
@@ -482,807 +66,364 @@
         </div>
     </div>
 
-    <!-- Dashboard (placeholder) -->
-    <div class="dashboard-container" id="dashboard-screen">
-        <h1>Dashboard</h1>
-        <p>You are connected!</p>
-        <button onclick="disconnect()">Disconnect</button>
-    </div>
-
-    <script>
-        // ============================================
-        // CONFIGURATION
-        // ============================================
-        
-        // WalletConnect Project ID from https://cloud.walletconnect.com
-        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
-
-        const CONFIG = {
-            orchestratorUrl: window.location.origin,
-            wallet: null
-        };
-
-        const WALLET_CONFIG = {
-            projectId: WALLETCONNECT_PROJECT_ID,
-            chains: [1], // Mainnet
-            optionalChains: [1, 137, 42161, 10], // Mainnet, Polygon, Arbitrum, Optimism
-            metadata: {
-                name: 'DeCloud',
-                description: 'Decentralized Cloud Computing Platform',
-                url: window.location.origin,
-                icons: [window.location.origin + '/favicon.ico']
-            },
-            showQrModal: true,
-            qrModalOptions: {
-                themeMode: 'dark',
-                themeVariables: {
-                    '--wcm-accent-color': '#10b981',
-                    '--wcm-background-color': '#111827'
-                }
-            }
-        };
-
-        // ============================================
-        // STATE
-        // ============================================
-        let authToken = null;
-        let refreshToken = null;
-        let currentUser = null;
-        let tokenRefreshTimer = null;
-
-        // Wallet connection state
-        let ethersProvider = null;
-        let ethersSigner = null;
-        let connectedAddress = null;
-        let walletConnectProvider = null;
-
-        // ============================================
-        // LAZY SDK LOADING STATE
-        // ============================================
-        let sdkLoadState = {
-            ethers: false,
-            walletConnect: false,
-            loading: false,
-            error: null
-        };
-
-        // SDK CDN URLs with version pinning for security
-        const SDK_URLS = {
-            ethers: 'https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js',
-            walletConnect: 'https://esm.sh/@walletconnect/ethereum-provider@2.17.0'
-        };
-
-        // ============================================
-        // INITIALIZATION
-        // ============================================
-        document.addEventListener('DOMContentLoaded', async () => {
-            const sessionRestored = await restoreSession();
-            if (!sessionRestored) {
-                showLogin();
-            }
-        });
-
-        // ============================================
-        // LAZY SDK LOADING
-        // ============================================
-        
-        /**
-         * Shows/hides the SDK loading progress bar
-         */
-        function updateLoadingProgress(percent) {
-            const bar = document.getElementById('sdk-loading-bar');
-            const progress = document.getElementById('sdk-loading-progress');
-            
-            if (percent > 0 && percent < 100) {
-                bar.classList.add('active');
-                progress.style.width = percent + '%';
-            } else if (percent >= 100) {
-                progress.style.width = '100%';
-                setTimeout(() => {
-                    bar.classList.remove('active');
-                    progress.style.width = '0%';
-                }, 300);
-            } else {
-                bar.classList.remove('active');
-            }
-        }
-
-        /**
-         * Dynamically loads a script and returns a promise
-         */
-        function loadScript(url, globalName) {
-            return new Promise((resolve, reject) => {
-                // Check if already loaded
-                if (globalName && window[globalName]) {
-                    resolve(window[globalName]);
-                    return;
-                }
-
-                const script = document.createElement('script');
-                script.src = url;
-                script.async = true;
-                
-                script.onload = () => {
-                    if (globalName && window[globalName]) {
-                        resolve(window[globalName]);
-                    } else {
-                        resolve(true);
-                    }
-                };
-                
-                script.onerror = () => {
-                    reject(new Error(`Failed to load script: ${url}`));
-                };
-
-                document.head.appendChild(script);
-            });
-        }
-
-        /**
-         * Dynamically imports an ES module
-         */
-        async function loadESModule(url) {
-            try {
-                const module = await import(url);
-                return module;
-            } catch (error) {
-                throw new Error(`Failed to load module: ${url}`);
-            }
-        }
-
-        /**
-         * Loads ethers.js SDK lazily
-         */
-        async function loadEthersSDK() {
-            if (sdkLoadState.ethers) {
-                return window.ethers;
-            }
-
-            console.log('[SDK] Loading ethers.js...');
-            await loadScript(SDK_URLS.ethers, 'ethers');
-            sdkLoadState.ethers = true;
-            console.log('[SDK] ethers.js loaded successfully');
-            
-            return window.ethers;
-        }
-
-        /**
-         * Loads WalletConnect SDK lazily
-         */
-        async function loadWalletConnectSDK() {
-            if (sdkLoadState.walletConnect && window.WalletConnectEthereumProvider) {
-                return window.WalletConnectEthereumProvider;
-            }
-
-            console.log('[SDK] Loading WalletConnect...');
-            const module = await loadESModule(SDK_URLS.walletConnect);
-            
-            window.WalletConnectEthereumProvider = module.EthereumProvider;
-            sdkLoadState.walletConnect = true;
-            console.log('[SDK] WalletConnect loaded successfully');
-            
-            return module.EthereumProvider;
-        }
-
-        /**
-         * Loads all required wallet SDKs
-         * @param {boolean} includeWalletConnect - Whether to load WalletConnect SDK
-         * @returns {Promise<void>}
-         */
-        async function loadWalletSDKs(includeWalletConnect = false) {
-            if (sdkLoadState.loading) {
-                // Wait for existing load to complete
-                while (sdkLoadState.loading) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-                return;
-            }
-
-            sdkLoadState.loading = true;
-            sdkLoadState.error = null;
-
-            try {
-                updateLoadingProgress(10);
-
-                // Always load ethers.js
-                if (!sdkLoadState.ethers) {
-                    await loadEthersSDK();
-                    updateLoadingProgress(50);
-                }
-
-                // Optionally load WalletConnect
-                if (includeWalletConnect && !sdkLoadState.walletConnect) {
-                    await loadWalletConnectSDK();
-                    updateLoadingProgress(90);
-                }
-
-                updateLoadingProgress(100);
-            } catch (error) {
-                sdkLoadState.error = error;
-                updateLoadingProgress(0);
-                console.error('[SDK] Failed to load wallet SDKs:', error);
-                throw error;
-            } finally {
-                sdkLoadState.loading = false;
-            }
-        }
-
-        /**
-         * Checks if SDKs are loaded and ready
-         */
-        function areSDKsReady(requireWalletConnect = false) {
-            if (!sdkLoadState.ethers) return false;
-            if (requireWalletConnect && !sdkLoadState.walletConnect) return false;
-            return true;
-        }
-
-        // ============================================
-        // UI HELPERS
-        // ============================================
-        function showLogin() {
-            document.getElementById('login-screen').style.display = 'flex';
-            document.getElementById('dashboard-screen').style.display = 'none';
-        }
-
-        function showDashboard() {
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('dashboard-screen').style.display = 'block';
-        }
-
-        function showLoginStatus(type, message) {
-            const status = document.getElementById('login-status');
-            status.className = 'login-status ' + type;
-            status.textContent = message;
-        }
-
-        function hideLoginStatus() {
-            const status = document.getElementById('login-status');
-            status.className = 'login-status';
-            status.style.display = 'none';
-        }
-
-        function showToast(message, type = 'info') {
-            const container = document.getElementById('toast-container');
-            const toast = document.createElement('div');
-            toast.className = 'toast ' + type;
-            toast.textContent = message;
-            container.appendChild(toast);
-            setTimeout(() => toast.remove(), 4000);
-        }
-
-        function resetConnectButton(btn) {
-            btn.disabled = false;
-            btn.innerHTML = `
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="2" y="4" width="20" height="16" rx="2"/>
-                    <path d="M2 10h20"/>
-                    <circle cx="17" cy="14" r="2"/>
-                </svg>
-                Connect Wallet
-            `;
-        }
-
-        // ============================================
-        // SESSION RESTORATION
-        // ============================================
-        async function restoreSession() {
-            const savedToken = localStorage.getItem('authToken');
-            const savedRefreshToken = localStorage.getItem('refreshToken');
-            const savedWallet = localStorage.getItem('wallet');
-            const connectionType = localStorage.getItem('connectionType');
-
-            if (savedToken && savedRefreshToken && savedWallet) {
-                authToken = savedToken;
-                refreshToken = savedRefreshToken;
-                CONFIG.wallet = savedWallet;
-                connectedAddress = savedWallet;
-
-                try {
-                    const response = await api('/api/user/me');
-                    if (response.success) {
-                        currentUser = response.data;
-
-                        // Lazy load SDKs for provider restoration (only if needed for signing)
-                        // This is deferred - we don't block session restoration
-                        restoreProviderConnection(connectionType).catch(e => {
-                            console.log('Provider restoration deferred:', e.message);
-                        });
-
-                        showDashboard();
-                        setupTokenRefresh();
-                        return true;
-                    } else {
-                        const refreshed = await refreshAuthToken();
-                        if (refreshed) {
-                            showDashboard();
-                            return true;
-                        }
-                    }
-                } catch (e) {
-                    console.error('Session verification failed:', e);
-                }
-            }
-            return false;
-        }
-
-        /**
-         * Restores provider connection lazily (non-blocking)
-         */
-        async function restoreProviderConnection(connectionType) {
-            try {
-                // Only load SDKs if we actually need provider functionality
-                const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-                
-                if (connectionType === 'walletconnect' && walletConnectConfigured) {
-                    await loadWalletSDKs(true);
-                    
-                    walletConnectProvider = await window.WalletConnectEthereumProvider.init({
-                        projectId: WALLET_CONFIG.projectId,
-                        chains: WALLET_CONFIG.chains,
-                        optionalChains: WALLET_CONFIG.optionalChains,
-                        showQrModal: false,
-                        metadata: WALLET_CONFIG.metadata
-                    });
-
-                    if (walletConnectProvider.session) {
-                        ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
-                        ethersSigner = await ethersProvider.getSigner();
-                        setupWalletConnectListeners();
-                        console.log('[Session] WalletConnect provider restored');
-                    }
-                } else if (window.ethereum) {
-                    await loadWalletSDKs(false);
-                    ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
-                    ethersSigner = await ethersProvider.getSigner();
-                    setupInjectedProviderListeners();
-                    console.log('[Session] Injected provider restored');
-                }
-            } catch (e) {
-                console.log('WalletConnect session expired:', e);
-            }
-        }
-
-        // ============================================
-        // WALLET CONNECTION - UNIFIED APPROACH
-        // ============================================
-        async function connectWallet() {
-            const btn = document.getElementById('connect-wallet-btn');
-
-            try {
-                btn.disabled = true;
-                btn.innerHTML = '<div class="spinner"></div> Loading...';
-                showLoginStatus('info', 'Initializing wallet connection...');
-
-                // Check configuration
-                const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-                const hasInjectedProvider = typeof window.ethereum !== 'undefined';
-                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-                // Determine what SDKs we need and load them lazily
-                const needWalletConnect = walletConnectConfigured && (isMobile || !hasInjectedProvider);
-                
-                btn.innerHTML = '<div class="spinner"></div> Loading wallet...';
-                await loadWalletSDKs(needWalletConnect || walletConnectConfigured);
-
-                btn.innerHTML = '<div class="spinner"></div> Connecting...';
-
-                if (isMobile && walletConnectConfigured) {
-                    // Mobile - use WalletConnect
-                    await connectWithWalletConnect();
-                } else if (!hasInjectedProvider && walletConnectConfigured) {
-                    // Desktop without extension - use WalletConnect QR
-                    await connectWithWalletConnect();
-                } else if (hasInjectedProvider && walletConnectConfigured) {
-                    // Desktop with extension - show choice
-                    await showConnectionOptions();
-                } else if (hasInjectedProvider) {
-                    // Desktop with extension, WalletConnect not configured
-                    await connectWithInjectedProvider();
-                } else {
-                    // No options available
-                    showLoginStatus('error', 'No wallet detected. Please install MetaMask or another Web3 wallet.');
-                }
-
-            } catch (error) {
-                console.error('Connection error:', error);
-                handleConnectionError(error);
-            } finally {
-                resetConnectButton(btn);
-            }
-        }
-
-        // Make connectWallet available globally
-        window.connectWallet = connectWallet;
-
-        // ============================================
-        // WALLETCONNECT CONNECTION
-        // ============================================
-        async function connectWithWalletConnect() {
-            showLoginStatus('info', 'Opening wallet selector...');
-
-            // Ensure WalletConnect SDK is loaded
-            if (!areSDKsReady(true)) {
-                await loadWalletSDKs(true);
-            }
-
-            walletConnectProvider = await window.WalletConnectEthereumProvider.init({
-                projectId: WALLET_CONFIG.projectId,
-                chains: WALLET_CONFIG.chains,
-                optionalChains: WALLET_CONFIG.optionalChains,
-                showQrModal: WALLET_CONFIG.showQrModal,
-                metadata: WALLET_CONFIG.metadata,
-                qrModalOptions: WALLET_CONFIG.qrModalOptions
-            });
-
-            await walletConnectProvider.enable();
-
-            const accounts = walletConnectProvider.accounts;
-            if (!accounts || accounts.length === 0) {
-                throw new Error('No accounts found');
-            }
-
-            connectedAddress = accounts[0];
-
-            ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
-            ethersSigner = await ethersProvider.getSigner();
-
-            setupWalletConnectListeners();
-
-            await proceedWithAuthentication(connectedAddress, 'walletconnect');
-        }
-
-        // ============================================
-        // INJECTED PROVIDER (MetaMask, etc.)
-        // ============================================
-        async function connectWithInjectedProvider() {
-            showLoginStatus('info', 'Requesting wallet connection...');
-
-            // Ensure ethers SDK is loaded
-            if (!areSDKsReady(false)) {
-                await loadWalletSDKs(false);
-            }
-
-            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-
-            if (!accounts || accounts.length === 0) {
-                throw new Error('No accounts found');
-            }
-
-            connectedAddress = accounts[0];
-
-            ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
-            ethersSigner = await ethersProvider.getSigner();
-
-            setupInjectedProviderListeners();
-
-            await proceedWithAuthentication(connectedAddress, 'injected');
-        }
-
-        // ============================================
-        // CONNECTION OPTIONS MODAL (Desktop)
-        // ============================================
-        async function showConnectionOptions() {
-            const modal = document.createElement('div');
-            modal.id = 'wallet-options-modal';
-            modal.className = 'wallet-options-overlay';
-            modal.innerHTML = `
-                <div class="wallet-options-modal">
-                    <h3 class="wallet-options-title">Connect Wallet</h3>
-                    <p class="wallet-options-subtitle">Choose how you want to connect</p>
-
-                    <div class="wallet-options-list">
-                        <button class="wallet-option" id="opt-injected">
-                            <div class="wallet-option-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
-                                    <path d="M6 8h12M6 12h12M6 16h6"/>
-                                </svg>
-                            </div>
-                            <div class="wallet-option-info">
-                                <span class="wallet-option-name">Browser Wallet</span>
-                                <span class="wallet-option-desc">MetaMask, Coinbase, etc.</span>
-                            </div>
+    <!-- =============================================
+         MAIN APPLICATION
+         ============================================= -->
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">DC</div>
+                <span class="logo-text">DeCloud</span>
+            </div>
+
+            <nav class="nav-section">
+                <div class="nav-label">Overview</div>
+                <a class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="9" rx="1" />
+                        <rect x="14" y="3" width="7" height="5" rx="1" />
+                        <rect x="14" y="12" width="7" height="9" rx="1" />
+                        <rect x="3" y="16" width="7" height="5" rx="1" />
+                    </svg>
+                    Dashboard
+                </a>
+
+                <div class="nav-label" style="margin-top: 24px;">Resources</div>
+                <a class="nav-item" data-page="vms" onclick="showPage('vms')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" />
+                        <path d="M8 21h8M12 17v4" />
+                    </svg>
+                    Virtual Machines
+                </a>
+                <a class="nav-item" data-page="nodes" onclick="showPage('nodes')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="6" height="6" rx="1" />
+                        <rect x="14" y="4" width="6" height="6" rx="1" />
+                        <rect x="4" y="14" width="6" height="6" rx="1" />
+                        <rect x="14" y="14" width="6" height="6" rx="1" />
+                    </svg>
+                    Nodes
+                </a>
+
+                <div class="nav-label" style="margin-top: 24px;">Settings</div>
+                <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                    </svg>
+                    SSH Keys
+                </a>
+                <a class="nav-item" data-page="settings" onclick="showPage('settings')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                    </svg>
+                    Settings
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="wallet-badge" id="wallet-badge">
+                    <div class="wallet-dot"></div>
+                    <span id="wallet-display">Not connected</span>
+                    <button class="disconnect-btn" id="disconnect-btn" onclick="disconnect()" style="display: none;">×</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Page -->
+            <div id="page-dashboard" class="page active">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Dashboard</h1>
+                        <p class="page-subtitle">Overview of your decentralized cloud resources</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-secondary" onclick="refreshData()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6M1 20v-6h6" />
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                            </svg>
+                            Refresh
                         </button>
-
-                        <button class="wallet-option" id="opt-walletconnect">
-                            <div class="wallet-option-icon walletconnect-icon">
-                                <svg viewBox="0 0 24 24" fill="currentColor">
-                                    <path d="M6.09 10.11c3.3-3.23 8.65-3.23 11.95 0l.4.39c.16.16.16.42 0 .58l-1.36 1.33c-.08.08-.21.08-.3 0l-.55-.53c-2.3-2.25-6.03-2.25-8.33 0l-.59.57c-.08.08-.21.08-.3 0L5.65 11.1c-.16-.16-.16-.42 0-.58l.44-.41zm14.77 2.74l1.21 1.18c.16.16.16.42 0 .58l-5.46 5.34c-.16.16-.43.16-.59 0l-3.88-3.79c-.04-.04-.11-.04-.15 0l-3.88 3.79c-.16.16-.43.16-.59 0L2.07 14.6c-.16-.16-.16-.42 0-.58l1.21-1.18c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.15.43-.15.59 0z"/>
-                                </svg>
-                            </div>
-                            <div class="wallet-option-info">
-                                <span class="wallet-option-name">WalletConnect</span>
-                                <span class="wallet-option-desc">Scan with mobile wallet</span>
-                            </div>
+                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            Create VM
                         </button>
                     </div>
+                </header>
 
-                    <button class="wallet-options-cancel" id="opt-cancel">Cancel</button>
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon nodes">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="4" y="4" width="6" height="6" rx="1" />
+                                <rect x="14" y="4" width="6" height="6" rx="1" />
+                                <rect x="4" y="14" width="6" height="6" rx="1" />
+                                <rect x="14" y="14" width="6" height="6" rx="1" />
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-nodes">-</div>
+                        <div class="stat-label">Active Nodes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon vms">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" />
+                                <path d="M8 21h8M12 17v4" />
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-vms">-</div>
+                        <div class="stat-label">Virtual Machines</div>
+                        <div class="stat-change positive" id="stat-vms-running">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon cpu">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="4" y="4" width="16" height="16" rx="2" />
+                                <rect x="9" y="9" width="6" height="6" />
+                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-cpu">-</div>
+                        <div class="stat-label">CPU Cores Available</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon memory">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
+                            </svg>
+                        </div>
+                        <div class="stat-value" id="stat-memory">-</div>
+                        <div class="stat-label">Memory Available</div>
+                    </div>
                 </div>
-            `;
 
-            document.body.appendChild(modal);
+                <!-- Content Grid -->
+                <div class="content-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Recent VMs</h3>
+                            <button class="btn btn-secondary" onclick="showPage('vms')">View All</button>
+                        </div>
+                        <div>
+                            <table class="vm-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Status</th>
+                                        <th>Specs</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recent-vms-table">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
 
-            return new Promise((resolve, reject) => {
-                document.getElementById('opt-injected').onclick = async () => {
-                    modal.remove();
-                    try {
-                        await connectWithInjectedProvider();
-                        resolve();
-                    } catch (e) {
-                        reject(e);
-                    }
-                };
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Nodes</h3>
+                        </div>
+                        <div class="card-body" id="nodes-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-                document.getElementById('opt-walletconnect').onclick = async () => {
-                    modal.remove();
-                    try {
-                        await connectWithWalletConnect();
-                        resolve();
-                    } catch (e) {
-                        reject(e);
-                    }
-                };
+            <!-- VMs Page -->
+            <div id="page-vms" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Virtual Machines</h1>
+                        <p class="page-subtitle">Manage your cloud instances</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            Create VM
+                        </button>
+                    </div>
+                </header>
 
-                document.getElementById('opt-cancel').onclick = () => {
-                    modal.remove();
-                    hideLoginStatus();
-                    reject(new Error('Connection cancelled'));
-                };
-            });
-        }
+                <div class="card">
+                    <div id="all-vms-container">
+                        <table class="vm-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Node</th>
+                                    <th>Specs</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="all-vms-table">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
 
-        // ============================================
-        // AUTHENTICATION FLOW
-        // ============================================
-        async function proceedWithAuthentication(walletAddress, connectionType) {
-            const btn = document.getElementById('connect-wallet-btn');
-            showLoginStatus('info', 'Requesting signature...');
-            btn.innerHTML = '<div class="spinner"></div> Sign Message...';
+            <!-- Nodes Page -->
+            <div id="page-nodes" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Nodes</h1>
+                        <p class="page-subtitle">Network infrastructure providers</p>
+                    </div>
+                </header>
 
-            const authResult = await authenticateWithWallet(walletAddress);
+                <div class="card">
+                    <div class="card-body" id="all-nodes-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
 
-            if (authResult.success) {
-                showLoginStatus('success', 'Authentication successful!');
-                localStorage.setItem('connectionType', connectionType);
-                
-                setTimeout(() => {
-                    showDashboard();
-                }, 500);
-            } else {
-                throw new Error(authResult.error || 'Authentication failed');
-            }
-        }
+            <!-- SSH Keys Page -->
+            <div id="page-ssh-keys" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">SSH Keys</h1>
+                        <p class="page-subtitle">Manage your SSH keys for VM access</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="openAddSshKeyModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            Add SSH Key
+                        </button>
+                    </div>
+                </header>
 
-        /**
-         * Authenticates with the backend using wallet signature
-         * Uses the backend's /api/auth/message and /api/auth/wallet endpoints
-         */
-        async function authenticateWithWallet(walletAddress) {
-            try {
-                // Step 1: Get message to sign from server
-                const messageResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`);
-                
-                if (!messageResponse.ok) {
-                    const errorText = await messageResponse.text();
-                    console.error('Message endpoint error:', messageResponse.status, errorText);
-                    return { success: false, error: `Server error: ${messageResponse.status}` };
-                }
-                
-                const messageData = await messageResponse.json();
+                <div class="card">
+                    <div class="card-body" id="ssh-keys-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
 
-                if (!messageData.success) {
-                    return { success: false, error: messageData.message || 'Failed to get authentication message' };
-                }
+            <!-- Settings Page -->
+            <div id="page-settings" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Settings</h1>
+                        <p class="page-subtitle">Configure your DeCloud dashboard</p>
+                    </div>
+                </header>
 
-                const { message, timestamp } = messageData.data;
+                <div class="card">
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label class="form-label">Orchestrator URL</label>
+                            <input type="text" class="form-input" id="settings-orchestrator-url" placeholder="http://localhost:5050">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Connected Wallet</label>
+                            <input type="text" class="form-input" id="settings-wallet" placeholder="Connect wallet to see address" disabled>
+                        </div>
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                        <button class="btn btn-secondary" onclick="disconnect()" style="margin-left: 12px;">Disconnect Wallet</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
 
-                // Step 2: Sign the message with the wallet
-                const signature = await ethersSigner.signMessage(message);
+    <!-- Create VM Modal -->
+    <div class="modal-overlay" id="create-vm-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Create Virtual Machine</h2>
+                <button class="modal-close" onclick="closeModal('create-vm-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">VM Name</label>
+                    <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">CPU Cores</label>
+                        <input type="number" class="form-input" id="vm-cpu" value="2" min="1" max="16">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Memory (MB)</label>
+                        <input type="number" class="form-input" id="vm-memory" value="2048" min="512" step="512">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Disk (GB)</label>
+                        <input type="number" class="form-input" id="vm-disk" value="20" min="10">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Image</label>
+                    <select class="form-input" id="vm-image">
+                        <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
+                        <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
+                        <option value="debian-12">Debian 12</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="createVm()">Create VM</button>
+            </div>
+        </div>
+    </div>
 
-                // Step 3: Authenticate with the server
-                const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        walletAddress: walletAddress,
-                        signature: signature,
-                        message: message,
-                        timestamp: timestamp
-                    })
-                });
+    <!-- Add SSH Key Modal -->
+    <div class="modal-overlay" id="add-ssh-key-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Add SSH Key</h2>
+                <button class="modal-close" onclick="closeModal('add-ssh-key-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Key Name</label>
+                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Public Key</label>
+                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addSshKey()">Add Key</button>
+            </div>
+        </div>
+    </div>
 
-                if (!authResponse.ok) {
-                    const errorText = await authResponse.text();
-                    console.error('Auth endpoint error:', authResponse.status, errorText);
-                    return { success: false, error: `Authentication failed: ${authResponse.status}` };
-                }
-
-                const authData = await authResponse.json();
-
-                if (authData.success && authData.data) {
-                    authToken = authData.data.accessToken;
-                    refreshToken = authData.data.refreshToken;
-                    currentUser = authData.data.user;
-                    CONFIG.wallet = walletAddress;
-
-                    // Save to localStorage
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('refreshToken', refreshToken);
-                    localStorage.setItem('wallet', walletAddress);
-
-                    setupTokenRefresh();
-
-                    return { success: true };
-                } else {
-                    return { success: false, error: authData.message || 'Authentication failed' };
-                }
-            } catch (error) {
-                console.error('Authentication error:', error);
-                return { success: false, error: error.message };
-            }
-        }
-
-        // ============================================
-        // WALLET EVENT LISTENERS
-        // ============================================
-        function setupWalletConnectListeners() {
-            if (!walletConnectProvider) return;
-
-            walletConnectProvider.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) {
-                    disconnect();
-                } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
-                    showToast('Wallet changed. Please reconnect.', 'info');
-                    disconnect();
-                }
-            });
-
-            walletConnectProvider.on('chainChanged', (chainId) => {
-                console.log('Chain changed to:', chainId);
-            });
-
-            walletConnectProvider.on('disconnect', () => {
-                disconnect();
-            });
-        }
-
-        function setupInjectedProviderListeners() {
-            if (!window.ethereum) return;
-
-            window.ethereum.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) {
-                    disconnect();
-                } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
-                    showToast('Wallet changed. Please reconnect.', 'info');
-                    disconnect();
-                }
-            });
-
-            window.ethereum.on('disconnect', () => {
-                disconnect();
-            });
-        }
-
-        // ============================================
-        // ERROR HANDLING
-        // ============================================
-        function handleConnectionError(error) {
-            let errorMsg = 'Connection failed. ';
-
-            if (error.code === 4001 || error.message?.includes('rejected')) {
-                errorMsg = 'Connection rejected. Please approve the connection request.';
-            } else if (error.message?.includes('cancelled')) {
-                errorMsg = 'Connection cancelled.';
-            } else if (error.message?.includes('projectId')) {
-                errorMsg = 'WalletConnect not configured. Please set up a Project ID.';
-            } else if (error.message?.includes('failed to load') || error.message?.includes('Failed to load')) {
-                errorMsg = 'Failed to load wallet libraries. Please check your connection and refresh.';
-            } else if (error.message?.includes('No accounts')) {
-                errorMsg = 'No accounts found. Please unlock your wallet.';
-            } else if (error.message) {
-                errorMsg = error.message;
-            }
-
-            showLoginStatus('error', errorMsg);
-        }
-
-        // ============================================
-        // DISCONNECT
-        // ============================================
-        async function disconnect() {
-            // Disconnect WalletConnect if active
-            if (walletConnectProvider) {
-                try {
-                    await walletConnectProvider.disconnect();
-                } catch (e) {
-                    console.log('WalletConnect disconnect error:', e);
-                }
-                walletConnectProvider = null;
-            }
-
-            ethersProvider = null;
-            ethersSigner = null;
-            connectedAddress = null;
-
-            clearSession();
-            showLogin();
-            showToast('Disconnected', 'info');
-        }
-
-        // Make disconnect available globally
-        window.disconnect = disconnect;
-
-        function clearSession() {
-            authToken = null;
-            refreshToken = null;
-            currentUser = null;
-            CONFIG.wallet = null;
-
-            localStorage.removeItem('authToken');
-            localStorage.removeItem('refreshToken');
-            localStorage.removeItem('wallet');
-            localStorage.removeItem('connectionType');
-
-            if (tokenRefreshTimer) {
-                clearInterval(tokenRefreshTimer);
-                tokenRefreshTimer = null;
-            }
-        }
-
-        // ============================================
-        // API HELPER
-        // ============================================
-        async function api(endpoint, options = {}) {
-            const headers = {
-                'Content-Type': 'application/json',
-                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-                ...options.headers
-            };
-
-            const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
-                ...options,
-                headers
-            });
-
-            return response.json();
-        }
-
-        // ============================================
-        // TOKEN REFRESH
-        // ============================================
-        function setupTokenRefresh() {
-            // Refresh token every 10 minutes
-            tokenRefreshTimer = setInterval(async () => {
-                await refreshAuthToken();
-            }, 10 * 60 * 1000);
-        }
-
-        async function refreshAuthToken() {
-            if (!refreshToken) return false;
-
-            try {
-                const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ refreshToken })
-                });
-
-                const data = await response.json();
-
-                if (data.success && data.data) {
-                    authToken = data.data.accessToken;
-                    refreshToken = data.data.refreshToken;
-                    localStorage.setItem('authToken', authToken);
-                    localStorage.setItem('refreshToken', refreshToken);
-                    return true;
-                }
-            } catch (e) {
-                console.error('Token refresh failed:', e);
-            }
-
-            return false;
-        }
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>
