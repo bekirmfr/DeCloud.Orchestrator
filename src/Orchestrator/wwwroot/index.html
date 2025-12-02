@@ -494,7 +494,7 @@
         // CONFIGURATION
         // ============================================
         
-        // IMPORTANT: Replace with your WalletConnect Project ID from https://cloud.walletconnect.com
+        // WalletConnect Project ID from https://cloud.walletconnect.com
         const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
 
         const CONFIG = {
@@ -1054,38 +1054,56 @@
             }
         }
 
+        /**
+         * Authenticates with the backend using wallet signature
+         * Uses the backend's /api/auth/message and /api/auth/wallet endpoints
+         */
         async function authenticateWithWallet(walletAddress) {
             try {
-                // Get nonce from server
-                const nonceResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/nonce?wallet=${walletAddress}`);
-                const nonceData = await nonceResponse.json();
+                // Step 1: Get message to sign from server
+                const messageResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`);
+                
+                if (!messageResponse.ok) {
+                    const errorText = await messageResponse.text();
+                    console.error('Message endpoint error:', messageResponse.status, errorText);
+                    return { success: false, error: `Server error: ${messageResponse.status}` };
+                }
+                
+                const messageData = await messageResponse.json();
 
-                if (!nonceData.success) {
-                    return { success: false, error: nonceData.message || 'Failed to get nonce' };
+                if (!messageData.success) {
+                    return { success: false, error: messageData.message || 'Failed to get authentication message' };
                 }
 
-                const { nonce, message } = nonceData.data;
+                const { message, timestamp } = messageData.data;
 
-                // Sign the message
+                // Step 2: Sign the message with the wallet
                 const signature = await ethersSigner.signMessage(message);
 
-                // Verify signature with server
-                const verifyResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/verify`, {
+                // Step 3: Authenticate with the server
+                const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        wallet: walletAddress,
+                        walletAddress: walletAddress,
                         signature: signature,
-                        nonce: nonce
+                        message: message,
+                        timestamp: timestamp
                     })
                 });
 
-                const verifyData = await verifyResponse.json();
+                if (!authResponse.ok) {
+                    const errorText = await authResponse.text();
+                    console.error('Auth endpoint error:', authResponse.status, errorText);
+                    return { success: false, error: `Authentication failed: ${authResponse.status}` };
+                }
 
-                if (verifyData.success && verifyData.data) {
-                    authToken = verifyData.data.accessToken;
-                    refreshToken = verifyData.data.refreshToken;
-                    currentUser = verifyData.data.user;
+                const authData = await authResponse.json();
+
+                if (authData.success && authData.data) {
+                    authToken = authData.data.accessToken;
+                    refreshToken = authData.data.refreshToken;
+                    currentUser = authData.data.user;
                     CONFIG.wallet = walletAddress;
 
                     // Save to localStorage
@@ -1097,7 +1115,7 @@
 
                     return { success: true };
                 } else {
-                    return { success: false, error: verifyData.message || 'Verification failed' };
+                    return { success: false, error: authData.message || 'Authentication failed' };
                 }
             } catch (error) {
                 console.error('Authentication error:', error);
