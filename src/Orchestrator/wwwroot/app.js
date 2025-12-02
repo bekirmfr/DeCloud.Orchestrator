@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function updateLoadingProgress(percent) {
     const bar = document.getElementById('sdk-loading-bar');
     const progress = document.getElementById('sdk-loading-progress');
-    
+
     if (percent > 0 && percent < 100) {
         bar.classList.add('active');
         progress.style.width = percent + '%';
@@ -115,7 +115,7 @@ function loadScript(url, globalName) {
         const script = document.createElement('script');
         script.src = url;
         script.async = true;
-        
+
         script.onload = () => {
             if (globalName && window[globalName]) {
                 resolve(window[globalName]);
@@ -123,7 +123,7 @@ function loadScript(url, globalName) {
                 resolve(true);
             }
         };
-        
+
         script.onerror = () => {
             reject(new Error(`Failed to load script: ${url}`));
         };
@@ -156,7 +156,7 @@ async function loadEthersSDK() {
     await loadScript(SDK_URLS.ethers, 'ethers');
     sdkLoadState.ethers = true;
     console.log('[SDK] ethers.js loaded successfully');
-    
+
     return window.ethers;
 }
 
@@ -170,11 +170,11 @@ async function loadWalletConnectSDK() {
 
     console.log('[SDK] Loading WalletConnect...');
     const module = await loadESModule(SDK_URLS.walletConnect);
-    
+
     window.WalletConnectEthereumProvider = module.EthereumProvider;
     sdkLoadState.walletConnect = true;
     console.log('[SDK] WalletConnect loaded successfully');
-    
+
     return module.EthereumProvider;
 }
 
@@ -282,10 +282,10 @@ async function restoreProviderConnection(connectionType) {
     try {
         // Only load SDKs if we actually need provider functionality
         const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-        
+
         if (connectionType === 'walletconnect' && walletConnectConfigured) {
             await loadWalletSDKs(true);
-            
+
             walletConnectProvider = await window.WalletConnectEthereumProvider.init({
                 projectId: WALLET_CONFIG.projectId,
                 chains: WALLET_CONFIG.chains,
@@ -382,7 +382,7 @@ async function connectWallet() {
 
         // Determine what SDKs we need and load them lazily
         const needWalletConnect = walletConnectConfigured && (isMobile || !hasInjectedProvider);
-        
+
         btn.innerHTML = '<div class="spinner"></div> Loading wallet...';
         await loadWalletSDKs(needWalletConnect || walletConnectConfigured);
 
@@ -564,7 +564,7 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
     if (authResult.success) {
         showLoginStatus('success', 'Authentication successful!');
         localStorage.setItem('connectionType', connectionType);
-        
+
         setTimeout(() => {
             showDashboard();
             setupTokenRefresh();
@@ -583,13 +583,13 @@ async function authenticateWithWallet(walletAddress) {
     try {
         // Step 1: Get message to sign from server
         const messageResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`);
-        
+
         if (!messageResponse.ok) {
             const errorText = await messageResponse.text();
             console.error('Message endpoint error:', messageResponse.status, errorText);
             return { success: false, error: `Server error: ${messageResponse.status}` };
         }
-        
+
         const messageData = await messageResponse.json();
 
         if (!messageData.success) {
@@ -1161,9 +1161,10 @@ async function startVm(vmId) {
             showToast('VM starting...', 'success');
             refreshData();
         } else {
-            showToast('Failed to start VM', 'error');
+            showToast(data.message || 'Failed to start VM', 'error');
         }
     } catch (e) {
+        console.error('Start VM error:', e);
         showToast('Failed to start VM', 'error');
     }
 }
@@ -1178,9 +1179,10 @@ async function stopVm(vmId) {
             showToast('VM stopping...', 'success');
             refreshData();
         } else {
-            showToast('Failed to stop VM', 'error');
+            showToast(data.message || 'Failed to stop VM', 'error');
         }
     } catch (e) {
+        console.error('Stop VM error:', e);
         showToast('Failed to stop VM', 'error');
     }
 }
@@ -1536,10 +1538,10 @@ function showToast(message, type = 'success') {
     toast.innerHTML = `
         <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             ${type === 'success'
-                ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
-                : type === 'error'
-                    ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
-                    : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
+            ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
+            : type === 'error'
+                ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
+                : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
         </svg>
         <span>${message}</span>
     `;
