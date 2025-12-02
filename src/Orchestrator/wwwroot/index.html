@@ -8,8 +8,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Ethers.js for Ethereum interactions -->
-    <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
+    <!-- 
+        LAZY INITIALIZATION: Wallet SDKs (ethers.js, WalletConnect) are loaded on-demand
+        Benefits:
+        - Faster initial page load (~200KB+ saved)
+        - Reduced bandwidth for session-restored users
+        - Better UX for users without wallets
+        - Improved mobile performance
+    -->
     
     <style>
         :root {
@@ -360,7 +366,7 @@
             color: var(--text-primary);
         }
 
-        /* Dashboard styles would continue here... */
+        /* Dashboard styles */
         .dashboard-container {
             display: none;
             min-height: 100vh;
@@ -411,12 +417,40 @@
                 opacity: 1;
             }
         }
+
+        /* Loading progress bar for SDK loading */
+        .sdk-loading-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: var(--bg-secondary);
+            z-index: 10000;
+            display: none;
+        }
+
+        .sdk-loading-bar.active {
+            display: block;
+        }
+
+        .sdk-loading-bar-progress {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
     <div class="bg-grid"></div>
     <div class="bg-glow bg-glow-1"></div>
     <div class="bg-glow bg-glow-2"></div>
+
+    <!-- SDK Loading Progress Bar -->
+    <div class="sdk-loading-bar" id="sdk-loading-bar">
+        <div class="sdk-loading-bar-progress" id="sdk-loading-progress"></div>
+    </div>
 
     <div class="toast-container" id="toast-container"></div>
 
@@ -455,30 +489,13 @@
         <button onclick="disconnect()">Disconnect</button>
     </div>
 
-    <script type="module">
-        // ============================================
-        // WALLETCONNECT SETUP - ES MODULE IMPORT
-        // ============================================
-        
-        // Import WalletConnect EthereumProvider as ES module
-        import { EthereumProvider } from 'https://esm.sh/@walletconnect/ethereum-provider@2.17.0';
-        
-        // Make it available globally for non-module scripts
-        window.WalletConnectEthereumProvider = EthereumProvider;
-        
-        // Signal that WalletConnect is loaded
-        window.walletConnectLoaded = true;
-        window.dispatchEvent(new Event('walletconnect-loaded'));
-    </script>
-
     <script>
         // ============================================
         // CONFIGURATION
         // ============================================
         
         // IMPORTANT: Replace with your WalletConnect Project ID from https://cloud.walletconnect.com
-        const WALLETCONNECT_PROJECT_ID = 'Y
-708cede4d366aa77aead71dbc67d8ae5';
+        const WALLETCONNECT_PROJECT_ID = 'YOUR_PROJECT_ID_HERE';
 
         const CONFIG = {
             orchestratorUrl: window.location.origin,
@@ -520,6 +537,22 @@
         let walletConnectProvider = null;
 
         // ============================================
+        // LAZY SDK LOADING STATE
+        // ============================================
+        let sdkLoadState = {
+            ethers: false,
+            walletConnect: false,
+            loading: false,
+            error: null
+        };
+
+        // SDK CDN URLs with version pinning for security
+        const SDK_URLS = {
+            ethers: 'https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js',
+            walletConnect: 'https://esm.sh/@walletconnect/ethereum-provider@2.17.0'
+        };
+
+        // ============================================
         // INITIALIZATION
         // ============================================
         document.addEventListener('DOMContentLoaded', async () => {
@@ -528,6 +561,160 @@
                 showLogin();
             }
         });
+
+        // ============================================
+        // LAZY SDK LOADING
+        // ============================================
+        
+        /**
+         * Shows/hides the SDK loading progress bar
+         */
+        function updateLoadingProgress(percent) {
+            const bar = document.getElementById('sdk-loading-bar');
+            const progress = document.getElementById('sdk-loading-progress');
+            
+            if (percent > 0 && percent < 100) {
+                bar.classList.add('active');
+                progress.style.width = percent + '%';
+            } else if (percent >= 100) {
+                progress.style.width = '100%';
+                setTimeout(() => {
+                    bar.classList.remove('active');
+                    progress.style.width = '0%';
+                }, 300);
+            } else {
+                bar.classList.remove('active');
+            }
+        }
+
+        /**
+         * Dynamically loads a script and returns a promise
+         */
+        function loadScript(url, globalName) {
+            return new Promise((resolve, reject) => {
+                // Check if already loaded
+                if (globalName && window[globalName]) {
+                    resolve(window[globalName]);
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.src = url;
+                script.async = true;
+                
+                script.onload = () => {
+                    if (globalName && window[globalName]) {
+                        resolve(window[globalName]);
+                    } else {
+                        resolve(true);
+                    }
+                };
+                
+                script.onerror = () => {
+                    reject(new Error(`Failed to load script: ${url}`));
+                };
+
+                document.head.appendChild(script);
+            });
+        }
+
+        /**
+         * Dynamically imports an ES module
+         */
+        async function loadESModule(url) {
+            try {
+                const module = await import(url);
+                return module;
+            } catch (error) {
+                throw new Error(`Failed to load module: ${url}`);
+            }
+        }
+
+        /**
+         * Loads ethers.js SDK lazily
+         */
+        async function loadEthersSDK() {
+            if (sdkLoadState.ethers) {
+                return window.ethers;
+            }
+
+            console.log('[SDK] Loading ethers.js...');
+            await loadScript(SDK_URLS.ethers, 'ethers');
+            sdkLoadState.ethers = true;
+            console.log('[SDK] ethers.js loaded successfully');
+            
+            return window.ethers;
+        }
+
+        /**
+         * Loads WalletConnect SDK lazily
+         */
+        async function loadWalletConnectSDK() {
+            if (sdkLoadState.walletConnect && window.WalletConnectEthereumProvider) {
+                return window.WalletConnectEthereumProvider;
+            }
+
+            console.log('[SDK] Loading WalletConnect...');
+            const module = await loadESModule(SDK_URLS.walletConnect);
+            
+            window.WalletConnectEthereumProvider = module.EthereumProvider;
+            sdkLoadState.walletConnect = true;
+            console.log('[SDK] WalletConnect loaded successfully');
+            
+            return module.EthereumProvider;
+        }
+
+        /**
+         * Loads all required wallet SDKs
+         * @param {boolean} includeWalletConnect - Whether to load WalletConnect SDK
+         * @returns {Promise<void>}
+         */
+        async function loadWalletSDKs(includeWalletConnect = false) {
+            if (sdkLoadState.loading) {
+                // Wait for existing load to complete
+                while (sdkLoadState.loading) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                return;
+            }
+
+            sdkLoadState.loading = true;
+            sdkLoadState.error = null;
+
+            try {
+                updateLoadingProgress(10);
+
+                // Always load ethers.js
+                if (!sdkLoadState.ethers) {
+                    await loadEthersSDK();
+                    updateLoadingProgress(50);
+                }
+
+                // Optionally load WalletConnect
+                if (includeWalletConnect && !sdkLoadState.walletConnect) {
+                    await loadWalletConnectSDK();
+                    updateLoadingProgress(90);
+                }
+
+                updateLoadingProgress(100);
+            } catch (error) {
+                sdkLoadState.error = error;
+                updateLoadingProgress(0);
+                console.error('[SDK] Failed to load wallet SDKs:', error);
+                throw error;
+            } finally {
+                sdkLoadState.loading = false;
+            }
+        }
+
+        /**
+         * Checks if SDKs are loaded and ready
+         */
+        function areSDKsReady(requireWalletConnect = false) {
+            if (!sdkLoadState.ethers) return false;
+            if (requireWalletConnect && !sdkLoadState.walletConnect) return false;
+            return true;
+        }
 
         // ============================================
         // UI HELPERS
@@ -595,31 +782,11 @@
                     if (response.success) {
                         currentUser = response.data;
 
-                        // Try to restore the provider connection
-                        if (connectionType === 'walletconnect' && WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE') {
-                            try {
-                                await waitForWalletConnect();
-                                walletConnectProvider = await window.WalletConnectEthereumProvider.init({
-                                    projectId: WALLET_CONFIG.projectId,
-                                    chains: WALLET_CONFIG.chains,
-                                    optionalChains: WALLET_CONFIG.optionalChains,
-                                    showQrModal: false,
-                                    metadata: WALLET_CONFIG.metadata
-                                });
-
-                                if (walletConnectProvider.session) {
-                                    ethersProvider = new ethers.BrowserProvider(walletConnectProvider);
-                                    ethersSigner = await ethersProvider.getSigner();
-                                    setupWalletConnectListeners();
-                                }
-                            } catch (e) {
-                                console.log('WalletConnect session expired:', e);
-                            }
-                        } else if (window.ethereum) {
-                            ethersProvider = new ethers.BrowserProvider(window.ethereum);
-                            ethersSigner = await ethersProvider.getSigner();
-                            setupInjectedProviderListeners();
-                        }
+                        // Lazy load SDKs for provider restoration (only if needed for signing)
+                        // This is deferred - we don't block session restoration
+                        restoreProviderConnection(connectionType).catch(e => {
+                            console.log('Provider restoration deferred:', e.message);
+                        });
 
                         showDashboard();
                         setupTokenRefresh();
@@ -638,25 +805,41 @@
             return false;
         }
 
-        // ============================================
-        // WALLETCONNECT LOADING HELPER
-        // ============================================
-        function waitForWalletConnect(timeout = 10000) {
-            return new Promise((resolve, reject) => {
-                if (window.walletConnectLoaded && window.WalletConnectEthereumProvider) {
-                    resolve();
-                    return;
+        /**
+         * Restores provider connection lazily (non-blocking)
+         */
+        async function restoreProviderConnection(connectionType) {
+            try {
+                // Only load SDKs if we actually need provider functionality
+                const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
+                
+                if (connectionType === 'walletconnect' && walletConnectConfigured) {
+                    await loadWalletSDKs(true);
+                    
+                    walletConnectProvider = await window.WalletConnectEthereumProvider.init({
+                        projectId: WALLET_CONFIG.projectId,
+                        chains: WALLET_CONFIG.chains,
+                        optionalChains: WALLET_CONFIG.optionalChains,
+                        showQrModal: false,
+                        metadata: WALLET_CONFIG.metadata
+                    });
+
+                    if (walletConnectProvider.session) {
+                        ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
+                        ethersSigner = await ethersProvider.getSigner();
+                        setupWalletConnectListeners();
+                        console.log('[Session] WalletConnect provider restored');
+                    }
+                } else if (window.ethereum) {
+                    await loadWalletSDKs(false);
+                    ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
+                    ethersSigner = await ethersProvider.getSigner();
+                    setupInjectedProviderListeners();
+                    console.log('[Session] Injected provider restored');
                 }
-
-                const timer = setTimeout(() => {
-                    reject(new Error('WalletConnect failed to load'));
-                }, timeout);
-
-                window.addEventListener('walletconnect-loaded', () => {
-                    clearTimeout(timer);
-                    resolve();
-                }, { once: true });
-            });
+            } catch (e) {
+                console.log('WalletConnect session expired:', e);
+            }
         }
 
         // ============================================
@@ -667,17 +850,21 @@
 
             try {
                 btn.disabled = true;
-                btn.innerHTML = '<div class="spinner"></div> Connecting...';
+                btn.innerHTML = '<div class="spinner"></div> Loading...';
                 showLoginStatus('info', 'Initializing wallet connection...');
 
-                // Check if WalletConnect is properly configured
+                // Check configuration
                 const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-
-                // Check if we have an injected provider (desktop browser extension)
                 const hasInjectedProvider = typeof window.ethereum !== 'undefined';
-
-                // Detect if mobile device
                 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+                // Determine what SDKs we need and load them lazily
+                const needWalletConnect = walletConnectConfigured && (isMobile || !hasInjectedProvider);
+                
+                btn.innerHTML = '<div class="spinner"></div> Loading wallet...';
+                await loadWalletSDKs(needWalletConnect || walletConnectConfigured);
+
+                btn.innerHTML = '<div class="spinner"></div> Connecting...';
 
                 if (isMobile && walletConnectConfigured) {
                     // Mobile - use WalletConnect
@@ -713,8 +900,10 @@
         async function connectWithWalletConnect() {
             showLoginStatus('info', 'Opening wallet selector...');
 
-            // Wait for WalletConnect ES module to load
-            await waitForWalletConnect();
+            // Ensure WalletConnect SDK is loaded
+            if (!areSDKsReady(true)) {
+                await loadWalletSDKs(true);
+            }
 
             walletConnectProvider = await window.WalletConnectEthereumProvider.init({
                 projectId: WALLET_CONFIG.projectId,
@@ -734,7 +923,7 @@
 
             connectedAddress = accounts[0];
 
-            ethersProvider = new ethers.BrowserProvider(walletConnectProvider);
+            ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
             ethersSigner = await ethersProvider.getSigner();
 
             setupWalletConnectListeners();
@@ -748,6 +937,11 @@
         async function connectWithInjectedProvider() {
             showLoginStatus('info', 'Requesting wallet connection...');
 
+            // Ensure ethers SDK is loaded
+            if (!areSDKsReady(false)) {
+                await loadWalletSDKs(false);
+            }
+
             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
 
             if (!accounts || accounts.length === 0) {
@@ -756,7 +950,7 @@
 
             connectedAddress = accounts[0];
 
-            ethersProvider = new ethers.BrowserProvider(window.ethereum);
+            ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
             ethersSigner = await ethersProvider.getSigner();
 
             setupInjectedProviderListeners();
@@ -850,16 +1044,11 @@
 
             if (authResult.success) {
                 showLoginStatus('success', 'Authentication successful!');
-
-                localStorage.setItem('authToken', authToken);
-                localStorage.setItem('refreshToken', refreshToken);
-                localStorage.setItem('wallet', walletAddress);
                 localStorage.setItem('connectionType', connectionType);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                showDashboard();
-                setupTokenRefresh();
+                
+                setTimeout(() => {
+                    showDashboard();
+                }, 500);
             } else {
                 throw new Error(authResult.error || 'Authentication failed');
             }
@@ -867,42 +1056,49 @@
 
         async function authenticateWithWallet(walletAddress) {
             try {
-                const messageResponse = await fetch(
-                    `${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`
-                );
-                const messageData = await messageResponse.json();
+                // Get nonce from server
+                const nonceResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/nonce?wallet=${walletAddress}`);
+                const nonceData = await nonceResponse.json();
 
-                if (!messageData.success || !messageData.data) {
-                    throw new Error('Failed to get authentication message');
+                if (!nonceData.success) {
+                    return { success: false, error: nonceData.message || 'Failed to get nonce' };
                 }
 
-                const { message, timestamp } = messageData.data;
+                const { nonce, message } = nonceData.data;
 
-                // Use the unified signer (works for both WalletConnect and injected)
+                // Sign the message
                 const signature = await ethersSigner.signMessage(message);
 
-                const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
+                // Verify signature with server
+                const verifyResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        walletAddress,
-                        signature,
-                        message,
-                        timestamp
+                        wallet: walletAddress,
+                        signature: signature,
+                        nonce: nonce
                     })
                 });
 
-                const authData = await authResponse.json();
+                const verifyData = await verifyResponse.json();
 
-                if (authData.success && authData.data) {
-                    authToken = authData.data.accessToken;
-                    refreshToken = authData.data.refreshToken;
-                    currentUser = authData.data.user;
+                if (verifyData.success && verifyData.data) {
+                    authToken = verifyData.data.accessToken;
+                    refreshToken = verifyData.data.refreshToken;
+                    currentUser = verifyData.data.user;
+                    CONFIG.wallet = walletAddress;
+
+                    // Save to localStorage
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('refreshToken', refreshToken);
+                    localStorage.setItem('wallet', walletAddress);
+
+                    setupTokenRefresh();
+
                     return { success: true };
                 } else {
-                    return { success: false, error: authData.error };
+                    return { success: false, error: verifyData.message || 'Verification failed' };
                 }
-
             } catch (error) {
                 console.error('Authentication error:', error);
                 return { success: false, error: error.message };
@@ -910,7 +1106,7 @@
         }
 
         // ============================================
-        // EVENT LISTENERS
+        // WALLET EVENT LISTENERS
         // ============================================
         function setupWalletConnectListeners() {
             if (!walletConnectProvider) return;
@@ -962,8 +1158,10 @@
                 errorMsg = 'Connection cancelled.';
             } else if (error.message?.includes('projectId')) {
                 errorMsg = 'WalletConnect not configured. Please set up a Project ID.';
-            } else if (error.message?.includes('failed to load')) {
-                errorMsg = 'Failed to load WalletConnect. Please refresh and try again.';
+            } else if (error.message?.includes('failed to load') || error.message?.includes('Failed to load')) {
+                errorMsg = 'Failed to load wallet libraries. Please check your connection and refresh.';
+            } else if (error.message?.includes('No accounts')) {
+                errorMsg = 'No accounts found. Please unlock your wallet.';
             } else if (error.message) {
                 errorMsg = error.message;
             }
