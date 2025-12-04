@@ -287,12 +287,31 @@ download_orchestrator() {
     if [ -d "$INSTALL_DIR/DeCloud.Orchestrator/.git" ]; then
         log_info "Repository exists, pulling latest changes..."
         cd "$INSTALL_DIR/DeCloud.Orchestrator"
-        git fetch origin main --quiet
-        git reset --hard origin/main --quiet
+        
+        # Detect default branch (main or master)
+        DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+        if [ -z "$DEFAULT_BRANCH" ]; then
+            # Fallback: try main first, then master
+            if git ls-remote --heads origin main 2>/dev/null | grep -q main; then
+                DEFAULT_BRANCH="main"
+            else
+                DEFAULT_BRANCH="master"
+            fi
+        fi
+        
+        log_info "Using branch: $DEFAULT_BRANCH"
+        git fetch origin $DEFAULT_BRANCH --quiet
+        git reset --hard origin/$DEFAULT_BRANCH --quiet
         git clean -fdx --quiet
     else
         log_info "Cloning repository..."
-        git clone --branch main --single-branch "$REPO_URL" "$INSTALL_DIR/DeCloud.Orchestrator" --quiet
+        
+        # Clone without specifying branch, let Git use the default
+        git clone "$REPO_URL" "$INSTALL_DIR/DeCloud.Orchestrator" --quiet
+        
+        cd "$INSTALL_DIR/DeCloud.Orchestrator"
+        DEFAULT_BRANCH=$(git branch --show-current)
+        log_info "Cloned branch: $DEFAULT_BRANCH"
     fi
     
     log_success "Source code downloaded"
