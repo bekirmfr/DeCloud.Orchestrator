@@ -403,6 +403,9 @@ RestartSec=10
 Environment=DOTNET_ENVIRONMENT=Production
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+Environment=DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+Environment=DOTNET_NOLOGO=1
+Environment=DOTNET_CLI_HOME=/tmp/dotnet-cli
 
 # Logging
 StandardOutput=journal
