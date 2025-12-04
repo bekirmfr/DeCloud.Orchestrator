@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Update Script
+# DeCloud Orchestrator Update Script (Updated for Integrated Build)
 #
-# Fetches latest code from GitHub, checks dependencies, rebuilds and restarts.
-# Safe to run multiple times - only installs/updates what's needed.
+# Fetches latest code from GitHub, checks dependencies including Node.js,
+# rebuilds frontend+backend and restarts. Safe to run multiple times.
 #
 # Usage:
 #   sudo ./update.sh              # Normal update
@@ -13,7 +13,7 @@
 
 set -e
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -83,6 +83,11 @@ Examples:
   $0                # Normal update
   $0 --force        # Force rebuild
   $0 --deps-only    # Only check dependencies
+
+Changes in v1.1.0:
+  - Added Node.js dependency check
+  - Support for integrated frontend/backend builds
+  - Improved build verification
 EOF
 }
 
@@ -112,6 +117,31 @@ check_dependencies() {
     log_step "Checking dependencies..."
     
     local deps_missing=false
+    
+    # Check Node.js (required for frontend build)
+    if command -v node &> /dev/null; then
+        NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+        NODE_MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
+        
+        if [ "$NODE_MAJOR" -ge 18 ]; then
+            log_success "Node.js: v$NODE_VERSION"
+        else
+            log_warn "Node.js $NODE_VERSION found (need 18+)"
+            deps_missing=true
+        fi
+    else
+        log_warn "Node.js not found (required for frontend build)"
+        deps_missing=true
+    fi
+    
+    # Check npm (required for frontend build)
+    if command -v npm &> /dev/null; then
+        NPM_VERSION=$(npm --version 2>/dev/null)
+        log_success "npm: v$NPM_VERSION"
+    else
+        log_warn "npm not found (required for frontend build)"
+        deps_missing=true
+    fi
     
     # Check .NET 8
     if command -v dotnet &> /dev/null; then
@@ -178,6 +208,30 @@ install_dependencies() {
         log_success "jq installed"
     fi
     
+    # Node.js 20 LTS
+    if ! command -v node &> /dev/null; then
+        log_info "Installing Node.js 20 LTS..."
+        
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+        apt-get install -y -qq nodejs > /dev/null 2>&1
+        
+        NODE_VERSION=$(node --version 2>/dev/null)
+        log_success "Node.js installed: $NODE_VERSION"
+    else
+        NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+        NODE_MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
+        
+        if [ "$NODE_MAJOR" -lt 18 ]; then
+            log_info "Upgrading Node.js from v$NODE_VERSION to v20..."
+            
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+            apt-get install -y -qq nodejs > /dev/null 2>&1
+            
+            NODE_VERSION=$(node --version 2>/dev/null)
+            log_success "Node.js upgraded: $NODE_VERSION"
+        fi
+    fi
+    
     # .NET 8
     if ! command -v dotnet &> /dev/null || [[ "$(dotnet --version 2>/dev/null)" != 8.* ]]; then
         log_info "Installing .NET 8 SDK..."
@@ -235,24 +289,52 @@ fetch_updates() {
 }
 
 build_orchestrator() {
-    log_step "Building Orchestrator..."
+    log_step "Building Orchestrator (frontend + backend)..."
     
     cd "$REPO_DIR"
+    
+    log_info "This will:"
+    log_info "  1. Install/update frontend dependencies (npm install)"
+    log_info "  2. Build frontend with Vite (npm run build)"
+    log_info "  3. Build backend with .NET (dotnet build)"
+    echo ""
     
     # Clean previous build
     log_info "Cleaning previous build..."
     dotnet clean --verbosity quiet > /dev/null 2>&1 || true
     rm -rf src/Orchestrator/bin src/Orchestrator/obj 2>/dev/null || true
     
-    # Restore packages
-    log_info "Restoring packages..."
-    dotnet restore --verbosity quiet
+    # Build with integrated system
+    log_info "Building... (this may take 2-3 minutes)"
     
-    # Build
-    log_info "Compiling..."
-    dotnet build -c Release --verbosity quiet --no-restore
+    cd src/Orchestrator
     
-    log_success "Build completed"
+    if dotnet build -c Release --verbosity minimal 2>&1 | tee /tmp/build.log; then
+        log_success "Build completed successfully"
+        
+        # Verify frontend was built
+        if [ -d "wwwroot/dist" ]; then
+            log_success "Frontend build found: wwwroot/dist/"
+            DIST_FILES=$(find wwwroot/dist -type f | wc -l)
+            log_info "  Frontend files: $DIST_FILES"
+        else
+            log_warn "Frontend dist/ folder not found"
+            log_warn "Frontend may not have been built"
+        fi
+        
+        # Verify backend was built
+        if [ -f "bin/Release/net8.0/Orchestrator.dll" ]; then
+            log_success "Backend build found: bin/Release/net8.0/"
+        else
+            log_error "Backend build failed"
+            cat /tmp/build.log
+            exit 1
+        fi
+    else
+        log_error "Build failed!"
+        cat /tmp/build.log
+        exit 1
+    fi
 }
 
 restart_service() {
@@ -337,6 +419,14 @@ show_status() {
         log_info "Version: $BRANCH @ $COMMIT"
     fi
     
+    # Runtime versions
+    if command -v node &> /dev/null; then
+        log_info "Node.js: $(node --version)"
+    fi
+    if command -v dotnet &> /dev/null; then
+        log_info ".NET: $(dotnet --version)"
+    fi
+    
     # Get config info
     local port=5050
     if [ -f "$CONFIG_DIR/orchestrator.appsettings.Production.json" ]; then
@@ -346,8 +436,9 @@ show_status() {
     # Get public IP
     local public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
     
-    log_info "API: http://$public_ip:$port"
+    echo ""
     log_info "Dashboard: http://$public_ip:$port/"
+    log_info "API: http://$public_ip:$port/api"
     log_info "Swagger: http://$public_ip:$port/swagger"
     
     # Node count
@@ -357,6 +448,7 @@ show_status() {
         local total_nodes=$(echo "$stats" | grep -o '"totalNodes":[0-9]*' | cut -d: -f2)
         local running_vms=$(echo "$stats" | grep -o '"runningVms":[0-9]*' | cut -d: -f2)
         local total_vms=$(echo "$stats" | grep -o '"totalVms":[0-9]*' | cut -d: -f2)
+        echo ""
         log_info "Nodes: $online_nodes online / $total_nodes total"
         log_info "VMs: $running_vms running / $total_vms total"
     fi
@@ -371,6 +463,7 @@ main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       DeCloud Orchestrator Update Script v${VERSION}              ║"
+    echo "║       (Integrated Frontend/Backend Build)                    ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     

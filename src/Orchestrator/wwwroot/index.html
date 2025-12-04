@@ -14,18 +14,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- External Stylesheet -->
-    <link rel="stylesheet" href="styles.css">
-
-    <!--
-        LAZY LOADING: Wallet SDKs (ethers.js, Reown AppKit) are loaded on-demand
-        Benefits:
-        - Faster initial page load (200KB+ saved)
-        - Reduced bandwidth for session-restored users
-        - Better UX for users without wallets
-        - Improved mobile performance
-        - Security: Only load trusted CDNs when needed
-    -->
+    <!-- Styles -->
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
     <!-- Background Effects -->
@@ -41,9 +31,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
-    <!-- =============================================
-         LOGIN OVERLAY
-         ============================================= -->
+    <!-- LOGIN OVERLAY -->
     <div class="login-overlay" id="login-overlay">
         <div class="login-card">
             <div class="login-logo">
@@ -72,9 +60,7 @@
         </div>
     </div>
 
-    <!-- =============================================
-         MAIN APPLICATION
-         ============================================= -->
+    <!-- MAIN APPLICATION -->
     <div class="app-container" id="app-container" style="display: none;">
         <!-- Sidebar -->
         <aside class="sidebar">
@@ -463,7 +449,7 @@
         </div>
     </div>
 
-    <!-- Main Application Script -->
-    <script src="app.js"></script>
+    <!-- Main Application Script - Vite will handle this -->
+    <script type="module" src="/src/app.js"></script>
 </body>
 </html>

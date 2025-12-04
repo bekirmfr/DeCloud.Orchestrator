@@ -66,20 +66,12 @@ document.addEventListener('DOMContentLoaded', async () => {
  */
 async function initializeAppKit() {
     if (appKitModal) {
-        console.log('[AppKit] Already initialized, reusing instance');
         return appKitModal;
     }
 
     try {
         console.log('[AppKit] Initializing...');
-        console.log('[AppKit] Project ID:', WALLETCONNECT_PROJECT_ID);
-        console.log('[AppKit] Window location:', window.location.origin);
         updateLoadingProgress(50);
-
-        // Ensure modal container exists in DOM
-        if (!document.querySelector('w3m-modal')) {
-            console.log('[AppKit] Creating modal container in DOM');
-        }
 
         // Create AppKit instance with unified configuration
         appKitModal = createAppKit({
@@ -101,38 +93,16 @@ async function initializeAppKit() {
             }
         });
 
-        updateLoadingProgress(80);
-
-        // Wait for modal to be ready
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Verify modal element exists
-        const modalElement = document.querySelector('w3m-modal');
-        if (modalElement) {
-            console.log('[AppKit] Modal element found in DOM');
-        } else {
-            console.warn('[AppKit] Modal element NOT found in DOM - this may cause issues');
-        }
-
         updateLoadingProgress(100);
         console.log('[AppKit] Initialized successfully');
 
         // Set up event listeners
         setupAppKitListeners();
 
-        // Expose for debugging
-        window.appKitModal = appKitModal;
-        console.log('[AppKit] Exposed as window.appKitModal for debugging');
-
         return appKitModal;
 
     } catch (error) {
         console.error('[AppKit] Initialization error:', error);
-        console.error('[AppKit] Error details:', {
-            message: error.message,
-            stack: error.stack,
-            projectId: WALLETCONNECT_PROJECT_ID
-        });
         updateLoadingProgress(0);
         throw new Error('Failed to initialize wallet connection. Please refresh and try again.');
     }
@@ -159,7 +129,7 @@ function setupAppKitListeners() {
             // User just connected
             if (connectedAddress !== account.address) {
                 connectedAddress = account.address;
-
+                
                 try {
                     // Get provider and signer
                     const walletProvider = appKitModal.getWalletProvider();
@@ -169,9 +139,9 @@ function setupAppKitListeners() {
 
                     ethersProvider = new BrowserProvider(walletProvider);
                     ethersSigner = await ethersProvider.getSigner();
-
+                    
                     console.log('[AppKit] Provider and signer ready');
-
+                    
                     // Proceed with authentication
                     await proceedWithAuthentication(account.address, 'appkit');
                 } catch (error) {
@@ -209,56 +179,24 @@ async function connectWallet() {
 
         // Initialize AppKit if not already done
         if (!appKitModal) {
-            console.log('[Connection] AppKit not initialized, initializing now...');
             await initializeAppKit();
         }
 
-        // Temporarily reduce login overlay z-index to allow modal to show
-        const loginOverlay = document.getElementById('login-overlay');
-        if (loginOverlay) {
-            loginOverlay.style.zIndex = '999';
-            console.log('[Connection] Login overlay z-index reduced to allow modal');
-        }
-
-        // Check if MetaMask or other injected provider exists
-        const hasInjected = typeof window.ethereum !== 'undefined';
-        console.log('[Connection] Has injected provider (MetaMask):', hasInjected);
-        if (hasInjected) {
-            console.log('[Connection] Injected provider:', window.ethereum);
-        }
-
-        // Check if modal is ready
-        console.log('[Connection] AppKit modal instance:', appKitModal);
-
         // Open AppKit modal - handles everything automatically
         console.log('[Connection] Opening AppKit modal...');
-        showLoginStatus('info', 'Opening wallet selector...');
-
-        // Try to open the modal
         await appKitModal.open();
-        console.log('[Connection] Modal opened');
 
         // Reset button after modal opens (it may be closed without connecting)
         setTimeout(() => {
             const currentAddress = appKitModal.getAddress();
             if (!currentAddress) {
-                console.log('[Connection] No address connected, resetting button');
                 resetConnectButton(btn);
                 hideLoginStatus();
-                // Restore login overlay z-index
-                if (loginOverlay) {
-                    loginOverlay.style.zIndex = '';
-                }
             }
         }, 1000);
 
     } catch (error) {
         console.error('[Connection] Error:', error);
-        console.error('[Connection] Error details:', {
-            message: error.message,
-            stack: error.stack,
-            name: error.name
-        });
         handleConnectionError(error);
         resetConnectButton(btn);
     }
@@ -270,7 +208,7 @@ async function connectWallet() {
 
 async function proceedWithAuthentication(walletAddress, connectionType) {
     const btn = document.getElementById('connect-wallet-btn');
-
+    
     try {
         showLoginStatus('info', 'Requesting signature...');
         btn.innerHTML = '<div class="spinner"></div> Sign Message...';
@@ -288,7 +226,7 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
                 if (appKitModal) {
                     appKitModal.close();
                 }
-
+                
                 showDashboard();
                 setupTokenRefresh();
                 refreshData();
@@ -361,7 +299,7 @@ async function authenticateWithWallet(walletAddress) {
         // Step 3: Authenticate with the server
         const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
             method: 'POST',
-            headers: {
+            headers: { 
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -396,18 +334,18 @@ async function authenticateWithWallet(walletAddress) {
         }
     } catch (error) {
         console.error('[Auth] Authentication error:', error);
-
+        
         // SECURITY: Don't expose internal error details
         let errorMessage = 'Authentication failed. Please try again.';
-
+        
         if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             errorMessage = 'Signature request rejected';
         } else if (error.message?.includes('User rejected')) {
             errorMessage = 'Signature request rejected';
         }
-
-        return {
-            success: false,
+        
+        return { 
+            success: false, 
             error: errorMessage
         };
     }
@@ -499,13 +437,13 @@ async function restoreSession() {
             // Verify token is still valid
             console.log('[Session] Verifying stored token...');
             const refreshed = await refreshAuthToken();
-
+            
             if (refreshed) {
                 console.log('[Session] Token valid, restoring session');
-
+                
                 // Initialize AppKit in background (non-blocking)
                 initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
-
+                
                 showDashboard();
                 refreshData();
                 return true;
@@ -514,7 +452,7 @@ async function restoreSession() {
             console.error('[Session] Verification failed:', e);
         }
     }
-
+    
     console.log('[Session] No valid session found');
     return false;
 }
@@ -542,7 +480,7 @@ function handleConnectionError(error) {
 
 function resetConnectButton(btn) {
     if (!btn) return;
-
+    
     btn.disabled = false;
     btn.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -651,7 +589,7 @@ async function api(endpoint, options = {}) {
     if (response.status === 401) {
         console.log('[API] 401 received, attempting token refresh...');
         const refreshed = await refreshAuthToken();
-
+        
         if (refreshed) {
             headers['Authorization'] = `Bearer ${authToken}`;
             return fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
@@ -682,10 +620,10 @@ async function getEncryptionKey() {
 
     // Dynamically import ethers utilities
     const { keccak256, toUtf8Bytes, getBytes } = await import('ethers');
-
+    
     const signature = await ethersSigner.signMessage(ENCRYPTION_MESSAGE);
     const keyMaterial = getBytes(keccak256(toUtf8Bytes(signature)));
-
+    
     cachedEncryptionKey = await crypto.subtle.importKey(
         'raw',
         keyMaterial.slice(0, 32),
@@ -701,7 +639,7 @@ async function encryptPassword(password) {
     const key = await getEncryptionKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(password);
-
+    
     const encrypted = await crypto.subtle.encrypt(
         { name: 'AES-GCM', iv },
         key,
@@ -718,7 +656,7 @@ async function encryptPassword(password) {
 async function decryptPassword(encryptedPassword) {
     const key = await getEncryptionKey();
     const combined = Uint8Array.from(atob(encryptedPassword), c => c.charCodeAt(0));
-
+    
     const iv = combined.slice(0, 12);
     const encrypted = combined.slice(12);
 
@@ -737,13 +675,15 @@ async function decryptPassword(encryptedPassword) {
 
 function showLogin() {
     document.getElementById('login-overlay').classList.add('active');
+    document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('app-container').style.display = 'none';
 }
 
 function showDashboard() {
     document.getElementById('login-overlay').classList.remove('active');
+    document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('app-container').style.display = 'flex';
-
+    
     if (CONFIG.wallet) {
         const shortAddress = `${CONFIG.wallet.slice(0, 6)}...${CONFIG.wallet.slice(-4)}`;
         const walletDisplay = document.getElementById('wallet-display');
@@ -781,11 +721,11 @@ function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
-
+    
     container.appendChild(toast);
-
+    
     setTimeout(() => toast.classList.add('show'), 10);
-
+    
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
@@ -796,21 +736,21 @@ function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
     });
-
+    
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
     });
-
+    
     const selectedPage = document.getElementById(`page-${pageName}`);
     if (selectedPage) {
         selectedPage.classList.add('active');
     }
-
+    
     const selectedNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
     if (selectedNav) {
         selectedNav.classList.add('active');
     }
-
+    
     if (pageName === 'dashboard' || pageName === 'virtual-machines') {
         refreshData();
     } else if (pageName === 'nodes') {
@@ -833,12 +773,12 @@ async function refreshData() {
 
 async function loadDashboardStats() {
     try {
-        const response = await api('/api/dashboard/stats');
+        const response = await api('/api/system/stats');
         const data = await response.json();
-
+        
         if (data.success) {
             const stats = data.data;
-
+            
             document.getElementById('stat-vms').textContent = stats.totalVMs || 0;
             document.getElementById('stat-nodes').textContent = stats.totalNodes || 0;
             document.getElementById('stat-cpu').textContent = `${stats.totalCPU || 0} cores`;
@@ -853,9 +793,9 @@ async function loadVirtualMachines() {
     try {
         const response = await api('/api/vms');
         const data = await response.json();
-
+        
         if (data.success) {
-            const vms = data.data;
+            const vms = data.data.items;
             renderVMsTable(vms);
             renderDashboardVMs(vms);
         }
@@ -963,14 +903,14 @@ async function loadNodes() {
     try {
         const response = await api('/api/nodes');
         const data = await response.json();
-
+        
         if (data.success) {
             const nodes = data.data;
-
+            
             nodes.forEach(node => {
                 nodesCache[node.id] = node.name;
             });
-
+            
             renderNodesTable(nodes);
         }
     } catch (error) {
@@ -991,7 +931,7 @@ function renderNodesTable(nodes) {
     tbody.innerHTML = nodes.map(node => {
         const lastSeen = node.lastHeartbeat ? new Date(node.lastHeartbeat).toLocaleString() : 'Never';
         const isOnline = node.status === 'online';
-
+        
         return `
         <tr>
             <td>
@@ -1018,7 +958,7 @@ async function loadSSHKeys() {
     try {
         const response = await api('/api/ssh-keys');
         const data = await response.json();
-
+        
         if (data.success) {
             renderSSHKeysTable(data.data);
         }
@@ -1040,7 +980,7 @@ function renderSSHKeysTable(keys) {
     tbody.innerHTML = keys.map(key => {
         const added = new Date(key.createdAt).toLocaleDateString();
         const fingerprint = key.fingerprint || 'N/A';
-
+        
         return `
         <tr>
             <td>${key.name}</td>
@@ -1099,7 +1039,7 @@ async function createVM() {
             showToast('Virtual machine created successfully', 'success');
             closeModal('create-vm-modal');
             refreshData();
-
+            
             document.getElementById('vm-name').value = '';
             document.getElementById('vm-cpu').value = '2';
             document.getElementById('vm-memory').value = '2048';
@@ -1221,7 +1161,7 @@ async function addSSHKey() {
             showToast('SSH key added successfully', 'success');
             closeModal('add-ssh-key-modal');
             loadSSHKeys();
-
+            
             document.getElementById('ssh-key-name').value = '';
             document.getElementById('ssh-key-public').value = '';
         } else {
@@ -1307,7 +1247,7 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
 
 function saveSettings() {
     const orchestratorUrl = document.getElementById('settings-orchestrator-url').value.trim();
-
+    
     if (orchestratorUrl && orchestratorUrl !== CONFIG.orchestratorUrl) {
         CONFIG.orchestratorUrl = orchestratorUrl;
         localStorage.setItem('orchestratorUrl', orchestratorUrl);

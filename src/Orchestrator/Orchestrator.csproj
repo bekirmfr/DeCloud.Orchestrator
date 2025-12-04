@@ -1,36 +1,180 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>Orchestrator</RootNamespace>
-    <UserSecretsId>orchestrator-dev-secrets</UserSecretsId>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<RootNamespace>Orchestrator</RootNamespace>
+		<UserSecretsId>orchestrator-dev-secrets</UserSecretsId>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <!-- SignalR for WebSocket/real-time communication -->
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.0" />
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
-    <PackageReference Include="Nethereum.Signer" Version="5.0.0" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
-    
-    <!-- JSON handling -->
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
-    
-    <!-- Swagger/OpenAPI -->
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
-    
-    <!-- Background services -->
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    
-    <!-- Logging -->
-    <PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
-    
-    <!-- JWT Authentication -->
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
-  </ItemGroup>
+	<!-- ============================================== -->
+	<!-- NuGet Package References -->
+	<!-- ============================================== -->
+	<ItemGroup>
+		<!-- SignalR for WebSocket/real-time communication -->
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.0" />
+		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
+		<PackageReference Include="Nethereum.Signer" Version="5.0.0" />
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
+
+		<!-- JSON handling -->
+		<PackageReference Include="System.Text.Json" Version="8.0.5" />
+
+		<!-- Swagger/OpenAPI -->
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+
+		<!-- Background services -->
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+
+		<!-- Logging -->
+		<PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
+		<PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
+
+		<!-- JWT Authentication -->
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+		<PackageReference Include="MongoDB.Driver" Version="2.28.0" />
+	</ItemGroup>
+
+	<!-- ============================================== -->
+	<!-- VITE FRONTEND BUILD INTEGRATION -->
+	<!-- ============================================== -->
+
+	<PropertyGroup>
+		<!-- Frontend working directory -->
+		<FrontendDir>wwwroot</FrontendDir>
+
+		<!-- Skip frontend build in Debug mode (use Vite dev server instead) -->
+		<!-- Build frontend automatically in Release mode (for production) -->
+		<BuildFrontend Condition="'$(Configuration)' == 'Release'">true</BuildFrontend>
+		<BuildFrontend Condition="'$(Configuration)' == 'Debug'">false</BuildFrontend>
+	</PropertyGroup>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Install Frontend Dependencies -->
+	<!-- ============================================== -->
+	<Target Name="InstallFrontendDependencies" BeforeTargets="BuildFrontend" Condition="'$(BuildFrontend)' == 'true' AND !Exists('$(FrontendDir)/node_modules')">
+
+		<Message Importance="high" Text="" />
+		<Message Importance="high" Text="📦 Installing frontend dependencies..." />
+		<Message Importance="high" Text="   This may take a few minutes on first build..." />
+
+		<Exec Command="npm install" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
+
+		<Message Importance="high" Text="✓ Frontend dependencies installed successfully" />
+		<Message Importance="high" Text="" />
+	</Target>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Build Frontend with Vite -->
+	<!-- ============================================== -->
+	<Target Name="BuildFrontend" BeforeTargets="BeforeBuild" Condition="'$(BuildFrontend)' == 'true'">
+
+		<Message Importance="high" Text="" />
+		<Message Importance="high" Text="╔══════════════════════════════════════════════════════════╗" />
+		<Message Importance="high" Text="║  🚀 Building frontend with Vite...                       ║" />
+		<Message Importance="high" Text="╚══════════════════════════════════════════════════════════╝" />
+		<Message Importance="high" Text="" />
+
+		<!-- Check if package.json exists -->
+		<Error Condition="!Exists('$(FrontendDir)/package.json')" Text="❌ package.json not found in $(FrontendDir). Cannot build frontend." />
+
+		<!-- Check if npm is available -->
+		<Exec Command="npm --version" IgnoreExitCode="true" ConsoleToMSBuild="true">
+			<Output TaskParameter="ExitCode" PropertyName="NpmExitCode" />
+		</Exec>
+
+		<Error Condition="'$(NpmExitCode)' != '0'" Text="❌ npm not found. Please install Node.js from https://nodejs.org" />
+
+		<!-- Run npm build -->
+		<Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
+
+		<!-- Verify dist/ was created -->
+		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')" Text="❌ Frontend build failed: dist/index.html not found. Check Vite build errors above." />
+
+		<Message Importance="high" Text="" />
+		<Message Importance="high" Text="✓ Frontend built successfully: wwwroot/dist/" />
+
+		<!-- Show build output stats -->
+		<ItemGroup>
+			<DistFiles Include="$(FrontendDir)/dist/**/*.*" />
+		</ItemGroup>
+		<Message Importance="high" Text="  Output: wwwroot/dist/ with @(DistFiles-&gt;Count()) files" />
+		<Message Importance="high" Text="" />
+	</Target>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Clean Frontend Build Output -->
+	<!-- ============================================== -->
+	<Target Name="CleanFrontend" AfterTargets="Clean">
+		<Message Importance="high" Text="🧹 Cleaning frontend build output..." />
+
+		<RemoveDir Directories="$(FrontendDir)/dist" Condition="Exists('$(FrontendDir)/dist')" />
+
+		<Message Importance="high" Text="✓ Frontend build output cleaned" />
+	</Target>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Content Exclude Rules -->
+	<!-- ============================================== -->
+	<ItemGroup>
+		<!-- .NET SDK automatically includes wwwroot/** as Content -->
+		<!-- We just need to exclude development files from publish -->
+
+		<!-- Exclude development files from publish -->
+		<Compile Remove="wwwroot\**" />
+		<Content Remove="$(FrontendDir)/node_modules/**" />
+		<Content Remove="$(FrontendDir)/src/**" />
+		<Content Remove="$(FrontendDir)/*.json" />
+		<Content Remove="$(FrontendDir)/*.md" />
+		<Content Remove="$(FrontendDir)/*.js" />
+		<Content Remove="$(FrontendDir)/*.ts" />
+		<Content Remove="$(FrontendDir)/.env*" />
+		<Content Remove="wwwroot\**" />
+		<EmbeddedResource Remove="wwwroot\**" />
+		<None Remove="wwwroot\**" />
+		<Content Remove="$(FrontendDir)/.gitignore" />
+		<Content Remove="$(FrontendDir)/index.html" />
+		<Content Remove="$(FrontendDir)/styles.css" />
+
+		<!-- Note: dist/ files are automatically included by .NET SDK -->
+		<!-- No explicit include needed - avoids NETSDK1022 duplicate error -->
+	</ItemGroup>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Show Frontend Build Status -->
+	<!-- ============================================== -->
+	<Target Name="ShowFrontendStatus" AfterTargets="Build">
+		<Message Importance="high" Text="" />
+		<Message Importance="high" Text="═══════════════════════════════════════════════════════════" />
+
+		<!-- Debug mode message -->
+		<Message Importance="high" Text="  Frontend: ⏭️  Skipped (Debug mode - use 'npm run dev' in wwwroot/)" Condition="'$(Configuration)' == 'Debug'" />
+
+		<!-- Release mode success message -->
+		<Message Importance="high" Text="  Frontend: ✓ Built and included in output (wwwroot/dist/)" Condition="'$(Configuration)' == 'Release' AND Exists('$(FrontendDir)/dist')" />
+
+		<!-- Release mode warning if dist doesn't exist (shouldn't happen) -->
+		<Warning Text="Frontend build was expected but dist/ not found" Condition="'$(Configuration)' == 'Release' AND !Exists('$(FrontendDir)/dist')" />
+
+		<Message Importance="high" Text="═══════════════════════════════════════════════════════════" />
+		<Message Importance="high" Text="" />
+	</Target>
+
+	<!-- ============================================== -->
+	<!-- OPTIONAL: Force Frontend Build -->
+	<!-- Usage: dotnet build -p:ForceFrontendBuild=true -->
+	<!-- ============================================== -->
+	<PropertyGroup Condition="'$(ForceFrontendBuild)' == 'true'">
+		<BuildFrontend>true</BuildFrontend>
+	</PropertyGroup>
+
+	<!-- ============================================== -->
+	<!-- OPTIONAL: Skip Frontend Build -->
+	<!-- Usage: dotnet build -c Release -p:SkipFrontendBuild=true -->
+	<!-- ============================================== -->
+	<PropertyGroup Condition="'$(SkipFrontendBuild)' == 'true'">
+		<BuildFrontend>false</BuildFrontend>
+	</PropertyGroup>
 
 </Project>

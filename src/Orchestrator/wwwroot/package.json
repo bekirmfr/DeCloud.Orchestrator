@@ -1,0 +1,30 @@
+{
+  "name": "decloud-orchestrator-frontend",
+  "version": "2.0.0",
+  "description": "DeCloud Orchestrator Frontend with Reown AppKit",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:prod": "vite build --mode production",
+    "clean": "rm -rf dist node_modules",
+    "dev:backend": "cd .. && dotnet run",
+    "dev:full": "concurrently -n \"Frontend,Backend\" -c \"cyan,green\" \"npm run dev\" \"npm run dev:backend\"",
+    "start": "npm run dev:full"
+  },
+  "dependencies": {
+    "@reown/appkit": "^1.5.2",
+    "@reown/appkit-adapter-ethers": "^1.5.2",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "terser": "^5.36.0",
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

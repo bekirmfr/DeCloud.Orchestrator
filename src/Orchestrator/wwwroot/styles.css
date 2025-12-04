@@ -90,7 +90,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: 9000;
     transition: opacity 0.3s ease, visibility 0.3s ease;
 }
 
@@ -259,7 +259,7 @@ body {
     width: 100%;
     height: 3px;
     background: var(--bg-secondary);
-    z-index: 10000;
+    z-index: 9000;
     display: none;
 }
 
@@ -288,7 +288,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10001;
+    z-index: 9001;
     animation: fadeIn 0.2s ease;
 }
 
@@ -1138,7 +1138,7 @@ body {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    z-index: 10000;
+    z-index: 9000;
     display: flex;
     flex-direction: column;
     gap: 8px;

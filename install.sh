@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Installation Script
+# DeCloud Orchestrator Installation Script (Updated for Integrated Build)
 #
-# Installs the DeCloud Orchestrator - the central coordination service
-# for managing nodes, VMs, and user requests.
+# Installs the DeCloud Orchestrator with integrated frontend/backend build.
+# Now includes Node.js for automatic frontend builds.
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.Orchestrator/main/install.sh | sudo bash
@@ -14,7 +14,7 @@
 
 set -e
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Colors
 RED='\033[0;31m'
@@ -100,6 +100,11 @@ Examples:
 Environment Variables:
   MONGODB_URI                MongoDB connection string
   JWT_SECRET                 JWT signing key
+  
+Changes in v1.3.0:
+  - Added Node.js installation for integrated frontend build
+  - Frontend now builds automatically with backend
+  - Improved production deployment process
 EOF
 }
 
@@ -157,18 +162,19 @@ check_resources() {
     fi
     log_success "CPU cores: $CPU_CORES"
     
-    # Memory (need at least 512MB)
+    # Memory (need at least 1GB for building frontend)
     TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$TOTAL_MEM" -lt 512 ]; then
-        log_error "At least 512MB RAM required (found: ${TOTAL_MEM}MB)"
-        exit 1
+    if [ "$TOTAL_MEM" -lt 1024 ]; then
+        log_warn "At least 1GB RAM recommended (found: ${TOTAL_MEM}MB)"
+        log_warn "Frontend build may be slow or fail with limited memory"
+    else
+        log_success "Memory: ${TOTAL_MEM}MB"
     fi
-    log_success "Memory: ${TOTAL_MEM}MB"
     
-    # Disk space (need at least 2GB)
+    # Disk space (need at least 3GB for Node.js + build artifacts)
     FREE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    if [ "$FREE_DISK" -lt 2 ]; then
-        log_error "At least 2GB free disk space required (found: ${FREE_DISK}GB)"
+    if [ "$FREE_DISK" -lt 3 ]; then
+        log_error "At least 3GB free disk space required (found: ${FREE_DISK}GB)"
         exit 1
     fi
     log_success "Free disk: ${FREE_DISK}GB"
@@ -239,12 +245,46 @@ check_mongodb() {
 # Installation Functions
 # ============================================================
 install_dependencies() {
-    log_step "Installing dependencies..."
+    log_step "Installing base dependencies..."
     
     apt-get update -qq
     apt-get install -y -qq curl wget git jq apt-transport-https ca-certificates gnupg lsb-release > /dev/null 2>&1
     
     log_success "Base dependencies installed"
+}
+
+install_nodejs() {
+    log_step "Installing Node.js 20 LTS..."
+    
+    if command -v node &> /dev/null; then
+        NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+        NODE_MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
+        
+        if [ "$NODE_MAJOR" -ge 18 ]; then
+            log_success "Node.js already installed: v$NODE_VERSION"
+            
+            if command -v npm &> /dev/null; then
+                NPM_VERSION=$(npm --version 2>/dev/null)
+                log_success "npm already installed: v$NPM_VERSION"
+            fi
+            return
+        else
+            log_warn "Node.js $NODE_VERSION found (need 18+), upgrading..."
+        fi
+    fi
+    
+    # Install NodeSource repository
+    log_info "Adding NodeSource repository..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+    
+    # Install Node.js
+    apt-get install -y -qq nodejs > /dev/null 2>&1
+    
+    NODE_VERSION=$(node --version 2>/dev/null)
+    NPM_VERSION=$(npm --version 2>/dev/null)
+    
+    log_success "Node.js installed: $NODE_VERSION"
+    log_success "npm installed: v$NPM_VERSION"
 }
 
 install_dotnet() {
@@ -284,63 +324,86 @@ create_directories() {
 download_orchestrator() {
     log_step "Downloading Orchestrator..."
     
-    if [ -d "$INSTALL_DIR/DeCloud.Orchestrator/.git" ]; then
-        log_info "Repository exists, pulling latest changes..."
-        cd "$INSTALL_DIR/DeCloud.Orchestrator"
-        
-        # Detect default branch (main or master)
-        DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
-        if [ -z "$DEFAULT_BRANCH" ]; then
-            # Fallback: try main first, then master
-            if git ls-remote --heads origin main 2>/dev/null | grep -q main; then
-                DEFAULT_BRANCH="main"
-            else
-                DEFAULT_BRANCH="master"
-            fi
-        fi
-        
-        log_info "Using branch: $DEFAULT_BRANCH"
-        git fetch origin $DEFAULT_BRANCH --quiet
-        git reset --hard origin/$DEFAULT_BRANCH --quiet
-        git clean -fdx --quiet
-    else
-        log_info "Cloning repository..."
-        
-        # Clone without specifying branch, let Git use the default
-        git clone "$REPO_URL" "$INSTALL_DIR/DeCloud.Orchestrator" --quiet
-        
-        cd "$INSTALL_DIR/DeCloud.Orchestrator"
-        DEFAULT_BRANCH=$(git branch --show-current)
-        log_info "Cloned branch: $DEFAULT_BRANCH"
+    if [ -d "$INSTALL_DIR/DeCloud.Orchestrator" ]; then
+        log_info "Removing existing installation..."
+        rm -rf "$INSTALL_DIR/DeCloud.Orchestrator"
     fi
     
-    log_success "Source code downloaded"
+    cd "$INSTALL_DIR"
+    git clone --depth 1 "$REPO_URL" > /dev/null 2>&1
+    
+    cd DeCloud.Orchestrator
+    COMMIT=$(git rev-parse --short HEAD)
+    
+    log_success "Code downloaded (commit: $COMMIT)"
 }
 
 build_orchestrator() {
-    log_step "Building Orchestrator..."
+    log_step "Building Orchestrator (frontend + backend)..."
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator"
     
-    # Build the project
-    dotnet build -c Release src/Orchestrator > /dev/null 2>&1
+    log_info "This will:"
+    log_info "  1. Install frontend dependencies (npm install)"
+    log_info "  2. Build frontend with Vite (npm run build)"
+    log_info "  3. Build backend with .NET (dotnet build)"
+    log_info "  4. Package everything for production"
+    echo ""
     
-    if [ ! -f "src/Orchestrator/bin/Release/net8.0/Orchestrator.dll" ]; then
-        log_error "Build failed - DLL not found"
+    # Clean previous build
+    log_info "Cleaning previous build..."
+    dotnet clean --verbosity quiet > /dev/null 2>&1 || true
+    
+    # Build (this now automatically builds frontend too!)
+    log_info "Building... (this may take 2-3 minutes)"
+    
+    cd src/Orchestrator
+    
+    # The integrated build system will:
+    # 1. Check if node_modules exists
+    # 2. Run npm install if needed
+    # 3. Run npm run build (creates wwwroot/dist/)
+    # 4. Build .NET project
+    # 5. Include dist/ in output
+    
+    if dotnet build -c Release --verbosity minimal 2>&1 | tee /tmp/build.log; then
+        log_success "Build completed successfully"
+        
+        # Verify frontend was built
+        if [ -d "wwwroot/dist" ]; then
+            log_success "Frontend build found: wwwroot/dist/"
+            DIST_FILES=$(find wwwroot/dist -type f | wc -l)
+            log_info "  Frontend files: $DIST_FILES"
+        else
+            log_warn "Frontend dist/ folder not found"
+            log_warn "Build may have skipped frontend (check if node_modules exists)"
+        fi
+        
+        # Verify backend was built
+        if [ -f "bin/Release/net8.0/Orchestrator.dll" ]; then
+            log_success "Backend build found: bin/Release/net8.0/"
+        else
+            log_error "Backend build failed"
+            cat /tmp/build.log
+            exit 1
+        fi
+    else
+        log_error "Build failed!"
+        cat /tmp/build.log
         exit 1
     fi
-    
-    log_success "Build complete"
+}
+
+generate_jwt_secret() {
+    if [ -z "$JWT_SECRET" ]; then
+        JWT_SECRET=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+    fi
 }
 
 create_configuration() {
     log_step "Creating configuration..."
     
-    # Generate JWT secret if not provided
-    if [ -z "$JWT_SECRET" ]; then
-        JWT_SECRET=$(openssl rand -base64 32)
-        log_info "Generated JWT secret"
-    fi
+    generate_jwt_secret
     
     # Create MongoDB config section if URI provided
     local mongodb_config=""
@@ -467,11 +530,7 @@ configure_firewall() {
 create_cli_tool() {
     log_step "Installing DeCloud CLI..."
     
-    # Download CLI if not bundled
-    if [ -f "$INSTALL_DIR/DeCloud.Orchestrator/decloud.sh" ]; then
-        cp "$INSTALL_DIR/DeCloud.Orchestrator/decloud.sh" /usr/local/bin/decloud
-    else
-        cat > /usr/local/bin/decloud << 'EOF'
+    cat > /usr/local/bin/decloud << 'EOF'
 #!/bin/bash
 # DeCloud CLI - See 'decloud help' for usage
 ORCHESTRATOR_URL="${DECLOUD_ORCHESTRATOR_URL:-http://localhost:5050}"
@@ -497,13 +556,9 @@ case "${1:-help}" in
         echo "  status    Show system status"
         echo "  nodes     List nodes"
         echo "  vms       List VMs"
-        echo ""
-        echo "For full CLI, download from:"
-        echo "  https://raw.githubusercontent.com/bekirmfr/DeCloud.Orchestrator/main/decloud.sh"
         ;;
 esac
 EOF
-    fi
     
     chmod +x /usr/local/bin/decloud
     
@@ -545,6 +600,7 @@ main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       DeCloud Orchestrator Installer v${VERSION}                  ║"
+    echo "║       (Integrated Frontend/Backend Build)                    ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
@@ -565,10 +621,11 @@ main() {
     echo ""
     
     install_dependencies
+    install_nodejs        # NEW: Required for frontend build
     install_dotnet
     create_directories
     download_orchestrator
-    build_orchestrator
+    build_orchestrator    # Now builds BOTH frontend and backend
     create_configuration
     create_systemd_service
     configure_firewall
@@ -585,8 +642,8 @@ main() {
     echo ""
     log_success "DeCloud Orchestrator v${VERSION} installed successfully!"
     echo ""
-    echo "  API Endpoint:    http://${PUBLIC_IP}:${PORT}"
     echo "  Dashboard:       http://${PUBLIC_IP}:${PORT}/"
+    echo "  API Endpoint:    http://${PUBLIC_IP}:${PORT}/api"
     echo "  Swagger UI:      http://${PUBLIC_IP}:${PORT}/swagger"
     echo "  Health Check:    http://${PUBLIC_IP}:${PORT}/health"
     echo ""
@@ -598,6 +655,9 @@ main() {
         echo -e "  ${YELLOW}Warning: Data will be lost on restart!${NC}"
         echo "  Add --mongodb to use persistent storage"
     fi
+    echo ""
+    echo "  Node.js:         $(node --version)"
+    echo "  .NET:            $(dotnet --version)"
     echo ""
     echo "─────────────────────────────────────────────────────────────────"
     echo ""
@@ -617,6 +677,8 @@ main() {
     echo ""
     echo "  curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/main/install.sh | \\"
     echo "    sudo bash -s -- --orchestrator http://${PUBLIC_IP}:${PORT}"
+    echo ""
+    log_success "Frontend and backend deployed as a single integrated application!"
     echo ""
 }
 
