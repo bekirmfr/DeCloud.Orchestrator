@@ -14,7 +14,7 @@
 
 set -e
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Colors
 RED='\033[0;31m'
@@ -284,19 +284,18 @@ create_directories() {
 download_orchestrator() {
     log_step "Downloading Orchestrator..."
     
-    cd "$INSTALL_DIR"
-    
-    if [ -d "DeCloud.Orchestrator" ]; then
-        log_info "Updating existing installation..."
-        cd DeCloud.Orchestrator
-        git fetch --quiet origin
-        git reset --hard origin/master 2>/dev/null || git reset --hard origin/main 2>/dev/null
+    if [ -d "$INSTALL_DIR/DeCloud.Orchestrator/.git" ]; then
+        log_info "Repository exists, pulling latest changes..."
+        cd "$INSTALL_DIR/DeCloud.Orchestrator"
+        git fetch origin main --quiet
+        git reset --hard origin/main --quiet
+        git clean -fdx --quiet
     else
-        git clone --quiet "$REPO_URL"
-        cd DeCloud.Orchestrator
+        log_info "Cloning repository..."
+        git clone --branch main --single-branch "$REPO_URL" "$INSTALL_DIR/DeCloud.Orchestrator" --quiet
     fi
     
-    log_success "Orchestrator downloaded"
+    log_success "Source code downloaded"
 }
 
 build_orchestrator() {
@@ -304,10 +303,15 @@ build_orchestrator() {
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator"
     
-    dotnet restore --verbosity quiet
-    dotnet build -c Release --verbosity quiet
+    # Build the project
+    dotnet build -c Release src/Orchestrator > /dev/null 2>&1
     
-    log_success "Orchestrator built"
+    if [ ! -f "src/Orchestrator/bin/Release/net8.0/Orchestrator.dll" ]; then
+        log_error "Build failed - DLL not found"
+        exit 1
+    fi
+    
+    log_success "Build complete"
 }
 
 create_configuration() {
@@ -316,9 +320,10 @@ create_configuration() {
     # Generate JWT secret if not provided
     if [ -z "$JWT_SECRET" ]; then
         JWT_SECRET=$(openssl rand -base64 32)
+        log_info "Generated JWT secret"
     fi
     
-    # MongoDB section
+    # Create MongoDB config section if URI provided
     local mongodb_config=""
     if [ -n "$MONGODB_URI" ]; then
         mongodb_config="\"ConnectionStrings\": {
@@ -394,8 +399,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator
-ExecStart=/usr/bin/dotnet run --project src/Orchestrator -c Release --no-build --environment Production
+WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
+ExecStart=/usr/bin/dotnet $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll
 Restart=always
 RestartSec=10
 
@@ -403,9 +408,6 @@ RestartSec=10
 Environment=DOTNET_ENVIRONMENT=Production
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
-Environment=DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
-Environment=DOTNET_NOLOGO=1
-Environment=DOTNET_CLI_HOME=/tmp/dotnet-cli
 
 # Logging
 StandardOutput=journal
