@@ -4,25 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeCloud - Decentralized Cloud Platform</title>
-    
+
+    <!-- Security Headers -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <!-- External Stylesheet -->
     <link rel="stylesheet" href="styles.css">
-    
-    <!-- 
-        LAZY INITIALIZATION: Wallet SDKs (ethers.js, WalletConnect) are loaded on-demand
+
+    <!--
+        LAZY LOADING: Wallet SDKs (ethers.js, Reown AppKit) are loaded on-demand
         Benefits:
-        - Faster initial page load (~200KB+ saved)
+        - Faster initial page load (200KB+ saved)
         - Reduced bandwidth for session-restored users
         - Better UX for users without wallets
         - Improved mobile performance
+        - Security: Only load trusted CDNs when needed
     -->
 </head>
 <body>
+    <!-- Background Effects -->
     <div class="bg-grid"></div>
     <div class="bg-glow bg-glow-1"></div>
     <div class="bg-glow bg-glow-2"></div>
@@ -60,8 +66,8 @@
             <div class="login-status" id="login-status"></div>
 
             <div class="login-footer">
-                <p>By connecting, you agree to our <a href="#">Terms of Service</a></p>
-                <p style="margin-top: 8px;">Need help? <a href="#">Documentation</a></p>
+                <p>By connecting, you agree to our <a href="#" onclick="return false;">Terms of Service</a></p>
+                <p style="margin-top: 8px;">Need help? <a href="#" onclick="return false;">Documentation</a></p>
             </div>
         </div>
     </div>
@@ -69,7 +75,7 @@
     <!-- =============================================
          MAIN APPLICATION
          ============================================= -->
-    <div class="app-container">
+    <div class="app-container" id="app-container" style="display: none;">
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="logo">
@@ -90,7 +96,7 @@
                 </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Resources</div>
-                <a class="nav-item" data-page="vms" onclick="showPage('vms')">
+                <a class="nav-item" data-page="virtual-machines" onclick="showPage('virtual-machines')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2" />
                         <path d="M8 21h8M12 17v4" />
@@ -149,7 +155,7 @@
                             </svg>
                             Refresh
                         </button>
-                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                        <button class="btn btn-primary" onclick="openCreateVMModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -159,7 +165,7 @@
                     </div>
                 </header>
 
-                <!-- Stats -->
+                <!-- Stats Grid -->
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon nodes">
@@ -170,7 +176,7 @@
                                 <rect x="14" y="14" width="6" height="6" rx="1" />
                             </svg>
                         </div>
-                        <div class="stat-value" id="stat-nodes">-</div>
+                        <div class="stat-value" id="stat-nodes">0</div>
                         <div class="stat-label">Active Nodes</div>
                     </div>
                     <div class="stat-card">
@@ -180,9 +186,8 @@
                                 <path d="M8 21h8M12 17v4" />
                             </svg>
                         </div>
-                        <div class="stat-value" id="stat-vms">-</div>
+                        <div class="stat-value" id="stat-vms">0</div>
                         <div class="stat-label">Virtual Machines</div>
-                        <div class="stat-change positive" id="stat-vms-running">-</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon cpu">
@@ -192,8 +197,8 @@
                                 <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
                             </svg>
                         </div>
-                        <div class="stat-value" id="stat-cpu">-</div>
-                        <div class="stat-label">CPU Cores Available</div>
+                        <div class="stat-value" id="stat-cpu">0 cores</div>
+                        <div class="stat-label">CPU Available</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-icon memory">
@@ -201,55 +206,34 @@
                                 <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
                             </svg>
                         </div>
-                        <div class="stat-value" id="stat-memory">-</div>
+                        <div class="stat-value" id="stat-memory">0 GB</div>
                         <div class="stat-label">Memory Available</div>
                     </div>
                 </div>
 
-                <!-- Content Grid -->
-                <div class="content-grid">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="card-title">Recent VMs</h3>
-                            <button class="btn btn-secondary" onclick="showPage('vms')">View All</button>
-                        </div>
-                        <div>
-                            <table class="vm-table">
-                                <thead>
-                                    <tr>
-                                        <th>Name</th>
-                                        <th>Status</th>
-                                        <th>Specs</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="recent-vms-table">
-                                    <!-- Populated by JS -->
-                                </tbody>
-                            </table>
-                        </div>
+                <!-- Recent VMs -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Recent Virtual Machines</h3>
+                        <button class="btn btn-secondary" onclick="showPage('virtual-machines')">View All</button>
                     </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <h3 class="card-title">Nodes</h3>
-                        </div>
-                        <div class="card-body" id="nodes-list">
-                            <!-- Populated by JS -->
+                    <div class="card-body">
+                        <div id="recent-vms">
+                            <p style="text-align: center; color: #6b7280; padding: 20px;">Loading...</p>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- VMs Page -->
-            <div id="page-vms" class="page">
+            <!-- Virtual Machines Page -->
+            <div id="page-virtual-machines" class="page">
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Virtual Machines</h1>
                         <p class="page-subtitle">Manage your cloud instances</p>
                     </div>
                     <div class="header-actions">
-                        <button class="btn btn-primary" onclick="openCreateVmModal()">
+                        <button class="btn btn-primary" onclick="openCreateVMModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -260,20 +244,25 @@
                 </header>
 
                 <div class="card">
-                    <div id="all-vms-container">
-                        <table class="vm-table">
+                    <div class="card-body">
+                        <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Name</th>
-                                    <th>Status</th>
                                     <th>Node</th>
-                                    <th>Specs</th>
-                                    <th>Created</th>
+                                    <th>CPU</th>
+                                    <th>Memory</th>
+                                    <th>Disk</th>
+                                    <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="all-vms-table">
-                                <!-- Populated by JS -->
+                            <tbody id="vms-table-body">
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
+                                        Loading virtual machines...
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -290,8 +279,27 @@
                 </header>
 
                 <div class="card">
-                    <div class="card-body" id="all-nodes-list">
-                        <!-- Populated by JS -->
+                    <div class="card-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>IP Address</th>
+                                    <th>CPU</th>
+                                    <th>Memory</th>
+                                    <th>Active VMs</th>
+                                    <th>Last Seen</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nodes-table-body">
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
+                                        Loading nodes...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -304,7 +312,7 @@
                         <p class="page-subtitle">Manage your SSH keys for VM access</p>
                     </div>
                     <div class="header-actions">
-                        <button class="btn btn-primary" onclick="openAddSshKeyModal()">
+                        <button class="btn btn-primary" onclick="openAddSSHKeyModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -315,8 +323,24 @@
                 </header>
 
                 <div class="card">
-                    <div class="card-body" id="ssh-keys-list">
-                        <!-- Populated by JS -->
+                    <div class="card-body">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Fingerprint</th>
+                                    <th>Added</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ssh-keys-table-body">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; padding: 40px; color: #6b7280;">
+                                        Loading SSH keys...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -335,13 +359,21 @@
                         <div class="form-group">
                             <label class="form-label">Orchestrator URL</label>
                             <input type="text" class="form-input" id="settings-orchestrator-url" placeholder="http://localhost:5050">
+                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                                The backend server URL for DeCloud services
+                            </p>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Connected Wallet</label>
                             <input type="text" class="form-input" id="settings-wallet" placeholder="Connect wallet to see address" disabled>
+                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                                Your Ethereum wallet address used for authentication
+                            </p>
                         </div>
-                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
-                        <button class="btn btn-secondary" onclick="disconnect()" style="margin-left: 12px;">Disconnect Wallet</button>
+                        <div style="display: flex; gap: 12px; margin-top: 24px;">
+                            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                            <button class="btn btn-secondary" onclick="disconnect()">Disconnect Wallet</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -380,17 +412,18 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Image</label>
+                    <label class="form-label">Operating System</label>
                     <select class="form-input" id="vm-image">
                         <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
                         <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
                         <option value="debian-12">Debian 12</option>
+                        <option value="debian-11">Debian 11</option>
                     </select>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="createVm()">Create VM</button>
+                <button class="btn btn-primary" onclick="createVM()">Create VM</button>
             </div>
         </div>
     </div>
@@ -411,19 +444,26 @@
                 <div class="form-group">
                     <label class="form-label">Key Name</label>
                     <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
+                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                        A friendly name to identify this key
+                    </p>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Public Key</label>
-                    <textarea class="form-input" id="ssh-key-value" rows="4" placeholder="ssh-rsa AAAA..."></textarea>
+                    <textarea class="form-input" id="ssh-key-public" rows="5" placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
+                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                        Paste your SSH public key (usually from ~/.ssh/id_rsa.pub)
+                    </p>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="addSshKey()">Add Key</button>
+                <button class="btn btn-primary" onclick="addSSHKey()">Add Key</button>
             </div>
         </div>
     </div>
 
+    <!-- Main Application Script -->
     <script src="app.js"></script>
 </body>
 </html>

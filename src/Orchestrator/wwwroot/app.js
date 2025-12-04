@@ -2,12 +2,18 @@
 // CONFIGURATION
 // ============================================
 
-// IMPORTANT: Replace with your WalletConnect Project ID from https://cloud.walletconnect.com
+// SECURITY: Replace with your WalletConnect Project ID from https://dashboard.reown.com
 const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
 
 const CONFIG = {
     orchestratorUrl: localStorage.getItem('orchestratorUrl') || window.location.origin,
-    wallet: null
+    wallet: null,
+    metadata: {
+        name: 'DeCloud Platform',
+        description: 'Decentralized Cloud Computing Platform',
+        url: window.location.origin,
+        icons: [`${window.location.origin}/favicon.ico`]
+    }
 };
 
 // ============================================
@@ -23,7 +29,7 @@ let nodesCache = {};
 let ethersProvider = null;
 let ethersSigner = null;
 let connectedAddress = null;
-let web3Modal = null;
+let appKitModal = null;
 
 // ============================================
 // LAZY SDK LOADING STATE
@@ -35,18 +41,21 @@ let sdkLoadState = {
     error: null
 };
 
-// SDK CDN URLs with version pinning for security
-// Using jsDelivr with proper UMD/ESM modules and correct MIME types
+// SDK CDN URLs - SECURITY: Version pinning
 const SDK_URLS = {
-    ethers: 'https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js',
-    // AppKit (Web3Modal v4) - proper WalletConnect implementation
-    appKitWagmi: 'https://cdn.jsdelivr.net/npm/@reown/appkit@1.0.0/dist/cdn/appkit-cdn.js',
-    appKitAdapter: 'https://cdn.jsdelivr.net/npm/@reown/appkit-adapter-ethers@1.0.0/dist/cdn/appkit-adapter-ethers-cdn.js'
+    ethers: 'https://cdn.jsdelivr.net/npm/ethers@6.13.0/dist/ethers.umd.min.js',
+    // Reown AppKit - Using ESM CDN
+    appKit: 'https://esm.sh/@reown/appkit@1.5.2',
+    appKitAdapter: 'https://esm.sh/@reown/appkit-adapter-ethers@1.5.2',
+    appKitNetworks: 'https://esm.sh/@reown/appkit@1.5.2/networks'
 };
 
 // Password encryption cache
 let cachedEncryptionKey = null;
 const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
+
+// AppKit unsubscribe functions
+let appKitUnsubscribers = [];
 
 // ============================================
 // INITIALIZATION
@@ -64,14 +73,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 /**
  * Dynamically loads a script from a CDN
+ * SECURITY: Includes timeout and CORS protection
  */
-function loadScript(url) {
+function loadScript(url, timeout = 30000) {
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = url;
         script.async = true;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+        script.crossOrigin = 'anonymous';
+
+        const timeoutId = setTimeout(() => {
+            reject(new Error(`Script load timeout: ${url}`));
+        }, timeout);
+
+        script.onload = () => {
+            clearTimeout(timeoutId);
+            resolve();
+        };
+
+        script.onerror = () => {
+            clearTimeout(timeoutId);
+            reject(new Error(`Failed to load script: ${url}`));
+        };
+
         document.head.appendChild(script);
     });
 }
@@ -99,7 +123,7 @@ function updateLoadingProgress(percent) {
 }
 
 /**
- * Loads ethers.js SDK lazily
+ * Loads ethers.js SDK
  */
 async function loadEthersSDK() {
     if (sdkLoadState.ethers && window.ethers) {
@@ -107,6 +131,8 @@ async function loadEthersSDK() {
     }
 
     console.log('[SDK] Loading ethers.js...');
+    updateLoadingProgress(20);
+
     await loadScript(SDK_URLS.ethers);
 
     if (!window.ethers) {
@@ -114,268 +140,152 @@ async function loadEthersSDK() {
     }
 
     sdkLoadState.ethers = true;
+    updateLoadingProgress(40);
     console.log('[SDK] ethers.js loaded successfully');
     return window.ethers;
 }
 
 /**
- * Loads WalletConnect AppKit SDK lazily
- * Uses the modern AppKit (Web3Modal v4) approach
+ * Initialize Reown AppKit with modern createAppKit approach
+ * SECURITY: Proper network configuration and metadata
  */
-async function loadAppKitSDK() {
-    if (sdkLoadState.appKit && window.AppKit) {
-        return window.AppKit;
+async function initializeAppKit() {
+    if (appKitModal) {
+        return appKitModal;
     }
-
-    console.log('[SDK] Loading WalletConnect AppKit...');
-
-    // Load AppKit core
-    await loadScript(SDK_URLS.appKitWagmi);
-
-    // Load ethers adapter
-    await loadScript(SDK_URLS.appKitAdapter);
-
-    if (!window.AppKit || !window.AppKitEthersAdapter) {
-        throw new Error('AppKit failed to load');
-    }
-
-    sdkLoadState.appKit = true;
-    console.log('[SDK] WalletConnect AppKit loaded successfully');
-    return window.AppKit;
-}
-
-/**
- * Loads all required wallet SDKs
- * @param {boolean} includeAppKit - Whether to load WalletConnect AppKit
- * @returns {Promise<void>}
- */
-async function loadWalletSDKs(includeAppKit = false) {
-    if (sdkLoadState.loading) {
-        // Wait for existing load to complete
-        while (sdkLoadState.loading) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        return;
-    }
-
-    sdkLoadState.loading = true;
-    sdkLoadState.error = null;
 
     try {
-        updateLoadingProgress(10);
+        console.log('[AppKit] Initializing...');
+        updateLoadingProgress(50);
 
-        // Always load ethers.js first
-        if (!sdkLoadState.ethers) {
+        // Load ethers.js first (required dependency)
+        if (!window.ethers) {
             await loadEthersSDK();
-            updateLoadingProgress(50);
         }
 
-        // Optionally load AppKit
-        if (includeAppKit && !sdkLoadState.appKit) {
-            await loadAppKitSDK();
-            updateLoadingProgress(90);
-        }
+        updateLoadingProgress(60);
 
+        // Load AppKit modules via ESM CDN
+        const [
+            { createAppKit },
+            { EthersAdapter },
+            { mainnet, polygon, arbitrum }
+        ] = await Promise.all([
+            import(SDK_URLS.appKit),
+            import(SDK_URLS.appKitAdapter),
+            import(SDK_URLS.appKitNetworks)
+        ]);
+
+        updateLoadingProgress(80);
+
+        // Create AppKit instance with unified configuration
+        appKitModal = createAppKit({
+            adapters: [new EthersAdapter()],
+            networks: [polygon, mainnet, arbitrum],
+            projectId: WALLETCONNECT_PROJECT_ID,
+            metadata: CONFIG.metadata,
+            features: {
+                analytics: true,
+                email: false,
+                socials: [],
+                swaps: false,
+                onramp: false
+            },
+            themeMode: 'dark',
+            themeVariables: {
+                '--w3m-accent': '#10b981',
+                '--w3m-border-radius-master': '8px'
+            }
+        });
+
+        sdkLoadState.appKit = true;
         updateLoadingProgress(100);
+        console.log('[AppKit] Initialized successfully');
+
+        // Set up event listeners
+        setupAppKitListeners();
+
+        return appKitModal;
+
     } catch (error) {
-        sdkLoadState.error = error;
+        console.error('[AppKit] Initialization error:', error);
+        sdkLoadState.error = error.message;
         updateLoadingProgress(0);
-        console.error('[SDK] Failed to load wallet SDKs:', error);
-        throw error;
-    } finally {
-        sdkLoadState.loading = false;
+        throw new Error('Failed to initialize wallet connection. Please refresh and try again.');
     }
 }
 
+// ============================================
+// APPKIT EVENT LISTENERS
+// ============================================
+
 /**
- * Checks if SDKs are loaded and ready
+ * Subscribe to AppKit provider state changes
+ * SECURITY: Validates address and handles disconnections
  */
-function areSDKsReady(requireAppKit = false) {
-    if (!sdkLoadState.ethers) return false;
-    if (requireAppKit && !sdkLoadState.appKit) return false;
-    return true;
-}
+function setupAppKitListeners() {
+    if (!appKitModal) return;
 
-// ============================================
-// SESSION RESTORATION
-// ============================================
-async function restoreSession() {
-    const savedToken = localStorage.getItem('authToken');
-    const savedRefreshToken = localStorage.getItem('refreshToken');
-    const savedWallet = localStorage.getItem('wallet');
-    const connectionType = localStorage.getItem('connectionType');
+    // Clean up previous listeners
+    if (appKitUnsubscribers.length > 0) {
+        appKitUnsubscribers.forEach(unsub => unsub());
+        appKitUnsubscribers = [];
+    }
 
-    if (savedToken && savedRefreshToken && savedWallet) {
-        authToken = savedToken;
-        refreshToken = savedRefreshToken;
-        CONFIG.wallet = savedWallet;
-        connectedAddress = savedWallet;
+    // Subscribe to account changes
+    const unsubscribeAccount = appKitModal.subscribeAccount(async (account) => {
+        console.log('[AppKit] Account state:', account);
 
-        try {
-            const response = await api('/api/user/me');
-            if (response.success) {
-                currentUser = response.data;
+        if (account.isConnected && account.address) {
+            // User just connected
+            if (connectedAddress !== account.address) {
+                connectedAddress = account.address;
 
-                // Lazy load SDKs for provider restoration (deferred, non-blocking)
-                restoreProviderConnection(connectionType).catch(e => {
-                    console.log('Provider restoration deferred:', e.message);
-                });
+                try {
+                    // Get provider and signer
+                    const walletProvider = appKitModal.getWalletProvider();
+                    if (!walletProvider) {
+                        throw new Error('Wallet provider not available');
+                    }
 
-                showDashboard();
-                setupTokenRefresh();
-                refreshData();
-                return true;
-            } else {
-                const refreshed = await refreshAuthToken();
-                if (refreshed) {
-                    showDashboard();
-                    refreshData();
-                    return true;
+                    ethersProvider = new window.ethers.BrowserProvider(walletProvider);
+                    ethersSigner = await ethersProvider.getSigner();
+
+                    console.log('[AppKit] Provider and signer ready');
+
+                    // Proceed with authentication
+                    await proceedWithAuthentication(account.address, 'appkit');
+                } catch (error) {
+                    console.error('[AppKit] Provider error:', error);
+                    handleConnectionError(error);
                 }
             }
-        } catch (e) {
-            console.error('Session verification failed:', e);
+        } else if (!account.isConnected && connectedAddress) {
+            // User disconnected
+            console.log('[AppKit] User disconnected');
+            disconnect();
         }
-    }
-    return false;
-}
-
-/**
- * Restores provider connection lazily (non-blocking)
- */
-async function restoreProviderConnection(connectionType) {
-    try {
-        const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-
-        if (connectionType === 'walletconnect' && walletConnectConfigured) {
-            await loadWalletSDKs(true);
-            await initializeAppKit();
-
-            // AppKit handles session restoration automatically
-            if (web3Modal?.getAddress()) {
-                const address = web3Modal.getAddress();
-                ethersProvider = new window.ethers.BrowserProvider(web3Modal.getWalletProvider());
-                ethersSigner = await ethersProvider.getSigner();
-                setupAppKitListeners();
-                console.log('[Session] AppKit session restored');
-            }
-        } else if (window.ethereum) {
-            await loadWalletSDKs(false);
-            ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
-            ethersSigner = await ethersProvider.getSigner();
-            setupInjectedProviderListeners();
-            console.log('[Session] Injected provider restored');
-        }
-    } catch (e) {
-        console.log('Provider restoration error:', e);
-    }
-}
-
-// ============================================
-// APPKIT INITIALIZATION
-// ============================================
-async function initializeAppKit() {
-    if (web3Modal) return web3Modal;
-
-    const { AppKit } = window;
-    const { EthersAdapter } = window.AppKitEthersAdapter;
-
-    // Create ethers adapter
-    const ethersAdapter = new EthersAdapter();
-
-    // Initialize AppKit with proper configuration
-    web3Modal = new AppKit({
-        adapters: [ethersAdapter],
-        projectId: WALLETCONNECT_PROJECT_ID,
-        networks: [
-            {
-                id: 1,
-                name: 'Ethereum',
-                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-                rpcUrls: { default: { http: ['https://eth.llamarpc.com'] } }
-            },
-            {
-                id: 137,
-                name: 'Polygon',
-                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
-                rpcUrls: { default: { http: ['https://polygon-rpc.com'] } }
-            }
-        ],
-        metadata: {
-            name: 'DeCloud',
-            description: 'Decentralized Cloud Computing Platform',
-            url: window.location.origin,
-            icons: [window.location.origin + '/favicon.ico']
-        },
-        themeMode: 'dark',
-        themeVariables: {
-            '--w3m-accent': '#10b981',
-            '--w3m-border-radius-master': '4px'
-        },
-        featuredWalletIds: [
-            'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
-            '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0'  // Trust Wallet
-        ]
     });
 
-    return web3Modal;
+    // Subscribe to network changes
+    const unsubscribeNetwork = appKitModal.subscribeNetwork((network) => {
+        console.log('[AppKit] Network changed:', network);
+        // For DeCloud, we primarily use Polygon for payments
+        // You can add network validation here if needed
+    });
+
+    // Store unsubscribe functions
+    appKitUnsubscribers = [unsubscribeAccount, unsubscribeNetwork];
 }
 
 // ============================================
-// UI STATE MANAGEMENT
+// WALLET CONNECTION - SIMPLIFIED
 // ============================================
-function showLogin() {
-    document.getElementById('login-overlay').classList.remove('hidden');
-}
 
-function showDashboard() {
-    document.getElementById('login-overlay').classList.add('hidden');
-    updateWalletDisplay();
-}
-
-function showLoginStatus(type, message) {
-    const status = document.getElementById('login-status');
-    status.className = `login-status ${type}`;
-    status.textContent = message;
-}
-
-function hideLoginStatus() {
-    const status = document.getElementById('login-status');
-    status.className = 'login-status';
-    status.style.display = 'none';
-}
-
-function updateWalletDisplay() {
-    const walletDisplay = document.getElementById('wallet-display');
-    const walletBadge = document.getElementById('wallet-badge');
-    const disconnectBtn = document.getElementById('disconnect-btn');
-    const settingsWallet = document.getElementById('settings-wallet');
-
-    if (CONFIG.wallet && walletDisplay) {
-        const shortWallet = CONFIG.wallet.slice(0, 6) + '...' + CONFIG.wallet.slice(-4);
-        walletDisplay.textContent = shortWallet;
-
-        if (walletBadge) walletBadge.classList.add('connected');
-        if (disconnectBtn) disconnectBtn.style.display = 'block';
-        if (settingsWallet) settingsWallet.value = CONFIG.wallet;
-    }
-}
-
-function resetConnectButton(btn) {
-    btn.disabled = false;
-    btn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-            <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
-            <circle cx="18" cy="15" r="1" />
-        </svg>
-        Connect Wallet
-    `;
-}
-
-// ============================================
-// WALLET CONNECTION - UNIFIED APPROACH
-// ============================================
+/**
+ * Unified wallet connection handler
+ * SECURITY: Proper error handling and user feedback
+ */
 async function connectWallet() {
     const btn = document.getElementById('connect-wallet-btn');
 
@@ -384,224 +294,132 @@ async function connectWallet() {
         btn.innerHTML = '<div class="spinner"></div> Loading...';
         showLoginStatus('info', 'Initializing wallet connection...');
 
-        // Check configuration
-        const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
-        const hasInjectedProvider = typeof window.ethereum !== 'undefined';
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-        // Load ethers.js first (always needed)
-        btn.innerHTML = '<div class="spinner"></div> Loading wallet...';
-        await loadWalletSDKs(false);
-
-        btn.innerHTML = '<div class="spinner"></div> Connecting...';
-
-        if (isMobile && walletConnectConfigured) {
-            // Mobile - use AppKit (WalletConnect)
-            await connectWithAppKit();
-        } else if (!hasInjectedProvider && walletConnectConfigured) {
-            // Desktop without extension - use AppKit
-            await connectWithAppKit();
-        } else if (hasInjectedProvider && walletConnectConfigured) {
-            // Desktop with extension - show choice
-            await showConnectionOptions();
-        } else if (hasInjectedProvider) {
-            // Desktop with extension, WalletConnect not configured
-            await connectWithInjectedProvider();
-        } else {
-            // No options available
-            showLoginStatus('error', 'No wallet detected. Please install MetaMask or another Web3 wallet.');
+        // Initialize AppKit if not already done
+        if (!appKitModal) {
+            await initializeAppKit();
         }
 
+        // Open AppKit modal - handles everything automatically
+        console.log('[Connection] Opening AppKit modal...');
+        await appKitModal.open();
+
+        // Reset button after modal opens (it may be closed without connecting)
+        setTimeout(() => {
+            const currentAddress = appKitModal.getAddress();
+            if (!currentAddress) {
+                resetConnectButton(btn);
+                hideLoginStatus();
+            }
+        }, 1000);
+
     } catch (error) {
-        console.error('Connection error:', error);
+        console.error('[Connection] Error:', error);
         handleConnectionError(error);
-    } finally {
         resetConnectButton(btn);
     }
 }
 
-// ============================================
-// APPKIT CONNECTION (WalletConnect v2)
-// ============================================
-async function connectWithAppKit() {
-    showLoginStatus('info', 'Opening wallet selector...');
+/**
+ * Check if wallet is already connected (for session restoration)
+ */
+async function checkExistingConnection() {
+    try {
+        if (!appKitModal) {
+            await initializeAppKit();
+        }
 
-    // Ensure AppKit SDK is loaded
-    if (!sdkLoadState.appKit) {
-        await loadWalletSDKs(true);
-    }
+        const address = appKitModal.getAddress();
+        const isConnected = appKitModal.getIsConnected();
 
-    // Initialize AppKit if not already done
-    if (!web3Modal) {
-        await initializeAppKit();
-    }
+        if (isConnected && address) {
+            console.log('[AppKit] Existing connection found:', address);
+            connectedAddress = address;
 
-    // Open modal and wait for connection
-    await web3Modal.open();
-
-    // Wait for connection to complete
-    return new Promise((resolve, reject) => {
-        const checkConnection = setInterval(async () => {
-            const address = web3Modal.getAddress();
-            if (address) {
-                clearInterval(checkConnection);
-
-                try {
-                    connectedAddress = address;
-                    ethersProvider = new window.ethers.BrowserProvider(web3Modal.getWalletProvider());
-                    ethersSigner = await ethersProvider.getSigner();
-
-                    setupAppKitListeners();
-                    await proceedWithAuthentication(address, 'walletconnect');
-                    resolve();
-                } catch (error) {
-                    reject(error);
-                }
+            const walletProvider = appKitModal.getWalletProvider();
+            if (walletProvider) {
+                ethersProvider = new window.ethers.BrowserProvider(walletProvider);
+                ethersSigner = await ethersProvider.getSigner();
             }
-        }, 500);
 
-        // Timeout after 60 seconds
-        setTimeout(() => {
-            clearInterval(checkConnection);
-            reject(new Error('Connection timeout'));
-        }, 60000);
-    });
-}
+            return true;
+        }
 
-// ============================================
-// INJECTED PROVIDER (MetaMask, etc.)
-// ============================================
-async function connectWithInjectedProvider() {
-    showLoginStatus('info', 'Connecting to wallet...');
-
-    if (!window.ethereum) {
-        throw new Error('No wallet detected');
+        return false;
+    } catch (error) {
+        console.error('[AppKit] Connection check error:', error);
+        return false;
     }
-
-    const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-    });
-
-    if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found');
-    }
-
-    connectedAddress = accounts[0];
-    ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
-    ethersSigner = await ethersProvider.getSigner();
-
-    setupInjectedProviderListeners();
-
-    await proceedWithAuthentication(connectedAddress, 'injected');
-}
-
-// ============================================
-// CONNECTION OPTIONS DIALOG
-// ============================================
-async function showConnectionOptions() {
-    hideLoginStatus();
-
-    const modal = document.createElement('div');
-    modal.className = 'wallet-options-modal';
-    modal.innerHTML = `
-        <div class="wallet-options-content">
-            <h3 class="wallet-options-title">Choose Connection Method</h3>
-
-            <div class="wallet-options-buttons">
-                <button class="wallet-option-btn" id="opt-injected">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-                        <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
-                        <circle cx="18" cy="15" r="1" />
-                    </svg>
-                    <div>
-                        <div class="wallet-option-name">Browser Wallet</div>
-                        <div class="wallet-option-desc">MetaMask, Coinbase, etc.</div>
-                    </div>
-                </button>
-
-                <button class="wallet-option-btn" id="opt-walletconnect">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
-                        <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/>
-                    </svg>
-                    <div>
-                        <div class="wallet-option-name">WalletConnect</div>
-                        <div class="wallet-option-desc">Mobile wallets & more</div>
-                    </div>
-                </button>
-            </div>
-
-            <button class="wallet-options-cancel" id="opt-cancel">Cancel</button>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    return new Promise((resolve, reject) => {
-        document.getElementById('opt-injected').onclick = async () => {
-            modal.remove();
-            try {
-                await connectWithInjectedProvider();
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        };
-
-        document.getElementById('opt-walletconnect').onclick = async () => {
-            modal.remove();
-            try {
-                await connectWithAppKit();
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        };
-
-        document.getElementById('opt-cancel').onclick = () => {
-            modal.remove();
-            hideLoginStatus();
-            reject(new Error('Connection cancelled'));
-        };
-    });
 }
 
 // ============================================
 // AUTHENTICATION FLOW
 // ============================================
+
+/**
+ * Proceed with authentication after wallet connection
+ */
 async function proceedWithAuthentication(walletAddress, connectionType) {
     const btn = document.getElementById('connect-wallet-btn');
-    showLoginStatus('info', 'Requesting signature...');
-    btn.innerHTML = '<div class="spinner"></div> Sign Message...';
 
-    const authResult = await authenticateWithWallet(walletAddress);
+    try {
+        showLoginStatus('info', 'Requesting signature...');
+        btn.innerHTML = '<div class="spinner"></div> Sign Message...';
 
-    if (authResult.success) {
-        showLoginStatus('success', 'Authentication successful!');
-        localStorage.setItem('connectionType', connectionType);
+        const authResult = await authenticateWithWallet(walletAddress);
 
-        setTimeout(() => {
-            showDashboard();
-            setupTokenRefresh();
-            refreshData();
-        }, 500);
-    } else {
-        throw new Error(authResult.error || 'Authentication failed');
+        if (authResult.success) {
+            showLoginStatus('success', 'Authentication successful!');
+            localStorage.setItem('connectionType', connectionType);
+            localStorage.setItem('wallet', walletAddress);
+            CONFIG.wallet = walletAddress;
+
+            setTimeout(() => {
+                // Close the AppKit modal
+                if (appKitModal) {
+                    appKitModal.close();
+                }
+
+                showDashboard();
+                setupTokenRefresh();
+                refreshData();
+            }, 500);
+        } else {
+            throw new Error(authResult.error || 'Authentication failed');
+        }
+    } catch (error) {
+        console.error('[Auth] Error:', error);
+        handleConnectionError(error);
+        resetConnectButton(btn);
     }
 }
 
 /**
  * Authenticates with the backend using wallet signature
+ * SECURITY: Message signing for proof of ownership
  */
 async function authenticateWithWallet(walletAddress) {
     try {
+        // SECURITY: Validate address format
+        if (!walletAddress || !walletAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+            return { success: false, error: 'Invalid wallet address format' };
+        }
+
+        console.log('[Auth] Requesting authentication message for:', walletAddress);
+
         // Step 1: Get message to sign from server
-        const messageResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`);
+        const messageResponse = await fetch(
+            `${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
 
         if (!messageResponse.ok) {
             const errorText = await messageResponse.text();
-            console.error('Message endpoint error:', messageResponse.status, errorText);
+            console.error('[Auth] Message endpoint error:', messageResponse.status, errorText);
             return { success: false, error: `Server error: ${messageResponse.status}` };
         }
 
@@ -613,13 +431,29 @@ async function authenticateWithWallet(walletAddress) {
 
         const { message, timestamp } = messageData.data;
 
+        // SECURITY: Validate message contains expected components
+        if (!message || !timestamp) {
+            return { success: false, error: 'Invalid authentication message from server' };
+        }
+
+        console.log('[Auth] Requesting signature from wallet...');
+
         // Step 2: Sign the message with the wallet
         const signature = await ethersSigner.signMessage(message);
+
+        // SECURITY: Validate signature format
+        if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
+            return { success: false, error: 'Invalid signature format' };
+        }
+
+        console.log('[Auth] Signature received, authenticating with server...');
 
         // Step 3: Authenticate with the server
         const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
                 walletAddress: walletAddress,
                 signature: signature,
@@ -630,104 +464,77 @@ async function authenticateWithWallet(walletAddress) {
 
         if (!authResponse.ok) {
             const errorText = await authResponse.text();
-            console.error('Auth endpoint error:', authResponse.status, errorText);
+            console.error('[Auth] Authentication endpoint error:', authResponse.status, errorText);
             return { success: false, error: `Authentication failed: ${authResponse.status}` };
         }
 
         const authData = await authResponse.json();
 
         if (authData.success && authData.data) {
+            // SECURITY: Store tokens
             authToken = authData.data.accessToken;
             refreshToken = authData.data.refreshToken;
             currentUser = authData.data.user;
-            CONFIG.wallet = walletAddress;
 
-            // Save to localStorage
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('refreshToken', refreshToken);
-            localStorage.setItem('wallet', walletAddress);
 
+            console.log('[Auth] Authentication successful');
             return { success: true };
         } else {
             return { success: false, error: authData.message || 'Authentication failed' };
         }
     } catch (error) {
-        console.error('Authentication error:', error);
-        return { success: false, error: error.message };
-    }
-}
+        console.error('[Auth] Authentication error:', error);
 
-// ============================================
-// WALLET EVENT LISTENERS
-// ============================================
-function setupAppKitListeners() {
-    if (!web3Modal) return;
+        // SECURITY: Don't expose internal error details
+        let errorMessage = 'Authentication failed. Please try again.';
 
-    // AppKit handles disconnection events through its built-in event system
-    web3Modal.subscribeProvider((state) => {
-        if (!state.isConnected) {
-            disconnect();
+        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+            errorMessage = 'Signature request rejected';
+        } else if (error.message?.includes('User rejected')) {
+            errorMessage = 'Signature request rejected';
         }
-    });
-}
 
-function setupInjectedProviderListeners() {
-    if (!window.ethereum) return;
-
-    window.ethereum.on('accountsChanged', (accounts) => {
-        if (accounts.length === 0) {
-            disconnect();
-        } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
-            showToast('Wallet changed. Please reconnect.', 'info');
-            disconnect();
-        }
-    });
-
-    window.ethereum.on('disconnect', () => {
-        disconnect();
-    });
-}
-
-// ============================================
-// ERROR HANDLING
-// ============================================
-function handleConnectionError(error) {
-    let errorMsg = 'Connection failed. ';
-
-    if (error.code === 4001 || error.message?.includes('rejected')) {
-        errorMsg = 'Connection rejected. Please approve the connection request.';
-    } else if (error.message?.includes('cancelled')) {
-        errorMsg = 'Connection cancelled.';
-    } else if (error.message?.includes('projectId')) {
-        errorMsg = 'WalletConnect not configured. Please set up a Project ID.';
-    } else if (error.message?.includes('failed to load') || error.message?.includes('Failed to load')) {
-        errorMsg = 'Failed to load wallet libraries. Please check your connection and refresh.';
-    } else if (error.message?.includes('No accounts')) {
-        errorMsg = 'No accounts found. Please unlock your wallet.';
-    } else if (error.message) {
-        errorMsg = error.message;
+        return {
+            success: false,
+            error: errorMessage
+        };
     }
-
-    showLoginStatus('error', errorMsg);
 }
 
 // ============================================
 // DISCONNECT
 // ============================================
+
 async function disconnect() {
-    // Disconnect AppKit if active
-    if (web3Modal) {
+    console.log('[Disconnect] Disconnecting wallet...');
+
+    // Disconnect AppKit
+    if (appKitModal) {
         try {
-            await web3Modal.disconnect();
+            await appKitModal.disconnect();
         } catch (e) {
-            console.log('AppKit disconnect error:', e);
+            console.log('[AppKit] Disconnect error:', e);
         }
     }
 
+    // Cleanup listeners
+    if (appKitUnsubscribers.length > 0) {
+        appKitUnsubscribers.forEach(unsub => {
+            try {
+                unsub();
+            } catch (e) {
+                console.log('[AppKit] Unsubscribe error:', e);
+            }
+        });
+        appKitUnsubscribers = [];
+    }
+
+    // Reset state
     ethersProvider = null;
     ethersSigner = null;
     connectedAddress = null;
-    web3Modal = null;
 
     clearSession();
     showLogin();
@@ -741,6 +548,7 @@ function clearSession() {
     CONFIG.wallet = null;
     cachedEncryptionKey = null;
 
+    // SECURITY: Clear sensitive data
     localStorage.removeItem('authToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('wallet');
@@ -751,6 +559,7 @@ function clearSession() {
         tokenRefreshTimer = null;
     }
 
+    // Update UI
     const walletDisplay = document.getElementById('wallet-display');
     const walletBadge = document.getElementById('wallet-badge');
     const disconnectBtn = document.getElementById('disconnect-btn');
@@ -761,655 +570,707 @@ function clearSession() {
 }
 
 // ============================================
-// API HELPER
+// SESSION RESTORATION
 // ============================================
-async function api(endpoint, options = {}) {
-    const headers = {
-        'Content-Type': 'application/json',
-        ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
-    };
 
-    const url = `${CONFIG.orchestratorUrl}${endpoint}`;
+async function restoreSession() {
+    const storedToken = localStorage.getItem('authToken');
+    const storedRefreshToken = localStorage.getItem('refreshToken');
+    const storedWallet = localStorage.getItem('wallet');
 
-    try {
-        const response = await fetch(url, {
-            ...options,
-            headers: { ...headers, ...options.headers }
-        });
+    console.log('[Session] Attempting to restore session...');
 
-        if (response.status === 401) {
-            // Token expired, try refresh
+    if (storedToken && storedRefreshToken && storedWallet) {
+        authToken = storedToken;
+        refreshToken = storedRefreshToken;
+        CONFIG.wallet = storedWallet;
+
+        try {
+            // Verify token is still valid
+            console.log('[Session] Verifying stored token...');
             const refreshed = await refreshAuthToken();
-            if (refreshed) {
-                // Retry original request with new token
-                headers['Authorization'] = `Bearer ${authToken}`;
-                const retryResponse = await fetch(url, {
-                    ...options,
-                    headers: { ...headers, ...options.headers }
-                });
-                return await retryResponse.json();
-            } else {
-                // Refresh failed, logout
-                disconnect();
-                throw new Error('Session expired. Please login again.');
-            }
-        }
 
-        return await response.json();
-    } catch (error) {
-        console.error('API error:', error);
-        throw error;
+            if (refreshed) {
+                console.log('[Session] Token valid, restoring session');
+
+                // Initialize AppKit in background (non-blocking)
+                initializeAppKit()
+                    .then(() => checkExistingConnection())
+                    .catch(e => console.log('[AppKit] Background init failed:', e));
+
+                showDashboard();
+                refreshData();
+                return true;
+            }
+        } catch (e) {
+            console.error('[Session] Verification failed:', e);
+        }
     }
+
+    console.log('[Session] No valid session found');
+    return false;
 }
 
+// ============================================
+// ERROR HANDLING
+// ============================================
+
+function handleConnectionError(error) {
+    let errorMsg = 'Connection failed. ';
+
+    // SECURITY: Sanitize error messages
+    if (error.code === 4001 || error.message?.includes('rejected') || error.message?.includes('User rejected')) {
+        errorMsg = 'Connection rejected. Please approve the connection request.';
+    } else if (error.message?.includes('cancelled')) {
+        errorMsg = 'Connection cancelled.';
+    } else if (error.message?.includes('projectId') || error.message?.includes('Project ID')) {
+        errorMsg = 'Wallet connection service unavailable. Please contact support.';
+    } else if (error.message?.includes('timeout')) {
+        errorMsg = 'Connection timeout. Please check your network and try again.';
+    } else if (error.message?.includes('network')) {
+        errorMsg = 'Network error. Please check your connection and try again.';
+    } else if (error.message?.includes('Failed to load')) {
+        errorMsg = 'Failed to load wallet libraries. Please refresh the page and try again.';
+    } else {
+        // SECURITY: Generic message for unknown errors
+        errorMsg = 'Connection failed. Please try again or contact support.';
+    }
+
+    showLoginStatus('error', errorMsg);
+    console.error('[Connection] Error details:', error);
+}
+
+function resetConnectButton(btn) {
+    if (!btn) return;
+
+    btn.disabled = false;
+    btn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+            <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+            <circle cx="18" cy="15" r="1" />
+        </svg>
+        Connect Wallet
+    `;
+}
+
+// ============================================
+// TOKEN REFRESH
+// ============================================
+
 async function refreshAuthToken() {
-    if (!refreshToken) return false;
+    if (!refreshToken) {
+        return false;
+    }
 
     try {
         const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({ refreshToken })
         });
+
+        if (!response.ok) {
+            console.error('[Auth] Token refresh failed:', response.status);
+            return false;
+        }
 
         const data = await response.json();
 
         if (data.success && data.data) {
             authToken = data.data.accessToken;
             refreshToken = data.data.refreshToken;
+            currentUser = data.data.user;
 
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('refreshToken', refreshToken);
 
+            console.log('[Auth] Token refreshed successfully');
             return true;
         }
-    } catch (error) {
-        console.error('Token refresh failed:', error);
-    }
 
-    return false;
+        return false;
+    } catch (error) {
+        console.error('[Auth] Token refresh error:', error);
+        return false;
+    }
 }
 
 function setupTokenRefresh() {
-    // Refresh token every 50 minutes (tokens typically expire in 60 minutes)
+    // Refresh token every 50 minutes (tokens expire at 60 minutes)
     if (tokenRefreshTimer) {
         clearInterval(tokenRefreshTimer);
     }
 
     tokenRefreshTimer = setInterval(async () => {
-        await refreshAuthToken();
+        console.log('[Auth] Auto-refreshing token...');
+        const refreshed = await refreshAuthToken();
+        if (!refreshed) {
+            console.error('[Auth] Auto-refresh failed, logging out');
+            disconnect();
+        }
     }, 50 * 60 * 1000);
 }
 
 // ============================================
-// DASHBOARD DATA LOADING
+// API HELPER
 // ============================================
+
+async function api(endpoint, options = {}) {
+    const headers = {
+        'Content-Type': 'application/json',
+        ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+        ...options.headers
+    };
+
+    const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+        ...options,
+        headers
+    });
+
+    // Handle 401 Unauthorized - token expired
+    if (response.status === 401) {
+        console.log('[API] 401 received, attempting token refresh...');
+        const refreshed = await refreshAuthToken();
+
+        if (refreshed) {
+            // Retry the request with new token
+            headers['Authorization'] = `Bearer ${authToken}`;
+            return fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+                ...options,
+                headers
+            });
+        } else {
+            // Refresh failed, redirect to login
+            disconnect();
+            throw new Error('Session expired. Please log in again.');
+        }
+    }
+
+    return response;
+}
+
+// ============================================
+// PASSWORD ENCRYPTION
+// ============================================
+
+async function getEncryptionKey() {
+    if (cachedEncryptionKey) {
+        return cachedEncryptionKey;
+    }
+
+    if (!ethersSigner) {
+        throw new Error('Wallet not connected');
+    }
+
+    const signature = await ethersSigner.signMessage(ENCRYPTION_MESSAGE);
+    const keyMaterial = window.ethers.getBytes(window.ethers.keccak256(window.ethers.toUtf8Bytes(signature)));
+
+    cachedEncryptionKey = await crypto.subtle.importKey(
+        'raw',
+        keyMaterial.slice(0, 32),
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+
+    return cachedEncryptionKey;
+}
+
+async function encryptPassword(password) {
+    const key = await getEncryptionKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(password);
+
+    const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        encoded
+    );
+
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+
+    return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptPassword(encryptedPassword) {
+    const key = await getEncryptionKey();
+    const combined = Uint8Array.from(atob(encryptedPassword), c => c.charCodeAt(0));
+
+    const iv = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        encrypted
+    );
+
+    return new TextDecoder().decode(decrypted);
+}
+
+// ============================================
+// UI HELPERS
+// ============================================
+
+function showLogin() {
+    document.getElementById('login-overlay').classList.add('active');
+    document.getElementById('app-container').style.display = 'none';
+}
+
+function showDashboard() {
+    document.getElementById('login-overlay').classList.remove('active');
+    document.getElementById('app-container').style.display = 'flex';
+
+    // Update wallet display
+    if (CONFIG.wallet) {
+        const shortAddress = `${CONFIG.wallet.slice(0, 6)}...${CONFIG.wallet.slice(-4)}`;
+        const walletDisplay = document.getElementById('wallet-display');
+        const walletBadge = document.getElementById('wallet-badge');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const settingsWallet = document.getElementById('settings-wallet');
+
+        if (walletDisplay) walletDisplay.textContent = shortAddress;
+        if (walletBadge) walletBadge.classList.add('connected');
+        if (disconnectBtn) disconnectBtn.style.display = 'block';
+        if (settingsWallet) settingsWallet.value = CONFIG.wallet;
+    }
+}
+
+function showLoginStatus(type, message) {
+    const status = document.getElementById('login-status');
+    if (!status) return;
+
+    status.className = `login-status ${type}`;
+    status.textContent = message;
+    status.style.display = 'block';
+}
+
+function hideLoginStatus() {
+    const status = document.getElementById('login-status');
+    if (status) {
+        status.style.display = 'none';
+    }
+}
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+
+    container.appendChild(toast);
+
+    setTimeout(() => toast.classList.add('show'), 10);
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function showPage(pageName) {
+    // Hide all pages
+    document.querySelectorAll('.page').forEach(page => {
+        page.classList.remove('active');
+    });
+
+    // Remove active class from nav items
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+    });
+
+    // Show selected page
+    const selectedPage = document.getElementById(`page-${pageName}`);
+    if (selectedPage) {
+        selectedPage.classList.add('active');
+    }
+
+    // Add active class to nav item
+    const selectedNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+    if (selectedNav) {
+        selectedNav.classList.add('active');
+    }
+
+    // Refresh data for certain pages
+    if (pageName === 'dashboard' || pageName === 'virtual-machines') {
+        refreshData();
+    } else if (pageName === 'nodes') {
+        loadNodes();
+    } else if (pageName === 'ssh-keys') {
+        loadSSHKeys();
+    }
+}
+
+// ============================================
+// DATA LOADING
+// ============================================
+
 async function refreshData() {
     await Promise.all([
         loadDashboardStats(),
-        loadVMs(),
-        loadSSHKeys(),
-        loadNodes()
+        loadVirtualMachines()
     ]);
 }
 
 async function loadDashboardStats() {
     try {
-        const data = await api('/api/system/stats');
-        if (data.success && data.data) {
+        const response = await api('/api/dashboard/stats');
+        const data = await response.json();
+
+        if (data.success) {
             const stats = data.data;
-            document.getElementById('stat-nodes').textContent = stats.totalNodes;
-            document.getElementById('stat-nodes-online').textContent = `${stats.onlineNodes}/${stats.totalNodes}`;
-            document.getElementById('stat-vms').textContent = stats.totalVms;
-            document.getElementById('stat-vms-running').textContent = `${stats.runningVms} running`;
-            document.getElementById('stat-cpu').textContent = stats.availableCpuCores;
-            document.getElementById('stat-memory').textContent = formatMemory(stats.availableMemoryMb);
+
+            document.getElementById('stat-vms').textContent = stats.totalVMs || 0;
+            document.getElementById('stat-nodes').textContent = stats.totalNodes || 0;
+            document.getElementById('stat-cpu').textContent = `${stats.totalCPU || 0} cores`;
+            document.getElementById('stat-memory').textContent = `${(stats.totalMemory / 1024).toFixed(1)} GB`;
         }
-    } catch (e) {
-        console.error('Failed to load stats:', e);
+    } catch (error) {
+        console.error('[Dashboard] Failed to load stats:', error);
     }
 }
 
-async function loadVMs() {
+async function loadVirtualMachines() {
     try {
-        const data = await api('/api/vms');
-        const vms = data.data?.items || [];
+        const response = await api('/api/vms');
+        const data = await response.json();
 
-        const recentHtml = vms.slice(0, 5).map(vm => renderVmRow(vm)).join('');
-        document.getElementById('recent-vms-table').innerHTML = recentHtml || '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted)">No VMs yet</td></tr>';
-
-        const allHtml = vms.map(vm => renderVmRowFull(vm)).join('');
-        document.getElementById('all-vms-table').innerHTML = allHtml || '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted)">No VMs yet</td></tr>';
-    } catch (e) {
-        console.error('Failed to load VMs:', e);
+        if (data.success) {
+            const vms = data.data;
+            renderVMsTable(vms);
+            renderDashboardVMs(vms);
+        }
+    } catch (error) {
+        console.error('[VMs] Failed to load:', error);
+        showToast('Failed to load virtual machines', 'error');
     }
+}
+
+function renderVMsTable(vms) {
+    const tbody = document.getElementById('vms-table-body');
+    if (!tbody) return;
+
+    if (!vms || vms.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No virtual machines found. Create your first VM to get started.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = vms.map(vm => `
+        <tr>
+            <td>
+                <div class="vm-name">
+                    <div class="vm-status ${vm.status}"></div>
+                    ${vm.name}
+                </div>
+            </td>
+            <td>${vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId) : 'Unknown'}</td>
+            <td>${vm.specs?.cpu || 0} cores</td>
+            <td>${vm.specs?.memory || 0} MB</td>
+            <td>${vm.specs?.disk || 0} GB</td>
+            <td>
+                <span class="status-badge status-${vm.status}">
+                    ${vm.status}
+                </span>
+            </td>
+            <td>
+                <div class="table-actions">
+                    <button class="btn-icon" onclick="showConnectInfo('${vm.nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Connect">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" onclick="openTerminal('${vm.id}')" title="Terminal">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <path d="M6 8l4 4-4 4M12 16h6"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" onclick="revealPassword('${vm.id}')" title="Show Password">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-icon-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function renderDashboardVMs(vms) {
+    const container = document.getElementById('recent-vms');
+    if (!container) return;
+
+    const recentVMs = vms.slice(0, 5);
+
+    if (recentVMs.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">No virtual machines yet</p>';
+        return;
+    }
+
+    container.innerHTML = recentVMs.map(vm => `
+        <div class="vm-card">
+            <div class="vm-card-header">
+                <div class="vm-name">
+                    <div class="vm-status ${vm.status}"></div>
+                    ${vm.name}
+                </div>
+                <span class="status-badge status-${vm.status}">${vm.status}</span>
+            </div>
+            <div class="vm-card-specs">
+                <div class="spec-item">
+                    <span class="spec-label">CPU</span>
+                    <span class="spec-value">${vm.specs?.cpu || 0} cores</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Memory</span>
+                    <span class="spec-value">${vm.specs?.memory || 0} MB</span>
+                </div>
+                <div class="spec-item">
+                    <span class="spec-label">Disk</span>
+                    <span class="spec-value">${vm.specs?.disk || 0} GB</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
 }
 
 async function loadNodes() {
     try {
-        const data = await api('/api/nodes');
-        const nodes = data.data || [];
+        const response = await api('/api/nodes');
+        const data = await response.json();
 
-        nodes.forEach(n => { nodesCache[n.id] = n; });
+        if (data.success) {
+            const nodes = data.data;
 
-        const html = nodes.slice(0, 5).map(node => `
-            <div class="node-item">
-                <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
-                <div class="node-info">
-                    <div class="node-name">${node.name}</div>
-                    <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)}</div>
-                </div>
-                <div class="node-metrics">
-                    <div class="node-usage">${node.activeVms || 0}</div>
-                    <div class="node-usage-label">VMs</div>
-                </div>
-            </div>
-        `).join('');
+            // Cache node names
+            nodes.forEach(node => {
+                nodesCache[node.id] = node.name;
+            });
 
-        document.getElementById('nodes-list').innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No nodes available</p>';
-
-        const allHtml = nodes.map(node => `
-            <div class="node-item">
-                <div class="node-status-indicator ${node.status === 'Online' ? '' : 'offline'}"></div>
-                <div class="node-info">
-                    <div class="node-name">${node.name}</div>
-                    <div class="node-specs">${node.resources?.cpuCores || 0} CPU • ${formatMemory(node.resources?.memoryMb)} • ${node.region || 'Unknown'}</div>
-                </div>
-                <div class="node-metrics">
-                    <div class="node-usage">${node.activeVms || 0}</div>
-                    <div class="node-usage-label">Active VMs</div>
-                </div>
-            </div>
-        `).join('');
-
-        document.getElementById('all-nodes-list').innerHTML = allHtml || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No nodes available</p>';
-    } catch (e) {
-        console.error('Failed to load nodes:', e);
+            renderNodesTable(nodes);
+        }
+    } catch (error) {
+        console.error('[Nodes] Failed to load:', error);
+        showToast('Failed to load nodes', 'error');
     }
+}
+
+function renderNodesTable(nodes) {
+    const tbody = document.getElementById('nodes-table-body');
+    if (!tbody) return;
+
+    if (!nodes || nodes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No nodes registered</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = nodes.map(node => {
+        const lastSeen = node.lastHeartbeat ? new Date(node.lastHeartbeat).toLocaleString() : 'Never';
+        const isOnline = node.status === 'online';
+
+        return `
+        <tr>
+            <td>
+                <div class="vm-name">
+                    <div class="vm-status ${isOnline ? 'running' : 'stopped'}"></div>
+                    ${node.name}
+                </div>
+            </td>
+            <td>${node.ipAddress}</td>
+            <td>${node.resources?.totalCPU || 0} cores</td>
+            <td>${((node.resources?.totalMemory || 0) / 1024).toFixed(1)} GB</td>
+            <td>${node.activeVMs || 0}</td>
+            <td>${lastSeen}</td>
+            <td>
+                <span class="status-badge status-${isOnline ? 'running' : 'stopped'}">
+                    ${node.status}
+                </span>
+            </td>
+        </tr>
+    `}).join('');
 }
 
 async function loadSSHKeys() {
     try {
-        const data = await api('/api/user/me/ssh-keys');
-        const keys = data.data || [];
+        const response = await api('/api/ssh-keys');
+        const data = await response.json();
 
-        const html = keys.map(key => `
-            <div class="node-item">
-                <div class="node-info">
-                    <div class="node-name">${key.name}</div>
-                    <div class="node-specs">${key.fingerprint}</div>
-                </div>
-                <button class="action-btn danger" onclick="deleteSshKey('${key.id}')" title="Delete">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                </button>
-            </div>
-        `).join('');
-
-        document.getElementById('ssh-keys-list').innerHTML = html || '<p style="color:var(--text-muted);text-align:center;padding:20px;">No SSH keys added yet</p>';
-    } catch (e) {
-        console.error('Failed to load SSH keys:', e);
+        if (data.success) {
+            renderSSHKeysTable(data.data);
+        }
+    } catch (error) {
+        console.error('[SSH Keys] Failed to load:', error);
+        showToast('Failed to load SSH keys', 'error');
     }
 }
 
-function getNodePublicIp(nodeId) {
-    const node = nodesCache[nodeId];
-    return node?.publicIp || null;
-}
+function renderSSHKeysTable(keys) {
+    const tbody = document.getElementById('ssh-keys-table-body');
+    if (!tbody) return;
 
-// ============================================
-// VM RENDERING
-// ============================================
-// Must match VmStatus enum in backend
-const VM_STATUS_MAP = {
-    0: 'Pending',
-    1: 'Scheduling',
-    2: 'Provisioning',
-    3: 'Running',
-    4: 'Stopping',
-    5: 'Stopped',
-    6: 'Migrating',
-    7: 'Error',
-    8: 'Deleted'
-};
+    if (!keys || keys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 40px; color: #6b7280;">No SSH keys added. Add a key to connect to your VMs.</td></tr>';
+        return;
+    }
 
-function getStatusString(status) {
-    if (typeof status === 'string') return status;
-    if (typeof status === 'number') return VM_STATUS_MAP[status] || 'Unknown';
-    return 'Unknown';
-}
+    tbody.innerHTML = keys.map(key => {
+        const added = new Date(key.createdAt).toLocaleDateString();
+        const fingerprint = key.fingerprint || 'N/A';
 
-function renderVmRow(vm) {
-    const statusStr = getStatusString(vm.status);
-    const statusClass = statusStr.toLowerCase();
-    const created = new Date(vm.createdAt).toLocaleDateString();
-
-    return `
+        return `
         <tr>
+            <td>${key.name}</td>
+            <td><code style="font-size: 12px; color: #9ca3af;">${fingerprint}</code></td>
+            <td>${added}</td>
             <td>
-                <div class="vm-name">
-                    <div class="vm-icon">
+                <div class="table-actions">
+                    <button class="btn-icon btn-icon-danger" onclick="deleteSSHKey('${key.id}', '${key.name}')" title="Delete">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="3" width="20" height="14" rx="2"/>
-                            <path d="M8 21h8M12 17v4"/>
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                         </svg>
-                    </div>
-                    ${vm.name}
+                    </button>
                 </div>
             </td>
-            <td>
-                <span class="status-badge ${statusClass}">
-                    <span class="status-dot"></span>
-                    ${statusStr}
-                </span>
-            </td>
-            <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)} • ${vm.spec?.diskGb || 20} GB</td>
-            <td>${created}</td>
         </tr>
-    `;
-}
-
-function renderVmRowFull(vm) {
-    const statusStr = getStatusString(vm.status);
-    const statusClass = statusStr.toLowerCase();
-    const created = new Date(vm.createdAt).toLocaleDateString();
-
-    const canConnect = statusStr === 'Running' && vm.accessInfo?.vmIp;
-    const vmIp = vm.accessInfo?.vmIp || '-';
-    const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
-
-    return `
-        <tr>
-            <td>
-                <div class="vm-name">
-                    <div class="vm-icon">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="3" width="20" height="14" rx="2"/>
-                            <path d="M8 21h8M12 17v4"/>
-                        </svg>
-                    </div>
-                    <div>
-                        ${vm.name}
-                        <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                    </div>
-                </div>
-            </td>
-            <td>
-                <span class="status-badge ${statusClass}">
-                    <span class="status-dot"></span>
-                    ${statusStr}
-                </span>
-            </td>
-            <td class="vm-id">${vm.nodeId ? vm.nodeId.slice(0, 8) + '...' : '-'}</td>
-            <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)} • ${vm.spec?.diskGb || 20} GB</td>
-            <td>${created}</td>
-            <td>
-                ${canConnect && nodeIp ? `
-                    <button class="action-btn" onclick="showConnectInfo('${nodeIp}', '${vmIp}', '${vm.name}')" title="Connect">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
-                        </svg>
-                    </button>
-                    <button class="action-btn" onclick="openTerminal('${nodeIp}', '${vmIp}', '${vm.name}', '${vm.id}')" title="Terminal">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="4,17 10,11 4,5"/>
-                            <line x1="12" y1="19" x2="20" y2="19"/>
-                        </svg>
-                    </button>
-                    <button class="action-btn" onclick="revealPassword('${vm.id}', '${vm.name}')" title="Show Password">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
-                        </svg>
-                    </button>
-                ` : ''}
-                ${statusStr === 'Running' ? `
-                    <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                    </button>
-                ` : statusStr === 'Stopped' ? `
-                    <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                    </button>
-                ` : ''}
-                <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                </button>
-            </td>
-        </tr>
-    `;
+    `}).join('');
 }
 
 // ============================================
-// VM ACTIONS
+// VM OPERATIONS
 // ============================================
-async function createVm() {
-    const name = document.getElementById('vm-name').value;
-    const cpuCores = parseInt(document.getElementById('vm-cpu').value);
-    const memoryGb = parseInt(document.getElementById('vm-memory').value);
-    const diskGb = parseInt(document.getElementById('vm-disk').value);
 
-    if (!name || !cpuCores || !memoryGb || !diskGb) {
-        showToast('Please fill in all fields', 'error');
+function openCreateVMModal() {
+    document.getElementById('create-vm-modal').classList.add('active');
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('active');
+}
+
+async function createVM() {
+    const name = document.getElementById('vm-name').value.trim();
+    const cpu = parseInt(document.getElementById('vm-cpu').value);
+    const memory = parseInt(document.getElementById('vm-memory').value);
+    const disk = parseInt(document.getElementById('vm-disk').value);
+    const image = document.getElementById('vm-image').value;
+
+    if (!name) {
+        showToast('Please enter a VM name', 'error');
         return;
     }
 
     try {
-        const data = await api('/api/vms', {
+        const response = await api('/api/vms', {
             method: 'POST',
             body: JSON.stringify({
                 name,
-                spec: {
-                    cpuCores,
-                    memoryMb: memoryGb * 1024,
-                    diskGb
-                },
-                osImage: 'ubuntu-24.04'
+                specs: { cpu, memory, disk },
+                image
             })
         });
 
+        const data = await response.json();
+
         if (data.success) {
-            showToast('VM created', 'success');
+            showToast('Virtual machine created successfully', 'success');
             closeModal('create-vm-modal');
-
-            // Show password modal if password is present
-            if (data.data.password) {
-                await showPasswordModal(data.data.vmId, name, data.data.password);
-            }
-
             refreshData();
+
+            // Clear form
+            document.getElementById('vm-name').value = '';
+            document.getElementById('vm-cpu').value = '2';
+            document.getElementById('vm-memory').value = '2048';
+            document.getElementById('vm-disk').value = '20';
         } else {
             showToast(data.message || 'Failed to create VM', 'error');
         }
-    } catch (e) {
-        console.error('Create VM error:', e);
-        showToast('Failed to create VM', 'error');
+    } catch (error) {
+        console.error('[VM] Create error:', error);
+        showToast('Failed to create virtual machine', 'error');
     }
 }
 
-async function startVm(vmId) {
-    try {
-        const data = await api(`/api/vms/${vmId}/action`, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'Start' })
-        });
-        if (data.success) {
-            showToast('VM starting...', 'success');
-            refreshData();
-        } else {
-            showToast(data.message || 'Failed to start VM', 'error');
-        }
-    } catch (e) {
-        console.error('Start VM error:', e);
-        showToast('Failed to start VM', 'error');
-    }
-}
-
-async function stopVm(vmId) {
-    try {
-        const data = await api(`/api/vms/${vmId}/action`, {
-            method: 'POST',
-            body: JSON.stringify({ action: 'Stop' })
-        });
-        if (data.success) {
-            showToast('VM stopping...', 'success');
-            refreshData();
-        } else {
-            showToast(data.message || 'Failed to stop VM', 'error');
-        }
-    } catch (e) {
-        console.error('Stop VM error:', e);
-        showToast('Failed to stop VM', 'error');
-    }
-}
-
-async function deleteVm(vmId) {
-    if (!confirm('Are you sure you want to delete this VM?')) return;
-
-    try {
-        const data = await api(`/api/vms/${vmId}`, { method: 'DELETE' });
-        if (data.success) {
-            showToast('VM deleted', 'success');
-            refreshData();
-        } else {
-            showToast('Failed to delete VM', 'error');
-        }
-    } catch (e) {
-        showToast('Failed to delete VM', 'error');
-    }
-}
-
-// ============================================
-// SSH KEY ACTIONS
-// ============================================
-async function addSshKey() {
-    const name = document.getElementById('ssh-key-name').value;
-    const publicKey = document.getElementById('ssh-key-value').value;
-
-    if (!name || !publicKey) {
-        showToast('Please fill in all fields', 'error');
+async function deleteVM(vmId, vmName) {
+    if (!confirm(`Are you sure you want to delete "${vmName}"? This action cannot be undone.`)) {
         return;
     }
 
     try {
-        const data = await api('/api/user/me/ssh-keys', {
-            method: 'POST',
-            body: JSON.stringify({ name, publicKey })
+        const response = await api(`/api/vms/${vmId}`, {
+            method: 'DELETE'
         });
 
+        const data = await response.json();
+
         if (data.success) {
-            showToast('SSH key added', 'success');
-            closeModal('add-ssh-key-modal');
-            document.getElementById('ssh-key-name').value = '';
-            document.getElementById('ssh-key-value').value = '';
-            loadSSHKeys();
+            showToast('Virtual machine deleted', 'success');
+            refreshData();
         } else {
-            showToast(data.message || 'Failed to add SSH key', 'error');
+            showToast(data.message || 'Failed to delete VM', 'error');
         }
-    } catch (e) {
-        showToast('Failed to add SSH key', 'error');
+    } catch (error) {
+        console.error('[VM] Delete error:', error);
+        showToast('Failed to delete virtual machine', 'error');
     }
 }
 
-async function deleteSshKey(keyId) {
-    if (!confirm('Are you sure you want to delete this SSH key?')) return;
-
+async function revealPassword(vmId) {
     try {
-        const data = await api(`/api/user/me/ssh-keys/${keyId}`, { method: 'DELETE' });
-        if (data.success) {
-            showToast('SSH key deleted', 'success');
-            loadSSHKeys();
-        } else {
-            showToast('Failed to delete SSH key', 'error');
+        const response = await api(`/api/vms/${vmId}`);
+        const data = await response.json();
+
+        if (!data.success || !data.data) {
+            showToast('Failed to load VM details', 'error');
+            return;
         }
-    } catch (e) {
-        showToast('Failed to delete SSH key', 'error');
-    }
-}
 
-// ============================================
-// WALLET-BASED PASSWORD ENCRYPTION
-// ============================================
+        const vm = data.data;
 
-// Check if we're in a secure context (HTTPS or localhost)
-function isSecureContext() {
-    return window.isSecureContext ||
-        location.protocol === 'https:' ||
-        location.hostname === 'localhost' ||
-        location.hostname === '127.0.0.1';
-}
-
-// Simple XOR-based obfuscation for non-secure contexts (DEV ONLY)
-// NOT cryptographically secure - only for development/testing
-function simpleObfuscate(text, key) {
-    let result = '';
-    for (let i = 0; i < text.length; i++) {
-        result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-    }
-    return btoa(result); // Base64 encode
-}
-
-function simpleDeobfuscate(encoded, key) {
-    const text = atob(encoded); // Base64 decode
-    let result = '';
-    for (let i = 0; i < text.length; i++) {
-        result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-    }
-    return result;
-}
-
-async function deriveEncryptionKey(signer) {
-    const signature = await signer.signMessage(ENCRYPTION_MESSAGE);
-
-    // If not in secure context, return the signature as a simple key
-    if (!isSecureContext() || !crypto.subtle) {
-        console.warn('⚠️ Not in secure context - using basic obfuscation (NOT secure for production)');
-        return { type: 'simple', key: signature };
-    }
-
-    // Secure context - use proper AES encryption
-    const encoder = new TextEncoder();
-    const sigBytes = encoder.encode(signature);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', sigBytes);
-    const aesKey = await crypto.subtle.importKey('raw', hashBuffer, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-    return { type: 'aes', key: aesKey };
-}
-
-async function encryptPassword(password, keyObj) {
-    if (keyObj.type === 'simple') {
-        // Simple obfuscation for dev/HTTP
-        return 'SIMPLE:' + simpleObfuscate(password, keyObj.key);
-    }
-
-    // AES-GCM encryption for production/HTTPS
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, keyObj.key, data);
-    const ivBase64 = btoa(String.fromCharCode(...iv));
-    const ctBase64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
-    return `${ivBase64}:${ctBase64}`;
-}
-
-async function decryptPassword(encryptedData, keyObj) {
-    // Check if it's simple obfuscation
-    if (encryptedData.startsWith('SIMPLE:')) {
-        if (keyObj.type !== 'simple') {
-            throw new Error('Password was encrypted in dev mode, need same wallet to decrypt');
+        if (!vm.encryptedPassword) {
+            showToast('No password set for this VM', 'error');
+            return;
         }
-        return simpleDeobfuscate(encryptedData.substring(7), keyObj.key);
-    }
 
-    // AES-GCM decryption
-    if (keyObj.type === 'simple') {
-        throw new Error('Password was encrypted with HTTPS. Please access via HTTPS to decrypt.');
-    }
+        // Decrypt password
+        const password = await decryptPassword(vm.encryptedPassword);
 
-    const [ivBase64, ctBase64] = encryptedData.split(':');
-    const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-    const ciphertext = Uint8Array.from(atob(ctBase64), c => c.charCodeAt(0));
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, keyObj.key, ciphertext);
-    return new TextDecoder().decode(decrypted);
-}
-
-async function getEncryptionKey() {
-    if (cachedEncryptionKey) return cachedEncryptionKey;
-    if (!ethersSigner) throw new Error('No wallet connected');
-    cachedEncryptionKey = await deriveEncryptionKey(ethersSigner);
-    return cachedEncryptionKey;
-}
-
-async function showPasswordModal(vmId, vmName, password) {
-    const isSecure = isSecureContext();
-    const securityWarning = !isSecure ? `
-        <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); padding: 12px; border-radius: 8px; margin: 10px 0;">
-            <p style="color: #fbbf24; margin: 0; font-size: 13px;">
-                <strong>⚠️ Development Mode:</strong> Using basic encryption over HTTP.
-                Use HTTPS in production for secure encryption.
-            </p>
-        </div>
-    ` : '';
-
-    return new Promise((resolve) => {
+        // Show modal with password
         const modal = document.createElement('div');
         modal.className = 'modal-overlay active';
         modal.innerHTML = `
             <div class="modal" style="max-width: 500px;">
                 <div class="modal-header">
-                    <h2 class="modal-title">🔐 Save Your VM Password</h2>
+                    <h2 class="modal-title">VM Password - ${vm.name}</h2>
+                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
                 </div>
                 <div class="modal-body">
-                    <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
-                    <div style="background: var(--bg-deep); padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                        <code style="font-size: 1.5em; color: var(--accent-primary); letter-spacing: 1px;">${password}</code>
+                    <p style="margin-bottom: 12px; color: #9ca3af;">Username: <strong style="color: #fff;">decloud</strong></p>
+                    <p style="margin-bottom: 12px; color: #9ca3af;">Password:</p>
+                    <div style="background: #1e1f2e; padding: 16px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 18px; color: #10b981; word-break: break-all; margin-bottom: 16px;">
+                        ${password}
                     </div>
-                    ${securityWarning}
-                    <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <p style="color: #fca5a5; margin: 0;">
-                            <strong>⚠️ Important:</strong> Save this password now. It will be encrypted with your wallet for later retrieval.
-                        </p>
-                    </div>
+                    <p style="font-size: 12px; color: #ef4444;">⚠️ Keep this password secure. It will not be shown again.</p>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');">📋 Copy</button>
-                    <button class="btn btn-primary" id="encrypt-save-btn">🔒 Encrypt & Save</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        document.getElementById('encrypt-save-btn').onclick = async () => {
-            try {
-                const keyObj = await getEncryptionKey();
-                const encrypted = await encryptPassword(password, keyObj);
-
-                await api(`/api/vms/${vmId}/secure-password`, {
-                    method: 'POST',
-                    body: JSON.stringify({ encryptedPassword: encrypted })
-                });
-
-                showToast('Password encrypted and saved', 'success');
-                modal.remove();
-                resolve();
-            } catch (error) {
-                console.error('Failed to encrypt:', error);
-                showToast('Failed to encrypt - save password manually!', 'error');
-            }
-        };
-
-        modal.onclick = (e) => { if (e.target === modal) { modal.remove(); resolve(); } };
-    });
-}
-
-async function revealPassword(vmId, vmName) {
-    try {
-        const response = await api(`/api/vms/${vmId}/encrypted-password`);
-
-        if (!response.success || !response.data?.encryptedPassword) {
-            showToast('Password not available', 'error');
-            return;
-        }
-
-        const keyObj = await getEncryptionKey();
-        const password = await decryptPassword(response.data.encryptedPassword, keyObj);
-
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay active';
-        modal.innerHTML = `
-            <div class="modal" style="max-width: 450px;">
-                <div class="modal-header">
-                    <h2 class="modal-title">🔑 VM Password</h2>
-                </div>
-                <div class="modal-body">
-                    <p>Password for <strong>${vmName}</strong>:</p>
-                    <div style="background: var(--bg-deep); padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
-                        <code style="font-size: 1.4em; color: var(--accent-primary);">${password}</code>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');">📋 Copy</button>
+                    <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); showToast('Password copied!', 'success');">📋 Copy</button>
                     <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
                 </div>
             </div>
@@ -1418,14 +1279,86 @@ async function revealPassword(vmId, vmName) {
         modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
     } catch (error) {
-        console.error('Failed to reveal password:', error);
+        console.error('[VM] Password reveal error:', error);
         showToast('Failed to decrypt password. Ensure same wallet is connected.', 'error');
     }
 }
 
 // ============================================
-// CONNECT INFO & TERMINAL
+// SSH KEYS
 // ============================================
+
+function openAddSSHKeyModal() {
+    document.getElementById('add-ssh-key-modal').classList.add('active');
+}
+
+async function addSSHKey() {
+    const name = document.getElementById('ssh-key-name').value.trim();
+    const publicKey = document.getElementById('ssh-key-public').value.trim();
+
+    if (!name || !publicKey) {
+        showToast('Please fill in all fields', 'error');
+        return;
+    }
+
+    try {
+        const response = await api('/api/ssh-keys', {
+            method: 'POST',
+            body: JSON.stringify({ name, publicKey })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('SSH key added successfully', 'success');
+            closeModal('add-ssh-key-modal');
+            loadSSHKeys();
+
+            // Clear form
+            document.getElementById('ssh-key-name').value = '';
+            document.getElementById('ssh-key-public').value = '';
+        } else {
+            showToast(data.message || 'Failed to add SSH key', 'error');
+        }
+    } catch (error) {
+        console.error('[SSH] Add key error:', error);
+        showToast('Failed to add SSH key', 'error');
+    }
+}
+
+async function deleteSSHKey(keyId, keyName) {
+    if (!confirm(`Delete SSH key "${keyName}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await api(`/api/ssh-keys/${keyId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('SSH key deleted', 'success');
+            loadSSHKeys();
+        } else {
+            showToast(data.message || 'Failed to delete SSH key', 'error');
+        }
+    } catch (error) {
+        console.error('[SSH] Delete key error:', error);
+        showToast('Failed to delete SSH key', 'error');
+    }
+}
+
+// ============================================
+// TERMINAL
+// ============================================
+
+function openTerminal(vmId) {
+    showToast('Terminal feature coming soon', 'info');
+    // TODO: Implement WebSocket terminal connection
+}
+
 function showConnectInfo(nodeIp, vmIp, vmName) {
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
@@ -1444,17 +1377,17 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
                     <div class="connect-section-title">SSH via Jump Host</div>
                     <div class="connect-code">
                         ssh -J decloud@${nodeIp} decloud@${vmIp}
-                        <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'; setTimeout(() => this.textContent='📋 Copy', 2000);">📋 Copy</button>
+                        <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
                     </div>
                 </div>
                 <div class="connect-section">
-                    <div class="connect-section-title">VM Details</div>
-                    <p class="connect-note">
-                        <strong>Node IP:</strong> ${nodeIp}<br>
-                        <strong>VM IP:</strong> ${vmIp}<br>
-                        <strong>Username:</strong> decloud
-                    </p>
+                    <div class="connect-section-title">Direct Connection Info</div>
+                    <p style="color: #9ca3af; margin-bottom: 8px;">Node IP: <code>${nodeIp}</code></p>
+                    <p style="color: #9ca3af;">VM IP: <code>${vmIp}</code></p>
                 </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
             </div>
         </div>
     `;
@@ -1462,72 +1395,27 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 }
 
-function openTerminal(nodeIp, vmIp, vmName, vmId) {
-    const terminalUrl = `${CONFIG.orchestratorUrl}/terminal.html?nodeIp=${nodeIp}&vmIp=${vmIp}&vmName=${encodeURIComponent(vmName)}&vmId=${vmId}`;
-    window.open(terminalUrl, '_blank', 'width=900,height=600');
-}
-
 // ============================================
-// NAVIGATION & MODALS
+// SETTINGS
 // ============================================
-function showPage(pageId) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
-    document.getElementById(`page-${pageId}`).classList.add('active');
-    document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
+function saveSettings() {
+    const orchestratorUrl = document.getElementById('settings-orchestrator-url').value.trim();
+
+    if (orchestratorUrl && orchestratorUrl !== CONFIG.orchestratorUrl) {
+        CONFIG.orchestratorUrl = orchestratorUrl;
+        localStorage.setItem('orchestratorUrl', orchestratorUrl);
+        showToast('Settings saved. Please reconnect your wallet.', 'success');
+        setTimeout(() => disconnect(), 2000);
+    } else {
+        showToast('No changes to save', 'info');
+    }
 }
 
-function openCreateVmModal() {
-    document.getElementById('create-vm-modal').classList.add('active');
-}
-
-function openAddSshKeyModal() {
-    document.getElementById('add-ssh-key-modal').classList.add('active');
-    document.getElementById('ssh-key-name').value = '';
-    document.getElementById('ssh-key-value').value = '';
-}
-
-function closeModal(modalId) {
-    document.getElementById(modalId).classList.remove('active');
-}
-
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            overlay.classList.remove('active');
-        }
-    });
+// Load settings on settings page
+document.addEventListener('DOMContentLoaded', () => {
+    const settingsUrl = document.getElementById('settings-orchestrator-url');
+    if (settingsUrl) {
+        settingsUrl.value = CONFIG.orchestratorUrl;
+    }
 });
-
-// ============================================
-// HELPERS
-// ============================================
-function formatMemory(mb) {
-    if (!mb) return '-';
-    if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
-    return mb + ' MB';
-}
-
-function showToast(message, type = 'success') {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            ${type === 'success'
-            ? '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
-            : type === 'error'
-                ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
-                : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
-        </svg>
-        <div class="toast-message">${message}</div>
-    `;
-
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.classList.add('toast-removing');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
