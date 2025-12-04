@@ -10,26 +10,6 @@ const CONFIG = {
     wallet: null
 };
 
-const WALLET_CONFIG = {
-    projectId: WALLETCONNECT_PROJECT_ID,
-    chains: [1], // Mainnet
-    optionalChains: [1, 137, 42161, 10], // Mainnet, Polygon, Arbitrum, Optimism
-    metadata: {
-        name: 'DeCloud',
-        description: 'Decentralized Cloud Computing Platform',
-        url: window.location.origin,
-        icons: [window.location.origin + '/favicon.ico']
-    },
-    showQrModal: true,
-    qrModalOptions: {
-        themeMode: 'dark',
-        themeVariables: {
-            '--wcm-accent-color': '#10b981',
-            '--wcm-background-color': '#111827'
-        }
-    }
-};
-
 // ============================================
 // STATE
 // ============================================
@@ -43,22 +23,25 @@ let nodesCache = {};
 let ethersProvider = null;
 let ethersSigner = null;
 let connectedAddress = null;
-let walletConnectProvider = null;
+let web3Modal = null;
 
 // ============================================
 // LAZY SDK LOADING STATE
 // ============================================
 let sdkLoadState = {
     ethers: false,
-    walletConnect: false,
+    appKit: false,
     loading: false,
     error: null
 };
 
 // SDK CDN URLs with version pinning for security
+// Using jsDelivr with proper UMD/ESM modules and correct MIME types
 const SDK_URLS = {
     ethers: 'https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js',
-    walletConnect: 'https://esm.sh/@walletconnect/ethereum-provider@2.17.0'
+    // AppKit (Web3Modal v4) - proper WalletConnect implementation
+    appKitWagmi: 'https://cdn.jsdelivr.net/npm/@reown/appkit@1.0.0/dist/cdn/appkit-cdn.js',
+    appKitAdapter: 'https://cdn.jsdelivr.net/npm/@reown/appkit-adapter-ethers@1.0.0/dist/cdn/appkit-adapter-ethers-cdn.js'
 };
 
 // Password encryption cache
@@ -73,7 +56,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!sessionRestored) {
         showLogin();
     }
-    loadSettings();
 });
 
 // ============================================
@@ -81,66 +63,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================
 
 /**
- * Shows/hides the SDK loading progress bar
+ * Dynamically loads a script from a CDN
  */
-function updateLoadingProgress(percent) {
-    const bar = document.getElementById('sdk-loading-bar');
-    const progress = document.getElementById('sdk-loading-progress');
-
-    if (percent > 0 && percent < 100) {
-        bar.classList.add('active');
-        progress.style.width = percent + '%';
-    } else if (percent >= 100) {
-        progress.style.width = '100%';
-        setTimeout(() => {
-            bar.classList.remove('active');
-            progress.style.width = '0%';
-        }, 300);
-    } else {
-        bar.classList.remove('active');
-    }
-}
-
-/**
- * Dynamically loads a script and returns a promise
- */
-function loadScript(url, globalName) {
+function loadScript(url) {
     return new Promise((resolve, reject) => {
-        // Check if already loaded
-        if (globalName && window[globalName]) {
-            resolve(window[globalName]);
-            return;
-        }
-
         const script = document.createElement('script');
         script.src = url;
         script.async = true;
-
-        script.onload = () => {
-            if (globalName && window[globalName]) {
-                resolve(window[globalName]);
-            } else {
-                resolve(true);
-            }
-        };
-
-        script.onerror = () => {
-            reject(new Error(`Failed to load script: ${url}`));
-        };
-
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
         document.head.appendChild(script);
     });
 }
 
 /**
- * Dynamically imports an ES module
+ * Updates the loading progress bar
  */
-async function loadESModule(url) {
-    try {
-        const module = await import(url);
-        return module;
-    } catch (error) {
-        throw new Error(`Failed to load module: ${url}`);
+function updateLoadingProgress(percent) {
+    const bar = document.getElementById('sdk-loading-progress');
+    const container = document.getElementById('sdk-loading-bar');
+
+    if (bar && container) {
+        if (percent > 0 && percent < 100) {
+            container.style.opacity = '1';
+            bar.style.width = percent + '%';
+        } else {
+            setTimeout(() => {
+                container.style.opacity = '0';
+                setTimeout(() => {
+                    bar.style.width = '0%';
+                }, 300);
+            }, 500);
+        }
     }
 }
 
@@ -148,42 +102,54 @@ async function loadESModule(url) {
  * Loads ethers.js SDK lazily
  */
 async function loadEthersSDK() {
-    if (sdkLoadState.ethers) {
+    if (sdkLoadState.ethers && window.ethers) {
         return window.ethers;
     }
 
     console.log('[SDK] Loading ethers.js...');
-    await loadScript(SDK_URLS.ethers, 'ethers');
+    await loadScript(SDK_URLS.ethers);
+
+    if (!window.ethers) {
+        throw new Error('ethers.js failed to load');
+    }
+
     sdkLoadState.ethers = true;
     console.log('[SDK] ethers.js loaded successfully');
-
     return window.ethers;
 }
 
 /**
- * Loads WalletConnect SDK lazily
+ * Loads WalletConnect AppKit SDK lazily
+ * Uses the modern AppKit (Web3Modal v4) approach
  */
-async function loadWalletConnectSDK() {
-    if (sdkLoadState.walletConnect && window.WalletConnectEthereumProvider) {
-        return window.WalletConnectEthereumProvider;
+async function loadAppKitSDK() {
+    if (sdkLoadState.appKit && window.AppKit) {
+        return window.AppKit;
     }
 
-    console.log('[SDK] Loading WalletConnect...');
-    const module = await loadESModule(SDK_URLS.walletConnect);
+    console.log('[SDK] Loading WalletConnect AppKit...');
 
-    window.WalletConnectEthereumProvider = module.EthereumProvider;
-    sdkLoadState.walletConnect = true;
-    console.log('[SDK] WalletConnect loaded successfully');
+    // Load AppKit core
+    await loadScript(SDK_URLS.appKitWagmi);
 
-    return module.EthereumProvider;
+    // Load ethers adapter
+    await loadScript(SDK_URLS.appKitAdapter);
+
+    if (!window.AppKit || !window.AppKitEthersAdapter) {
+        throw new Error('AppKit failed to load');
+    }
+
+    sdkLoadState.appKit = true;
+    console.log('[SDK] WalletConnect AppKit loaded successfully');
+    return window.AppKit;
 }
 
 /**
  * Loads all required wallet SDKs
- * @param {boolean} includeWalletConnect - Whether to load WalletConnect SDK
+ * @param {boolean} includeAppKit - Whether to load WalletConnect AppKit
  * @returns {Promise<void>}
  */
-async function loadWalletSDKs(includeWalletConnect = false) {
+async function loadWalletSDKs(includeAppKit = false) {
     if (sdkLoadState.loading) {
         // Wait for existing load to complete
         while (sdkLoadState.loading) {
@@ -198,15 +164,15 @@ async function loadWalletSDKs(includeWalletConnect = false) {
     try {
         updateLoadingProgress(10);
 
-        // Always load ethers.js
+        // Always load ethers.js first
         if (!sdkLoadState.ethers) {
             await loadEthersSDK();
             updateLoadingProgress(50);
         }
 
-        // Optionally load WalletConnect
-        if (includeWalletConnect && !sdkLoadState.walletConnect) {
-            await loadWalletConnectSDK();
+        // Optionally load AppKit
+        if (includeAppKit && !sdkLoadState.appKit) {
+            await loadAppKitSDK();
             updateLoadingProgress(90);
         }
 
@@ -224,9 +190,9 @@ async function loadWalletSDKs(includeWalletConnect = false) {
 /**
  * Checks if SDKs are loaded and ready
  */
-function areSDKsReady(requireWalletConnect = false) {
+function areSDKsReady(requireAppKit = false) {
     if (!sdkLoadState.ethers) return false;
-    if (requireWalletConnect && !sdkLoadState.walletConnect) return false;
+    if (requireAppKit && !sdkLoadState.appKit) return false;
     return true;
 }
 
@@ -250,8 +216,7 @@ async function restoreSession() {
             if (response.success) {
                 currentUser = response.data;
 
-                // Lazy load SDKs for provider restoration (only if needed for signing)
-                // This is deferred - we don't block session restoration
+                // Lazy load SDKs for provider restoration (deferred, non-blocking)
                 restoreProviderConnection(connectionType).catch(e => {
                     console.log('Provider restoration deferred:', e.message);
                 });
@@ -280,25 +245,19 @@ async function restoreSession() {
  */
 async function restoreProviderConnection(connectionType) {
     try {
-        // Only load SDKs if we actually need provider functionality
         const walletConnectConfigured = WALLETCONNECT_PROJECT_ID !== 'YOUR_PROJECT_ID_HERE';
 
         if (connectionType === 'walletconnect' && walletConnectConfigured) {
             await loadWalletSDKs(true);
+            await initializeAppKit();
 
-            walletConnectProvider = await window.WalletConnectEthereumProvider.init({
-                projectId: WALLET_CONFIG.projectId,
-                chains: WALLET_CONFIG.chains,
-                optionalChains: WALLET_CONFIG.optionalChains,
-                showQrModal: false,
-                metadata: WALLET_CONFIG.metadata
-            });
-
-            if (walletConnectProvider.session) {
-                ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
+            // AppKit handles session restoration automatically
+            if (web3Modal?.getAddress()) {
+                const address = web3Modal.getAddress();
+                ethersProvider = new window.ethers.BrowserProvider(web3Modal.getWalletProvider());
                 ethersSigner = await ethersProvider.getSigner();
-                setupWalletConnectListeners();
-                console.log('[Session] WalletConnect provider restored');
+                setupAppKitListeners();
+                console.log('[Session] AppKit session restored');
             }
         } else if (window.ethereum) {
             await loadWalletSDKs(false);
@@ -308,8 +267,58 @@ async function restoreProviderConnection(connectionType) {
             console.log('[Session] Injected provider restored');
         }
     } catch (e) {
-        console.log('WalletConnect session expired:', e);
+        console.log('Provider restoration error:', e);
     }
+}
+
+// ============================================
+// APPKIT INITIALIZATION
+// ============================================
+async function initializeAppKit() {
+    if (web3Modal) return web3Modal;
+
+    const { AppKit } = window;
+    const { EthersAdapter } = window.AppKitEthersAdapter;
+
+    // Create ethers adapter
+    const ethersAdapter = new EthersAdapter();
+
+    // Initialize AppKit with proper configuration
+    web3Modal = new AppKit({
+        adapters: [ethersAdapter],
+        projectId: WALLETCONNECT_PROJECT_ID,
+        networks: [
+            {
+                id: 1,
+                name: 'Ethereum',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: { default: { http: ['https://eth.llamarpc.com'] } }
+            },
+            {
+                id: 137,
+                name: 'Polygon',
+                nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+                rpcUrls: { default: { http: ['https://polygon-rpc.com'] } }
+            }
+        ],
+        metadata: {
+            name: 'DeCloud',
+            description: 'Decentralized Cloud Computing Platform',
+            url: window.location.origin,
+            icons: [window.location.origin + '/favicon.ico']
+        },
+        themeMode: 'dark',
+        themeVariables: {
+            '--w3m-accent': '#10b981',
+            '--w3m-border-radius-master': '4px'
+        },
+        featuredWalletIds: [
+            'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
+            '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0'  // Trust Wallet
+        ]
+    });
+
+    return web3Modal;
 }
 
 // ============================================
@@ -380,20 +389,18 @@ async function connectWallet() {
         const hasInjectedProvider = typeof window.ethereum !== 'undefined';
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-        // Determine what SDKs we need and load them lazily
-        const needWalletConnect = walletConnectConfigured && (isMobile || !hasInjectedProvider);
-
+        // Load ethers.js first (always needed)
         btn.innerHTML = '<div class="spinner"></div> Loading wallet...';
-        await loadWalletSDKs(needWalletConnect || walletConnectConfigured);
+        await loadWalletSDKs(false);
 
         btn.innerHTML = '<div class="spinner"></div> Connecting...';
 
         if (isMobile && walletConnectConfigured) {
-            // Mobile - use WalletConnect
-            await connectWithWalletConnect();
+            // Mobile - use AppKit (WalletConnect)
+            await connectWithAppKit();
         } else if (!hasInjectedProvider && walletConnectConfigured) {
-            // Desktop without extension - use WalletConnect QR
-            await connectWithWalletConnect();
+            // Desktop without extension - use AppKit
+            await connectWithAppKit();
         } else if (hasInjectedProvider && walletConnectConfigured) {
             // Desktop with extension - show choice
             await showConnectionOptions();
@@ -414,61 +421,72 @@ async function connectWallet() {
 }
 
 // ============================================
-// WALLETCONNECT CONNECTION
+// APPKIT CONNECTION (WalletConnect v2)
 // ============================================
-async function connectWithWalletConnect() {
+async function connectWithAppKit() {
     showLoginStatus('info', 'Opening wallet selector...');
 
-    // Ensure WalletConnect SDK is loaded
-    if (!areSDKsReady(true)) {
+    // Ensure AppKit SDK is loaded
+    if (!sdkLoadState.appKit) {
         await loadWalletSDKs(true);
     }
 
-    walletConnectProvider = await window.WalletConnectEthereumProvider.init({
-        projectId: WALLET_CONFIG.projectId,
-        chains: WALLET_CONFIG.chains,
-        optionalChains: WALLET_CONFIG.optionalChains,
-        showQrModal: WALLET_CONFIG.showQrModal,
-        metadata: WALLET_CONFIG.metadata,
-        qrModalOptions: WALLET_CONFIG.qrModalOptions
-    });
-
-    await walletConnectProvider.enable();
-
-    const accounts = walletConnectProvider.accounts;
-    if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found');
+    // Initialize AppKit if not already done
+    if (!web3Modal) {
+        await initializeAppKit();
     }
 
-    connectedAddress = accounts[0];
+    // Open modal and wait for connection
+    await web3Modal.open();
 
-    ethersProvider = new window.ethers.BrowserProvider(walletConnectProvider);
-    ethersSigner = await ethersProvider.getSigner();
+    // Wait for connection to complete
+    return new Promise((resolve, reject) => {
+        const checkConnection = setInterval(async () => {
+            const address = web3Modal.getAddress();
+            if (address) {
+                clearInterval(checkConnection);
 
-    setupWalletConnectListeners();
+                try {
+                    connectedAddress = address;
+                    ethersProvider = new window.ethers.BrowserProvider(web3Modal.getWalletProvider());
+                    ethersSigner = await ethersProvider.getSigner();
 
-    await proceedWithAuthentication(connectedAddress, 'walletconnect');
+                    setupAppKitListeners();
+                    await proceedWithAuthentication(address, 'walletconnect');
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            }
+        }, 500);
+
+        // Timeout after 60 seconds
+        setTimeout(() => {
+            clearInterval(checkConnection);
+            reject(new Error('Connection timeout'));
+        }, 60000);
+    });
 }
 
 // ============================================
 // INJECTED PROVIDER (MetaMask, etc.)
 // ============================================
 async function connectWithInjectedProvider() {
-    showLoginStatus('info', 'Requesting wallet connection...');
+    showLoginStatus('info', 'Connecting to wallet...');
 
-    // Ensure ethers SDK is loaded
-    if (!areSDKsReady(false)) {
-        await loadWalletSDKs(false);
+    if (!window.ethereum) {
+        throw new Error('No wallet detected');
     }
 
-    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const accounts = await window.ethereum.request({
+        method: 'eth_requestAccounts'
+    });
 
     if (!accounts || accounts.length === 0) {
         throw new Error('No accounts found');
     }
 
     connectedAddress = accounts[0];
-
     ethersProvider = new window.ethers.BrowserProvider(window.ethereum);
     ethersSigner = await ethersProvider.getSigner();
 
@@ -478,40 +496,38 @@ async function connectWithInjectedProvider() {
 }
 
 // ============================================
-// CONNECTION OPTIONS MODAL (Desktop)
+// CONNECTION OPTIONS DIALOG
 // ============================================
 async function showConnectionOptions() {
-    const modal = document.createElement('div');
-    modal.id = 'wallet-options-modal';
-    modal.className = 'wallet-options-overlay';
-    modal.innerHTML = `
-        <div class="wallet-options-modal">
-            <h3 class="wallet-options-title">Connect Wallet</h3>
-            <p class="wallet-options-subtitle">Choose how you want to connect</p>
+    hideLoginStatus();
 
-            <div class="wallet-options-list">
-                <button class="wallet-option" id="opt-injected">
-                    <div class="wallet-option-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="4" width="20" height="16" rx="2"/>
-                            <path d="M6 8h12M6 12h12M6 16h6"/>
-                        </svg>
-                    </div>
-                    <div class="wallet-option-info">
-                        <span class="wallet-option-name">Browser Wallet</span>
-                        <span class="wallet-option-desc">MetaMask, Coinbase, etc.</span>
+    const modal = document.createElement('div');
+    modal.className = 'wallet-options-modal';
+    modal.innerHTML = `
+        <div class="wallet-options-content">
+            <h3 class="wallet-options-title">Choose Connection Method</h3>
+
+            <div class="wallet-options-buttons">
+                <button class="wallet-option-btn" id="opt-injected">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
+                        <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+                        <circle cx="18" cy="15" r="1" />
+                    </svg>
+                    <div>
+                        <div class="wallet-option-name">Browser Wallet</div>
+                        <div class="wallet-option-desc">MetaMask, Coinbase, etc.</div>
                     </div>
                 </button>
 
-                <button class="wallet-option" id="opt-walletconnect">
-                    <div class="wallet-option-icon walletconnect-icon">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M6.09 10.11c3.3-3.23 8.65-3.23 11.95 0l.4.39c.16.16.16.42 0 .58l-1.36 1.33c-.08.08-.21.08-.3 0l-.55-.53c-2.3-2.25-6.03-2.25-8.33 0l-.59.57c-.08.08-.21.08-.3 0L5.65 11.1c-.16-.16-.16-.42 0-.58l.44-.41zm14.77 2.74l1.21 1.18c.16.16.16.42 0 .58l-5.46 5.34c-.16.16-.43.16-.59 0l-3.88-3.79c-.04-.04-.11-.04-.15 0l-3.88 3.79c-.16.16-.43.16-.59 0L2.07 14.6c-.16-.16-.16-.42 0-.58l1.21-1.18c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.16.43-.16.59 0l3.88 3.79c.04.04.11.04.15 0l3.88-3.79c.16-.15.43-.15.59 0z"/>
-                        </svg>
-                    </div>
-                    <div class="wallet-option-info">
-                        <span class="wallet-option-name">WalletConnect</span>
-                        <span class="wallet-option-desc">Scan with mobile wallet</span>
+                <button class="wallet-option-btn" id="opt-walletconnect">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+                        <path d="M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/>
+                    </svg>
+                    <div>
+                        <div class="wallet-option-name">WalletConnect</div>
+                        <div class="wallet-option-desc">Mobile wallets & more</div>
                     </div>
                 </button>
             </div>
@@ -536,7 +552,7 @@ async function showConnectionOptions() {
         document.getElementById('opt-walletconnect').onclick = async () => {
             modal.remove();
             try {
-                await connectWithWalletConnect();
+                await connectWithAppKit();
                 resolve();
             } catch (e) {
                 reject(e);
@@ -577,7 +593,6 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
 
 /**
  * Authenticates with the backend using wallet signature
- * Uses the backend's /api/auth/message and /api/auth/wallet endpoints
  */
 async function authenticateWithWallet(walletAddress) {
     try {
@@ -645,24 +660,14 @@ async function authenticateWithWallet(walletAddress) {
 // ============================================
 // WALLET EVENT LISTENERS
 // ============================================
-function setupWalletConnectListeners() {
-    if (!walletConnectProvider) return;
+function setupAppKitListeners() {
+    if (!web3Modal) return;
 
-    walletConnectProvider.on('accountsChanged', (accounts) => {
-        if (accounts.length === 0) {
-            disconnect();
-        } else if (accounts[0].toLowerCase() !== CONFIG.wallet?.toLowerCase()) {
-            showToast('Wallet changed. Please reconnect.', 'info');
+    // AppKit handles disconnection events through its built-in event system
+    web3Modal.subscribeProvider((state) => {
+        if (!state.isConnected) {
             disconnect();
         }
-    });
-
-    walletConnectProvider.on('chainChanged', (chainId) => {
-        console.log('Chain changed to:', chainId);
-    });
-
-    walletConnectProvider.on('disconnect', () => {
-        disconnect();
     });
 }
 
@@ -710,19 +715,19 @@ function handleConnectionError(error) {
 // DISCONNECT
 // ============================================
 async function disconnect() {
-    // Disconnect WalletConnect if active
-    if (walletConnectProvider) {
+    // Disconnect AppKit if active
+    if (web3Modal) {
         try {
-            await walletConnectProvider.disconnect();
+            await web3Modal.disconnect();
         } catch (e) {
-            console.log('WalletConnect disconnect error:', e);
+            console.log('AppKit disconnect error:', e);
         }
-        walletConnectProvider = null;
     }
 
     ethersProvider = null;
     ethersSigner = null;
     connectedAddress = null;
+    web3Modal = null;
 
     clearSession();
     showLogin();
@@ -761,28 +766,32 @@ function clearSession() {
 async function api(endpoint, options = {}) {
     const headers = {
         'Content-Type': 'application/json',
-        ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-        ...options.headers
+        ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
     };
 
+    const url = `${CONFIG.orchestratorUrl}${endpoint}`;
+
     try {
-        const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+        const response = await fetch(url, {
             ...options,
-            headers
+            headers: { ...headers, ...options.headers }
         });
 
         if (response.status === 401) {
+            // Token expired, try refresh
             const refreshed = await refreshAuthToken();
             if (refreshed) {
+                // Retry original request with new token
                 headers['Authorization'] = `Bearer ${authToken}`;
-                const retryResponse = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
+                const retryResponse = await fetch(url, {
                     ...options,
-                    headers
+                    headers: { ...headers, ...options.headers }
                 });
                 return await retryResponse.json();
             } else {
+                // Refresh failed, logout
                 disconnect();
-                throw new Error('Session expired');
+                throw new Error('Session expired. Please login again.');
             }
         }
 
@@ -793,20 +802,14 @@ async function api(endpoint, options = {}) {
     }
 }
 
-// ============================================
-// TOKEN REFRESH
-// ============================================
-function setupTokenRefresh() {
-    if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
-    tokenRefreshTimer = setInterval(refreshAuthToken, 45 * 60 * 1000);
-}
-
 async function refreshAuthToken() {
+    if (!refreshToken) return false;
+
     try {
         const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken: refreshToken })
+            body: JSON.stringify({ refreshToken })
         });
 
         const data = await response.json();
@@ -814,12 +817,10 @@ async function refreshAuthToken() {
         if (data.success && data.data) {
             authToken = data.data.accessToken;
             refreshToken = data.data.refreshToken;
-            currentUser = data.data.user;
 
             localStorage.setItem('authToken', authToken);
             localStorage.setItem('refreshToken', refreshToken);
 
-            console.log('Token refreshed successfully');
             return true;
         }
     } catch (error) {
@@ -829,43 +830,36 @@ async function refreshAuthToken() {
     return false;
 }
 
-// ============================================
-// SETTINGS
-// ============================================
-function loadSettings() {
-    const urlInput = document.getElementById('settings-orchestrator-url');
-    if (urlInput) urlInput.value = CONFIG.orchestratorUrl;
-    updateWalletDisplay();
-}
-
-function saveSettings() {
-    const urlInput = document.getElementById('settings-orchestrator-url');
-    if (urlInput) {
-        CONFIG.orchestratorUrl = urlInput.value;
-        localStorage.setItem('orchestratorUrl', CONFIG.orchestratorUrl);
-        showToast('Settings saved', 'success');
-        refreshData();
+function setupTokenRefresh() {
+    // Refresh token every 50 minutes (tokens typically expire in 60 minutes)
+    if (tokenRefreshTimer) {
+        clearInterval(tokenRefreshTimer);
     }
+
+    tokenRefreshTimer = setInterval(async () => {
+        await refreshAuthToken();
+    }, 50 * 60 * 1000);
 }
 
 // ============================================
-// DATA LOADING
+// DASHBOARD DATA LOADING
 // ============================================
 async function refreshData() {
     await Promise.all([
-        loadStats(),
-        loadVms(),
-        loadNodes(),
-        loadSshKeys()
+        loadDashboardStats(),
+        loadVMs(),
+        loadSSHKeys(),
+        loadNodes()
     ]);
 }
 
-async function loadStats() {
+async function loadDashboardStats() {
     try {
         const data = await api('/api/system/stats');
-        if (data.success) {
+        if (data.success && data.data) {
             const stats = data.data;
-            document.getElementById('stat-nodes').textContent = `${stats.onlineNodes}/${stats.totalNodes}`;
+            document.getElementById('stat-nodes').textContent = stats.totalNodes;
+            document.getElementById('stat-nodes-online').textContent = `${stats.onlineNodes}/${stats.totalNodes}`;
             document.getElementById('stat-vms').textContent = stats.totalVms;
             document.getElementById('stat-vms-running').textContent = `${stats.runningVms} running`;
             document.getElementById('stat-cpu').textContent = stats.availableCpuCores;
@@ -876,7 +870,7 @@ async function loadStats() {
     }
 }
 
-async function loadVms() {
+async function loadVMs() {
     try {
         const data = await api('/api/vms');
         const vms = data.data?.items || [];
@@ -934,7 +928,7 @@ async function loadNodes() {
     }
 }
 
-async function loadSshKeys() {
+async function loadSSHKeys() {
     try {
         const data = await api('/api/user/me/ssh-keys');
         const keys = data.data || [];
@@ -989,6 +983,8 @@ function getStatusString(status) {
 function renderVmRow(vm) {
     const statusStr = getStatusString(vm.status);
     const statusClass = statusStr.toLowerCase();
+    const created = new Date(vm.createdAt).toLocaleDateString();
+
     return `
         <tr>
             <td>
@@ -999,10 +995,7 @@ function renderVmRow(vm) {
                             <path d="M8 21h8M12 17v4"/>
                         </svg>
                     </div>
-                    <div>
-                        ${vm.name}
-                        <div class="vm-id">${vm.id.slice(0, 8)}...</div>
-                    </div>
+                    ${vm.name}
                 </div>
             </td>
             <td>
@@ -1011,23 +1004,8 @@ function renderVmRow(vm) {
                     ${statusStr}
                 </span>
             </td>
-            <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)}</td>
-            <td>
-                ${statusStr === 'Running' ? `
-                    <button class="action-btn" onclick="stopVm('${vm.id}')" title="Stop">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                    </button>
-                ` : statusStr === 'Stopped' ? `
-                    <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                    </button>
-                ` : ''}
-                <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                </button>
-            </td>
+            <td>${vm.spec?.cpuCores || 1} CPU • ${formatMemory(vm.spec?.memoryMb)} • ${vm.spec?.diskGb || 20} GB</td>
+            <td>${created}</td>
         </tr>
     `;
 }
@@ -1036,8 +1014,9 @@ function renderVmRowFull(vm) {
     const statusStr = getStatusString(vm.status);
     const statusClass = statusStr.toLowerCase();
     const created = new Date(vm.createdAt).toLocaleDateString();
-    const vmIp = vm.networkConfig?.privateIp;
-    const canConnect = statusStr === 'Running' && vmIp;
+
+    const canConnect = statusStr === 'Running' && vm.accessInfo?.vmIp;
+    const vmIp = vm.accessInfo?.vmIp || '-';
     const nodeIp = vm.nodeId ? getNodePublicIp(vm.nodeId) : null;
 
     return `
@@ -1090,7 +1069,7 @@ function renderVmRowFull(vm) {
                     </button>
                 ` : statusStr === 'Stopped' ? `
                     <button class="action-btn" onclick="startVm('${vm.id}')" title="Start">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                     </button>
                 ` : ''}
                 <button class="action-btn danger" onclick="deleteVm('${vm.id}')" title="Delete">
@@ -1107,46 +1086,45 @@ function renderVmRowFull(vm) {
 // VM ACTIONS
 // ============================================
 async function createVm() {
-    const name = document.getElementById('vm-name').value.trim();
+    const name = document.getElementById('vm-name').value;
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
-    const memoryMb = parseInt(document.getElementById('vm-memory').value);
+    const memoryGb = parseInt(document.getElementById('vm-memory').value);
     const diskGb = parseInt(document.getElementById('vm-disk').value);
-    const imageId = document.getElementById('vm-image').value;
 
-    if (!name) {
-        showToast('Please enter a VM name', 'error');
+    if (!name || !cpuCores || !memoryGb || !diskGb) {
+        showToast('Please fill in all fields', 'error');
         return;
     }
 
     try {
-        const response = await api('/api/vms', {
+        const data = await api('/api/vms', {
             method: 'POST',
             body: JSON.stringify({
                 name,
-                spec: { cpuCores, memoryMb, diskGb, imageId }
+                spec: {
+                    cpuCores,
+                    memoryMb: memoryGb * 1024,
+                    diskGb
+                },
+                osImage: 'ubuntu-24.04'
             })
         });
 
-        if (response.success && response.data) {
-            const vmId = response.data.vmId;
-            // WORKAROUND: Backend has password/error fields swapped
-            // Check both fields until backend is fixed
-            const password = response.data.password || response.data.error;
-
+        if (data.success) {
+            showToast('VM created', 'success');
             closeModal('create-vm-modal');
 
-            // Only show password modal if we got a valid password (not an error code)
-            if (password && !password.includes('_') && password.includes('-')) {
-                await showPasswordModal(vmId, name, password);
+            // Show password modal if password is present
+            if (data.data.password) {
+                await showPasswordModal(data.data.vmId, name, data.data.password);
             }
 
             refreshData();
-            showToast('VM created successfully', 'success');
         } else {
-            showToast(response.message || 'Failed to create VM', 'error');
+            showToast(data.message || 'Failed to create VM', 'error');
         }
-    } catch (error) {
-        console.error('Create VM error:', error);
+    } catch (e) {
+        console.error('Create VM error:', e);
         showToast('Failed to create VM', 'error');
     }
 }
@@ -1226,7 +1204,7 @@ async function addSshKey() {
             closeModal('add-ssh-key-modal');
             document.getElementById('ssh-key-name').value = '';
             document.getElementById('ssh-key-value').value = '';
-            loadSshKeys();
+            loadSSHKeys();
         } else {
             showToast(data.message || 'Failed to add SSH key', 'error');
         }
@@ -1242,7 +1220,7 @@ async function deleteSshKey(keyId) {
         const data = await api(`/api/user/me/ssh-keys/${keyId}`, { method: 'DELETE' });
         if (data.success) {
             showToast('SSH key deleted', 'success');
-            loadSshKeys();
+            loadSSHKeys();
         } else {
             showToast('Failed to delete SSH key', 'error');
         }
@@ -1466,7 +1444,7 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
                     <div class="connect-section-title">SSH via Jump Host</div>
                     <div class="connect-code">
                         ssh -J decloud@${nodeIp} decloud@${vmIp}
-                        <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'">Copy</button>
+                        <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'; setTimeout(() => this.textContent='📋 Copy', 2000);">📋 Copy</button>
                     </div>
                 </div>
                 <div class="connect-section">
@@ -1543,8 +1521,13 @@ function showToast(message, type = 'success') {
                 ? '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
                 : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'}
         </svg>
-        <span>${message}</span>
+        <div class="toast-message">${message}</div>
     `;
+
     container.appendChild(toast);
-    setTimeout(() => toast.remove(), 4000);
+
+    setTimeout(() => {
+        toast.classList.add('toast-removing');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
