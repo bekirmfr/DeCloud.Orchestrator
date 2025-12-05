@@ -773,16 +773,16 @@ async function refreshData() {
 
 async function loadDashboardStats() {
     try {
-        const response = await api('/api/system/stats');
+        const response = await api('/api/system/stats');  // ← Fix endpoint
         const data = await response.json();
-        
+
         if (data.success) {
             const stats = data.data;
-            
-            document.getElementById('stat-vms').textContent = stats.totalVMs || 0;
-            document.getElementById('stat-nodes').textContent = stats.totalNodes || 0;
-            document.getElementById('stat-cpu').textContent = `${stats.totalCPU || 0} cores`;
-            document.getElementById('stat-memory').textContent = `${(stats.totalMemory / 1024).toFixed(1)} GB`;
+
+            document.getElementById('stat-vms').textContent = stats.totalVms || 0;
+            document.getElementById('stat-nodes').textContent = stats.onlineNodes || 0;
+            document.getElementById('stat-cpu').textContent = `${stats.availableCpuCores || 0} cores`;
+            document.getElementById('stat-memory').textContent = `${((stats.availableMemoryMb || 0) / 1024).toFixed(1)} GB`;
         }
     } catch (error) {
         console.error('[Dashboard] Failed to load stats:', error);
@@ -940,9 +940,9 @@ function renderNodesTable(nodes) {
                     ${node.name}
                 </div>
             </td>
-            <td>${node.ipAddress}</td>
-            <td>${node.resources?.totalCPU || 0} cores</td>
-            <td>${((node.resources?.totalMemory || 0) / 1024).toFixed(1)} GB</td>
+            <td>${node.publicIp || 'N/A'}</td>
+            <td>${node.totalResources?.cpuCores || 0} cores</td>
+            <td>${((node.totalResources?.memoryMb || 0) / 1024).toFixed(1)} GB</td>
             <td>${node.activeVMs || 0}</td>
             <td>${lastSeen}</td>
             <td>
@@ -1028,8 +1028,13 @@ async function createVM() {
             method: 'POST',
             body: JSON.stringify({
                 name,
-                specs: { cpu, memory, disk },
-                image
+                spec: {
+                    cpuCores: cpu,
+                    memoryMb: memory,
+                    diskGb: disk,
+                    imageId: image,
+                    requiresGpu: false
+                }
             })
         });
 
