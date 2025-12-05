@@ -1,3 +1,5 @@
+using Orchestrator.Services;
+
 namespace Orchestrator.Models;
 
 /// <summary>
@@ -53,15 +55,56 @@ public class VmSpec
     public long DiskGb { get; set; } = 20;
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }
-    
+
+    // Scheduling preferences and requirements
+    /// <summary>
+    /// Preferred quality tier for scheduling (Guaranteed, Standard, Burstable)
+    /// Default: Standard
+    /// </summary>
+    public QualityTier QualityTier { get; set; } = QualityTier.Standard;
+
+    /// <summary>
+    /// Preferred region for deployment (e.g., "us-west", "eu-central")
+    /// If null, any region is acceptable
+    /// </summary>
+    public string? PreferredRegion { get; set; }
+
+    /// <summary>
+    /// Preferred availability zone within region (e.g., "us-west-2a")
+    /// If null, any zone in preferred region is acceptable
+    /// </summary>
+    public string? PreferredZone { get; set; }
+
+    /// <summary>
+    /// If true, ONLY schedule on nodes in PreferredRegion (hard requirement)
+    /// If false, PreferredRegion is just a preference (soft requirement)
+    /// Default: false
+    /// </summary>
+    public bool RequirePreferredRegion { get; set; } = false;
+
+    /// <summary>
+    /// Minimum node reputation score (0.0 to 1.0) required for scheduling
+    /// Higher values = more selective about node quality
+    /// Default: 0.3 (accept most nodes)
+    /// </summary>
+    public double MinNodeReputationScore { get; set; } = 0.3;
+
+    /// <summary>
+    /// Maximum acceptable CPU overcommit ratio
+    /// Example: 2.0 means accept up to 2:1 CPU overcommit
+    /// If null, use tier default
+    /// </summary>
+    public double? MaxCpuOvercommitRatio { get; set; }
+
+    /// <summary>
+    /// Tags for advanced scheduling (anti-affinity, affinity, etc.)
+    /// Example: { "app": "web", "env": "production" }
+    /// </summary>
+    public Dictionary<string, string> SchedulingTags { get; set; } = new();
+
     // Image
     public string ImageId { get; set; } = string.Empty;       // e.g., "ubuntu-22.04"
     public string? ImageUrl { get; set; }                     // Custom image URL
-    
-    // Placement preferences
-    public string? PreferredRegion { get; set; }
-    public string? PreferredZone { get; set; }
-    public string? PreferredNodeId { get; set; }              // Sticky scheduling
     
     // SSH key for access
     public string? SshPublicKey { get; set; }
