@@ -855,7 +855,7 @@ async function loadVirtualMachines() {
         const data = await response.json();
 
         if (data.success) {
-            const vms = data.data;
+            const vms = data.data.items;
             renderVMsTable(vms);
             renderDashboardVMs(vms);
         }
@@ -883,9 +883,9 @@ function renderVMsTable(vms) {
                 </div>
             </td>
             <td>${vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId) : 'Unknown'}</td>
-            <td>${vm.specs?.cpu || 0} cores</td>
-            <td>${vm.specs?.memory || 0} MB</td>
-            <td>${vm.specs?.disk || 0} GB</td>
+            <td>${vm.spec?.cpuCores || 0} cores</td>
+            <td>${vm.spec?.memoryMb || 0} MB</td>
+            <td>${vm.spec?.diskGb || 0} GB</td>
             <td>
                 <span class="status-badge status-${vm.status}">
                     ${vm.status}
@@ -944,15 +944,15 @@ function renderDashboardVMs(vms) {
             <div class="vm-card-specs">
                 <div class="spec-item">
                     <span class="spec-label">CPU</span>
-                    <span class="spec-value">${vm.specs?.cpu || 0} cores</span>
+                    <span class="spec-value">${vm.spec?.cpuCores || 0} cores</span>
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Memory</span>
-                    <span class="spec-value">${vm.specs?.memory || 0} MB</span>
+                    <span class="spec-value">${vm.spec?.memoryMb || 0} MB</span>
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Disk</span>
-                    <span class="spec-value">${vm.specs?.disk || 0} GB</span>
+                    <span class="spec-value">${vm.spec?.diskGb || 0} GB</span>
                 </div>
             </div>
         </div>
@@ -965,7 +965,7 @@ async function loadNodes() {
         const data = await response.json();
 
         if (data.success) {
-            const nodes = data.data;
+            const nodes = data.data.items;
 
             nodes.forEach(node => {
                 nodesCache[node.id] = node.name;
