@@ -95,6 +95,7 @@ public class NodeService : INodeService
     {
         var policy = _schedulingConfig.TierPolicies[tier];
         var allNodes = _dataStore.Nodes.Values.ToList();
+        _logger.LogInformation("Scoring {TotalNodesCount} nodes", allNodes.Count);
         var scoredNodes = new List<ScoredNode>();
 
         foreach (var node in allNodes)
