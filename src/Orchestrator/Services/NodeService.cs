@@ -135,6 +135,7 @@ public class NodeService : INodeService
         var rejection = ApplyHardFilters(node, spec, policy);
         if (rejection != null)
         {
+            _logger.LogWarning("Node {NodeId} rejected for reason: {RejectionReason}", node.Id, rejection);
             scored.RejectionReason = rejection;
             scored.TotalScore = 0;
             return scored;
