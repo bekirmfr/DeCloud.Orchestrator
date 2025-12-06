@@ -119,68 +119,77 @@ public class NodeService : INodeService
         QualityTier tier,
         TierPolicy policy)
     {
-        var scored = new ScoredNode { Node = node };
-
-        // Step 1: Hard filters (must pass or node is rejected)
-        var rejection = ApplyHardFilters(node, spec, policy);
-        if (rejection != null)
+        try
         {
-            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
-            scored.RejectionReason = rejection;
-            scored.TotalScore = 0;
-            return scored;
+            var scored = new ScoredNode { Node = node };
+
+            // Step 1: Hard filters (must pass or node is rejected)
+            var rejection = ApplyHardFilters(node, spec, policy);
+            if (rejection != null)
+            {
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
+                scored.RejectionReason = rejection;
+                scored.TotalScore = 0;
+                return scored;
+            }
+
+            // Step 2: Calculate resource availability with overcommit
+            var availability = CalculateResourceAvailability(node, tier, policy);
+            scored.Availability = availability;
+
+            // Step 3: Check if VM fits after overcommit calculation
+            if (!availability.CanFit(spec))
+            {
+                scored.RejectionReason = $"Insufficient resources after overcommit " +
+                    $"(CPU: {availability.RemainingCpu:F1}/{spec.CpuCores}, " +
+                    $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
+                    $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
+                scored.TotalScore = 0;
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
+                return scored;
+            }
+
+            // Step 4: Check utilization safety threshold
+            var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
+            var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
+
+            if (projectedCpuUtil > _schedulingConfig.MaxUtilizationPercent ||
+                projectedMemUtil > _schedulingConfig.MaxUtilizationPercent)
+            {
+                scored.RejectionReason = $"Would exceed max utilization " +
+                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
+                scored.TotalScore = 0;
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
+                return scored;
+            }
+
+            // Step 5: Calculate component scores
+            var scores = new NodeScores
+            {
+                CapacityScore = CalculateCapacityScore(availability, spec),
+                LoadScore = CalculateLoadScore(node, availability),
+                ReputationScore = CalculateReputationScore(node),
+                LocalityScore = CalculateLocalityScore(node, spec)
+            };
+
+            scored.ComponentScores = scores;
+
+            // Step 6: Calculate weighted total score
+            var weights = _schedulingConfig.Weights;
+            scored.TotalScore =
+                (scores.CapacityScore * weights.Capacity) +
+                (scores.LoadScore * weights.Load) +
+                (scores.ReputationScore * weights.Reputation) +
+                (scores.LocalityScore * weights.Locality);
+
+            return await Task.FromResult(scored);
         }
-
-        // Step 2: Calculate resource availability with overcommit
-        var availability = CalculateResourceAvailability(node, tier, policy);
-        scored.Availability = availability;
-
-        // Step 3: Check if VM fits after overcommit calculation
-        if (!availability.CanFit(spec))
+        catch (Exception ex)
         {
-            scored.RejectionReason = $"Insufficient resources after overcommit " +
-                $"(CPU: {availability.RemainingCpu:F1}/{spec.CpuCores}, " +
-                $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
-                $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
-            scored.TotalScore = 0;
-            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
-            return scored;
+            _logger.LogError(ex, "Failed to score node {NodeId}", node.Id);
+            throw;
         }
-
-        // Step 4: Check utilization safety threshold
-        var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
-        var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
-
-        if (projectedCpuUtil > _schedulingConfig.MaxUtilizationPercent ||
-            projectedMemUtil > _schedulingConfig.MaxUtilizationPercent)
-        {
-            scored.RejectionReason = $"Would exceed max utilization " +
-                $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
-            scored.TotalScore = 0;
-            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
-            return scored;
-        }
-
-        // Step 5: Calculate component scores
-        var scores = new NodeScores
-        {
-            CapacityScore = CalculateCapacityScore(availability, spec),
-            LoadScore = CalculateLoadScore(node, availability),
-            ReputationScore = CalculateReputationScore(node),
-            LocalityScore = CalculateLocalityScore(node, spec)
-        };
-
-        scored.ComponentScores = scores;
-
-        // Step 6: Calculate weighted total score
-        var weights = _schedulingConfig.Weights;
-        scored.TotalScore =
-            (scores.CapacityScore * weights.Capacity) +
-            (scores.LoadScore * weights.Load) +
-            (scores.ReputationScore * weights.Reputation) +
-            (scores.LocalityScore * weights.Locality);
-
-        return await Task.FromResult(scored);
+        
     }
 
     private string? ApplyHardFilters(Node node, VmSpec spec, TierPolicy policy)
