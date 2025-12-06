@@ -101,6 +101,20 @@ public class NodeService : INodeService
         foreach (var node in allNodes)
         {
             var scored = await ScoreNodeForVmAsync(node, spec, tier, policy);
+            _logger.LogInformation("Scoring result:");
+            // Add scroring logs
+             _logger.LogInformation("Node {NodeId} - Total Score: {TotalScore:F2}, " +
+                 "Capacity: {CapacityScore:F2}, Load: {LoadScore:F2}, " +
+                 "Reputation: {ReputationScore:F2}, Locality: {LocalityScore:F2}, " +
+                 "Rejection: {RejectionReason}",
+                 node.Id,
+                 scored.TotalScore,
+                 scored.ComponentScores.CapacityScore,
+                 scored.ComponentScores.LoadScore,
+                 scored.ComponentScores.ReputationScore,
+                 scored.ComponentScores.LocalityScore,
+                 scored.RejectionReason ?? "None");
+
             scoredNodes.Add(scored);
         }
 
