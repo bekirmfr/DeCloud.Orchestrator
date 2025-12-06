@@ -304,29 +304,29 @@ public class VmService : IVmService
             );
 
             _dataStore.AddPendingCommand(vm.NodeId, command);
+
+            // Release reserved resources from node
+            if (!string.IsNullOrEmpty(vm.NodeId) &&
+                _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+            {
+                node.ReservedResources.CpuCores = Math.Max(0,
+                    node.ReservedResources.CpuCores - vm.Spec.CpuCores);
+                node.ReservedResources.MemoryMb = Math.Max(0,
+                    node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
+                node.ReservedResources.StorageGb = Math.Max(0,
+                    node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+
+                await _dataStore.SaveNodeAsync(node);
+                _logger.LogInformation(
+                    "Released resources for deleted VM {VmId} on node {NodeId}: " +
+                    "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
+                    vmId, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
+            }
         }
 
         // Mark as deleted (soft delete with persistence)
         await _dataStore.DeleteVmAsync(vmId);
         await _dataStore.SaveVmAsync(vm);
-
-        // Release reserved resources from node
-        if (!string.IsNullOrEmpty(vm.NodeId) &&
-            _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
-        {
-            node.ReservedResources.CpuCores = Math.Max(0,
-                node.ReservedResources.CpuCores - vm.Spec.CpuCores);
-            node.ReservedResources.MemoryMb = Math.Max(0,
-                node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
-            node.ReservedResources.StorageGb = Math.Max(0,
-                node.ReservedResources.StorageGb - vm.Spec.DiskGb);
-
-            await _dataStore.SaveNodeAsync(node);
-            _logger.LogInformation(
-                "Released resources for deleted VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
-                vmId, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
-        }
 
         // Update user quotas
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
