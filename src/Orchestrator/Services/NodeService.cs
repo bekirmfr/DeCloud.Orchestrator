@@ -612,11 +612,11 @@ public class NodeService : INodeService
                     owner = new User
                     {
                         Id = reported.TenantId,
-                        WalletAddress = $"0x{reported.TenantId.Replace("-", "")[..40]}",
+                        WalletAddress = $"0x{SafeSubstring(reported.TenantId.Replace("-", ""), 40)}",
                         Status = UserStatus.Active,
                         CreatedAt = DateTime.UtcNow,
                         LastLoginAt = DateTime.UtcNow,
-                        DisplayName = $"Recovered User {reported.TenantId[..8]}"
+                        DisplayName = $"Recovered User {SafeSubstring(reported.TenantId, 8)}"
                     };
 
                     await _dataStore.SaveUserAsync(owner);
