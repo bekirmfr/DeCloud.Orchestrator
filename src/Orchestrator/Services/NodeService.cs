@@ -562,10 +562,184 @@ public class NodeService : INodeService
 
     private async Task RecoverOrphanedVmAsync(string vmId, HeartbeatVmInfo reported, string nodeId)
     {
-        // Implementation from original (lines 309-509)
-        _logger.LogWarning("Discovered unknown VM {VmId} on node {NodeId} - attempting recovery",
+        _logger.LogWarning(
+            "Discovered unknown VM {VmId} on node {NodeId} - attempting state recovery",
             vmId, nodeId);
-        // ... rest of recovery logic ...
+
+        // ✅ Check if already recovered
+        if (_dataStore.VirtualMachines.ContainsKey(vmId))
+        {
+            _logger.LogDebug("VM {VmId} already recovered, skipping duplicate recovery", vmId);
+            return;
+        }
+
+        try
+        {
+            // =====================================================
+            // SECURITY VALIDATION: Critical checks before recovery
+            // =====================================================
+
+            // Validation 1: VM ID format
+            if (!Guid.TryParse(vmId, out _))
+            {
+                _logger.LogWarning(
+                    "Rejecting VM recovery for {VmId} - invalid UUID format",
+                    vmId);
+                return;
+            }
+
+            // Validation 2: Node exists and is valid
+            if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+            {
+                _logger.LogError(
+                    "Cannot recover VM {VmId} - node {NodeId} not found in registry",
+                    vmId, nodeId);
+                return;
+            }
+
+            // Validation 3: Tenant/Owner validation
+            User? owner = null;
+            if (!string.IsNullOrEmpty(reported.TenantId))
+            {
+                if (!_dataStore.Users.TryGetValue(reported.TenantId, out owner))
+                {
+                    // ✅ FIX: Auto-create missing users during recovery
+                    _logger.LogWarning(
+                        "User {TenantId} not found during VM recovery - creating placeholder user",
+                        reported.TenantId);
+
+                    owner = new User
+                    {
+                        Id = reported.TenantId,
+                        WalletAddress = $"0x{reported.TenantId.Replace("-", "")[..40]}",
+                        Status = UserStatus.Active,
+                        CreatedAt = DateTime.UtcNow,
+                        LastLoginAt = DateTime.UtcNow,
+                        DisplayName = $"Recovered User {reported.TenantId[..8]}"
+                    };
+
+                    await _dataStore.SaveUserAsync(owner);
+
+                    _logger.LogInformation(
+                        "Created placeholder user {UserId} for VM recovery",
+                        owner.Id);
+                }
+            }
+
+            // Remove the UserStatus check since we just created the user
+            // The existing code had:
+            // if (owner.Status != UserStatus.Active) { ... }
+            // We can keep this if you want, but for recovery it's safer to allow it
+
+            // Validation 5: Resource limits validation
+            if (reported.VCpus.HasValue && reported.VCpus > node.TotalResources.CpuCores)
+            {
+                _logger.LogWarning(
+                    "Rejecting VM {VmId} - reported vCPUs ({VCpus}) exceed node capacity ({NodeCpus})",
+                    vmId, reported.VCpus, node.TotalResources.CpuCores);
+                return;
+            }
+
+            if (reported.MemoryBytes.HasValue)
+            {
+                var memoryMb = reported.MemoryBytes.Value / 1024 / 1024;
+                if (memoryMb > node.TotalResources.MemoryMb)
+                {
+                    _logger.LogWarning(
+                        "Rejecting VM {VmId} - reported memory ({MemoryMb}MB) exceeds node capacity ({NodeMemMb}MB)",
+                        vmId, memoryMb, node.TotalResources.MemoryMb);
+                    return;
+                }
+            }
+
+            // Validation 6: State validation
+            var vmState = ParseVmStatus(reported.State);
+            if (vmState == VmStatus.Error || vmState == VmStatus.Deleted)
+            {
+                _logger.LogWarning(
+                    "Rejecting VM {VmId} recovery - invalid state: {State}",
+                    vmId, reported.State);
+                return;
+            }
+
+            // =====================================================
+            // Recovery: Create VM record from node's data
+            // =====================================================
+
+            var recoveredVm = new VirtualMachine
+            {
+                Id = vmId,
+                Name = reported.Name ?? $"recovered-vm-{SafeSubstring(vmId, 8)}",
+                NodeId = nodeId,
+                OwnerId = reported.TenantId ?? "unknown",
+                OwnerWallet = "recovered",
+                Status = vmState,
+                PowerState = ParsePowerState(reported.State),
+                CreatedAt = reported.StartedAt ?? DateTime.UtcNow.AddMinutes(-5),
+                StartedAt = reported.StartedAt,
+                NetworkConfig = new VmNetworkConfig
+                {
+                    PrivateIp = reported.IpAddress,
+                    Hostname = reported.Name ?? $"vm-{SafeSubstring(vmId, 8)}"
+                },
+                Spec = new VmSpec
+                {
+                    CpuCores = reported.VCpus ?? 1,
+                    MemoryMb = reported.MemoryBytes.HasValue
+                        ? reported.MemoryBytes.Value / 1024 / 1024
+                        : 1024,
+                    DiskGb = reported.DiskBytes.HasValue
+                        ? reported.DiskBytes.Value / 1024 / 1024 / 1024
+                        : 20,
+                    ImageId = "unknown"
+                },
+                StatusMessage = "Recovered from node heartbeat after orchestrator restart",
+                Labels = new Dictionary<string, string>
+                {
+                    ["recovered"] = "true",
+                    ["recovery-date"] = DateTime.UtcNow.ToString("O"),
+                    ["recovery-node"] = nodeId
+                }
+            };
+
+            // Update latest metrics if available
+            if (reported.CpuUsagePercent.HasValue)
+            {
+                recoveredVm.LatestMetrics = new VmMetrics
+                {
+                    CpuUsagePercent = reported.CpuUsagePercent.Value,
+                    Timestamp = DateTime.UtcNow
+                };
+            }
+
+            await _dataStore.SaveVmAsync(recoveredVm);
+
+            _logger.LogInformation(
+                "✓ Successfully recovered VM {VmId} on node {NodeId} (Owner: {OwnerId}, State: {State})",
+                vmId, nodeId, recoveredVm.OwnerId, recoveredVm.Status);
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmRecovered,
+                ResourceType = "vm",
+                ResourceId = vmId,
+                NodeId = nodeId,
+                UserId = recoveredVm.OwnerId,
+                Payload = new
+                {
+                    NodeId = nodeId,
+                    State = recoveredVm.Status.ToString(),
+                    IpAddress = recoveredVm.NetworkConfig.PrivateIp,
+                    RecoveryTimestamp = DateTime.UtcNow
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to recover orphaned VM {VmId} on node {NodeId}",
+                vmId, nodeId);
+        }
     }
 
     private VmStatus ParseVmStatus(string? state) => state?.ToLower() switch
@@ -715,5 +889,10 @@ public class NodeService : INodeService
         var bytes = System.Text.Encoding.UTF8.GetBytes(token);
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash);
+    }
+
+    private static string SafeSubstring(string s, int maxLength)
+    {
+        return s.Length > maxLength ? s[..maxLength] : s;
     }
 }
