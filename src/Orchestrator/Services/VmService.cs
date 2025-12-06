@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text.Json;
 using Orchestrator.Data;
 using Orchestrator.Models;
@@ -115,7 +115,14 @@ public class VmService : IVmService
             ResourceType = "vm",
             ResourceId = vm.Id,
             UserId = userId,
-            Payload = new { vm.Name, vm.Spec }
+            Payload = new Dictionary<string, object>
+            {
+                ["name"] = vm.Name,
+                ["cpuCores"] = vm.Spec.CpuCores,
+                ["memoryMb"] = vm.Spec.MemoryMb,
+                ["diskGb"] = vm.Spec.DiskGb,
+                ["imageId"] = vm.Spec.ImageId ?? ""
+            }
         });
 
         // Immediately try to schedule
@@ -464,7 +471,12 @@ public class VmService : IVmService
             ResourceType = "vm",
             ResourceId = vm.Id,
             UserId = vm.OwnerId,
-            Payload = new { NodeId = selectedNode.Id }
+            NodeId = selectedNode.Id,
+            Payload = new Dictionary<string, object>
+            {
+                ["nodeId"] = selectedNode.Id,
+                ["nodeName"] = selectedNode.Name
+            }
         });
     }
 

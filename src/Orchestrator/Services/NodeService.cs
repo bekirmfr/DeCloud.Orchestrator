@@ -216,7 +216,6 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// FIXED: Calculate resource availability using orchestrator-tracked allocations
     /// This is the source of truth for scheduling decisions
     /// </summary>
     private NodeResourceAvailability CalculateResourceAvailability(
@@ -229,7 +228,6 @@ public class NodeService : INodeService
         var effectiveMemory = node.TotalResources.MemoryMb * policy.MemoryOvercommitRatio;
         var effectiveStorage = node.TotalResources.StorageGb * policy.StorageOvercommitRatio;
 
-        // CRITICAL FIX: Use orchestrator-tracked allocations, not node-reported availability
         // This ensures scheduling decisions are based on reserved resources
         var allocatedCpu = (double)node.ReservedResources.CpuCores;
         var allocatedMemory = (double)node.ReservedResources.MemoryMb;
@@ -340,8 +338,6 @@ public class NodeService : INodeService
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
             existingNode.TotalResources = request.Resources;
-            // CRITICAL FIX: Don't reset AvailableResources - preserve orchestrator state
-            // existingNode.AvailableResources = request.Resources; // ❌ REMOVED
             existingNode.AgentVersion = request.AgentVersion;
             existingNode.SupportedImages = request.SupportedImages;
             existingNode.SupportsGpu = request.SupportsGpu;
@@ -395,7 +391,14 @@ public class NodeService : INodeService
             Type = EventType.NodeRegistered,
             ResourceType = "node",
             ResourceId = node.Id,
-            Payload = new { node.Name, node.PublicIp, node.TotalResources }
+            Payload = new Dictionary<string, object>
+            {
+                ["name"] = node.Name,
+                ["publicIp"] = node.PublicIp,
+                ["cpuCores"] = node.TotalResources.CpuCores,
+                ["memoryMb"] = node.TotalResources.MemoryMb,
+                ["storageGb"] = node.TotalResources.StorageGb
+            }
         });
 
         return new NodeRegistrationResponse(
@@ -414,7 +417,7 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// FIXED: Process heartbeat without overwriting orchestrator resource tracking
+    /// Process heartbeat without overwriting orchestrator resource tracking
     /// </summary>
     public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
     {
@@ -427,10 +430,6 @@ public class NodeService : INodeService
         node.Status = NodeStatus.Online;
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
-
-        // CRITICAL FIX: Don't overwrite AvailableResources with heartbeat data
-        // The orchestrator tracks reservations via ReservedResources
-        // node.AvailableResources = heartbeat.AvailableResources; // ❌ REMOVED
 
         // Optional: Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
@@ -614,12 +613,12 @@ public class NodeService : INodeService
                 ResourceId = vmId,
                 NodeId = nodeId,
                 UserId = recoveredVm.OwnerId,
-                Payload = new
+                Payload = new Dictionary<string, object>
                 {
-                    NodeId = nodeId,
-                    State = recoveredVm.Status.ToString(),
-                    IpAddress = recoveredVm.NetworkConfig.PrivateIp,
-                    RecoveryTimestamp = DateTime.UtcNow
+                    ["nodeId"] = nodeId,
+                    ["state"] = recoveredVm.Status.ToString(),
+                    ["ipAddress"] = recoveredVm.NetworkConfig.PrivateIp ?? "",
+                    ["recoveryTimestamp"] = DateTime.UtcNow
                 }
             });
         }
@@ -721,10 +720,10 @@ public class NodeService : INodeService
                     Type = EventType.NodeOffline,
                     ResourceType = "node",
                     ResourceId = node.Id,
-                    Payload = new
+                    Payload = new Dictionary<string, object>
                     {
-                        LastHeartbeat = node.LastHeartbeat,
-                        TimeoutMinutes = timeSinceLastHeartbeat.TotalMinutes
+                        ["lastHeartbeat"] = node.LastHeartbeat,
+                        ["timeoutMinutes"] = timeSinceLastHeartbeat.TotalMinutes
                     }
                 });
 
@@ -757,7 +756,11 @@ public class NodeService : INodeService
                 ResourceId = vm.Id,
                 UserId = vm.OwnerId,
                 NodeId = nodeId,
-                Payload = new { Reason = "Node offline", NodeId = nodeId }
+                Payload = new Dictionary<string, object>
+                {
+                    ["reason"] = "Node offline",
+                    ["nodeId"] = nodeId
+                }
             });
         }
     }
