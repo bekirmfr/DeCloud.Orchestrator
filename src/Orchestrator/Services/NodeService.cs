@@ -12,7 +12,7 @@ public interface INodeService
     Task<Node?> GetNodeAsync(string nodeId);
     Task<List<Node>> GetAllNodesAsync(NodeStatus? statusFilter = null);
 
-    // NEW: Enhanced scheduling methods
+    // Enhanced scheduling methods
     Task<List<Node>> GetAvailableNodesForVmAsync(VmSpec spec, QualityTier tier = QualityTier.Standard);
     Task<Node?> SelectBestNodeForVmAsync(VmSpec spec, QualityTier tier = QualityTier.Standard);
     Task<List<ScoredNode>> GetScoredNodesForVmAsync(VmSpec spec, QualityTier tier = QualityTier.Standard);
@@ -46,10 +46,6 @@ public class NodeService : INodeService
     // SMART SCHEDULING - Core Methods
     // ============================================================================
 
-    /// <summary>
-    /// Get all nodes that can fit the VM, considering overcommit and quality tier
-    /// Returns nodes ordered by best fit (highest score first)
-    /// </summary>
     public async Task<List<Node>> GetAvailableNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
@@ -62,10 +58,6 @@ public class NodeService : INodeService
             .ToList();
     }
 
-    /// <summary>
-    /// Select the single best node for scheduling a VM
-    /// Returns null if no suitable node found
-    /// </summary>
     public async Task<Node?> SelectBestNodeForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
@@ -97,9 +89,6 @@ public class NodeService : INodeService
         return best?.Node;
     }
 
-    /// <summary>
-    /// Get detailed scoring for all nodes (useful for debugging/monitoring)
-    /// </summary>
     public async Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
@@ -135,7 +124,7 @@ public class NodeService : INodeService
         var rejection = ApplyHardFilters(node, spec, policy);
         if (rejection != null)
         {
-            _logger.LogWarning("Node {NodeId} rejected for reason: {RejectionReason}", node.Id, rejection);
+            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
             scored.RejectionReason = rejection;
             scored.TotalScore = 0;
             return scored;
@@ -150,8 +139,10 @@ public class NodeService : INodeService
         {
             scored.RejectionReason = $"Insufficient resources after overcommit " +
                 $"(CPU: {availability.RemainingCpu:F1}/{spec.CpuCores}, " +
-                $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB)";
+                $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
+                $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
             scored.TotalScore = 0;
+            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
             return scored;
         }
 
@@ -165,6 +156,7 @@ public class NodeService : INodeService
             scored.RejectionReason = $"Would exceed max utilization " +
                 $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
             scored.TotalScore = 0;
+            _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
             return scored;
         }
 
@@ -206,9 +198,9 @@ public class NodeService : INodeService
         if (spec.RequiresGpu && !node.SupportsGpu)
             return "GPU required but not available";
 
-        // Filter 4: Minimum free memory check
-        if (node.AvailableResources.MemoryMb < _schedulingConfig.MinFreeMemoryMb)
-            return $"Below minimum free memory ({node.AvailableResources.MemoryMb}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
+        // Filter 4: Minimum total resources check (physical capacity)
+        if (node.TotalResources.MemoryMb < _schedulingConfig.MinFreeMemoryMb)
+            return $"Node total memory too low ({node.TotalResources.MemoryMb}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
 
         // Filter 5: Load average check (if metrics available)
         if (node.LatestMetrics?.LoadAverage > _schedulingConfig.MaxLoadAverage)
@@ -223,6 +215,10 @@ public class NodeService : INodeService
         return null; // Passed all filters
     }
 
+    /// <summary>
+    /// FIXED: Calculate resource availability using orchestrator-tracked allocations
+    /// This is the source of truth for scheduling decisions
+    /// </summary>
     private NodeResourceAvailability CalculateResourceAvailability(
         Node node,
         QualityTier tier,
@@ -233,10 +229,11 @@ public class NodeService : INodeService
         var effectiveMemory = node.TotalResources.MemoryMb * policy.MemoryOvercommitRatio;
         var effectiveStorage = node.TotalResources.StorageGb * policy.StorageOvercommitRatio;
 
-        // Calculate allocated resources (total - available = allocated)
-        var allocatedCpu = node.TotalResources.CpuCores - node.AvailableResources.CpuCores;
-        var allocatedMemory = node.TotalResources.MemoryMb - node.AvailableResources.MemoryMb;
-        var allocatedStorage = node.TotalResources.StorageGb - node.AvailableResources.StorageGb;
+        // CRITICAL FIX: Use orchestrator-tracked allocations, not node-reported availability
+        // This ensures scheduling decisions are based on reserved resources
+        var allocatedCpu = (double)node.ReservedResources.CpuCores;
+        var allocatedMemory = (double)node.ReservedResources.MemoryMb;
+        var allocatedStorage = (double)node.ReservedResources.StorageGb;
 
         return new NodeResourceAvailability
         {
@@ -251,10 +248,6 @@ public class NodeService : INodeService
         };
     }
 
-    /// <summary>
-    /// Score based on available capacity - prefer nodes with more headroom
-    /// Score: 0.0 (no capacity) to 1.0 (plenty of capacity)
-    /// </summary>
     private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
     {
         // Calculate how much capacity remains AFTER placing this VM
@@ -269,10 +262,6 @@ public class NodeService : INodeService
         return (cpuScore + memoryScore) / 2.0;
     }
 
-    /// <summary>
-    /// Score based on current load - prefer lightly loaded nodes
-    /// Score: 0.0 (heavily loaded) to 1.0 (lightly loaded)
-    /// </summary>
     private double CalculateLoadScore(Node node, NodeResourceAvailability availability)
     {
         // Use current utilization as primary indicator
@@ -296,18 +285,8 @@ public class NodeService : INodeService
         return (cpuScore * 0.35) + (memoryScore * 0.35) + (loadScore * 0.30);
     }
 
-    /// <summary>
-    /// Score based on node reputation/reliability
-    /// Score: 0.0 (unreliable) to 1.0 (excellent)
-    /// </summary>
     private double CalculateReputationScore(Node node)
     {
-        // Factors:
-        // 1. Uptime (how long has node been registered)
-        // 2. Heartbeat consistency (no long gaps)
-        // 3. VM success rate (future: track failed VMs)
-        // 4. Agent version (newer = better)
-
         double score = 0.5; // Start with neutral score
 
         // Uptime bonus (max +0.3)
@@ -322,15 +301,9 @@ public class NodeService : INodeService
         else if (timeSinceHeartbeat.TotalMinutes < 2)
             score += 0.1; // Recent
 
-        // Future: Add VM success rate, performance metrics, etc.
-
         return Math.Clamp(score, 0.0, 1.0);
     }
 
-    /// <summary>
-    /// Score based on geographical proximity
-    /// Score: 0.0 (far away) to 1.0 (same region/zone)
-    /// </summary>
     private double CalculateLocalityScore(Node node, VmSpec spec)
     {
         if (string.IsNullOrEmpty(spec.PreferredRegion))
@@ -350,7 +323,7 @@ public class NodeService : INodeService
     }
 
     // ============================================================================
-    // Registration and Heartbeat (unchanged from original)
+    // Registration and Heartbeat - FIXED RESOURCE ACCOUNTING
     // ============================================================================
 
     public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request)
@@ -367,7 +340,8 @@ public class NodeService : INodeService
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
             existingNode.TotalResources = request.Resources;
-            existingNode.AvailableResources = request.Resources;
+            // CRITICAL FIX: Don't reset AvailableResources - preserve orchestrator state
+            // existingNode.AvailableResources = request.Resources; // ❌ REMOVED
             existingNode.AgentVersion = request.AgentVersion;
             existingNode.SupportedImages = request.SupportedImages;
             existingNode.SupportsGpu = request.SupportsGpu;
@@ -395,7 +369,7 @@ public class NodeService : INodeService
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             TotalResources = request.Resources,
-            AvailableResources = request.Resources,
+            AvailableResources = request.Resources, // ✓ OK for new nodes
             ReservedResources = new NodeResources(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -439,6 +413,9 @@ public class NodeService : INodeService
         return Task.FromResult(storedHash == tokenHash);
     }
 
+    /// <summary>
+    /// FIXED: Process heartbeat without overwriting orchestrator resource tracking
+    /// </summary>
     public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
     {
         if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
@@ -450,7 +427,33 @@ public class NodeService : INodeService
         node.Status = NodeStatus.Online;
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
-        node.AvailableResources = heartbeat.AvailableResources;
+
+        // CRITICAL FIX: Don't overwrite AvailableResources with heartbeat data
+        // The orchestrator tracks reservations via ReservedResources
+        // node.AvailableResources = heartbeat.AvailableResources; // ❌ REMOVED
+
+        // Optional: Log discrepancy between node-reported and orchestrator-tracked resources
+        var nodeReportedFree = heartbeat.AvailableResources;
+        var orchestratorTrackedFree = new NodeResources
+        {
+            CpuCores = node.TotalResources.CpuCores - node.ReservedResources.CpuCores,
+            MemoryMb = node.TotalResources.MemoryMb - node.ReservedResources.MemoryMb,
+            StorageGb = node.TotalResources.StorageGb - node.ReservedResources.StorageGb
+        };
+
+        var cpuDiff = Math.Abs(nodeReportedFree.CpuCores - orchestratorTrackedFree.CpuCores);
+        var memDiff = Math.Abs(nodeReportedFree.MemoryMb - orchestratorTrackedFree.MemoryMb);
+
+        if (cpuDiff > 1 || memDiff > 1024)
+        {
+            _logger.LogDebug(
+                "Resource tracking drift on node {NodeId}: Node reports {NodeCpu}c/{NodeMem}MB free, " +
+                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu}c/{ResMem}MB)",
+                nodeId,
+                nodeReportedFree.CpuCores, nodeReportedFree.MemoryMb,
+                orchestratorTrackedFree.CpuCores, orchestratorTrackedFree.MemoryMb,
+                node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb);
+        }
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -465,7 +468,7 @@ public class NodeService : INodeService
             });
         }
 
-        // Synchronize VM state from heartbeat (keep existing implementation)
+        // Synchronize VM state from heartbeat
         await SyncVmStateFromHeartbeatAsync(nodeId, heartbeat);
 
         // Get pending commands for this node
@@ -474,214 +477,100 @@ public class NodeService : INodeService
         return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null);
     }
 
-    // ============================================================================
-    // VM State Synchronization (keep existing implementation)
-    // ============================================================================
-
+    /// <summary>
+    /// Synchronize VM state reported by node agent with orchestrator's view
+    /// Handles VM state updates and orphan VM recovery
+    /// </summary>
     private async Task SyncVmStateFromHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
     {
-        // Keep existing implementation from uploaded file
-        // Lines 164-208 from original NodeService.cs
-        try
-        {
-            var orchestratorVms = _dataStore.VirtualMachines.Values
-                .Where(v => v.NodeId == nodeId && v.Status != VmStatus.Deleted)
-                .ToDictionary(v => v.Id);
-
-            var reportedVms = new Dictionary<string, HeartbeatVmInfo>();
-            if (heartbeat.ActiveVms != null)
-            {
-                foreach (var vm in heartbeat.ActiveVms)
-                {
-                    reportedVms[vm.VmId] = vm;
-                }
-            }
-
-            foreach (var (vmId, vm) in orchestratorVms)
-            {
-                if (reportedVms.TryGetValue(vmId, out var reported))
-                {
-                    await UpdateKnownVmStateAsync(vm, reported, nodeId);
-                }
-                else
-                {
-                    await HandleMissingVmAsync(vm, nodeId);
-                }
-            }
-
-            foreach (var (vmId, reported) in reportedVms)
-            {
-                if (!orchestratorVms.ContainsKey(vmId))
-                {
-                    await RecoverOrphanedVmAsync(vmId, reported, nodeId);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to sync VM state from heartbeat for node {NodeId}", nodeId);
-        }
-    }
-
-    // Keep the rest of the existing methods (UpdateKnownVmStateAsync, HandleMissingVmAsync, 
-    // RecoverOrphanedVmAsync, etc.) from the original file...
-    // [Lines 210-685 from original NodeService.cs - omitted for brevity]
-
-    private async Task UpdateKnownVmStateAsync(VirtualMachine vm, HeartbeatVmInfo reported, string nodeId)
-    {
-        // Implementation from original file (lines 210-263)
-        var reportedState = ParseVmStatus(reported.State);
-        var stateChanged = false;
-
-        if (vm.Status == VmStatus.Provisioning && reportedState == VmStatus.Running)
-        {
-            vm.Status = VmStatus.Running;
-            vm.PowerState = VmPowerState.Running;
-            vm.StartedAt ??= reported.StartedAt ?? DateTime.UtcNow;
-            stateChanged = true;
-        }
-
-        if (vm.NetworkConfig.PrivateIp != reported.IpAddress && !string.IsNullOrEmpty(reported.IpAddress))
-        {
-            vm.NetworkConfig.PrivateIp = reported.IpAddress;
-            stateChanged = true;
-        }
-
-        if (stateChanged)
-        {
-            vm.UpdatedAt = DateTime.UtcNow;
-            await _dataStore.SaveVmAsync(vm);
-        }
-    }
-
-    private async Task HandleMissingVmAsync(VirtualMachine vm, string nodeId)
-    {
-        // Implementation from original (lines 265-307)
-        _logger.LogWarning("VM {VmId} expected on node {NodeId} but not reported in heartbeat",
-            vm.Id, nodeId);
-    }
-
-    private async Task RecoverOrphanedVmAsync(string vmId, HeartbeatVmInfo reported, string nodeId)
-    {
-        _logger.LogWarning(
-            "Discovered unknown VM {VmId} on node {NodeId} - attempting state recovery",
-            vmId, nodeId);
-
-        // ✅ Check if already recovered
-        if (_dataStore.VirtualMachines.ContainsKey(vmId))
-        {
-            _logger.LogDebug("VM {VmId} already recovered, skipping duplicate recovery", vmId);
+        if (heartbeat.ActiveVms == null || !heartbeat.ActiveVms.Any())
             return;
-        }
 
-        try
+        var knownVmIds = _dataStore.VirtualMachines.Values
+            .Where(v => v.NodeId == nodeId)
+            .Select(v => v.Id)
+            .ToHashSet();
+
+        foreach (var reported in heartbeat.ActiveVms)
         {
-            // =====================================================
-            // SECURITY VALIDATION: Critical checks before recovery
-            // =====================================================
+            var vmId = reported.VmId;
 
-            // Validation 1: VM ID format
-            if (!Guid.TryParse(vmId, out _))
+            if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             {
-                _logger.LogWarning(
-                    "Rejecting VM recovery for {VmId} - invalid UUID format",
-                    vmId);
-                return;
-            }
+                // Update existing VM state
+                var newStatus = ParseVmStatus(reported.State);
+                var newPowerState = ParsePowerState(reported.State);
 
-            // Validation 2: Node exists and is valid
-            if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
-            {
-                _logger.LogError(
-                    "Cannot recover VM {VmId} - node {NodeId} not found in registry",
-                    vmId, nodeId);
-                return;
-            }
-
-            // Validation 3: Tenant/Owner validation
-            User? owner = null;
-            if (!string.IsNullOrEmpty(reported.TenantId))
-            {
-                if (!_dataStore.Users.TryGetValue(reported.TenantId, out owner))
+                if (vm.Status != newStatus || vm.PowerState != newPowerState)
                 {
-                    // ✅ FIX: Auto-create missing users during recovery
-                    _logger.LogWarning(
-                        "User {TenantId} not found during VM recovery - creating placeholder user",
-                        reported.TenantId);
+                    vm.Status = newStatus;
+                    vm.PowerState = newPowerState;
 
-                    owner = new User
-                    {
-                        Id = reported.TenantId,
-                        WalletAddress = $"0x{SafeSubstring(reported.TenantId.Replace("-", ""), 40)}",
-                        Status = UserStatus.Active,
-                        CreatedAt = DateTime.UtcNow,
-                        LastLoginAt = DateTime.UtcNow,
-                        DisplayName = $"Recovered User {SafeSubstring(reported.TenantId, 8)}"
-                    };
+                    if (newStatus == VmStatus.Running && vm.StartedAt == null)
+                        vm.StartedAt = reported.StartedAt ?? DateTime.UtcNow;
 
-                    await _dataStore.SaveUserAsync(owner);
+                    await _dataStore.SaveVmAsync(vm);
 
                     _logger.LogInformation(
-                        "Created placeholder user {UserId} for VM recovery",
-                        owner.Id);
+                        "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
+                        vmId, newStatus, newPowerState);
                 }
-            }
 
-            // Remove the UserStatus check since we just created the user
-            // The existing code had:
-            // if (owner.Status != UserStatus.Active) { ... }
-            // We can keep this if you want, but for recovery it's safer to allow it
-
-            // Validation 5: Resource limits validation
-            if (reported.VCpus.HasValue && reported.VCpus > node.TotalResources.CpuCores)
-            {
-                _logger.LogWarning(
-                    "Rejecting VM {VmId} - reported vCPUs ({VCpus}) exceed node capacity ({NodeCpus})",
-                    vmId, reported.VCpus, node.TotalResources.CpuCores);
-                return;
-            }
-
-            if (reported.MemoryBytes.HasValue)
-            {
-                var memoryMb = reported.MemoryBytes.Value / 1024 / 1024;
-                if (memoryMb > node.TotalResources.MemoryMb)
+                // Update metrics if provided
+                if (reported.CpuUsagePercent.HasValue)
                 {
-                    _logger.LogWarning(
-                        "Rejecting VM {VmId} - reported memory ({MemoryMb}MB) exceeds node capacity ({NodeMemMb}MB)",
-                        vmId, memoryMb, node.TotalResources.MemoryMb);
-                    return;
+                    vm.LatestMetrics = new VmMetrics
+                    {
+                        CpuUsagePercent = reported.CpuUsagePercent.Value,
+                        Timestamp = DateTime.UtcNow
+                    };
+                    await _dataStore.SaveVmAsync(vm);
+                }
+
+                // Update access info if available
+                if (!string.IsNullOrEmpty(reported.IpAddress) &&
+                    vm.NetworkConfig.PrivateIp != reported.IpAddress)
+                {
+                    vm.NetworkConfig.PrivateIp = reported.IpAddress;
+                    await _dataStore.SaveVmAsync(vm);
                 }
             }
-
-            // Validation 6: State validation
-            var vmState = ParseVmStatus(reported.State);
-            if (vmState == VmStatus.Error || vmState == VmStatus.Deleted)
+            else if (!string.IsNullOrEmpty(reported.TenantId))
             {
-                _logger.LogWarning(
-                    "Rejecting VM {VmId} recovery - invalid state: {State}",
-                    vmId, reported.State);
-                return;
+                // Orphaned VM recovery
+                await RecoverOrphanedVmAsync(nodeId, reported);
             }
+        }
+    }
 
-            // =====================================================
-            // Recovery: Create VM record from node's data
-            // =====================================================
+    /// <summary>
+    /// Recover VMs that exist on node but are unknown to orchestrator
+    /// This handles orchestrator restarts where node state persists
+    /// </summary>
+    private async Task RecoverOrphanedVmAsync(string nodeId, HeartbeatVmInfo reported)
+    {
+        var vmId = reported.VmId;
+
+        try
+        {
+            _logger.LogInformation(
+                "Recovering orphaned VM {VmId} on node {NodeId} (Owner: {OwnerId}, State: {State})",
+                vmId, nodeId, reported.TenantId, reported.State);
 
             var recoveredVm = new VirtualMachine
             {
                 Id = vmId,
-                Name = reported.Name ?? $"recovered-vm-{SafeSubstring(vmId, 8)}",
-                NodeId = nodeId,
+                Name = reported.Name ?? $"recovered-{vmId[..8]}",
                 OwnerId = reported.TenantId ?? "unknown",
-                OwnerWallet = "recovered",
-                Status = vmState,
+                NodeId = nodeId,
+                Status = ParseVmStatus(reported.State),
                 PowerState = ParsePowerState(reported.State),
-                CreatedAt = reported.StartedAt ?? DateTime.UtcNow.AddMinutes(-5),
                 StartedAt = reported.StartedAt,
+                CreatedAt = reported.StartedAt ?? DateTime.UtcNow,
                 NetworkConfig = new VmNetworkConfig
                 {
-                    PrivateIp = reported.IpAddress,
-                    Hostname = reported.Name ?? $"vm-{SafeSubstring(vmId, 8)}"
+                    PrivateIp = reported.IpAddress ?? "",
+                    Hostname = reported.Name ?? ""
                 },
                 Spec = new VmSpec
                 {
@@ -703,7 +592,6 @@ public class NodeService : INodeService
                 }
             };
 
-            // Update latest metrics if available
             if (reported.CpuUsagePercent.HasValue)
             {
                 recoveredVm.LatestMetrics = new VmMetrics
