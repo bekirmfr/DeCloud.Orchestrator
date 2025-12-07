@@ -1088,8 +1088,12 @@ async function createVM() {
             method: 'POST',
             body: JSON.stringify({
                 name,
-                specs: { cpu, memory, disk },
-                image
+                spec: {
+                    CpuCores: cpu,
+                    MemoryMb: memory,
+                    DiskGb: disk,
+                    ImageId: image
+                }
             })
         });
 

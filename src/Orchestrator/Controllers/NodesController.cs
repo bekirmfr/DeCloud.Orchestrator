@@ -70,6 +70,50 @@ public class NodesController : ControllerBase
     }
 
     /// <summary>
+    /// Node acknowledges command completion
+    /// Called by node agent after executing a command
+    /// </summary>
+    [HttpPost("{nodeId}/commands/{commandId}/acknowledge")]
+    public async Task<ActionResult<ApiResponse<bool>>> AcknowledgeCommand(
+        string nodeId,
+        string commandId,
+        [FromBody] CommandAcknowledgment ack,
+        [FromHeader(Name = "X-Node-Token")] string? nodeToken)
+    {
+        // Validate node token
+        if (string.IsNullOrEmpty(nodeToken) ||
+            !await _nodeService.ValidateNodeTokenAsync(nodeId, nodeToken))
+        {
+            return Unauthorized(ApiResponse<bool>.Fail("UNAUTHORIZED", "Invalid node token"));
+        }
+
+        try
+        {
+            var result = await _nodeService.ProcessCommandAcknowledgmentAsync(
+                nodeId, commandId, ack);
+
+            if (!result)
+            {
+                return NotFound(ApiResponse<bool>.Fail(
+                    "COMMAND_NOT_FOUND",
+                    "Command not found or already processed"));
+            }
+
+            return Ok(ApiResponse<bool>.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error processing acknowledgment for command {CommandId} from node {NodeId}",
+                commandId, nodeId);
+
+            return StatusCode(500, ApiResponse<bool>.Fail(
+                "PROCESSING_ERROR",
+                "Failed to process acknowledgment"));
+        }
+    }
+
+    /// <summary>
     /// List all nodes
     /// </summary>
     [HttpGet]

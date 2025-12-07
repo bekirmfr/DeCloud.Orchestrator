@@ -79,6 +79,7 @@ public enum EventType
     VmProvisioning,
     VmStarted,
     VmStopped,
+    VmDeleting,
     VmDeleted,
     VmRecovered,
     VmError,

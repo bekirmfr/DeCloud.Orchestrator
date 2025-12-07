@@ -288,7 +288,7 @@ public class DataStore
     }
 
     /// <summary>
-    /// Delete a VM (write-through to MongoDB)
+    /// Marks a VM state as Deleted (write-through to MongoDB)
     /// </summary>
     public async Task DeleteVmAsync(string vmId)
     {
@@ -308,6 +308,27 @@ public class DataStore
                 }, $"mark VM {vmId} as deleted");
             }
         }
+    }
+
+    /// <summary>
+    /// Asynchronously and permanently removes the virtual machine identified by the specified ID from the database and
+    /// in-memory cache.
+    /// </summary>
+    /// <remarks>This method deletes the virtual machine from both persistent storage and the in-memory cache.
+    /// Once removed, the virtual machine cannot be recovered through this API.</remarks>
+    /// <param name="vmId">The unique identifier of the virtual machine to remove. Cannot be null or empty.</param>
+    /// <returns>A task that represents the asynchronous remove operation.</returns>
+    public async Task RemoveVmAsync(string vmId)
+    {
+        var filter = Builders<VirtualMachine>.Filter.Eq(v => v.Id, vmId);
+        var result = await VmsCollection!.DeleteOneAsync(filter);
+
+        // Remove from in-memory cache
+        VirtualMachines.TryRemove(vmId, out _);
+
+        _logger.LogInformation(
+            "VM {VmId} permanently removed from database (DeletedCount: {Count})",
+            vmId, result.DeletedCount);
     }
 
     /// <summary>
@@ -426,59 +447,65 @@ public class DataStore
     /// <summary>
     /// Get system statistics
     /// </summary>
-    public SystemStats GetSystemStats()
+    public async Task<SystemStats> GetSystemStatsAsync()
     {
-        var totalNodes = Nodes.Count;
-        var onlineNodes = Nodes.Values.Count(n => n.Status == NodeStatus.Online);
-        var totalVms = VirtualMachines.Count;
-        var runningVms = VirtualMachines.Values.Count(v => v.Status == VmStatus.Running);
-        var totalUsers = Users.Count;
-        var activeUsers = Users.Values.Count(u => u.Status == UserStatus.Active);
+        // Only count VMs that are "active" (not Deleting or Deleted)
+        var activeVms = VirtualMachines.Values
+            .Where(v => v.Status != VmStatus.Deleting &&
+                        v.Status != VmStatus.Deleted)
+            .ToList();
 
-        // Calculate total resources
-        var totalCpu = Nodes.Values.Sum(n => n.TotalResources.CpuCores);
-        var totalMemoryMb = Nodes.Values.Sum(n => n.TotalResources.MemoryMb);
-        var totalStorageGb = Nodes.Values.Sum(n => n.TotalResources.StorageGb);
+        var nodes = Nodes.Values.ToList();
+        var onlineNodes = nodes.Where(n => n.Status == NodeStatus.Online).ToList();
 
-        // Calculate available resources (online nodes only)
-        var availableNodes = Nodes.Values.Where(n => n.Status == NodeStatus.Online);
-        var availableCpu = availableNodes.Sum(n => n.AvailableResources.CpuCores);
-        var availableMemoryMb = availableNodes.Sum(n => n.AvailableResources.MemoryMb);
-        var availableStorageGb = availableNodes.Sum(n => n.AvailableResources.StorageGb);
+        var stats = new SystemStats
+        {
+            // Node statistics
+            TotalNodes = nodes.Count,
+            OnlineNodes = onlineNodes.Count,
+            OfflineNodes = nodes.Count(n => n.Status == NodeStatus.Offline),
 
-        // Calculate used resources
-        var usedCpu = totalCpu - availableCpu;
-        var usedMemoryMb = totalMemoryMb - availableMemoryMb;
-        var usedStorageGb = totalStorageGb - availableStorageGb;
+            // VM statistics - ONLY ACTIVE VMs
+            TotalVms = activeVms.Count,
+            RunningVms = activeVms.Count(v => v.Status == VmStatus.Running),
+            StoppedVms = activeVms.Count(v => v.Status == VmStatus.Stopped),
+
+            // User statistics
+            TotalUsers = Users.Count,
+            ActiveUsers = Users.Values
+                .Count(u => u.LastLoginAt > DateTime.UtcNow.AddDays(-30)),
+
+            // Resource statistics (from online nodes)
+            TotalCpuCores = nodes.Sum(n => n.TotalResources.CpuCores),
+            AvailableCpuCores = onlineNodes.Sum(n => n.AvailableResources.CpuCores),
+            UsedCpuCores = nodes.Sum(n =>
+                n.TotalResources.CpuCores - n.AvailableResources.CpuCores),
+
+            TotalMemoryMb = nodes.Sum(n => n.TotalResources.MemoryMb),
+            AvailableMemoryMb = onlineNodes.Sum(n => n.AvailableResources.MemoryMb),
+            UsedMemoryMb = nodes.Sum(n =>
+                n.TotalResources.MemoryMb - n.AvailableResources.MemoryMb),
+
+            TotalStorageGb = nodes.Sum(n => n.TotalResources.StorageGb),
+            AvailableStorageGb = onlineNodes.Sum(n => n.AvailableResources.StorageGb),
+            UsedStorageGb = nodes.Sum(n =>
+                n.TotalResources.StorageGb - n.AvailableResources.StorageGb),
+        };
 
         // Calculate utilization percentages
-        var cpuUtilization = totalCpu > 0 ? (double)usedCpu / totalCpu * 100 : 0;
-        var memoryUtilization = totalMemoryMb > 0 ? (double)usedMemoryMb / totalMemoryMb * 100 : 0;
-        var storageUtilization = totalStorageGb > 0 ? (double)usedStorageGb / totalStorageGb * 100 : 0;
+        stats.CpuUtilizationPercent = stats.TotalCpuCores > 0
+            ? (double)stats.UsedCpuCores / stats.TotalCpuCores * 100
+            : 0;
 
-        return new SystemStats
-        {
-            TotalNodes = totalNodes,
-            OnlineNodes = onlineNodes,
-            OfflineNodes = totalNodes - onlineNodes,
-            TotalVms = totalVms,
-            RunningVms = runningVms,
-            StoppedVms = VirtualMachines.Values.Count(v => v.Status == VmStatus.Stopped),
-            TotalUsers = totalUsers,
-            ActiveUsers = activeUsers,
-            TotalCpuCores = totalCpu,
-            AvailableCpuCores = availableCpu,
-            UsedCpuCores = usedCpu,
-            CpuUtilizationPercent = cpuUtilization,
-            TotalMemoryMb = totalMemoryMb,
-            AvailableMemoryMb = availableMemoryMb,
-            UsedMemoryMb = usedMemoryMb,
-            MemoryUtilizationPercent = memoryUtilization,
-            TotalStorageGb = totalStorageGb,
-            AvailableStorageGb = availableStorageGb,
-            UsedStorageGb = usedStorageGb,
-            StorageUtilizationPercent = storageUtilization
-        };
+        stats.MemoryUtilizationPercent = stats.TotalMemoryMb > 0
+            ? (double)stats.UsedMemoryMb / stats.TotalMemoryMb * 100
+            : 0;
+
+        stats.StorageUtilizationPercent = stats.TotalStorageGb > 0
+            ? (double)stats.UsedStorageGb / stats.TotalStorageGb * 100
+            : 0;
+
+        return stats;
     }
 
     /// <summary>

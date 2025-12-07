@@ -14,6 +14,10 @@ public interface IVmService
     Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams);
     Task<bool> PerformVmActionAsync(string vmId, VmAction action, string? userId = null);
     Task<bool> DeleteVmAsync(string vmId, string? userId = null);
+    /// <summary>
+    /// Complete VM deletion after node confirmation
+    /// </summary>
+    Task CompleteVmDeletionAsync(string vmId);
     Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null);
     Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics);
     Task SchedulePendingVmsAsync();
@@ -187,7 +191,7 @@ public class VmService : IVmService
 
         if (!string.IsNullOrEmpty(userId))
         {
-            query = query.Where(v => v.OwnerId == userId);
+            query = query.Where(v => v.OwnerWallet == userId);
         }
 
         if (queryParams.Filters?.TryGetValue("status", out var status) == true)
@@ -290,11 +294,42 @@ public class VmService : IVmService
     public async Task<bool> DeleteVmAsync(string vmId, string? userId = null)
     {
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        {
+            _logger.LogWarning("DeleteVm called for non-existent VM {VmId}", vmId);
             return false;
+        }
 
         if (userId != null && vm.OwnerId != userId)
+        {
+            _logger.LogWarning(
+                "User {UserId} attempted to delete VM {VmId} owned by {OwnerId}",
+                userId, vmId, vm.OwnerId);
             return false;
+        }
 
+        // Already being deleted or deleted
+        if (vm.Status == VmStatus.Deleting || vm.Status == VmStatus.Deleted)
+        {
+            _logger.LogInformation("VM {VmId} already in deletion process", vmId);
+            return true;
+        }
+
+        _logger.LogInformation(
+            "Initiating deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
+            vmId, vm.OwnerId, vm.NodeId ?? "none");
+
+        // Step 1: Mark as DELETING (waiting for node confirmation)
+        var oldStatus = vm.Status;
+        vm.Status = VmStatus.Deleting;
+        vm.StatusMessage = "Deletion initiated, waiting for node confirmation";
+        vm.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogInformation(
+            "VM {VmId} status changed: {OldStatus} → Deleting",
+            vmId, oldStatus);
+
+        // Step 2: Send delete command to node if assigned
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
             var command = new NodeCommand(
@@ -305,50 +340,121 @@ public class VmService : IVmService
 
             _dataStore.AddPendingCommand(vm.NodeId, command);
 
-            // Release reserved resources from node
-            if (!string.IsNullOrEmpty(vm.NodeId) &&
-                _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
-            {
-                node.ReservedResources.CpuCores = Math.Max(0,
-                    node.ReservedResources.CpuCores - vm.Spec.CpuCores);
-                node.ReservedResources.MemoryMb = Math.Max(0,
-                    node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
-                node.ReservedResources.StorageGb = Math.Max(0,
-                    node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+            _logger.LogInformation(
+                "DeleteVm command {CommandId} queued for VM {VmId} on node {NodeId}",
+                command.CommandId, vmId, vm.NodeId);
 
-                await _dataStore.SaveNodeAsync(node);
-                _logger.LogInformation(
-                    "Released resources for deleted VM {VmId} on node {NodeId}: " +
-                    "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
-                    vmId, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
-            }
+            // Store command ID in VM for tracking
+            vm.StatusMessage = $"Deletion command {command.CommandId} sent to node";
+            await _dataStore.SaveVmAsync(vm);
+        }
+        else
+        {
+            // No node assigned - complete deletion immediately
+            _logger.LogInformation(
+                "VM {VmId} has no node assignment - completing deletion immediately",
+                vmId);
+
+            await CompleteVmDeletionAsync(vmId);
+            return true;
         }
 
-        // Mark as deleted (soft delete with persistence)
-        await _dataStore.DeleteVmAsync(vmId);
+        // Emit event
+        await _eventService.EmitAsync(new OrchestratorEvent
+        {
+            Type = EventType.VmDeleting,
+            ResourceType = "vm",
+            ResourceId = vmId,
+            NodeId = vm.NodeId,
+            UserId = userId
+        });
+
+        _logger.LogInformation(
+            "VM {VmId} deletion initiated - awaiting node confirmation",
+            vmId);
+
+        // Resources will be freed after node confirms deletion
+        return true;
+    }
+
+    /// <summary>
+    /// Complete VM deletion after node confirmation
+    /// Called by NodeService after receiving acknowledgment
+    /// </summary>
+    public async Task CompleteVmDeletionAsync(string vmId)
+    {
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        {
+            _logger.LogWarning(
+                "CompleteVmDeletion called for non-existent VM {VmId}",
+                vmId);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
+            vmId, vm.OwnerId, vm.NodeId ?? "none");
+
+        // Mark as Deleted (final state before removal)
+        vm.Status = VmStatus.Deleted;
+        vm.StatusMessage = "Deletion confirmed by node";
+        vm.StoppedAt = DateTime.UtcNow;
+        vm.UpdatedAt = DateTime.UtcNow;
         await _dataStore.SaveVmAsync(vm);
+
+        // Free reserved resources from node
+        if (!string.IsNullOrEmpty(vm.NodeId) &&
+            _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        {
+            node.ReservedResources.CpuCores = Math.Max(0,
+                node.ReservedResources.CpuCores - vm.Spec.CpuCores);
+            node.ReservedResources.MemoryMb = Math.Max(0,
+                node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
+            node.ReservedResources.StorageGb = Math.Max(0,
+                node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+
+            await _dataStore.SaveNodeAsync(node);
+
+            _logger.LogInformation(
+                "Released reserved resources for VM {VmId} on node {NodeId}: " +
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
+                vmId, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
+        }
 
         // Update user quotas
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
         {
             user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
-            user.Quotas.CurrentCpuCores = Math.Max(0, user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
-            user.Quotas.CurrentMemoryMb = Math.Max(0, user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
-            user.Quotas.CurrentStorageGb = Math.Max(0, user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+            user.Quotas.CurrentCpuCores = Math.Max(0,
+                user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
+            user.Quotas.CurrentMemoryMb = Math.Max(0,
+                user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
+            user.Quotas.CurrentStorageGb = Math.Max(0,
+                user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+
             await _dataStore.SaveUserAsync(user);
+
+            _logger.LogInformation(
+                "Updated quotas for user {UserId}: VMs={VMs}, CPU={CPU}c, MEM={MEM}MB",
+                user.Id, user.Quotas.CurrentVms, user.Quotas.CurrentCpuCores,
+                user.Quotas.CurrentMemoryMb);
         }
 
-        _logger.LogInformation("VM {VmId} deleted by user {UserId}", vmId, userId ?? "system");
-
+        // Emit completion event
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmDeleted,
             ResourceType = "vm",
             ResourceId = vmId,
-            UserId = userId
+            NodeId = vm.NodeId,
+            UserId = vm.OwnerId
         });
 
-        return true;
+        _logger.LogInformation("VM {VmId} deletion completed successfully", vmId);
+
+        // OPTIONAL: Remove from database after a grace period
+        // For now, keep it with Status=Deleted for audit/billing
+        // A cleanup job can purge old Deleted VMs later
     }
 
     public async Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null)

@@ -1041,6 +1041,14 @@ async function createVM() {
         const data = await response.json();
 
         if (data.success) {
+            const vm = data.data.vm;
+            const vmId = vm.vmId;
+            const password = vm.password
+
+            // Only show password modal if we got a valid password (not an error code)
+            if (password && !password.includes('_') && password.includes('-')) {
+                await showPasswordModal(vmId, name, password);
+            }
             showToast('Virtual machine created successfully', 'success');
             closeModal('create-vm-modal');
             refreshData();

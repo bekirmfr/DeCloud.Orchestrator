@@ -44,9 +44,9 @@ public class SystemController : ControllerBase
     /// </summary>
     [HttpGet("stats")]
     [AllowAnonymous]
-    public ActionResult<ApiResponse<SystemStats>> GetStats()
+    public async Task<ActionResult<ApiResponse<SystemStats>>> GetStats()
     {
-        var stats = _dataStore.GetSystemStats();
+        var stats = await _dataStore.GetSystemStatsAsync();
         return Ok(ApiResponse<SystemStats>.Ok(stats));
     }
 

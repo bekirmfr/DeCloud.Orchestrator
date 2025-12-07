@@ -9,6 +9,13 @@ public interface INodeService
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request);
     Task<bool> ValidateNodeTokenAsync(string nodeId, string token);
     Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat);
+    /// <summary>
+    /// Process command acknowledgment from node
+    /// </summary>
+    Task<bool> ProcessCommandAcknowledgmentAsync(
+        string nodeId,
+        string commandId,
+        CommandAcknowledgment ack);
     Task<Node?> GetNodeAsync(string nodeId);
     Task<List<Node>> GetAllNodesAsync(NodeStatus? statusFilter = null);
 
@@ -25,17 +32,20 @@ public interface INodeService
 public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
+    private readonly IVmService _vmService;
     private readonly IEventService _eventService;
     private readonly ILogger<NodeService> _logger;
     private readonly SchedulingConfiguration _schedulingConfig;
 
     public NodeService(
         DataStore dataStore,
+        IVmService vmService,
         IEventService eventService,
         ILogger<NodeService> logger,
         SchedulingConfiguration? schedulingConfig = null)
     {
         _dataStore = dataStore;
+        _vmService = vmService;
         _eventService = eventService;
         _logger = logger;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
@@ -345,7 +355,7 @@ public class NodeService : INodeService
     }
 
     // ============================================================================
-    // Registration and Heartbeat - FIXED RESOURCE ACCOUNTING
+    // Registration and Heartbeat
     // ============================================================================
 
     public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request)
@@ -498,6 +508,98 @@ public class NodeService : INodeService
         var commands = _dataStore.GetAndClearPendingCommands(nodeId);
 
         return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null);
+    }
+
+    /// <summary>
+    /// Process command acknowledgment from node
+    /// </summary>
+    public async Task<bool> ProcessCommandAcknowledgmentAsync(
+        string nodeId,
+        string commandId,
+        CommandAcknowledgment ack)
+    {
+        _logger.LogInformation(
+            "Processing acknowledgment for command {CommandId} from node {NodeId}: Success={Success}",
+            commandId, nodeId, ack.Success);
+
+        // Determine command type by finding the VM associated with this command
+        // (This is a simplified approach - you might want to track commands better)
+        var affectedVm = _dataStore.VirtualMachines.Values
+            .FirstOrDefault(vm =>
+                vm.NodeId == nodeId &&
+                vm.StatusMessage != null &&
+                vm.StatusMessage.Contains(commandId));
+
+        if (affectedVm == null)
+        {
+            _logger.LogWarning(
+                "Could not find VM associated with command {CommandId} from node {NodeId}",
+                commandId, nodeId);
+
+            // Still return true - acknowledgment was received
+            return true;
+        }
+
+        if (!ack.Success)
+        {
+            // Command failed
+            _logger.LogError(
+                "Command {CommandId} failed on node {NodeId}: {Error}",
+                commandId, nodeId, ack.ErrorMessage ?? "Unknown error");
+
+            // Mark VM as error state
+            if (affectedVm.Status == VmStatus.Deleting)
+            {
+                affectedVm.Status = VmStatus.Error;
+                affectedVm.StatusMessage = $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}";
+                affectedVm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(affectedVm);
+            }
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmError,
+                ResourceType = "vm",
+                ResourceId = affectedVm.Id,
+                NodeId = nodeId,
+                UserId = affectedVm.OwnerId,
+                Payload = new Dictionary<string, object>
+                {
+                    ["CommandId"] = commandId,
+                    ["Error"] = ack.ErrorMessage ?? "Unknown error"
+                }
+            });
+
+            return true;
+        }
+
+        // Command succeeded - handle based on VM status
+        if (affectedVm.Status == VmStatus.Deleting)
+        {
+            _logger.LogInformation(
+                "Deletion confirmed for VM {VmId} - completing deletion",
+                affectedVm.Id);
+
+            // Complete the deletion (free resources, update quotas, etc.)
+            await _vmService.CompleteVmDeletionAsync(affectedVm.Id);
+        }
+        else if (affectedVm.Status == VmStatus.Provisioning)
+        {
+            // VM creation acknowledged
+            _logger.LogInformation(
+                "Creation confirmed for VM {VmId} - marking as running",
+                affectedVm.Id);
+
+            affectedVm.Status = VmStatus.Running;
+            affectedVm.PowerState = VmPowerState.Running;
+            affectedVm.StartedAt = ack.CompletedAt;
+            affectedVm.StatusMessage = null;
+            affectedVm.UpdatedAt = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(affectedVm);
+        }
+        // Handle other command types as needed (Start, Stop, etc.)
+
+        return true;
     }
 
     /// <summary>

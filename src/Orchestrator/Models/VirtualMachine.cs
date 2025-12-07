@@ -178,15 +178,16 @@ public class VmMetrics
 
 public enum VmStatus
 {
-    Pending,        // Waiting to be scheduled
-    Scheduling,     // Finding a node
-    Provisioning,   // Being created on node
-    Running,        // Active and running
-    Stopping,       // Being stopped
-    Stopped,        // Stopped but resources reserved
-    Migrating,      // Being moved to another node
-    Error,          // Something went wrong
-    Deleted         // Marked for deletion
+    Pending,        // 0 - Waiting to be scheduled
+    Scheduling,     // 1 - Finding a node
+    Provisioning,   // 2 - Being created on node
+    Running,        // 3 - Active and running
+    Stopping,       // 4 - Being stopped
+    Stopped,        // 5 - Stopped but resources reserved
+    Deleting,       // 6 - Deletion in progress, waiting for node confirmation
+    Migrating,      // 7 - Being moved to another node
+    Error,          // 8 - Something went wrong
+    Deleted         // 9 - Deletion confirmed, resources freed
 }
 
 public enum VmPowerState

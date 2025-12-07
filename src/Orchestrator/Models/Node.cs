@@ -190,3 +190,10 @@ public enum NodeCommandType
     UpdateAgent,
     CollectDiagnostics
 }
+
+public record CommandAcknowledgment(
+    string CommandId,
+    bool Success,
+    string? ErrorMessage,
+    DateTime CompletedAt
+);
