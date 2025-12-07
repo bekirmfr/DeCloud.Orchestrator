@@ -32,20 +32,17 @@ public interface INodeService
 public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
-    private readonly IVmService _vmService;
     private readonly IEventService _eventService;
     private readonly ILogger<NodeService> _logger;
     private readonly SchedulingConfiguration _schedulingConfig;
 
     public NodeService(
         DataStore dataStore,
-        IVmService vmService,
         IEventService eventService,
         ILogger<NodeService> logger,
         SchedulingConfiguration? schedulingConfig = null)
     {
         _dataStore = dataStore;
-        _vmService = vmService;
         _eventService = eventService;
         _logger = logger;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
@@ -522,8 +519,8 @@ public class NodeService : INodeService
             "Processing acknowledgment for command {CommandId} from node {NodeId}: Success={Success}",
             commandId, nodeId, ack.Success);
 
-        // Determine command type by finding the VM associated with this command
-        // (This is a simplified approach - you might want to track commands better)
+        // Find VM associated with this command
+        // Look for VM on this node with matching commandId in StatusMessage
         var affectedVm = _dataStore.VirtualMachines.Values
             .FirstOrDefault(vm =>
                 vm.NodeId == nodeId &&
@@ -580,8 +577,8 @@ public class NodeService : INodeService
                 "Deletion confirmed for VM {VmId} - completing deletion",
                 affectedVm.Id);
 
-            // Complete the deletion (free resources, update quotas, etc.)
-            await _vmService.CompleteVmDeletionAsync(affectedVm.Id);
+            // Complete deletion directly (no VmService dependency!)
+            await CompleteVmDeletionAsync(affectedVm);
         }
         else if (affectedVm.Status == VmStatus.Provisioning)
         {
@@ -597,9 +594,77 @@ public class NodeService : INodeService
             affectedVm.UpdatedAt = DateTime.UtcNow;
             await _dataStore.SaveVmAsync(affectedVm);
         }
-        // Handle other command types as needed (Start, Stop, etc.)
+        // Handle other command types as needed
 
         return true;
+    }
+
+    /// <summary>
+    /// Complete VM deletion after node confirmation
+    /// This is called by NodeService only - no circular dependency!
+    /// </summary>
+    private async Task CompleteVmDeletionAsync(VirtualMachine vm)
+    {
+        _logger.LogInformation(
+            "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
+            vm.Id, vm.OwnerId, vm.NodeId ?? "none");
+
+        // Step 1: Mark as Deleted
+        vm.Status = VmStatus.Deleted;
+        vm.StatusMessage = "Deletion confirmed by node";
+        vm.StoppedAt = DateTime.UtcNow;
+        vm.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveVmAsync(vm);
+
+        // Step 2: Free reserved resources
+        if (!string.IsNullOrEmpty(vm.NodeId) &&
+            _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        {
+            node.ReservedResources.CpuCores = Math.Max(0,
+                node.ReservedResources.CpuCores - vm.Spec.CpuCores);
+            node.ReservedResources.MemoryMb = Math.Max(0,
+                node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
+            node.ReservedResources.StorageGb = Math.Max(0,
+                node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+
+            await _dataStore.SaveNodeAsync(node);
+
+            _logger.LogInformation(
+                "Released reserved resources for VM {VmId} on node {NodeId}: " +
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
+                vm.Id, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
+        }
+
+        // Step 3: Update user quotas
+        if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
+        {
+            user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
+            user.Quotas.CurrentCpuCores = Math.Max(0,
+                user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
+            user.Quotas.CurrentMemoryMb = Math.Max(0,
+                user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
+            user.Quotas.CurrentStorageGb = Math.Max(0,
+                user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+
+            await _dataStore.SaveUserAsync(user);
+
+            _logger.LogInformation(
+                "Updated quotas for user {UserId}: VMs={VMs}, CPU={CPU}c, MEM={MEM}MB",
+                user.Id, user.Quotas.CurrentVms, user.Quotas.CurrentCpuCores,
+                user.Quotas.CurrentMemoryMb);
+        }
+
+        // Step 4: Emit completion event
+        await _eventService.EmitAsync(new OrchestratorEvent
+        {
+            Type = EventType.VmDeleted,
+            ResourceType = "vm",
+            ResourceId = vm.Id,
+            NodeId = vm.NodeId,
+            UserId = vm.OwnerId
+        });
+
+        _logger.LogInformation("VM {VmId} deletion completed successfully", vm.Id);
     }
 
     /// <summary>
