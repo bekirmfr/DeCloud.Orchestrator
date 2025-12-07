@@ -1100,8 +1100,15 @@ async function createVM() {
         const data = await response.json();
 
         if (data.success) {
-            showToast('Virtual machine created successfully', 'success');
+            const vmId = data.data.vmId;
+            const password = response.data.password;
+
             closeModal('create-vm-modal');
+
+            // Only show password modal if we got a valid password (not an error code)
+            if (password && !password.includes('_') && password.includes('-')) {
+                await showPasswordModal(vmId, name, password);
+            }
             refreshData();
 
             document.getElementById('vm-name').value = '';
@@ -1109,7 +1116,7 @@ async function createVM() {
             document.getElementById('vm-memory').value = '2048';
             document.getElementById('vm-disk').value = '20';
         } else {
-            showToast(data.message || 'Failed to create VM', 'error');
+            showToast(data.error || 'Failed to create VM', 'error');
         }
     } catch (error) {
         console.error('[VM] Create error:', error);

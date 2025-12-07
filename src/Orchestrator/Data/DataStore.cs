@@ -18,6 +18,10 @@ public class DataStore
     // Thread-safe in-memory collections for fast access
     public ConcurrentDictionary<string, Node> Nodes { get; } = new();
     public ConcurrentDictionary<string, VirtualMachine> VirtualMachines { get; } = new();
+    // Pending commands for nodes (nodeId -> commands)
+    public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingNodeCommands { get; } = new();
+    // Add tracking dictionary
+    public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
@@ -27,9 +31,6 @@ public class DataStore
 
     // User sessions (refresh token hash -> user id)
     public ConcurrentDictionary<string, string> UserSessions { get; } = new();
-
-    // Pending commands for nodes (nodeId -> commands)
-    public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingNodeCommands { get; } = new();
 
     // Event history (for debugging/auditing)
     public ConcurrentQueue<OrchestratorEvent> EventHistory { get; } = new();
@@ -553,10 +554,52 @@ public class DataStore
     // Pending Commands Queue Management
     // =====================================================
 
+    // <summary>
+    /// Add a command to node's pending queue
+    /// Automatically tracks acknowledgment if RequiresAck=true
+    /// </summary>
     public void AddPendingCommand(string nodeId, NodeCommand command)
     {
-        var queue = PendingNodeCommands.GetOrAdd(nodeId, _ => new ConcurrentQueue<NodeCommand>());
+        if (!PendingNodeCommands.TryGetValue(nodeId, out var queue))
+        {
+            queue = new ConcurrentQueue<NodeCommand>();
+            PendingNodeCommands[nodeId] = queue;
+        }
+
         queue.Enqueue(command);
+
+        // Automatic acknowledgment tracking - store FULL command
+        if (command.RequiresAck && !string.IsNullOrEmpty(command.TargetResourceId))
+        {
+            PendingCommandAcks[command.CommandId] = command;  // ← Store full object!
+
+            _logger.LogDebug(
+                "Command {CommandId} ({Type}) queued for node {NodeId} - tracking ack for resource {ResourceId}",
+                command.CommandId, command.Type, nodeId, command.TargetResourceId);
+        }
+        else if (command.RequiresAck)
+        {
+            _logger.LogWarning(
+                "Command {CommandId} requires ack but has no TargetResourceId - cannot track!",
+                command.CommandId);
+        }
+    }
+
+    // <summary>
+    /// Complete command acknowledgment and return the command
+    /// </summary>
+    public NodeCommand? CompleteCommandAck(string commandId)
+    {
+        PendingCommandAcks.TryRemove(commandId, out var command);
+        return command;
+    }
+
+    /// <summary>
+    /// Get all commands waiting for acknowledgment
+    /// </summary>
+    public IReadOnlyCollection<NodeCommand> GetPendingAcks()
+    {
+        return PendingCommandAcks.Values.ToList();
     }
 
     public List<NodeCommand> GetAndClearPendingCommands(string nodeId)

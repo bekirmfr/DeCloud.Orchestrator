@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace Orchestrator.Models;
 
@@ -175,9 +175,41 @@ public record NodeHeartbeatResponse(
 
 public record NodeCommand(
     string CommandId,
-    [property: JsonConverter(typeof(JsonStringEnumConverter))]
     NodeCommandType Type,
-    string Payload
+    string Payload,
+    bool RequiresAck = true,
+    string? TargetResourceId = null
+)
+{
+    /// <summary>
+    /// When this command was queued
+    /// </summary>
+    public DateTime QueuedAt { get; init; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Optional expiration time for automatic timeout
+    /// </summary>
+    public DateTime? ExpiresAt { get; init; }
+
+    /// <summary>
+    /// Check if this command has expired
+    /// </summary>
+    public bool IsExpired => ExpiresAt.HasValue && DateTime.UtcNow > ExpiresAt.Value;
+
+    /// <summary>
+    /// Get age of this command
+    /// </summary>
+    public TimeSpan Age => DateTime.UtcNow - QueuedAt;
+}
+
+public record PendingCommandDto(
+    string CommandId,
+    string Type,
+    string? TargetResourceId,
+    DateTime QueuedAt,
+    double AgeSeconds,
+    bool IsExpired,
+    DateTime? ExpiresAt
 );
 
 public enum NodeCommandType

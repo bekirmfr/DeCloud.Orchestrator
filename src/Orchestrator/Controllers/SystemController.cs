@@ -175,6 +175,29 @@ public class SystemController : ControllerBase
 
         return Ok(ApiResponse<List<OrchestratorEvent>>.Ok(events.ToList()));
     }
+
+    // Then in controller:
+    /// <summary>
+    /// Get pending command acknowledgments (for monitoring/debugging)
+    /// </summary>
+    [HttpGet("commands/pending")]
+    public ActionResult<ApiResponse<List<PendingCommandDto>>> GetPendingCommands()
+    {
+        var pending = _dataStore.GetPendingAcks()
+            .Select(cmd => new PendingCommandDto(
+                cmd.CommandId,
+                cmd.Type.ToString(),
+                cmd.TargetResourceId,
+                cmd.QueuedAt,
+                cmd.Age.TotalSeconds,
+                cmd.IsExpired,
+                cmd.ExpiresAt
+            ))
+            .OrderByDescending(x => x.AgeSeconds)
+            .ToList();
+
+        return Ok(ApiResponse<List<PendingCommandDto>>.Ok(pending));
+    }
 }
 
 public record PriceCalculation(

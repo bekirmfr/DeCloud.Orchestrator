@@ -507,96 +507,165 @@ public class NodeService : INodeService
         return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null);
     }
 
-    /// <summary>
-    /// Process command acknowledgment from node
-    /// </summary>
     public async Task<bool> ProcessCommandAcknowledgmentAsync(
-        string nodeId,
-        string commandId,
-        CommandAcknowledgment ack)
+    string nodeId,
+    string commandId,
+    CommandAcknowledgment ack)
     {
         _logger.LogInformation(
             "Processing acknowledgment for command {CommandId} from node {NodeId}: Success={Success}",
             commandId, nodeId, ack.Success);
 
-        // Find VM associated with this command
-        // Look for VM on this node with matching commandId in StatusMessage
-        var affectedVm = _dataStore.VirtualMachines.Values
-            .FirstOrDefault(vm =>
-                vm.NodeId == nodeId &&
-                vm.StatusMessage != null &&
-                vm.StatusMessage.Contains(commandId));
+        // Get full command from acknowledgment tracking
+        var command = _dataStore.CompleteCommandAck(commandId);
 
-        if (affectedVm == null)
+        if (command == null)
         {
             _logger.LogWarning(
-                "Could not find VM associated with command {CommandId} from node {NodeId}",
-                commandId, nodeId);
+                "Command {CommandId} not found in acknowledgment tracking - may have expired or already processed",
+                commandId);
+            return true; // Still return true - ack received
+        }
 
-            // Still return true - acknowledgment was received
+        // Log processing time
+        var processingTime = DateTime.UtcNow - command.QueuedAt;
+        _logger.LogInformation(
+            "Command {CommandId} ({Type}) processed in {Duration}ms",
+            commandId, command.Type, processingTime.TotalMilliseconds);
+
+        // Get the target resource (VM)
+        var resourceId = command.TargetResourceId!;
+        if (!_dataStore.VirtualMachines.TryGetValue(resourceId, out var vm))
+        {
+            _logger.LogWarning(
+                "VM {VmId} associated with command {CommandId} not found - may have been deleted",
+                resourceId, commandId);
             return true;
+        }
+
+        // Validate node matches
+        if (vm.NodeId != nodeId)
+        {
+            _logger.LogWarning(
+                "Command {CommandId} ack from node {NodeId} but VM {VmId} is on node {VmNodeId}",
+                commandId, nodeId, resourceId, vm.NodeId);
+            return false;
         }
 
         if (!ack.Success)
         {
             // Command failed
             _logger.LogError(
-                "Command {CommandId} failed on node {NodeId}: {Error}",
-                commandId, nodeId, ack.ErrorMessage ?? "Unknown error");
+                "Command {CommandId} ({Type}) failed for VM {VmId}: {Error}",
+                commandId, command.Type, resourceId, ack.ErrorMessage ?? "Unknown error");
 
-            // Mark VM as error state
-            if (affectedVm.Status == VmStatus.Deleting)
+            if (vm.Status == VmStatus.Deleting || vm.Status == VmStatus.Provisioning)
             {
-                affectedVm.Status = VmStatus.Error;
-                affectedVm.StatusMessage = $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}";
-                affectedVm.UpdatedAt = DateTime.UtcNow;
-                await _dataStore.SaveVmAsync(affectedVm);
+                vm.Status = VmStatus.Error;
+                vm.StatusMessage = $"{command.Type} failed: {ack.ErrorMessage ?? "Unknown error"}";
+                vm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(vm);
             }
 
             await _eventService.EmitAsync(new OrchestratorEvent
             {
                 Type = EventType.VmError,
                 ResourceType = "vm",
-                ResourceId = affectedVm.Id,
+                ResourceId = vm.Id,
                 NodeId = nodeId,
-                UserId = affectedVm.OwnerId,
+                UserId = vm.OwnerId,
                 Payload = new Dictionary<string, object>
                 {
                     ["CommandId"] = commandId,
-                    ["Error"] = ack.ErrorMessage ?? "Unknown error"
+                    ["CommandType"] = command.Type.ToString(),
+                    ["Error"] = ack.ErrorMessage ?? "Unknown error",
+                    ["ProcessingTimeMs"] = processingTime.TotalMilliseconds
                 }
             });
 
             return true;
         }
 
-        // Command succeeded - handle based on VM status
-        if (affectedVm.Status == VmStatus.Deleting)
+        // Command succeeded - handle based on command type
+        switch (command.Type)
         {
-            _logger.LogInformation(
-                "Deletion confirmed for VM {VmId} - completing deletion",
-                affectedVm.Id);
+            case NodeCommandType.CreateVm:
+                await HandleCreateVmAckAsync(vm, commandId, ack, processingTime);
+                break;
 
-            // Complete deletion directly (no VmService dependency!)
-            await CompleteVmDeletionAsync(affectedVm);
-        }
-        else if (affectedVm.Status == VmStatus.Provisioning)
-        {
-            // VM creation acknowledged
-            _logger.LogInformation(
-                "Creation confirmed for VM {VmId} - marking as running",
-                affectedVm.Id);
+            case NodeCommandType.DeleteVm:
+                await HandleDeleteVmAckAsync(vm, commandId, processingTime);
+                break;
 
-            affectedVm.Status = VmStatus.Running;
-            affectedVm.PowerState = VmPowerState.Running;
-            affectedVm.StartedAt = ack.CompletedAt;
-            affectedVm.StatusMessage = null;
-            affectedVm.UpdatedAt = DateTime.UtcNow;
-            await _dataStore.SaveVmAsync(affectedVm);
+            case NodeCommandType.StartVm:
+            case NodeCommandType.StopVm:
+                await HandleVmActionAckAsync(vm, command.Type, commandId);
+                break;
+
+            default:
+                _logger.LogWarning(
+                    "Unhandled command type {Type} for acknowledgment",
+                    command.Type);
+                break;
         }
-        // Handle other command types as needed
 
         return true;
+    }
+
+    private async Task HandleCreateVmAckAsync(
+        VirtualMachine vm,
+        string commandId,
+        CommandAcknowledgment ack,
+        TimeSpan processingTime)
+    {
+        _logger.LogInformation(
+            "VM {VmId} creation confirmed (provisioning took {Duration}s)",
+            vm.Id, processingTime.TotalSeconds);
+
+        vm.Status = VmStatus.Running;
+        vm.PowerState = VmPowerState.Running;
+        vm.StartedAt = ack.CompletedAt;
+        vm.StatusMessage = null;
+        vm.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveVmAsync(vm);
+
+        await _eventService.EmitAsync(new OrchestratorEvent
+        {
+            Type = EventType.VmCreated,
+            ResourceType = "vm",
+            ResourceId = vm.Id,
+            NodeId = vm.NodeId,
+            UserId = vm.OwnerId,
+            Payload = new Dictionary<string, object>
+            {
+                ["ProvisioningTimeSeconds"] = processingTime.TotalSeconds
+            }
+        });
+    }
+
+    private async Task HandleDeleteVmAckAsync(
+        VirtualMachine vm,
+        string commandId,
+        TimeSpan processingTime)
+    {
+        _logger.LogInformation(
+            "VM {VmId} deletion confirmed (deletion took {Duration}s) - completing cleanup",
+            vm.Id, processingTime.TotalSeconds);
+
+        await CompleteVmDeletionAsync(vm);
+    }
+
+    private async Task HandleVmActionAckAsync(
+        VirtualMachine vm,
+        NodeCommandType commandType,
+        string commandId)
+    {
+        _logger.LogInformation(
+            "VM {VmId} action {Action} confirmed",
+            vm.Id, commandType);
+
+        // Update VM state based on action
+        // (Implementation depends on your state machine)
     }
 
     /// <summary>

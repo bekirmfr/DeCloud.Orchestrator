@@ -331,7 +331,9 @@ public class VmService : IVmService
             var command = new NodeCommand(
                 Guid.NewGuid().ToString(),
                 NodeCommandType.DeleteVm,
-                JsonSerializer.Serialize(new { VmId = vmId })
+                JsonSerializer.Serialize(new { VmId = vmId }),
+                RequiresAck: true,
+                TargetResourceId: vmId          // ← Automatic tracking!
             );
 
             _dataStore.AddPendingCommand(vm.NodeId, command);
@@ -577,7 +579,9 @@ public class VmService : IVmService
                     AllowedPorts = new List<int>()
                 },
                 Password = vm.Spec.Password ?? ""
-            })
+            }),
+            RequiresAck: true,              // ← Explicit
+            TargetResourceId: vm.Id         // ← Automatic tracking!
         );
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);

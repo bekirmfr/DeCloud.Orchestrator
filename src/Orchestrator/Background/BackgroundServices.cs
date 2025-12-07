@@ -1,3 +1,5 @@
+using Orchestrator.Data;
+using Orchestrator.Models;
 using Orchestrator.Services;
 
 namespace Orchestrator.Background;
@@ -182,6 +184,8 @@ public class CleanupService : BackgroundService
                 
                 await CleanupDeletedVmsAsync(dataStore);
                 await TrimEventHistoryAsync(dataStore);
+                await CleanupStaleCommandAcks(dataStore);
+                await CleanupExpiredCommands(dataStore);
             }
             catch (Exception ex)
             {
@@ -190,6 +194,77 @@ public class CleanupService : BackgroundService
 
             await Task.Delay(_cleanupInterval, stoppingToken);
         }
+    }
+
+    /// <summary>
+    /// Handle commands that have been waiting for ack too long (5 minutes default)
+    /// </summary>
+    private async Task CleanupExpiredCommands(DataStore dataStore)
+    {
+        var timeout = TimeSpan.FromMinutes(5);
+        var now = DateTime.UtcNow;
+
+        var timedOutCommands = dataStore.PendingCommandAcks.Values
+            .Where(cmd => cmd.Age > timeout)
+            .ToList();
+
+        foreach (var command in timedOutCommands)
+        {
+            _logger.LogWarning(
+                "Command {CommandId} ({Type}) for resource {ResourceId} timed out after {Age}s - no acknowledgment received",
+                command.CommandId, command.Type, command.TargetResourceId, command.Age.TotalSeconds);
+
+            // Mark associated VM as error if it exists and is in a waiting state
+            if (!string.IsNullOrEmpty(command.TargetResourceId) &&
+                dataStore.VirtualMachines.TryGetValue(command.TargetResourceId, out var vm))
+            {
+                if (vm.Status == VmStatus.Provisioning || vm.Status == VmStatus.Deleting)
+                {
+                    vm.Status = VmStatus.Error;
+                    vm.StatusMessage = $"{command.Type} timed out - no acknowledgment received from node after {timeout.TotalMinutes} minutes";
+                    vm.UpdatedAt = DateTime.UtcNow;
+                    await dataStore.SaveVmAsync(vm);
+
+                    _logger.LogWarning(
+                        "Marked VM {VmId} as Error due to command timeout",
+                        vm.Id);
+                }
+            }
+
+            // Remove from tracking
+            dataStore.PendingCommandAcks.TryRemove(command.CommandId, out _);
+        }
+
+        if (timedOutCommands.Any())
+        {
+            _logger.LogWarning(
+                "Handled {Count} timed-out commands",
+                timedOutCommands.Count);
+        }
+    }
+
+    private Task CleanupStaleCommandAcks(DataStore dataStore)
+    {
+        var staleCommands = dataStore.PendingCommandAcks.Values
+        .Where(cmd =>
+            !string.IsNullOrEmpty(cmd.TargetResourceId) &&
+            !dataStore.VirtualMachines.ContainsKey(cmd.TargetResourceId))
+        .Select(cmd => cmd.CommandId)
+        .ToList();
+
+        foreach (var commandId in staleCommands)
+        {
+            dataStore.PendingCommandAcks.TryRemove(commandId, out _);
+        }
+
+        if (staleCommands.Any())
+        {
+            _logger.LogInformation(
+                "Cleaned up {Count} stale command acknowledgment entries",
+                staleCommands.Count);
+        }
+
+        return Task.CompletedTask;
     }
 
     private Task CleanupDeletedVmsAsync(Data.DataStore dataStore)
