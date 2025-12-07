@@ -187,7 +187,7 @@ public class VmService : IVmService
 
         if (!string.IsNullOrEmpty(userId))
         {
-            query = query.Where(v => v.OwnerWallet == userId);
+            query = query.Where(v => v.OwnerId == userId);
         }
 
         if (queryParams.Filters?.TryGetValue("status", out var status) == true)
