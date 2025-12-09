@@ -344,9 +344,11 @@ public class VmService : IVmService
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
             var command = new NodeCommand(
-                Guid.NewGuid().ToString(),
-                NodeCommandType.DeleteVm,
-                JsonSerializer.Serialize(new { VmId = vmId })
+                CommandId: Guid.NewGuid().ToString(),
+                Type: NodeCommandType.DeleteVm,
+                Payload: JsonSerializer.Serialize(new { VmId = vmId }),
+                RequiresAck: true,
+                TargetResourceId: vmId
             );
 
             // Register in command registry (primary lookup mechanism)

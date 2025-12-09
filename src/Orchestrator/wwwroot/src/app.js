@@ -888,11 +888,11 @@ function renderDashboardVMs(vms) {
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Memory</span>
-                    <span class="spec-value">${vm.specs?.memoryMb || 0} MB</span>
+                    <span class="spec-value">${vm.spec?.memoryMb || 0} MB</span>
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Disk</span>
-                    <span class="spec-value">${vm.specs?.diskGb || 0} GB</span>
+                    <span class="spec-value">${vm.spec?.diskGb || 0} GB</span>
                 </div>
             </div>
         </div>

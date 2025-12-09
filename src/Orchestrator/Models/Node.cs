@@ -1,6 +1,4 @@
-﻿using System.Text.Json.Serialization;
-
-namespace Orchestrator.Models;
+﻿namespace Orchestrator.Models;
 
 /// <summary>
 /// Represents a compute node in the decentralized network
@@ -43,23 +41,6 @@ public class Node
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
-}
-
-/// <summary>
-/// Detailed VM information sent in heartbeats for state recovery
-/// </summary>
-public class NodeVmInfo
-{
-    public string VmId { get; set; } = string.Empty;
-    public string? Name { get; set; }
-    public string? TenantId { get; set; }
-    public string State { get; set; } = string.Empty;
-    public string? IpAddress { get; set; }
-    public double? CpuUsagePercent { get; set; }
-    public DateTime? StartedAt { get; set; }
-    public int? VCpus { get; set; }
-    public long? MemoryBytes { get; set; }
-    public long? DiskBytes { get; set; }
 }
 
 public class NodeResources

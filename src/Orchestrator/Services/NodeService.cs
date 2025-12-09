@@ -933,6 +933,8 @@ public class NodeService : INodeService
             .Select(v => v.Id)
             .ToHashSet();
 
+        var node = await GetNodeAsync(nodeId);
+
         foreach (var reported in heartbeat.ActiveVms)
         {
             var vmId = reported.VmId;
@@ -973,7 +975,20 @@ public class NodeService : INodeService
                 if (!string.IsNullOrEmpty(reported.IpAddress) &&
                     vm.NetworkConfig.PrivateIp != reported.IpAddress)
                 {
+                    vm.AccessInfo ??= new VmAccessInfo();
+                    vm.AccessInfo.SshHost = reported.IpAddress;
+                    vm.AccessInfo.SshPort = int.Parse(reported.VncPort);
+
+                    if (!string.IsNullOrEmpty(reported.VncPort))
+                    {
+                        // VNC accessible through WireGuard at node IP
+                        vm.AccessInfo.VncHost = node?.PublicIp ?? reported.IpAddress;
+                        vm.AccessInfo.VncPort = int.Parse(reported.VncPort);
+                    }
+
+                    // Update network config with actual libvirt IP
                     vm.NetworkConfig.PrivateIp = reported.IpAddress;
+
                     await _dataStore.SaveVmAsync(vm);
                 }
             }
@@ -1012,7 +1027,10 @@ public class NodeService : INodeService
                 NetworkConfig = new VmNetworkConfig
                 {
                     PrivateIp = reported.IpAddress ?? "",
-                    Hostname = reported.Name ?? ""
+                    Hostname = reported.Name ?? "",
+                    //PublicIp = ,
+                    //PortMappings = [reported.VncPort],
+                    //OverlayNetworkId = 
                 },
                 Spec = new VmSpec
                 {
@@ -1023,7 +1041,8 @@ public class NodeService : INodeService
                     DiskGb = reported.DiskBytes.HasValue
                         ? reported.DiskBytes.Value / 1024 / 1024 / 1024
                         : 20,
-                    ImageId = "unknown"
+                    ImageId = "unknown",
+                    EncryptedPassword = reported.EncryptedPassword ?? null
                 },
                 StatusMessage = "Recovered from node heartbeat after orchestrator restart",
                 Labels = new Dictionary<string, string>
