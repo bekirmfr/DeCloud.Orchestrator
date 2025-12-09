@@ -823,9 +823,9 @@ function renderVMsTable(vms) {
                 </div>
             </td>
             <td>${vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId) : 'Unknown'}</td>
-            <td>${vm.specs?.cpu || 0} cores</td>
-            <td>${vm.specs?.memory || 0} MB</td>
-            <td>${vm.specs?.disk || 0} GB</td>
+            <td>${vm.spec?.cpu || 0} cores</td>
+            <td>${vm.spec?.memory || 0} MB</td>
+            <td>${vm.spec?.disk || 0} GB</td>
             <td>
                 <span class="status-badge status-${vm.status}">
                     ${vm.status}
@@ -833,7 +833,7 @@ function renderVMsTable(vms) {
             </td>
             <td>
                 <div class="table-actions">
-                    <button class="btn-icon" onclick="window.showConnectInfo('${vm.nodeIp}', '${vm.ipAddress}', '${vm.name}')" title="Connect">
+                    <button class="btn-icon" onclick="window.showConnectInfo('${vm.networkConfig.nodeIp}', '${vm.networkConfig.privateIp}', '${vm.name}')" title="Connect">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
                         </svg>
@@ -1041,9 +1041,8 @@ async function createVM() {
         const data = await response.json();
 
         if (data.success) {
-            const vm = data.data.vm;
-            const vmId = vm.vmId;
-            const password = vm.password
+            const vmId = data.data.vmId;
+            const password = data.data.password
 
             // Only show password modal if we got a valid password (not an error code)
             if (password && !password.includes('_') && password.includes('-')) {
