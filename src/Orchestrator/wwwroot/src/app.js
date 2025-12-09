@@ -6,6 +6,11 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { mainnet, polygon, arbitrum } from '@reown/appkit/networks';
 import { BrowserProvider } from 'ethers';
 
+// @noble/ciphers - Works on HTTP and HTTPS (no secure context required)
+import { gcm } from '@noble/ciphers/aes';
+import { randomBytes } from '@noble/ciphers/webcrypto';
+import { sha256 } from '@noble/hashes/sha256';
+
 // ============================================
 // CONFIGURATION
 // ============================================
@@ -129,7 +134,7 @@ function setupAppKitListeners() {
             // User just connected
             if (connectedAddress !== account.address) {
                 connectedAddress = account.address;
-                
+
                 try {
                     // Get provider and signer
                     const walletProvider = appKitModal.getWalletProvider();
@@ -139,9 +144,9 @@ function setupAppKitListeners() {
 
                     ethersProvider = new BrowserProvider(walletProvider);
                     ethersSigner = await ethersProvider.getSigner();
-                    
+
                     console.log('[AppKit] Provider and signer ready');
-                    
+
                     // Proceed with authentication
                     await proceedWithAuthentication(account.address, 'appkit');
                 } catch (error) {
@@ -208,7 +213,7 @@ async function connectWallet() {
 
 async function proceedWithAuthentication(walletAddress, connectionType) {
     const btn = document.getElementById('connect-wallet-btn');
-    
+
     try {
         showLoginStatus('info', 'Requesting signature...');
         btn.innerHTML = '<div class="spinner"></div> Sign Message...';
@@ -226,7 +231,7 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
                 if (appKitModal) {
                     appKitModal.close();
                 }
-                
+
                 showDashboard();
                 setupTokenRefresh();
                 refreshData();
@@ -299,7 +304,7 @@ async function authenticateWithWallet(walletAddress) {
         // Step 3: Authenticate with the server
         const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -334,18 +339,18 @@ async function authenticateWithWallet(walletAddress) {
         }
     } catch (error) {
         console.error('[Auth] Authentication error:', error);
-        
+
         // SECURITY: Don't expose internal error details
         let errorMessage = 'Authentication failed. Please try again.';
-        
+
         if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             errorMessage = 'Signature request rejected';
         } else if (error.message?.includes('User rejected')) {
             errorMessage = 'Signature request rejected';
         }
-        
-        return { 
-            success: false, 
+
+        return {
+            success: false,
             error: errorMessage
         };
     }
@@ -383,6 +388,7 @@ async function disconnect() {
     ethersProvider = null;
     ethersSigner = null;
     connectedAddress = null;
+    clearEncryptionKey();  // Clear cached encryption key
 
     clearSession();
     showLogin();
@@ -437,13 +443,13 @@ async function restoreSession() {
             // Verify token is still valid
             console.log('[Session] Verifying stored token...');
             const refreshed = await refreshAuthToken();
-            
+
             if (refreshed) {
                 console.log('[Session] Token valid, restoring session');
-                
+
                 // Initialize AppKit in background (non-blocking)
                 initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
-                
+
                 showDashboard();
                 refreshData();
                 return true;
@@ -452,7 +458,7 @@ async function restoreSession() {
             console.error('[Session] Verification failed:', e);
         }
     }
-    
+
     console.log('[Session] No valid session found');
     return false;
 }
@@ -480,7 +486,7 @@ function handleConnectionError(error) {
 
 function resetConnectButton(btn) {
     if (!btn) return;
-    
+
     btn.disabled = false;
     btn.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -589,7 +595,7 @@ async function api(endpoint, options = {}) {
     if (response.status === 401) {
         console.log('[API] 401 received, attempting token refresh...');
         const refreshed = await refreshAuthToken();
-        
+
         if (refreshed) {
             headers['Authorization'] = `Bearer ${authToken}`;
             return fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
@@ -606,9 +612,16 @@ async function api(endpoint, options = {}) {
 }
 
 // ============================================
-// PASSWORD ENCRYPTION
+// PASSWORD ENCRYPTION - @noble/ciphers
+// Works on HTTP and HTTPS - No secure context required!
 // ============================================
 
+/**
+ * Get encryption key from wallet signature
+ * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
+ * 
+ * @returns {Promise<Uint8Array>} 32-byte AES-256 key
+ */
 async function getEncryptionKey() {
     if (cachedEncryptionKey) {
         return cachedEncryptionKey;
@@ -618,55 +631,123 @@ async function getEncryptionKey() {
         throw new Error('Wallet not connected');
     }
 
-    // Dynamically import ethers utilities
-    const { keccak256, toUtf8Bytes, getBytes } = await import('ethers');
-    
-    const signature = await ethersSigner.signMessage(ENCRYPTION_MESSAGE);
-    const keyMaterial = getBytes(keccak256(toUtf8Bytes(signature)));
-    
-    cachedEncryptionKey = await crypto.subtle.importKey(
-        'raw',
-        keyMaterial.slice(0, 32),
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt']
-    );
+    try {
+        console.log('[Encryption] Deriving key from wallet signature...');
 
-    return cachedEncryptionKey;
+        // Get wallet signature
+        const signature = await ethersSigner.signMessage(ENCRYPTION_MESSAGE);
+
+        // Hash the signature to get a consistent 32-byte key using SHA-256
+        // This is secure and deterministic (same wallet = same key)
+        const keyMaterial = sha256(new TextEncoder().encode(signature));
+
+        // Cache the key (32 bytes for AES-256)
+        cachedEncryptionKey = keyMaterial;
+
+        console.log('[Encryption] ✓ Key derived successfully');
+        return cachedEncryptionKey;
+    } catch (error) {
+        console.error('[Encryption] Failed to generate key:', error);
+        throw new Error(`Key generation failed: ${error.message}`);
+    }
 }
 
+/**
+ * Encrypt password using AES-256-GCM
+ * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
+ * 
+ * @param {string} password - Plain text password to encrypt
+ * @returns {Promise<string>} Base64-encoded encrypted data (nonce + ciphertext + tag)
+ */
 async function encryptPassword(password) {
-    const key = await getEncryptionKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encoded = new TextEncoder().encode(password);
-    
-    const encrypted = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        encoded
-    );
+    try {
+        console.log('[Encryption] Encrypting password...');
 
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(encrypted), iv.length);
+        // Get encryption key (32 bytes for AES-256)
+        const key = await getEncryptionKey();
 
-    return btoa(String.fromCharCode(...combined));
+        // Generate random 12-byte nonce (IV) for GCM mode
+        // Using @noble/ciphers randomBytes - works on HTTP!
+        const nonce = randomBytes(12);
+
+        // Convert password to bytes
+        const plaintext = new TextEncoder().encode(password);
+
+        // Create AES-256-GCM cipher using @noble/ciphers
+        // This works on HTTP, HTTPS, and localhost - no crypto.subtle needed!
+        const cipher = gcm(key, nonce);
+
+        // Encrypt (produces ciphertext + 16-byte authentication tag)
+        const ciphertext = cipher.encrypt(plaintext);
+
+        // Combine nonce + ciphertext (which includes auth tag)
+        // Format: [12-byte nonce][ciphertext + 16-byte tag]
+        const combined = new Uint8Array(nonce.length + ciphertext.length);
+        combined.set(nonce, 0);
+        combined.set(ciphertext, nonce.length);
+
+        // Convert to base64 for storage/transmission
+        const encrypted = btoa(String.fromCharCode(...combined));
+
+        console.log('[Encryption] ✓ Password encrypted successfully');
+        return encrypted;
+    } catch (error) {
+        console.error('[Encryption] Failed to encrypt:', error);
+        throw new Error(`Encryption failed: ${error.message}`);
+    }
 }
 
+/**
+ * Decrypt password using AES-256-GCM
+ * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
+ * 
+ * @param {string} encryptedPassword - Base64-encoded encrypted data
+ * @returns {Promise<string>} Decrypted plain text password
+ */
 async function decryptPassword(encryptedPassword) {
-    const key = await getEncryptionKey();
-    const combined = Uint8Array.from(atob(encryptedPassword), c => c.charCodeAt(0));
-    
-    const iv = combined.slice(0, 12);
-    const encrypted = combined.slice(12);
+    try {
+        console.log('[Decryption] Decrypting password...');
 
-    const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        key,
-        encrypted
-    );
+        // Get encryption key (must be same wallet that encrypted)
+        const key = await getEncryptionKey();
 
-    return new TextDecoder().decode(decrypted);
+        // Decode base64 to bytes
+        const combined = Uint8Array.from(atob(encryptedPassword), c => c.charCodeAt(0));
+
+        // Split into nonce and ciphertext
+        const nonce = combined.slice(0, 12);
+        const ciphertext = combined.slice(12);
+
+        // Create AES-256-GCM cipher using @noble/ciphers
+        const cipher = gcm(key, nonce);
+
+        // Decrypt (automatically verifies authentication tag)
+        const plaintext = cipher.decrypt(ciphertext);
+
+        // Convert bytes to string
+        const password = new TextDecoder().decode(plaintext);
+
+        console.log('[Decryption] ✓ Password decrypted successfully');
+        return password;
+    } catch (error) {
+        console.error('[Decryption] Failed to decrypt:', error);
+
+        // Provide helpful error messages
+        if (error.message.includes('Invalid')) {
+            throw new Error('Decryption failed: Invalid key or corrupted data. Make sure you\'re using the same wallet.');
+        }
+
+        throw new Error(`Decryption failed: ${error.message}`);
+    }
+}
+
+/**
+ * Clear cached encryption key
+ * Call this when wallet disconnects
+ */
+function clearEncryptionKey() {
+    cachedEncryptionKey = null;
+    console.log('[Encryption] Key cache cleared');
 }
 
 // ============================================
@@ -683,7 +764,7 @@ function showDashboard() {
     document.getElementById('login-overlay').classList.remove('active');
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('app-container').style.display = 'flex';
-    
+
     if (CONFIG.wallet) {
         const shortAddress = `${CONFIG.wallet.slice(0, 6)}...${CONFIG.wallet.slice(-4)}`;
         const walletDisplay = document.getElementById('wallet-display');
@@ -721,11 +802,11 @@ function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
-    
+
     container.appendChild(toast);
-    
+
     setTimeout(() => toast.classList.add('show'), 10);
-    
+
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
@@ -736,21 +817,21 @@ function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
     });
-    
+
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
     });
-    
+
     const selectedPage = document.getElementById(`page-${pageName}`);
     if (selectedPage) {
         selectedPage.classList.add('active');
     }
-    
+
     const selectedNav = document.querySelector(`.nav-item[data-page="${pageName}"]`);
     if (selectedNav) {
         selectedNav.classList.add('active');
     }
-    
+
     if (pageName === 'dashboard' || pageName === 'virtual-machines') {
         refreshData();
     } else if (pageName === 'nodes') {
@@ -793,7 +874,7 @@ async function loadVirtualMachines() {
     try {
         const response = await api('/api/vms');
         const data = await response.json();
-        
+
         if (data.success) {
             const vms = data.data.items;
             renderVMsTable(vms);
@@ -903,14 +984,14 @@ async function loadNodes() {
     try {
         const response = await api('/api/nodes');
         const data = await response.json();
-        
+
         if (data.success) {
             const nodes = data.data;
-            
+
             nodes.forEach(node => {
                 nodesCache[node.id] = node.name;
             });
-            
+
             renderNodesTable(nodes);
         }
     } catch (error) {
@@ -931,7 +1012,7 @@ function renderNodesTable(nodes) {
     tbody.innerHTML = nodes.map(node => {
         const lastSeen = node.lastHeartbeat ? new Date(node.lastHeartbeat).toLocaleString() : 'Never';
         const isOnline = node.status === 'online';
-        
+
         return `
         <tr>
             <td>
@@ -958,7 +1039,7 @@ async function loadSSHKeys() {
     try {
         const response = await api('/api/ssh-keys');
         const data = await response.json();
-        
+
         if (data.success) {
             renderSSHKeysTable(data.data);
         }
@@ -980,7 +1061,7 @@ function renderSSHKeysTable(keys) {
     tbody.innerHTML = keys.map(key => {
         const added = new Date(key.createdAt).toLocaleDateString();
         const fingerprint = key.fingerprint || 'N/A';
-        
+
         return `
         <tr>
             <td>${key.name}</td>
@@ -1051,7 +1132,7 @@ async function createVM() {
             showToast('Virtual machine created successfully', 'success');
             closeModal('create-vm-modal');
             refreshData();
-            
+
             document.getElementById('vm-name').value = '';
             document.getElementById('vm-cpu').value = '2';
             document.getElementById('vm-memory').value = '2048';
@@ -1127,11 +1208,8 @@ async function showPasswordModal(vmId, vmName, password) {
 
         window.secureAndClose = async (vmId, password) => {
             try {
-                // Get encryption key from wallet
-                const aesKey = await getEncryptionKey();
-
-                // Encrypt password
-                const encryptedPassword = await encryptPassword(password, aesKey);
+                // Encrypt password (key derived from wallet internally)
+                const encryptedPassword = await encryptPassword(password);
 
                 // Store encrypted password on server
                 await api(`/api/vms/${vmId}/secure-password`, {
@@ -1168,11 +1246,8 @@ async function revealPassword(vmId, vmName) {
             return;
         }
 
-        // Get decryption key from wallet
-        const aesKey = await getEncryptionKey();
-
-        // Decrypt
-        const password = await decryptPassword(response.data.encryptedPassword, aesKey);
+        // Decrypt (key derived from wallet internally)
+        const password = await decryptPassword(response.data.encryptedPassword);
 
         // Show in modal
         const modal = document.createElement('div');
@@ -1234,7 +1309,7 @@ async function addSSHKey() {
             showToast('SSH key added successfully', 'success');
             closeModal('add-ssh-key-modal');
             loadSSHKeys();
-            
+
             document.getElementById('ssh-key-name').value = '';
             document.getElementById('ssh-key-public').value = '';
         } else {
@@ -1320,7 +1395,7 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
 
 function saveSettings() {
     const orchestratorUrl = document.getElementById('settings-orchestrator-url').value.trim();
-    
+
     if (orchestratorUrl && orchestratorUrl !== CONFIG.orchestratorUrl) {
         CONFIG.orchestratorUrl = orchestratorUrl;
         localStorage.setItem('orchestratorUrl', orchestratorUrl);
