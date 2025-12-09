@@ -1089,58 +1089,119 @@ async function deleteVM(vmId, vmName) {
     }
 }
 
-async function revealPassword(vmId) {
+/**
+* Show password modal and handle encryption
+*/
+async function showPasswordModal(vmId, vmName, password) {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay active';
+        modal.id = 'password-modal';
+        modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 550px;">
+                        <h3>🔐 Save Your VM Password</h3>
+                        <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
+                
+                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
+                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${password}</code>
+                        </div>
+                
+                        <div style="background: #2d1f1f; border: 1px solid #7f1d1d; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <p style="color: #fca5a5; margin: 0;">
+                                <strong>⚠️ Important:</strong> This password will be encrypted with your wallet and stored securely. 
+                                You can always retrieve it by signing with your wallet, but <strong>save it now</strong> as a backup.
+                            </p>
+                        </div>
+                
+                        <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
+                                📋 Copy Password
+                            </button>
+                            <button onclick="secureAndClose('${vmId}', '${password}')" class="btn btn-primary">
+                                🔒 Secure & Continue
+                            </button>
+                        </div>
+                    </div>
+                `;
+        document.body.appendChild(modal);
+
+        window.secureAndClose = async (vmId, password) => {
+            try {
+                // Get encryption key from wallet
+                const aesKey = await getEncryptionKey();
+
+                // Encrypt password
+                const encryptedPassword = await encryptPassword(password, aesKey);
+
+                // Store encrypted password on server
+                await api(`/api/vms/${vmId}/secure-password`, {
+                    method: 'POST',
+                    body: JSON.stringify({ encryptedPassword })
+                });
+
+                showToast('Password secured with your wallet!', 'success');
+                modal.remove();
+                resolve();
+            } catch (error) {
+                console.error('Failed to secure password:', error);
+                showToast('Failed to encrypt - please save password manually!', 'error');
+            }
+        };
+    });
+}
+
+function copyVmPassword(password) {
+    navigator.clipboard.writeText(password);
+    showToast('Password copied!', 'success');
+}
+
+/**
+ * Reveal password for a VM (requires wallet signature)
+ */
+async function revealPassword(vmId, vmName) {
     try {
-        const response = await api(`/api/vms/${vmId}`);
-        const data = await response.json();
+        // Get encrypted password from server
+        const response = await api(`/api/vms/${vmId}/encrypted-password`);
 
-        if (!data.success || !data.data) {
-            showToast('Failed to load VM details', 'error');
+        if (!response.success || !response.data?.encryptedPassword) {
+            showToast('Password not available', 'error');
             return;
         }
 
-        const vm = data.data.vm;
+        // Get decryption key from wallet
+        const aesKey = await getEncryptionKey();
 
-        if (vm.spec.passwordSecured == true && !vm.spec.encryptedPassword) {
-            showToast('No password set for this VM', 'error');
-            return;
-        }
+        // Decrypt
+        const password = await decryptPassword(response.data.encryptedPassword, aesKey);
 
-        const password = vm.spec.encryptedPassword ? await decryptPassword(vm.spec.encryptedPassword) : vm.spec.password;
-
+        // Show in modal
         const modal = document.createElement('div');
         modal.className = 'modal-overlay active';
         modal.innerHTML = `
-            <div class="modal" style="max-width: 500px;">
-                <div class="modal-header">
-                    <h2 class="modal-title">VM Password - ${vm.name}</h2>
-                    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p style="margin-bottom: 12px; color: #9ca3af;">Username: <strong style="color: #fff;">decloud</strong></p>
-                    <p style="margin-bottom: 12px; color: #9ca3af;">Password:</p>
-                    <div style="background: #1e1f2e; padding: 16px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 18px; color: #10b981; word-break: break-all; margin-bottom: 16px;">
-                        ${password}
+                    <div class="modal-content" style="max-width: 450px;">
+                        <h3>🔑 VM Password</h3>
+                        <p>Password for <strong>${vmName}</strong>:</p>
+                
+                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
+                            <code style="font-size: 1.4em; color: #10b981;">${password}</code>
+                        </div>
+                
+                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                            <button onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');" class="btn btn-secondary">
+                                📋 Copy
+                            </button>
+                            <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
+                                Close
+                            </button>
+                        </div>
                     </div>
-                    <p style="font-size: 12px; color: #ef4444;">⚠️ Keep this password secure. It will not be shown again.</p>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${password}'); window.showToast('Password copied!', 'success');">📋 Copy</button>
-                    <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
-                </div>
-            </div>
-        `;
+                `;
         document.body.appendChild(modal);
         modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
     } catch (error) {
-        console.error('[VM] Password reveal error:', error);
-        showToast('Failed to decrypt password. Ensure same wallet is connected.', 'error');
+        console.error('Failed to reveal password:', error);
+        showToast('Failed to decrypt password. Make sure you\'re using the same wallet.', 'error');
     }
 }
 
