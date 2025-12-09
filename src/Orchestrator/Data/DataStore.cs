@@ -20,6 +20,13 @@ public class DataStore
     public ConcurrentDictionary<string, VirtualMachine> VirtualMachines { get; } = new();
     // Pending commands for nodes (nodeId -> commands)
     public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingNodeCommands { get; } = new();
+    /// <summary>
+    /// Command registry for reliable command→VM tracking.
+    /// Key: commandId, Value: CommandRegistration
+    /// This provides a reliable way to look up which VM a command belongs to,
+    /// independent of the VM's StatusMessage field.
+    /// </summary>
+    public ConcurrentDictionary<string, CommandRegistration> CommandRegistry { get; } = new();
     // Add tracking dictionary
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
@@ -600,6 +607,84 @@ public class DataStore
     public IReadOnlyCollection<NodeCommand> GetPendingAcks()
     {
         return PendingCommandAcks.Values.ToList();
+    }
+
+    /// <summary>
+    /// Register a command for tracking.
+    /// Call this when issuing any command that needs acknowledgement.
+    /// </summary>
+    public void RegisterCommand(string commandId, string vmId, string nodeId, NodeCommandType commandType)
+    {
+        var registration = new CommandRegistration(
+            commandId,
+            vmId,
+            nodeId,
+            commandType,
+            DateTime.UtcNow
+        );
+
+        CommandRegistry[commandId] = registration;
+
+        _logger.LogDebug(
+            "Registered command {CommandId} for VM {VmId} on node {NodeId} (type: {Type})",
+            commandId, vmId, nodeId, commandType);
+    }
+
+    /// <summary>
+    /// Try to get and remove a command registration.
+    /// Returns true if found and removed.
+    /// </summary>
+    public bool TryCompleteCommand(string commandId, out CommandRegistration? registration)
+    {
+        var result = CommandRegistry.TryRemove(commandId, out registration);
+
+        if (result)
+        {
+            _logger.LogDebug(
+                "Completed command {CommandId} for VM {VmId}",
+                commandId, registration!.VmId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Get all stale commands (older than specified timeout).
+    /// </summary>
+    public List<CommandRegistration> GetStaleCommands(TimeSpan timeout)
+    {
+        var cutoff = DateTime.UtcNow - timeout;
+
+        return CommandRegistry.Values
+            .Where(r => r.IssuedAt < cutoff)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Remove stale command registrations.
+    /// Returns the count of removed registrations.
+    /// </summary>
+    public int CleanupStaleCommands(TimeSpan timeout)
+    {
+        var cutoff = DateTime.UtcNow - timeout;
+        var staleIds = CommandRegistry
+            .Where(kvp => kvp.Value.IssuedAt < cutoff)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var id in staleIds)
+        {
+            CommandRegistry.TryRemove(id, out _);
+        }
+
+        if (staleIds.Count > 0)
+        {
+            _logger.LogWarning(
+                "Cleaned up {Count} stale command registrations (timeout: {Timeout})",
+                staleIds.Count, timeout);
+        }
+
+        return staleIds.Count;
     }
 
     public List<NodeCommand> GetAndClearPendingCommands(string nodeId)

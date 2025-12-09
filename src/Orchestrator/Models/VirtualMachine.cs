@@ -1,4 +1,5 @@
 using Orchestrator.Services;
+using System.Text.Json.Serialization;
 
 namespace Orchestrator.Models;
 
@@ -46,6 +47,29 @@ public class VirtualMachine
     
     // Tags/Labels
     public Dictionary<string, string> Labels { get; set; } = new();
+
+    // =========================================================================
+    // Command Tracking (for reliable acknowledgement processing)
+    // =========================================================================
+
+    /// <summary>
+    /// Currently active command ID for this VM.
+    /// Used for reliable command acknowledgement tracking.
+    /// Cleared after command is acknowledged.
+    /// </summary>
+    public string? ActiveCommandId { get; set; }
+
+    /// <summary>
+    /// Type of the currently active command.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public NodeCommandType? ActiveCommandType { get; set; }
+
+    /// <summary>
+    /// Timestamp when the active command was issued.
+    /// Used for timeout detection.
+    /// </summary>
+    public DateTime? ActiveCommandIssuedAt { get; set; }
 }
 
 public class VmSpec

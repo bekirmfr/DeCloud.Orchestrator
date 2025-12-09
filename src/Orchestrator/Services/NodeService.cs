@@ -507,106 +507,257 @@ public class NodeService : INodeService
         return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null);
     }
 
+    /// <summary>
+    /// Process command acknowledgment from node.
+    /// Uses multiple lookup strategies for reliability.
+    /// </summary>
     public async Task<bool> ProcessCommandAcknowledgmentAsync(
-    string nodeId,
-    string commandId,
-    CommandAcknowledgment ack)
+        string nodeId,
+        string commandId,
+        CommandAcknowledgment ack)
     {
         _logger.LogInformation(
             "Processing acknowledgment for command {CommandId} from node {NodeId}: Success={Success}",
             commandId, nodeId, ack.Success);
 
-        // Get full command from acknowledgment tracking
-        var command = _dataStore.CompleteCommandAck(commandId);
+        // ====================================================================
+        // MULTI-STRATEGY VM LOOKUP (in order of reliability)
+        // ====================================================================
 
-        if (command == null)
+        VirtualMachine? affectedVm = null;
+        string lookupMethod = "none";
+        CommandRegistration? registration = null;
+
+        // Strategy 1: Command Registry (most reliable)
+        if (_dataStore.TryCompleteCommand(commandId, out registration))
         {
-            _logger.LogWarning(
-                "Command {CommandId} not found in acknowledgment tracking - may have expired or already processed",
-                commandId);
-            return true; // Still return true - ack received
+            if (_dataStore.VirtualMachines.TryGetValue(registration!.VmId, out affectedVm))
+            {
+                lookupMethod = "command_registry";
+                _logger.LogDebug(
+                    "Found VM {VmId} via command registry for command {CommandId}",
+                    registration.VmId, commandId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Command registry pointed to non-existent VM {VmId} for command {CommandId}",
+                    registration.VmId, commandId);
+            }
         }
 
-        // Log processing time
-        var processingTime = DateTime.UtcNow - command.QueuedAt;
-        _logger.LogInformation(
-            "Command {CommandId} ({Type}) processed in {Duration}ms",
-            commandId, command.Type, processingTime.TotalMilliseconds);
-
-        // Get the target resource (VM)
-        var resourceId = command.TargetResourceId!;
-        if (!_dataStore.VirtualMachines.TryGetValue(resourceId, out var vm))
+        // Strategy 2: VM's ActiveCommandId field (backup)
+        if (affectedVm == null)
         {
-            _logger.LogWarning(
-                "VM {VmId} associated with command {CommandId} not found - may have been deleted",
-                resourceId, commandId);
+            affectedVm = _dataStore.VirtualMachines.Values
+                .FirstOrDefault(vm =>
+                    vm.NodeId == nodeId &&
+                    vm.ActiveCommandId == commandId);
+
+            if (affectedVm != null)
+            {
+                lookupMethod = "active_command_id";
+                _logger.LogDebug(
+                    "Found VM {VmId} via ActiveCommandId for command {CommandId}",
+                    affectedVm.Id, commandId);
+            }
+        }
+
+        // Strategy 3: StatusMessage contains commandId (legacy fallback)
+        if (affectedVm == null)
+        {
+            affectedVm = _dataStore.VirtualMachines.Values
+                .FirstOrDefault(vm =>
+                    vm.NodeId == nodeId &&
+                    vm.StatusMessage != null &&
+                    vm.StatusMessage.Contains(commandId));
+
+            if (affectedVm != null)
+            {
+                lookupMethod = "status_message_legacy";
+                _logger.LogWarning(
+                    "Found VM {VmId} via StatusMessage fallback for command {CommandId}. " +
+                    "Command tracking may be degraded - check if ActiveCommandId is being set.",
+                    affectedVm.Id, commandId);
+            }
+        }
+
+        // Strategy 4: For DeleteVm commands, try to find VM in Deleting status on this node
+        if (affectedVm == null && registration?.CommandType == NodeCommandType.DeleteVm)
+        {
+            affectedVm = _dataStore.VirtualMachines.Values
+                .FirstOrDefault(vm =>
+                    vm.NodeId == nodeId &&
+                    vm.Status == VmStatus.Deleting);
+
+            if (affectedVm != null)
+            {
+                lookupMethod = "deleting_status_heuristic";
+                _logger.LogWarning(
+                    "Found VM {VmId} via Deleting status heuristic for command {CommandId}. " +
+                    "This is a last-resort lookup - investigate why primary methods failed.",
+                    affectedVm.Id, commandId);
+            }
+        }
+
+        // ====================================================================
+        // HANDLE LOOKUP FAILURE
+        // ====================================================================
+
+        if (affectedVm == null)
+        {
+            _logger.LogError(
+                "CRITICAL: Could not find VM for command {CommandId} from node {NodeId}. " +
+                "Command type: {Type}. Resources may be leaked if this was a deletion. " +
+                "Manual cleanup may be required.",
+                commandId, nodeId, registration?.CommandType.ToString() ?? "unknown");
+
+            // Emit alert event for monitoring/alerting systems
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmError,
+                ResourceType = "command",
+                ResourceId = commandId,
+                NodeId = nodeId,
+                Payload = new Dictionary<string, object>
+                {
+                    ["Error"] = "Orphaned command acknowledgement - VM not found",
+                    ["CommandId"] = commandId,
+                    ["CommandType"] = registration?.CommandType.ToString() ?? "unknown",
+                    ["ExpectedVmId"] = registration?.VmId ?? "unknown",
+                    ["AckSuccess"] = ack.Success
+                }
+            });
+
+            // Return true - we received the ack even if we couldn't process it
+            // The stale command cleanup service will handle stuck VMs
             return true;
         }
 
-        // Validate node matches
-        if (vm.NodeId != nodeId)
-        {
-            _logger.LogWarning(
-                "Command {CommandId} ack from node {NodeId} but VM {VmId} is on node {VmNodeId}",
-                commandId, nodeId, resourceId, vm.NodeId);
-            return false;
-        }
+        _logger.LogInformation(
+            "Processing command {CommandId} for VM {VmId} (lookup: {Method})",
+            commandId, affectedVm.Id, lookupMethod);
+
+        // ====================================================================
+        // CLEAR COMMAND TRACKING ON VM
+        // ====================================================================
+
+        affectedVm.ActiveCommandId = null;
+        affectedVm.ActiveCommandType = null;
+        affectedVm.ActiveCommandIssuedAt = null;
+
+        // ====================================================================
+        // HANDLE COMMAND FAILURE
+        // ====================================================================
 
         if (!ack.Success)
         {
-            // Command failed
             _logger.LogError(
-                "Command {CommandId} ({Type}) failed for VM {VmId}: {Error}",
-                commandId, command.Type, resourceId, ack.ErrorMessage ?? "Unknown error");
+                "Command {CommandId} failed on node {NodeId}: {Error}",
+                commandId, nodeId, ack.ErrorMessage ?? "Unknown error");
 
-            if (vm.Status == VmStatus.Deleting || vm.Status == VmStatus.Provisioning)
+            // Handle failure based on VM status
+            if (affectedVm.Status == VmStatus.Deleting)
             {
-                vm.Status = VmStatus.Error;
-                vm.StatusMessage = $"{command.Type} failed: {ack.ErrorMessage ?? "Unknown error"}";
-                vm.UpdatedAt = DateTime.UtcNow;
-                await _dataStore.SaveVmAsync(vm);
+                affectedVm.Status = VmStatus.Error;
+                affectedVm.StatusMessage = $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}";
+                affectedVm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(affectedVm);
+
+                _logger.LogWarning(
+                    "VM {VmId} deletion failed - resources remain reserved. " +
+                    "Manual intervention may be required.",
+                    affectedVm.Id);
+            }
+            else if (affectedVm.Status == VmStatus.Provisioning)
+            {
+                affectedVm.Status = VmStatus.Error;
+                affectedVm.StatusMessage = $"Creation failed: {ack.ErrorMessage ?? "Unknown error"}";
+                affectedVm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(affectedVm);
+            }
+            else if (affectedVm.Status == VmStatus.Stopping)
+            {
+                // Stop failed - VM might still be running
+                affectedVm.Status = VmStatus.Error;
+                affectedVm.StatusMessage = $"Stop failed: {ack.ErrorMessage ?? "Unknown error"}";
+                affectedVm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(affectedVm);
             }
 
             await _eventService.EmitAsync(new OrchestratorEvent
             {
                 Type = EventType.VmError,
                 ResourceType = "vm",
-                ResourceId = vm.Id,
+                ResourceId = affectedVm.Id,
                 NodeId = nodeId,
-                UserId = vm.OwnerId,
+                UserId = affectedVm.OwnerId,
                 Payload = new Dictionary<string, object>
                 {
                     ["CommandId"] = commandId,
-                    ["CommandType"] = command.Type.ToString(),
-                    ["Error"] = ack.ErrorMessage ?? "Unknown error",
-                    ["ProcessingTimeMs"] = processingTime.TotalMilliseconds
+                    ["CommandType"] = registration?.CommandType.ToString() ?? "unknown",
+                    ["Error"] = ack.ErrorMessage ?? "Unknown error"
                 }
             });
 
             return true;
         }
 
-        // Command succeeded - handle based on command type
-        switch (command.Type)
+        // ====================================================================
+        // HANDLE COMMAND SUCCESS
+        // ====================================================================
+
+        if (affectedVm.Status == VmStatus.Deleting)
         {
-            case NodeCommandType.CreateVm:
-                await HandleCreateVmAckAsync(vm, commandId, ack, processingTime);
-                break;
+            _logger.LogInformation(
+                "Deletion confirmed for VM {VmId} - completing deletion and freeing resources",
+                affectedVm.Id);
 
-            case NodeCommandType.DeleteVm:
-                await HandleDeleteVmAckAsync(vm, commandId, processingTime);
-                break;
+            await CompleteVmDeletionAsync(affectedVm);
+        }
+        else if (affectedVm.Status == VmStatus.Provisioning)
+        {
+            _logger.LogInformation(
+                "Creation confirmed for VM {VmId} - marking as running",
+                affectedVm.Id);
 
-            case NodeCommandType.StartVm:
-            case NodeCommandType.StopVm:
-                await HandleVmActionAckAsync(vm, command.Type, commandId);
-                break;
+            affectedVm.Status = VmStatus.Running;
+            affectedVm.PowerState = VmPowerState.Running;
+            affectedVm.StartedAt = ack.CompletedAt;
+            affectedVm.StatusMessage = null;
+            affectedVm.UpdatedAt = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(affectedVm);
 
-            default:
-                _logger.LogWarning(
-                    "Unhandled command type {Type} for acknowledgment",
-                    command.Type);
-                break;
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmStarted,
+                ResourceType = "vm",
+                ResourceId = affectedVm.Id,
+                NodeId = nodeId,
+                UserId = affectedVm.OwnerId
+            });
+        }
+        else if (affectedVm.Status == VmStatus.Stopping)
+        {
+            _logger.LogInformation(
+                "Stop confirmed for VM {VmId} - marking as stopped",
+                affectedVm.Id);
+
+            affectedVm.Status = VmStatus.Stopped;
+            affectedVm.PowerState = VmPowerState.Off;
+            affectedVm.StoppedAt = ack.CompletedAt;
+            affectedVm.StatusMessage = null;
+            affectedVm.UpdatedAt = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(affectedVm);
+
+            await _eventService.EmitAsync(new OrchestratorEvent
+            {
+                Type = EventType.VmStopped,
+                ResourceType = "vm",
+                ResourceId = affectedVm.Id,
+                NodeId = nodeId,
+                UserId = affectedVm.OwnerId
+            });
         }
 
         return true;
@@ -669,8 +820,8 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// Complete VM deletion after node confirmation
-    /// This is called by NodeService only - no circular dependency!
+    /// Complete VM deletion after node confirmation.
+    /// Frees all reserved resources and updates quotas.
     /// </summary>
     private async Task CompleteVmDeletionAsync(VirtualMachine vm)
     {
@@ -683,25 +834,49 @@ public class NodeService : INodeService
         vm.StatusMessage = "Deletion confirmed by node";
         vm.StoppedAt = DateTime.UtcNow;
         vm.UpdatedAt = DateTime.UtcNow;
+
+        // Clear any remaining command tracking
+        vm.ActiveCommandId = null;
+        vm.ActiveCommandType = null;
+        vm.ActiveCommandIssuedAt = null;
+
         await _dataStore.SaveVmAsync(vm);
 
-        // Step 2: Free reserved resources
+        // Step 2: Free reserved resources from node
         if (!string.IsNullOrEmpty(vm.NodeId) &&
             _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
+            var cpuToFree = vm.Spec.CpuCores;
+            var memToFree = vm.Spec.MemoryMb;
+            var storageToFree = vm.Spec.DiskGb;
+
             node.ReservedResources.CpuCores = Math.Max(0,
-                node.ReservedResources.CpuCores - vm.Spec.CpuCores);
+                node.ReservedResources.CpuCores - cpuToFree);
             node.ReservedResources.MemoryMb = Math.Max(0,
-                node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
+                node.ReservedResources.MemoryMb - memToFree);
             node.ReservedResources.StorageGb = Math.Max(0,
-                node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+                node.ReservedResources.StorageGb - storageToFree);
+
+            // Also update available resources
+            node.AvailableResources.CpuCores += cpuToFree;
+            node.AvailableResources.MemoryMb += memToFree;
+            node.AvailableResources.StorageGb += storageToFree;
 
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
-                vm.Id, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB. " +
+                "Node now has: Reserved={ResCpu}c/{ResMem}MB, Available={AvCpu}c/{AvMem}MB",
+                vm.Id, node.Id, cpuToFree, memToFree, storageToFree,
+                node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb,
+                node.AvailableResources.CpuCores, node.AvailableResources.MemoryMb);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Could not find node {NodeId} to release resources for VM {VmId}",
+                vm.NodeId, vm.Id);
         }
 
         // Step 3: Update user quotas
@@ -718,9 +893,9 @@ public class NodeService : INodeService
             await _dataStore.SaveUserAsync(user);
 
             _logger.LogInformation(
-                "Updated quotas for user {UserId}: VMs={VMs}, CPU={CPU}c, MEM={MEM}MB",
-                user.Id, user.Quotas.CurrentVms, user.Quotas.CurrentCpuCores,
-                user.Quotas.CurrentMemoryMb);
+                "Updated quotas for user {UserId}: VMs={VMs}/{MaxVMs}, CPU={CPU}c, MEM={MEM}MB",
+                user.Id, user.Quotas.CurrentVms, user.Quotas.MaxVms,
+                user.Quotas.CurrentCpuCores, user.Quotas.CurrentMemoryMb);
         }
 
         // Step 4: Emit completion event
@@ -730,10 +905,18 @@ public class NodeService : INodeService
             ResourceType = "vm",
             ResourceId = vm.Id,
             NodeId = vm.NodeId,
-            UserId = vm.OwnerId
+            UserId = vm.OwnerId,
+            Payload = new Dictionary<string, object>
+            {
+                ["FreedCpu"] = vm.Spec.CpuCores,
+                ["FreedMemoryMb"] = vm.Spec.MemoryMb,
+                ["FreedStorageGb"] = vm.Spec.DiskGb
+            }
         });
 
-        _logger.LogInformation("VM {VmId} deletion completed successfully", vm.Id);
+        _logger.LogInformation(
+            "VM {VmId} deletion completed successfully - all resources freed",
+            vm.Id);
     }
 
     /// <summary>

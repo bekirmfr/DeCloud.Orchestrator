@@ -271,6 +271,17 @@ public class VmService : IVmService
             JsonSerializer.Serialize(new { VmId = vmId, Action = action.ToString() })
         );
 
+        _dataStore.RegisterCommand(
+            command.CommandId,
+            vmId,
+            vm.NodeId,
+            commandType.Value
+        );
+
+        vm.ActiveCommandId = command.CommandId;
+        vm.ActiveCommandType = commandType.Value;
+        vm.ActiveCommandIssuedAt = DateTime.UtcNow;
+
         _dataStore.AddPendingCommand(vm.NodeId, command);
 
         vm.Status = action switch
@@ -280,9 +291,13 @@ public class VmService : IVmService
             _ => vm.Status
         };
 
+        vm.StatusMessage = $"Action {action} command {command.CommandId} sent to node";
+
         await _dataStore.SaveVmAsync(vm);
 
-        _logger.LogInformation("VM action {Action} queued for {VmId}", action, vmId);
+        _logger.LogInformation(
+            "VM action {Action} queued for {VmId} (command: {CommandId})",
+            action, vmId, command.CommandId);
 
         return true;
     }
@@ -331,18 +346,30 @@ public class VmService : IVmService
             var command = new NodeCommand(
                 Guid.NewGuid().ToString(),
                 NodeCommandType.DeleteVm,
-                JsonSerializer.Serialize(new { VmId = vmId }),
-                RequiresAck: true,
-                TargetResourceId: vmId          // ← Automatic tracking!
+                JsonSerializer.Serialize(new { VmId = vmId })
             );
 
+            // Register in command registry (primary lookup mechanism)
+            _dataStore.RegisterCommand(
+                command.CommandId,
+                vmId,
+                vm.NodeId,
+                NodeCommandType.DeleteVm
+            );
+
+            // Also store on VM for backup lookup and status visibility
+            vm.ActiveCommandId = command.CommandId;
+            vm.ActiveCommandType = NodeCommandType.DeleteVm;
+            vm.ActiveCommandIssuedAt = DateTime.UtcNow;
+
+            // Queue command for node
             _dataStore.AddPendingCommand(vm.NodeId, command);
 
             _logger.LogInformation(
                 "DeleteVm command {CommandId} queued for VM {VmId} on node {NodeId}",
                 command.CommandId, vmId, vm.NodeId);
 
-            // Store command ID in VM for tracking
+            // Update status message (keep command ID for legacy fallback)
             vm.StatusMessage = $"Deletion command {command.CommandId} sent to node";
             await _dataStore.SaveVmAsync(vm);
         }
@@ -374,7 +401,6 @@ public class VmService : IVmService
         // Resources will be freed after node confirms deletion
         return true;
     }
-
     /// <summary>
     /// Complete VM deletion after node confirmation
     /// Called by NodeService after receiving acknowledgment

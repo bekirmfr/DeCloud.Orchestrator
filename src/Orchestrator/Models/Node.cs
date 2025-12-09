@@ -229,3 +229,15 @@ public record CommandAcknowledgment(
     string? ErrorMessage,
     DateTime CompletedAt
 );
+
+
+/// <summary>
+/// Registration record for tracking active commands
+/// </summary>
+public record CommandRegistration(
+    string CommandId,
+    string VmId,
+    string NodeId,
+    NodeCommandType CommandType,
+    DateTime IssuedAt
+);
