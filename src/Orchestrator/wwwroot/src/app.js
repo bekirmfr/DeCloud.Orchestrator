@@ -823,9 +823,9 @@ function renderVMsTable(vms) {
                 </div>
             </td>
             <td>${vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId) : 'Unknown'}</td>
-            <td>${vm.spec?.cpu || 0} cores</td>
-            <td>${vm.spec?.memory || 0} MB</td>
-            <td>${vm.spec?.disk || 0} GB</td>
+            <td>${vm.spec?.cpuCores || 0} cores</td>
+            <td>${vm.spec?.memoryMb || 0} MB</td>
+            <td>${vm.spec?.diskGb || 0} GB</td>
             <td>
                 <span class="status-badge status-${vm.status}">
                     ${vm.status}
@@ -884,15 +884,15 @@ function renderDashboardVMs(vms) {
             <div class="vm-card-specs">
                 <div class="spec-item">
                     <span class="spec-label">CPU</span>
-                    <span class="spec-value">${vm.specs?.cpu || 0} cores</span>
+                    <span class="spec-value">${vm.spec?.cpuCores || 0} cores</span>
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Memory</span>
-                    <span class="spec-value">${vm.specs?.memory || 0} MB</span>
+                    <span class="spec-value">${vm.specs?.memoryMb || 0} MB</span>
                 </div>
                 <div class="spec-item">
                     <span class="spec-label">Disk</span>
-                    <span class="spec-value">${vm.specs?.disk || 0} GB</span>
+                    <span class="spec-value">${vm.specs?.diskGb || 0} GB</span>
                 </div>
             </div>
         </div>
@@ -1099,14 +1099,14 @@ async function revealPassword(vmId) {
             return;
         }
 
-        const vm = data.data;
+        const vm = data.data.vm;
 
-        if (!vm.encryptedPassword) {
+        if (vm.spec.passwordSecured == true && !vm.spec.encryptedPassword) {
             showToast('No password set for this VM', 'error');
             return;
         }
 
-        const password = await decryptPassword(vm.encryptedPassword);
+        const password = vm.spec.encryptedPassword ? await decryptPassword(vm.spec.encryptedPassword) : vm.spec.password;
 
         const modal = document.createElement('div');
         modal.className = 'modal-overlay active';
