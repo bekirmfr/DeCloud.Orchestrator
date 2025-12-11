@@ -1228,9 +1228,36 @@ async function showPasswordModal(vmId, vmName, password) {
     });
 }
 
-function copyVmPassword(password) {
-    navigator.clipboard.writeText(password);
-    showToast('Password copied!', 'success');
+async function copyToClipboard(text) {
+    // Try modern API on HTTPS
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            console.log('Modern API failed, trying fallback');
+        }
+    }
+
+    // Fallback for HTTP: Use execCommand
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-999999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const successful = document.execCommand('copy');  // ✅ Works on HTTP!
+    document.body.removeChild(textarea);
+    return successful;
+}
+
+async function copyVmPassword(password) {
+    const success = await copyToClipboard(password);
+    if (success) {
+        showToast('Password copied!', 'success');
+    } else {
+        showToast('Could not copy - please select manually', 'warning');
+    }
 }
 
 /**
