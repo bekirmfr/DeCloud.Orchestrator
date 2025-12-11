@@ -1248,7 +1248,7 @@ async function revealPassword(vmId, vmName) {
         }
 
         // Decrypt (key derived from wallet internally)
-        const password = await decryptPassword(response.data.encryptedPassword);
+        const password = await decryptPassword(data.data.encryptedPassword);
 
         // Show in modal
         const modal = document.createElement('div');
