@@ -1228,6 +1228,13 @@ async function showPasswordModal(vmId, vmName, password) {
     });
 }
 
+/**
+ * Copy text to clipboard with HTTP fallback
+ * navigator.clipboard requires HTTPS, so we use execCommand as fallback
+ * 
+ * @param {string} text - Text to copy to clipboard
+ * @returns {Promise<boolean>} - True if successful
+ */
 async function copyToClipboard(text) {
     // Try modern API on HTTPS
     if (navigator.clipboard && window.isSecureContext) {
@@ -1251,6 +1258,12 @@ async function copyToClipboard(text) {
     return successful;
 }
 
+/**
+ * Copy VM password to clipboard
+ * Works on both HTTP and HTTPS
+ * 
+ * @param {string} password - Password to copy
+ */
 async function copyVmPassword(password) {
     const success = await copyToClipboard(password);
     if (success) {
