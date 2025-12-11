@@ -1241,7 +1241,7 @@ async function revealPassword(vmId, vmName) {
         // Get encrypted password from server
         const response = await api(`/api/vms/${vmId}/encrypted-password`);
 
-        if (!response.success || !response.data?.encryptedPassword) {
+        if (!response.success || !response.data?.isSecured || response.data?.encryptedPassword == null) {
             showToast('Password not available', 'error');
             return;
         }
