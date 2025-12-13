@@ -10,55 +10,63 @@ const SSH_KEY_DERIVATION_MESSAGE = "DeCloud SSH Key Derivation v1";
 async function getSSHCertificate(vmId) {
     try {
         console.log('[SSH] Requesting certificate for VM:', vmId);
-        
+
         // Step 1: Check if user needs wallet signature
-        const connectionInfo = await api(`/api/vms/${vmId}/ssh/connection-info`);
+        const connectionInfoResponse = await api(`/api/vms/${vmId}/ssh/connection-info`);
+        const connectionInfo = await connectionInfoResponse.json();
+
+        if (!connectionInfo.success) {
+            throw new Error(connectionInfo.error || 'Failed to get connection info');
+        }
+
         const needsWalletSig = connectionInfo.data.requiresWalletSignature;
-        
+
         let walletSignature = null;
-        
+
         // Step 2: Get wallet signature if needed (no user SSH key)
         if (needsWalletSig) {
             console.log('[SSH] No SSH key registered - requesting wallet signature...');
-            
+
             const signer = window.ethersSigner();
             if (!signer) {
-                throw new Error('Wallet not connected...');
+                throw new Error('Wallet not connected. Please connect your wallet first.');
             }
-            
+
             // Sign the SSH key derivation message
             walletSignature = await signer.signMessage(SSH_KEY_DERIVATION_MESSAGE);
             console.log('[SSH] ✓ Wallet signature obtained');
         } else {
             console.log('[SSH] Using registered SSH key');
         }
-        
+
         // Step 3: Request certificate from API
-        const response = await api(`/api/vms/${vmId}/ssh/certificate`, {
+        const certResponse = await api(`/api/vms/${vmId}/ssh/certificate`, {
             method: 'POST',
             body: JSON.stringify({
                 walletSignature: walletSignature,
                 ttlSeconds: 3600 // 1 hour validity
             })
         });
-        
-        if (!response.data) {
-            throw new Error('Failed to get SSH certificate');
+
+        const certData = await certResponse.json();
+
+        if (!certData.success || !certData.data) {
+            throw new Error(certData.error || 'Failed to get SSH certificate');
         }
-        
-        console.log('[SSH] ✓ Certificate issued, valid until:', response.data.validUntil);
-        
-        return response.data;
+
+        console.log('[SSH] ✓ Certificate issued, valid until:', certData.data.validUntil);
+
+        return certData.data;
     } catch (error) {
         console.error('[SSH] Failed to get certificate:', error);
-        
+
         // User-friendly error messages
         if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             throw new Error('Wallet signature rejected. Please sign the message to generate SSH credentials.');
         } else if (error.message?.includes('User rejected')) {
             throw new Error('Wallet signature rejected.');
         }
-        
+
         throw error;
     }
 }
@@ -69,16 +77,16 @@ async function getSSHCertificate(vmId) {
 async function showSSHConnectionModal(vmId, vmName) {
     try {
         showToast('Generating SSH credentials...', 'info');
-        
+
         // Get certificate (may trigger wallet signature)
         const cert = await getSSHCertificate(vmId);
-        
+
         const modal = document.createElement('div');
         modal.className = 'modal-overlay active';
         modal.id = 'ssh-connection-modal';
-        
+
         let content;
-        
+
         if (cert.isWalletDerived) {
             // WALLET-DERIVED KEYS: Show complete setup
             content = generateWalletDerivedSSHInstructions(vmId, vmName, cert);
@@ -86,15 +94,15 @@ async function showSSHConnectionModal(vmId, vmName) {
             // USER SSH KEY: Show standard certificate instructions
             content = generateUserKeySSHInstructions(vmId, vmName, cert);
         }
-        
+
         modal.innerHTML = content;
         document.body.appendChild(modal);
-        
+
         // Close on background click
         modal.onclick = (e) => {
             if (e.target === modal) modal.remove();
         };
-        
+
         showToast('SSH credentials ready!', 'success');
     } catch (error) {
         console.error('[SSH] Error showing connection modal:', error);
@@ -107,7 +115,7 @@ async function showSSHConnectionModal(vmId, vmName) {
  */
 function generateWalletDerivedSSHInstructions(vmId, vmName, cert) {
     const vmIdShort = vmId.substring(0, 8);
-    
+
     return `
         <div class="modal-content" style="max-width: 900px;">
             <div class="modal-header">
@@ -202,7 +210,7 @@ EOF</code></pre>
  */
 function generateUserKeySSHInstructions(vmId, vmName, cert) {
     const vmIdShort = vmId.substring(0, 8);
-    
+
     return `
         <div class="modal-content" style="max-width: 700px;">
             <div class="modal-header">
@@ -252,7 +260,7 @@ EOF</code></pre>
  */
 function downloadSSHBundle(vmId, vmName, cert) {
     const vmIdShort = vmId.substring(0, 8);
-    
+
     // Create files
     const files = {
         'decloud-wallet.pem': cert.privateKey,
@@ -298,14 +306,14 @@ ssh -i ~/.ssh/decloud-wallet.pem \\
     ssh ubuntu@${cert.vmIp}
 `
     };
-    
+
     // For simplicity, create a text file with all content
     // In production, use a proper ZIP library like JSZip
     let bundleContent = '';
     for (const [filename, content] of Object.entries(files)) {
         bundleContent += `\n=== ${filename} ===\n${content}\n`;
     }
-    
+
     const blob = new Blob([bundleContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -313,7 +321,7 @@ ssh -i ~/.ssh/decloud-wallet.pem \\
     a.download = `decloud-${vmName}-ssh-bundle.txt`;
     a.click();
     URL.revokeObjectURL(url);
-    
+
     showToast('SSH bundle downloaded!', 'success');
 }
 
