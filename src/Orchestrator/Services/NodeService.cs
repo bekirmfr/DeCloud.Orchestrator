@@ -778,6 +778,16 @@ public class NodeService : INodeService
         vm.StartedAt = ack.CompletedAt;
         vm.StatusMessage = null;
         vm.UpdatedAt = DateTime.UtcNow;
+
+        if (vm.Spec.PasswordSecured && !string.IsNullOrEmpty(vm.Spec.Password))
+        {
+            _logger.LogInformation(
+                "VM {VmId} started successfully - clearing plaintext password",
+                vm.Id);
+
+            vm.Spec.Password = null;
+        }
+
         await _dataStore.SaveVmAsync(vm);
 
         await _eventService.EmitAsync(new OrchestratorEvent

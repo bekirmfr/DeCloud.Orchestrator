@@ -145,7 +145,7 @@ public class VmService : IVmService
             return false;
 
         vm.Spec.EncryptedPassword = encryptedPassword;
-        vm.Spec.Password = null;
+        //vm.Spec.Password = null;
         vm.Spec.PasswordSecured = true;
 
         await _dataStore.SaveVmAsync(vm);
