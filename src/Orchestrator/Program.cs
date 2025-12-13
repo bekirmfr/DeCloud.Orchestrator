@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -93,7 +94,8 @@ builder.Services.AddScoped<IUserService>(sp =>
 });
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
-
+builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
+builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
 // =====================================================
 // Background Services
 // =====================================================
@@ -449,6 +451,7 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<OrchestratorHub>("/hub/orchestrator");
 app.MapHealthChecks("/health");
+//app.MapHealthChecks("/health/wallet-ssh");
 
 // =====================================================
 // SPA Fallback (Production Only)

@@ -27,6 +27,23 @@ public interface INodeService
     Task<bool> UpdateNodeStatusAsync(string nodeId, NodeStatus status);
     Task<bool> RemoveNodeAsync(string nodeId);
     Task CheckNodeHealthAsync();
+    /// <summary>
+    /// Request node to sign an SSH certificate using its CA
+    /// </summary>
+    Task<CertificateSignResponse> SignCertificateAsync(
+        string nodeId,
+        CertificateSignRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Inject SSH public key into a VM's authorized_keys
+    /// </summary>
+    Task<bool> InjectSshKeyAsync(
+        string nodeId,
+        string vmId,
+        string publicKey,
+        string username = "ubuntu",
+        CancellationToken ct = default);
 }
 
 public class NodeService : INodeService
@@ -34,17 +51,20 @@ public class NodeService : INodeService
     private readonly DataStore _dataStore;
     private readonly IEventService _eventService;
     private readonly ILogger<NodeService> _logger;
+    private readonly HttpClient _httpClient;
     private readonly SchedulingConfiguration _schedulingConfig;
 
     public NodeService(
         DataStore dataStore,
         IEventService eventService,
         ILogger<NodeService> logger,
+        HttpClient httpClient,
         SchedulingConfiguration? schedulingConfig = null)
     {
         _dataStore = dataStore;
         _eventService = eventService;
         _logger = logger;
+        _httpClient = httpClient;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
         _schedulingConfig.Weights.Validate();
     }
@@ -763,72 +783,6 @@ public class NodeService : INodeService
         return true;
     }
 
-    private async Task HandleCreateVmAckAsync(
-        VirtualMachine vm,
-        string commandId,
-        CommandAcknowledgment ack,
-        TimeSpan processingTime)
-    {
-        _logger.LogInformation(
-            "VM {VmId} creation confirmed (provisioning took {Duration}s)",
-            vm.Id, processingTime.TotalSeconds);
-
-        vm.Status = VmStatus.Running;
-        vm.PowerState = VmPowerState.Running;
-        vm.StartedAt = ack.CompletedAt;
-        vm.StatusMessage = null;
-        vm.UpdatedAt = DateTime.UtcNow;
-
-        if (vm.Spec.PasswordSecured && !string.IsNullOrEmpty(vm.Spec.Password))
-        {
-            _logger.LogInformation(
-                "VM {VmId} started successfully - clearing plaintext password",
-                vm.Id);
-
-            vm.Spec.Password = null;
-        }
-
-        await _dataStore.SaveVmAsync(vm);
-
-        await _eventService.EmitAsync(new OrchestratorEvent
-        {
-            Type = EventType.VmCreated,
-            ResourceType = "vm",
-            ResourceId = vm.Id,
-            NodeId = vm.NodeId,
-            UserId = vm.OwnerId,
-            Payload = new Dictionary<string, object>
-            {
-                ["ProvisioningTimeSeconds"] = processingTime.TotalSeconds
-            }
-        });
-    }
-
-    private async Task HandleDeleteVmAckAsync(
-        VirtualMachine vm,
-        string commandId,
-        TimeSpan processingTime)
-    {
-        _logger.LogInformation(
-            "VM {VmId} deletion confirmed (deletion took {Duration}s) - completing cleanup",
-            vm.Id, processingTime.TotalSeconds);
-
-        await CompleteVmDeletionAsync(vm);
-    }
-
-    private async Task HandleVmActionAckAsync(
-        VirtualMachine vm,
-        NodeCommandType commandType,
-        string commandId)
-    {
-        _logger.LogInformation(
-            "VM {VmId} action {Action} confirmed",
-            vm.Id, commandType);
-
-        // Update VM state based on action
-        // (Implementation depends on your state machine)
-    }
-
     /// <summary>
     /// Complete VM deletion after node confirmation.
     /// Frees all reserved resources and updates quotas.
@@ -1120,6 +1074,144 @@ public class NodeService : INodeService
         "stopped" => VmPowerState.Off,
         _ => VmPowerState.Off
     };
+
+    // ============================================================================
+    // SSH Methods
+    // ============================================================================
+
+    /// <summary>
+    /// Request node to sign an SSH certificate using its CA
+    /// </summary>
+    public async Task<CertificateSignResponse> SignCertificateAsync(
+        string nodeId,
+        CertificateSignRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var node = await GetNodeAsync(nodeId);
+            if (node == null)
+            {
+                _logger.LogWarning("Node {NodeId} not found for certificate signing", nodeId);
+                return new CertificateSignResponse
+                {
+                    Success = false,
+                    Error = "Node not found"
+                };
+            }
+
+            var url = $"http://{node.PublicIp}:{node.AgentPort}/api/ssh/sign-certificate";
+
+            _logger.LogInformation(
+                "Requesting certificate signing from node {NodeId} at {Url}",
+                nodeId, url);
+
+            var json = System.Text.Json.JsonSerializer.Serialize(request);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var httpResponse = await _httpClient.PostAsync(url, content, ct);
+
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var errorBody = await httpResponse.Content.ReadAsStringAsync(ct);
+                _logger.LogError(
+                    "Certificate signing failed: HTTP {StatusCode}, Body: {Body}",
+                    httpResponse.StatusCode, errorBody);
+
+                return new CertificateSignResponse
+                {
+                    Success = false,
+                    Error = $"HTTP {httpResponse.StatusCode}: {errorBody}"
+                };
+            }
+
+            var responseJson = await httpResponse.Content.ReadAsStringAsync(ct);
+            var response = System.Text.Json.JsonSerializer.Deserialize<CertificateSignResponse>(responseJson);
+
+            if (response == null)
+            {
+                return new CertificateSignResponse
+                {
+                    Success = false,
+                    Error = "Failed to deserialize response"
+                };
+            }
+
+            _logger.LogInformation(
+                "✓ Certificate signed successfully for cert ID {CertId}",
+                request.CertificateId);
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error requesting certificate signature from node {NodeId}", nodeId);
+            return new CertificateSignResponse
+            {
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Inject SSH public key into a VM's authorized_keys
+    /// </summary>
+    public async Task<bool> InjectSshKeyAsync(
+        string nodeId,
+        string vmId,
+        string publicKey,
+        string username = "ubuntu",
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var node = await GetNodeAsync(nodeId);
+            if (node == null)
+            {
+                _logger.LogWarning("Node {NodeId} not found for SSH key injection", nodeId);
+                return false;
+            }
+
+            var url = $"http://{node.PublicIp}:{node.AgentPort}/api/vms/{vmId}/ssh/inject-key";
+
+            _logger.LogInformation(
+                "Injecting SSH key into VM {VmId} on node {NodeId}",
+                vmId, nodeId);
+
+            var request = new InjectSshKeyRequest
+            {
+                PublicKey = publicKey,
+                Username = username,
+                Temporary = true
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(request);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var httpResponse = await _httpClient.PostAsync(url, content, ct);
+
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var errorBody = await httpResponse.Content.ReadAsStringAsync(ct);
+                _logger.LogError(
+                    "SSH key injection failed: HTTP {StatusCode}, Body: {Body}",
+                    httpResponse.StatusCode, errorBody);
+                return false;
+            }
+
+            _logger.LogInformation(
+                "✓ SSH key injected successfully into VM {VmId}",
+                vmId);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error injecting SSH key into VM {VmId} on node {NodeId}", vmId, nodeId);
+            return false;
+        }
+    }
 
     // ============================================================================
     // Simple Getters

@@ -940,7 +940,7 @@ function renderVMsTable(vms) {
                 <div class="table-actions">
                     ${canConnect ? `
                     <button class="btn-icon" 
-                            onclick="window.showConnectInfo('${escapeHtml(sshJumpHost)}', ${sshJumpPort}, '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort})" 
+                            onclick="window.showSSHConnectionModal('${escapeHtml(sshJumpHost)}', ${sshJumpPort}, '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort})"
                             title="SSH Connection Info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
@@ -1679,6 +1679,7 @@ window.addSSHKey = addSSHKey;
 window.deleteSSHKey = deleteSSHKey;
 window.openTerminal = openTerminal;
 window.showConnectInfo = showConnectInfo;
+window.showSSHConnectionModal = showSSHConnectionModal;
 window.saveSettings = saveSettings;
 window.refreshData = refreshData;
 window.showToast = showToast;
