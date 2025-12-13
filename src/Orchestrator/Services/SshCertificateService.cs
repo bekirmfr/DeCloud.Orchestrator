@@ -185,12 +185,6 @@ public class SshCertificateService : ISshCertificateService
             }
         };
 
-        // Add VM-specific port forwarding restriction if VM IP is known
-        if (!string.IsNullOrEmpty(vmIp))
-        {
-            request.Extensions["permitopen"] = $"{vmIp}:22";
-        }
-
         var response = await _nodeService.SignCertificateAsync(nodeId, request, ct);
 
         if (!response.Success)
