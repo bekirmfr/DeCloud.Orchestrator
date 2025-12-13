@@ -1,6 +1,6 @@
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Net;
 using Nethereum.Signer;
 using Nethereum.Util;
 using NSec.Cryptography;
@@ -133,7 +133,8 @@ public class WalletSshKeyService : IWalletSshKeyService
     }
 
     /// <summary>
-    /// Generate Ed25519 SSH key pair from seed using NSec library
+    /// Generate Ed25519 SSH key pair from seed
+    /// FIXED: Keep raw bytes instead of NSec Key to avoid export restrictions
     /// </summary>
     private async Task<SshKeyPair> GenerateEd25519KeyPairAsync(
         byte[] seed,
@@ -142,23 +143,30 @@ public class WalletSshKeyService : IWalletSshKeyService
     {
         return await Task.Run(() =>
         {
-            // Use NSec's Ed25519 signature algorithm
+            // Ed25519 key generation from seed
+            // We'll use NSec to generate the key pair, but keep the raw bytes
             var algorithm = SignatureAlgorithm.Ed25519;
 
-            // Import the seed as a private key
-            // Ed25519 private keys are 32 bytes - perfect match for our SHA-256 hash
-            var key = Key.Import(
-                algorithm,
-                seed,
-                KeyBlobFormat.RawPrivateKey);
+            // Import seed to generate key pair
+            using var key = Key.Import(algorithm, seed, KeyBlobFormat.RawPrivateKey);
 
-            // Get public key
-            var publicKey = key.PublicKey;
+            // Extract raw key material before disposing
+            // Ed25519 private key is 32 bytes, public key is 32 bytes
+            var privateKeyBytes = new byte[32];
+            var publicKeyBytes = new byte[32];
+
+            Array.Copy(seed, 0, privateKeyBytes, 0, 32);
+
+            // Generate public key from private key using Ed25519
+            // NSec does this internally, so we can export the public key
+            var tempPublicKey = key.PublicKey;
+            var publicKeyExport = tempPublicKey.Export(KeyBlobFormat.RawPublicKey);
+            Array.Copy(publicKeyExport, 0, publicKeyBytes, 0, 32);
 
             // Convert to OpenSSH format
-            var privateKeyPem = ExportPrivateKeyToOpenSSH(key, walletAddress);
-            var publicKeySsh = ExportPublicKeyToOpenSSH(publicKey, walletAddress);
-            var fingerprint = CalculateFingerprint(publicKey);
+            var privateKeyPem = ExportPrivateKeyToOpenSSH(privateKeyBytes, publicKeyBytes, walletAddress);
+            var publicKeySsh = ExportPublicKeyToOpenSSH(publicKeyBytes, walletAddress);
+            var fingerprint = CalculateFingerprint(publicKeyBytes);
 
             return new SshKeyPair
             {
@@ -173,14 +181,10 @@ public class WalletSshKeyService : IWalletSshKeyService
 
     /// <summary>
     /// Export Ed25519 private key in OpenSSH format (PEM-like)
+    /// FIXED: Works directly with raw bytes instead of NSec Key objects
     /// </summary>
-    private string ExportPrivateKeyToOpenSSH(Key key, string walletAddress)
+    private string ExportPrivateKeyToOpenSSH(byte[] privateKeyBytes, byte[] publicKeyBytes, string walletAddress)
     {
-        // Export the private key bytes
-        var privateKeyBytes = key.Export(KeyBlobFormat.RawPrivateKey);
-        var publicKeyBytes = key.PublicKey.Export(KeyBlobFormat.RawPublicKey);
-
-        // OpenSSH private key format structure
         var comment = $"decloud-wallet-{walletAddress.Substring(0, Math.Min(8, walletAddress.Length))}";
 
         // Build the OpenSSH private key blob
@@ -237,7 +241,10 @@ public class WalletSshKeyService : IWalletSshKeyService
         // Padding to 8-byte boundary
         var privateBlob = privateMs.ToArray();
         var paddingLength = (8 - (privateBlob.Length % 8)) % 8;
-        privateWriter.Write(new byte[paddingLength]);
+        for (int i = 1; i <= paddingLength; i++)
+        {
+            privateWriter.Write((byte)i);
+        }
 
         privateBlob = privateMs.ToArray();
         WriteSshString(writer, privateBlob);
@@ -264,10 +271,8 @@ public class WalletSshKeyService : IWalletSshKeyService
     /// <summary>
     /// Export Ed25519 public key in OpenSSH format (ssh-ed25519 AAAA... comment)
     /// </summary>
-    private string ExportPublicKeyToOpenSSH(PublicKey publicKey, string walletAddress)
+    private string ExportPublicKeyToOpenSSH(byte[] publicKeyBytes, string walletAddress)
     {
-        var keyBytes = publicKey.Export(KeyBlobFormat.RawPublicKey);
-
         // Build OpenSSH public key blob
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
@@ -276,7 +281,7 @@ public class WalletSshKeyService : IWalletSshKeyService
         WriteSshString(writer, "ssh-ed25519");
 
         // Write key data
-        WriteSshString(writer, keyBytes);
+        WriteSshString(writer, publicKeyBytes);
 
         var blob = ms.ToArray();
         var base64 = Convert.ToBase64String(blob);
@@ -288,14 +293,14 @@ public class WalletSshKeyService : IWalletSshKeyService
     /// <summary>
     /// Calculate SSH fingerprint (SHA256 hash of public key)
     /// </summary>
-    private string CalculateFingerprint(PublicKey publicKey)
+    private string CalculateFingerprint(byte[] publicKeyBytes)
     {
         // Get the SSH public key blob
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
 
         WriteSshString(writer, "ssh-ed25519");
-        WriteSshString(writer, publicKey.Export(KeyBlobFormat.RawPublicKey));
+        WriteSshString(writer, publicKeyBytes);
 
         var blob = ms.ToArray();
 
