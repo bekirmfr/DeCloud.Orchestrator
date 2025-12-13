@@ -1195,7 +1195,7 @@ async function showPasswordModal(vmId, vmName, password) {
                         </div>
                 
                         <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
+                            <button onclick="copyToClipboard('${password}')" class="btn btn-secondary">
                                 📋 Copy Password
                             </button>
                             <button onclick="secureAndClose('${vmId}', '${password}')" class="btn btn-primary">
@@ -1303,7 +1303,7 @@ async function revealPassword(vmId, vmName) {
                         </div>
                 
                         <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
+                            <button onclick="copyToClipboard('${password}')" class="btn btn-secondary">
                                 📋 Copy
                             </button>
                             <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
@@ -1412,7 +1412,7 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
                     <div class="connect-section-title">SSH via Jump Host</div>
                     <div class="connect-code">
                         ssh -J decloud@${nodeIp} decloud@${vmIp}
-                        <button class="connect-code-copy" onclick="copyVmPassword('ssh -J decloud@${nodeIp} decloud@${vmIp}')">Copy</button>
+                        <button class="connect-code-copy" onclick="copyToClipboard('ssh -J decloud@${nodeIp} decloud@${vmIp}')">Copy</button>
                     </div>
                 </div>
                 <div class="connect-section">
