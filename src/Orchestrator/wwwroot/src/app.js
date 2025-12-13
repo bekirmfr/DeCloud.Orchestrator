@@ -1171,6 +1171,45 @@ async function deleteVM(vmId, vmName) {
 }
 
 /**
+ * Copy text to clipboard with HTTP fallback
+ * navigator.clipboard requires HTTPS, so we use execCommand as fallback
+ * 
+ * @param {string} text - Text to copy to clipboard
+ * @returns {Promise<boolean>} - True if successful
+ */
+async function copyToClipboard(text) {
+    // Try modern API on HTTPS
+    var isSuccess = false;
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            isSuccess = true;
+        } catch (err) {
+            console.log('Modern API failed, trying fallback');
+        }
+    } else {
+        // Fallback for HTTP: Use execCommand
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-999999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const successful = document.execCommand('copy');  // ✅ Works on HTTP!
+        document.body.removeChild(textarea);
+        isSuccess = successful;
+    }
+
+    if (success) {
+        showToast('Copied!', 'success');
+        return true;
+    } else {
+        showToast('Could not copy - please select manually', 'warning');
+        return false;
+    }
+}
+
+/**
 * Show password modal and handle encryption
 */
 async function showPasswordModal(vmId, vmName, password) {
@@ -1226,51 +1265,6 @@ async function showPasswordModal(vmId, vmName, password) {
             }
         };
     });
-}
-
-/**
- * Copy text to clipboard with HTTP fallback
- * navigator.clipboard requires HTTPS, so we use execCommand as fallback
- * 
- * @param {string} text - Text to copy to clipboard
- * @returns {Promise<boolean>} - True if successful
- */
-async function copyToClipboard(text) {
-    // Try modern API on HTTPS
-    if (navigator.clipboard && window.isSecureContext) {
-        try {
-            await navigator.clipboard.writeText(text);
-            return true;
-        } catch (err) {
-            console.log('Modern API failed, trying fallback');
-        }
-    }
-
-    // Fallback for HTTP: Use execCommand
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-999999px';
-    document.body.appendChild(textarea);
-    textarea.select();
-    const successful = document.execCommand('copy');  // ✅ Works on HTTP!
-    document.body.removeChild(textarea);
-    return successful;
-}
-
-/**
- * Copy VM password to clipboard
- * Works on both HTTP and HTTPS
- * 
- * @param {string} password - Password to copy
- */
-async function copyVmPassword(password) {
-    const success = await copyToClipboard(password);
-    if (success) {
-        showToast('Password copied!', 'success');
-    } else {
-        showToast('Could not copy - please select manually', 'warning');
-    }
 }
 
 /**
