@@ -1303,7 +1303,7 @@ async function revealPassword(vmId, vmName) {
                         </div>
                 
                         <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="navigator.clipboard.writeText('${password}'); showToast('Copied!', 'success');" class="btn btn-secondary">
+                            <button onclick="copyVmPassword('${password}')" class="btn btn-secondary">
                                 📋 Copy
                             </button>
                             <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
@@ -1412,7 +1412,7 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
                     <div class="connect-section-title">SSH via Jump Host</div>
                     <div class="connect-code">
                         ssh -J decloud@${nodeIp} decloud@${vmIp}
-                        <button class="connect-code-copy" onclick="navigator.clipboard.writeText('ssh -J decloud@${nodeIp} decloud@${vmIp}'); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
+                        <button class="connect-code-copy" onclick="copyVmPassword('ssh -J decloud@${nodeIp} decloud@${vmIp}')">Copy</button>
                     </div>
                 </div>
                 <div class="connect-section">
