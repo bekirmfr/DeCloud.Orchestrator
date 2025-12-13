@@ -217,21 +217,59 @@ public class VmService : IVmService
             _ => query.OrderByDescending(v => v.CreatedAt)
         };
 
-        var items = query
+        var vmsWithPagination = query
             .Skip((queryParams.Page - 1) * queryParams.PageSize)
             .Take(queryParams.PageSize)
-            .Select(v => new VmSummary(
+            .ToList();
+
+        // ========================================================================
+        // SECURITY-CONSCIOUS NODE IP RESOLUTION
+        // ========================================================================
+        // For each VM, look up the node's public IP if a node is assigned.
+        // This is done efficiently in-memory since nodes are cached in DataStore.
+        // Only public IP and agent port are exposed - no sensitive node details.
+        // ========================================================================
+
+        // Efficiently lookup node IPs (in-memory, no DB queries)
+        var items = vmsWithPagination.Select(v =>
+        {
+            string? nodePublicIp = null;
+            int? nodeAgentPort = null;
+
+            // Only lookup if VM is assigned to a node
+            if (!string.IsNullOrEmpty(v.NodeId))
+            {
+                if (_dataStore.Nodes.TryGetValue(v.NodeId, out var node))
+                {
+                    nodePublicIp = node.PublicIp;
+                    nodeAgentPort = node.AgentPort > 0 ? node.AgentPort : null;
+
+                    _logger.LogDebug(
+                        "VM {VmId} on node {NodeId}: IP={PublicIp}, Port={Port}",
+                        v.Id, v.NodeId, nodePublicIp ?? "none", nodeAgentPort ?? 5100);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "VM {VmId} references non-existent node {NodeId}",
+                        v.Id, v.NodeId);
+                }
+            }
+
+            return new VmSummary(
                 v.Id,
                 v.Name,
                 v.Status,
                 v.PowerState,
                 v.NodeId,
+                nodePublicIp,      // NEW: Populated from node lookup
+                nodeAgentPort,     // NEW: Populated from node lookup
                 v.Spec,
                 v.NetworkConfig,
                 v.CreatedAt,
                 v.UpdatedAt
-            ))
-            .ToList();
+            );
+        }).ToList();
 
         return Task.FromResult(new PagedResult<VmSummary>
         {

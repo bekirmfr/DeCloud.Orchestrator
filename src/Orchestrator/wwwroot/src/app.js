@@ -890,48 +890,75 @@ function renderVMsTable(vms) {
     const tbody = document.getElementById('vms-table-body');
     if (!tbody) return;
 
-    if (!vms || vms.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No virtual machines found. Create your first VM to get started.</td></tr>';
+    if (vms.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No VMs found. Create your first VM to get started.</td></tr>';
         return;
     }
 
-    tbody.innerHTML = vms.map(vm => `
+    tbody.innerHTML = vms.map(vm => {
+        // FIXED: Use correct properties from API response
+        const nodeIp = vm.nodePublicIp || 'pending';
+        const nodePort = vm.nodeAgentPort || 5100;
+        const vmIp = vm.networkConfig?.privateIp || 'pending';
+        const nodeName = vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId.substring(0, 8)) : 'None';
+
+        // Only enable connect button if VM is running and has IPs
+        const canConnect = vm.status === 3 && nodeIp !== 'pending' && vmIp !== 'pending';
+
+        return `
         <tr>
             <td>
                 <div class="vm-name">
-                    <div class="vm-status ${vm.status}"></div>
-                    ${vm.name}
+                    <div class="vm-status ${getStatusClass(vm.status)}"></div>
+                    ${escapeHtml(vm.name)}
                 </div>
             </td>
-            <td>${vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId) : 'Unknown'}</td>
+            <td>${escapeHtml(nodeName)}</td>
             <td>${vm.spec?.cpuCores || 0} cores</td>
             <td>${vm.spec?.memoryMb || 0} MB</td>
             <td>${vm.spec?.diskGb || 0} GB</td>
             <td>
-                <span class="status-badge status-${vm.status}">
-                    ${vm.status}
+                <span class="status-badge status-${getStatusClass(vm.status)}">
+                    ${getStatusText(vm.status)}
                 </span>
             </td>
             <td>
                 <div class="table-actions">
-                    <button class="btn-icon" onclick="window.showConnectInfo('${vm.networkConfig.nodeIp}', '${vm.networkConfig.privateIp}', '${vm.name}')" title="Connect">
+                    ${canConnect ? `
+                    <button class="btn-icon" 
+                            onclick="window.showConnectInfo('${escapeHtml(nodeIp)}', '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', ${nodePort})" 
+                            title="SSH Connection Info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
                         </svg>
                     </button>
-                    <button class="btn-icon" onclick="window.openTerminal('${vm.id}')" title="Terminal">
+                    ` : `
+                    <button class="btn-icon" disabled title="VM must be running">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
+                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                        </svg>
+                    </button>
+                    `}
+                    <!-- Other buttons: terminal, password, delete -->
+                    <button class="btn-icon" 
+                            onclick="window.openTerminal('${vm.id}')" 
+                            title="Web Terminal">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="2" y="4" width="20" height="16" rx="2"/>
                             <path d="M6 8l4 4-4 4M12 16h6"/>
                         </svg>
                     </button>
-                    <button class="btn-icon" onclick="window.revealPassword('${vm.id}')" title="Show Password">
+                    <button class="btn-icon" 
+                            onclick="window.revealPassword('${vm.id}')" 
+                            title="Show Password">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
                     </button>
-                    <button class="btn-icon btn-icon-danger" onclick="window.deleteVM('${vm.id}', '${vm.name}')" title="Delete">
+                    <button class="btn-icon btn-delete" 
+                            onclick="window.deleteVM('${vm.id}', '${escapeHtml(vm.name)}')" 
+                            title="Delete VM">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                         </svg>
@@ -939,7 +966,7 @@ function renderVMsTable(vms) {
                 </div>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 function renderDashboardVMs(vms) {
@@ -1171,45 +1198,6 @@ async function deleteVM(vmId, vmName) {
 }
 
 /**
- * Copy text to clipboard with HTTP fallback
- * navigator.clipboard requires HTTPS, so we use execCommand as fallback
- * 
- * @param {string} text - Text to copy to clipboard
- * @returns {Promise<boolean>} - True if successful
- */
-async function copyToClipboard(text) {
-    // Try modern API on HTTPS
-    var isSuccess = false;
-    if (navigator.clipboard && window.isSecureContext) {
-        try {
-            await navigator.clipboard.writeText(text);
-            isSuccess = true;
-        } catch (err) {
-            console.log('Modern API failed, trying fallback');
-        }
-    } else {
-        // Fallback for HTTP: Use execCommand
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-999999px';
-        document.body.appendChild(textarea);
-        textarea.select();
-        const successful = document.execCommand('copy');  // ✅ Works on HTTP!
-        document.body.removeChild(textarea);
-        isSuccess = successful;
-    }
-
-    if (isSuccess) {
-        showToast('Copied!', 'success');
-        return true;
-    } else {
-        showToast('Could not copy - please select manually', 'warning');
-        return false;
-    }
-}
-
-/**
 * Show password modal and handle encryption
 */
 async function showPasswordModal(vmId, vmName, password) {
@@ -1388,13 +1376,24 @@ function openTerminal(vmId) {
     showToast('Terminal feature coming soon', 'info');
 }
 
-function showConnectInfo(nodeIp, vmIp, vmName) {
+function showConnectInfo(nodeIp, vmIp, vmName, nodePort = 5100) {
+    // Validate IPs to prevent injection
+    if (!isValidIp(nodeIp) || !isValidIp(vmIp)) {
+        showToast('Invalid IP address format', 'error');
+        return;
+    }
+
+    if (nodePort < 1 || nodePort > 65535) {
+        showToast('Invalid port number', 'error');
+        return;
+    }
+
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
     modal.innerHTML = `
-        <div class="modal" style="max-width: 600px;">
+        <div class="modal" style="max-width: 700px;">
             <div class="modal-header">
-                <h2 class="modal-title">Connect to ${vmName}</h2>
+                <h2 class="modal-title">Connect to ${escapeHtml(vmName)}</h2>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -1405,14 +1404,25 @@ function showConnectInfo(nodeIp, vmIp, vmName) {
                 <div class="connect-section">
                     <div class="connect-section-title">SSH via Jump Host</div>
                     <div class="connect-code">
-                        ssh -J decloud@${nodeIp} decloud@${vmIp}
+                        ssh -J decloud@${escapeHtml(nodeIp)} decloud@${escapeHtml(vmIp)}
                         <button class="connect-code-copy" onclick="copyToClipboard('ssh -J decloud@${nodeIp} decloud@${vmIp}')">Copy</button>
                     </div>
+                    <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
+                        💡 Use this command to connect through the node as a jump host
+                    </p>
                 </div>
+                
                 <div class="connect-section">
                     <div class="connect-section-title">Direct Connection Info</div>
-                    <p style="color: #9ca3af; margin-bottom: 8px;">Node IP: <code>${nodeIp}</code></p>
-                    <p style="color: #9ca3af;">VM IP: <code>${vmIp}</code></p>
+                    <p style="color: #9ca3af; margin-bottom: 8px;">
+                        <strong>Node IP:</strong> <code>${escapeHtml(nodeIp)}</code>
+                    </p>
+                    <p style="color: #9ca3af; margin-bottom: 8px;">
+                        <strong>Node Port:</strong> <code>${nodePort}</code>
+                    </p>
+                    <p style="color: #9ca3af;">
+                        <strong>VM IP:</strong> <code>${escapeHtml(vmIp)}</code>
+                    </p>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1447,6 +1457,96 @@ document.addEventListener('DOMContentLoaded', () => {
         settingsUrl.value = CONFIG.orchestratorUrl;
     }
 });
+
+// ============================================
+// HELPER METHODS
+// ============================================
+
+/**
+ * Copy text to clipboard with HTTP fallback
+ * navigator.clipboard requires HTTPS, so we use execCommand as fallback
+ * 
+ * @param {string} text - Text to copy to clipboard
+ * @returns {Promise<boolean>} - True if successful
+ */
+async function copyToClipboard(text) {
+    // Try modern API on HTTPS
+    var isSuccess = false;
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            isSuccess = true;
+        } catch (err) {
+            console.log('Modern API failed, trying fallback');
+        }
+    } else {
+        // Fallback for HTTP: Use execCommand
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-999999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const successful = document.execCommand('copy');  // ✅ Works on HTTP!
+        document.body.removeChild(textarea);
+        isSuccess = successful;
+    }
+
+    if (isSuccess) {
+        showToast('Copied!', 'success');
+        return true;
+    } else {
+        showToast('Could not copy - please select manually', 'warning');
+        return false;
+    }
+}
+
+/**
+ * Escape HTML to prevent XSS
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Validate IPv4 address format
+ */
+function isValidIp(ip) {
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipv4Regex.test(ip)) return false;
+
+    const octets = ip.split('.');
+    return octets.every(octet => {
+        const num = parseInt(octet, 10);
+        return num >= 0 && num <= 255;
+    });
+}
+
+/**
+ * Get CSS class for VM status
+ */
+function getStatusClass(status) {
+    const statusMap = {
+        0: 'pending', 1: 'scheduling', 2: 'provisioning',
+        3: 'running', 4: 'stopping', 5: 'stopped',
+        6: 'deleting', 7: 'migrating', 8: 'error', 9: 'deleted'
+    };
+    return statusMap[status] || 'unknown';
+}
+
+/**
+ * Get human-readable status text
+ */
+function getStatusText(status) {
+    const statusMap = {
+        0: 'Pending', 1: 'Scheduling', 2: 'Provisioning',
+        3: 'Running', 4: 'Stopping', 5: 'Stopped',
+        6: 'Deleting', 7: 'Migrating', 8: 'Error', 9: 'Deleted'
+    };
+    return statusMap[status] || 'Unknown';
+}
 
 // ============================================
 // EXPOSE FUNCTIONS TO WINDOW (for onclick handlers)

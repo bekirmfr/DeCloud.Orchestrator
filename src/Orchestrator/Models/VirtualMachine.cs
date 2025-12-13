@@ -266,6 +266,8 @@ public record VmSummary(
     VmStatus Status,
     VmPowerState PowerState,
     string? NodeId,
+    string? NodePublicIp,       // Node's public IP for SSH access
+    int? NodeAgentPort,         // Node's agent port (null = default 5100)
     VmSpec Spec,
     VmNetworkConfig NetworkConfig,
     DateTime CreatedAt,
