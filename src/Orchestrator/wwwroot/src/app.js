@@ -1200,7 +1200,7 @@ async function copyToClipboard(text) {
         isSuccess = successful;
     }
 
-    if (success) {
+    if (isSuccess) {
         showToast('Copied!', 'success');
         return true;
     } else {
