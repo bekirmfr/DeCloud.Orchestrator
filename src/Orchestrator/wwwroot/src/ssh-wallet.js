@@ -21,12 +21,13 @@ async function getSSHCertificate(vmId) {
         if (needsWalletSig) {
             console.log('[SSH] No SSH key registered - requesting wallet signature...');
             
-            if (!ethersSigner) {
-                throw new Error('Wallet not connected. Please connect your wallet first.');
+            const signer = window.ethersSigner();
+            if (!signer) {
+                throw new Error('Wallet not connected...');
             }
             
             // Sign the SSH key derivation message
-            walletSignature = await ethersSigner.signMessage(SSH_KEY_DERIVATION_MESSAGE);
+            walletSignature = await signer.signMessage(SSH_KEY_DERIVATION_MESSAGE);
             console.log('[SSH] ✓ Wallet signature obtained');
         } else {
             console.log('[SSH] Using registered SSH key');
@@ -316,7 +317,10 @@ ssh -i ~/.ssh/decloud-wallet.pem \\
     showToast('SSH bundle downloaded!', 'success');
 }
 
-// Export functions for use in app.js
-window.getSSHCertificate = getSSHCertificate;
-window.showSSHConnectionModal = showSSHConnectionModal;
-window.downloadSSHBundle = downloadSSHBundle;
+// Export functions as ES6 module
+export {
+    getSSHCertificate,
+    showSSHConnectionModal,
+    downloadSSHBundle,
+    SSH_KEY_DERIVATION_MESSAGE
+};

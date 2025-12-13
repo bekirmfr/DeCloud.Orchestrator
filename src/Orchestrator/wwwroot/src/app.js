@@ -10,6 +10,11 @@ import { BrowserProvider } from 'ethers';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/ciphers/webcrypto';
 import { sha256 } from '@noble/hashes/sha256';
+import {
+    getSSHCertificate,
+    showSSHConnectionModal,
+    downloadSSHBundle
+} from './ssh-wallet.js';
 
 // ============================================
 // CONFIGURATION
@@ -896,9 +901,6 @@ function renderVMsTable(vms) {
     }
 
     tbody.innerHTML = vms.map(vm => {
-        // ================================================================
-        // CORRECT: Access networkConfig properties
-        // ================================================================
         const networkConfig = vm.networkConfig || {};
 
         // VM network details
@@ -940,7 +942,7 @@ function renderVMsTable(vms) {
                 <div class="table-actions">
                     ${canConnect ? `
                     <button class="btn-icon" 
-                            onclick="window.showSSHConnectionModal('${escapeHtml(sshJumpHost)}', ${sshJumpPort}, '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort})"
+                            onclick="window.showSSHConnectionModal('${vm.id}', '${escapeHtml(vm.name)}')"
                             title="SSH Connection Info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
@@ -1665,6 +1667,8 @@ function getStatusText(status) {
 // ============================================
 // EXPOSE FUNCTIONS TO WINDOW (for onclick handlers)
 // ============================================
+window.api = api;
+window.escapeHtml = escapeHtml;
 window.connectWallet = connectWallet;
 window.disconnect = disconnect;
 window.showPage = showPage;
@@ -1680,6 +1684,8 @@ window.deleteSSHKey = deleteSSHKey;
 window.openTerminal = openTerminal;
 window.showConnectInfo = showConnectInfo;
 window.showSSHConnectionModal = showSSHConnectionModal;
+window.downloadSSHBundle = downloadSSHBundle;
 window.saveSettings = saveSettings;
 window.refreshData = refreshData;
 window.showToast = showToast;
+window.ethersSigner = () => ethersSigner;
