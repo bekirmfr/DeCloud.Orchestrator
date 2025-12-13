@@ -134,7 +134,7 @@ public class WalletSshKeyService : IWalletSshKeyService
 
     /// <summary>
     /// Generate Ed25519 SSH key pair from seed
-    /// FIXED: Keep raw bytes instead of NSec Key to avoid export restrictions
+    /// FIXED: Extract bytes without triggering disposal issues
     /// </summary>
     private async Task<SshKeyPair> GenerateEd25519KeyPairAsync(
         byte[] seed,
@@ -144,24 +144,20 @@ public class WalletSshKeyService : IWalletSshKeyService
         return await Task.Run(() =>
         {
             // Ed25519 key generation from seed
-            // We'll use NSec to generate the key pair, but keep the raw bytes
             var algorithm = SignatureAlgorithm.Ed25519;
 
             // Import seed to generate key pair
             using var key = Key.Import(algorithm, seed, KeyBlobFormat.RawPrivateKey);
 
-            // Extract raw key material before disposing
-            // Ed25519 private key is 32 bytes, public key is 32 bytes
+            // Extract raw key material
+            // Ed25519 private key is the 32-byte seed
             var privateKeyBytes = new byte[32];
-            var publicKeyBytes = new byte[32];
-
             Array.Copy(seed, 0, privateKeyBytes, 0, 32);
 
-            // Generate public key from private key using Ed25519
-            // NSec does this internally, so we can export the public key
-            var tempPublicKey = key.PublicKey;
-            var publicKeyExport = tempPublicKey.Export(KeyBlobFormat.RawPublicKey);
-            Array.Copy(publicKeyExport, 0, publicKeyBytes, 0, 32);
+            // Get public key (NSec generates this from the private key)
+            // PublicKey doesn't implement IDisposable, so don't use 'using'
+            var publicKey = key.PublicKey;
+            var publicKeyBytes = publicKey.Export(KeyBlobFormat.RawPublicKey);
 
             // Convert to OpenSSH format
             var privateKeyPem = ExportPrivateKeyToOpenSSH(privateKeyBytes, publicKeyBytes, walletAddress);
@@ -181,7 +177,7 @@ public class WalletSshKeyService : IWalletSshKeyService
 
     /// <summary>
     /// Export Ed25519 private key in OpenSSH format (PEM-like)
-    /// FIXED: Works directly with raw bytes instead of NSec Key objects
+    /// Works directly with raw bytes instead of NSec Key objects
     /// </summary>
     private string ExportPrivateKeyToOpenSSH(byte[] privateKeyBytes, byte[] publicKeyBytes, string walletAddress)
     {
@@ -238,7 +234,7 @@ public class WalletSshKeyService : IWalletSshKeyService
         // Comment
         WriteSshString(privateWriter, comment);
 
-        // Padding to 8-byte boundary
+        // Padding to 8-byte boundary (OpenSSH uses 1,2,3,4... for padding)
         var privateBlob = privateMs.ToArray();
         var paddingLength = (8 - (privateBlob.Length % 8)) % 8;
         for (int i = 1; i <= paddingLength; i++)
