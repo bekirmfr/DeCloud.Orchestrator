@@ -223,51 +223,67 @@ public class VmService : IVmService
             .ToList();
 
         // ========================================================================
-        // SECURITY-CONSCIOUS NODE IP RESOLUTION
-        // ========================================================================
-        // For each VM, look up the node's public IP if a node is assigned.
-        // This is done efficiently in-memory since nodes are cached in DataStore.
-        // Only public IP and agent port are exposed - no sensitive node details.
+        // For each VM, enrich the networkConfig with SSH jump host details
+        // This keeps all network information properly organized in one object
         // ========================================================================
 
-        // Efficiently lookup node IPs (in-memory, no DB queries)
         var items = vmsWithPagination.Select(v =>
         {
-            string? nodePublicIp = null;
-            int? nodeAgentPort = null;
+            // Clone the existing network config to avoid modifying the original
+            var enrichedNetworkConfig = new VmNetworkConfig
+            {
+                PrivateIp = v.NetworkConfig.PrivateIp,
+                PublicIp = v.NetworkConfig.PublicIp,
+                Hostname = v.NetworkConfig.Hostname,
+                PortMappings = v.NetworkConfig.PortMappings,
+                OverlayNetworkId = v.NetworkConfig.OverlayNetworkId,
 
-            // Only lookup if VM is assigned to a node
+                // Default values (will be populated if node exists)
+                SshJumpHost = null,
+                SshJumpPort = 22,
+                NodeAgentHost = null,
+                NodeAgentPort = 5100
+            };
+
+            // Populate node connection details if VM is assigned to a node
             if (!string.IsNullOrEmpty(v.NodeId))
             {
                 if (_dataStore.Nodes.TryGetValue(v.NodeId, out var node))
                 {
-                    nodePublicIp = node.PublicIp;
-                    nodeAgentPort = node.AgentPort > 0 ? node.AgentPort : null;
+                    // ============================================================
+                    // SECURITY: Only expose what's needed for connection
+                    // ============================================================
+                    enrichedNetworkConfig.SshJumpHost = node.PublicIp;
+                    enrichedNetworkConfig.SshJumpPort = 22; // Standard SSH port
+                    enrichedNetworkConfig.NodeAgentHost = node.PublicIp;
+                    enrichedNetworkConfig.NodeAgentPort = node.AgentPort > 0 ? node.AgentPort : 5100;
 
                     _logger.LogDebug(
-                        "VM {VmId} on node {NodeId}: IP={PublicIp}, Port={Port}",
-                        v.Id, v.NodeId, nodePublicIp ?? "none", nodeAgentPort ?? 5100);
+                        "VM {VmId} on node {NodeId}: SSH={SshHost}:{SshPort}, Agent={AgentHost}:{AgentPort}",
+                        v.Id, v.NodeId,
+                        enrichedNetworkConfig.SshJumpHost, enrichedNetworkConfig.SshJumpPort,
+                        enrichedNetworkConfig.NodeAgentHost, enrichedNetworkConfig.NodeAgentPort);
                 }
                 else
                 {
                     _logger.LogWarning(
-                        "VM {VmId} references non-existent node {NodeId}",
+                        "VM {VmId} references non-existent node {NodeId} - connection details unavailable",
                         v.Id, v.NodeId);
                 }
             }
 
             return new VmSummary(
-                v.Id,
-                v.Name,
-                v.Status,
-                v.PowerState,
-                v.NodeId,
-                nodePublicIp,      // NEW: Populated from node lookup
-                nodeAgentPort,     // NEW: Populated from node lookup
-                v.Spec,
-                v.NetworkConfig,
-                v.CreatedAt,
-                v.UpdatedAt
+                Id: v.Id,
+                Name: v.Name,
+                Status: v.Status,
+                PowerState: v.PowerState,
+                NodeId: v.NodeId,
+                NodePublicIp: enrichedNetworkConfig.SshJumpHost,
+                NodeAgentPort: enrichedNetworkConfig.NodeAgentPort,
+                Spec: v.Spec,
+                NetworkConfig: enrichedNetworkConfig,  // <-- Enhanced with node connection details
+                CreatedAt: v.CreatedAt,
+                UpdatedAt: v.UpdatedAt
             );
         }).ToList();
 

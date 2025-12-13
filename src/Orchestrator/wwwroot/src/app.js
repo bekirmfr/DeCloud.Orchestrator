@@ -896,14 +896,28 @@ function renderVMsTable(vms) {
     }
 
     tbody.innerHTML = vms.map(vm => {
-        // FIXED: Use correct properties from API response
-        const nodeIp = vm.nodePublicIp || 'pending';
-        const nodePort = vm.nodeAgentPort || 5100;
-        const vmIp = vm.networkConfig?.privateIp || 'pending';
+        // ================================================================
+        // CORRECT: Access networkConfig properties
+        // ================================================================
+        const networkConfig = vm.networkConfig || {};
+
+        // VM network details
+        const vmIp = networkConfig.privateIp || 'pending';
+        const hostname = networkConfig.hostname || vm.name;
+
+        // Node connection details (for SSH and web terminal)
+        const sshJumpHost = networkConfig.sshJumpHost || 'pending';
+        const sshJumpPort = networkConfig.sshJumpPort || 22;
+        const nodeAgentHost = networkConfig.nodeAgentHost || 'pending';
+        const nodeAgentPort = networkConfig.nodeAgentPort || 5100;
+
+        // Display node name from cache
         const nodeName = vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId.substring(0, 8)) : 'None';
 
-        // Only enable connect button if VM is running and has IPs
-        const canConnect = vm.status === 3 && nodeIp !== 'pending' && vmIp !== 'pending';
+        // Only enable connect button if VM is running and has connection details
+        const canConnect = vm.status === 3 &&
+            sshJumpHost !== 'pending' &&
+            vmIp !== 'pending';
 
         return `
         <tr>
@@ -926,10 +940,18 @@ function renderVMsTable(vms) {
                 <div class="table-actions">
                     ${canConnect ? `
                     <button class="btn-icon" 
-                            onclick="window.showConnectInfo('${escapeHtml(nodeIp)}', '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', ${nodePort})" 
+                            onclick="window.showConnectInfo('${escapeHtml(sshJumpHost)}', ${sshJumpPort}, '${escapeHtml(vmIp)}', '${escapeHtml(vm.name)}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort})" 
                             title="SSH Connection Info">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" 
+                            onclick="window.openTerminal('${vm.id}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort}, '${escapeHtml(vmIp)}')" 
+                            title="Web Terminal">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <path d="M6 8l4 4-4 4M12 16h6"/>
                         </svg>
                     </button>
                     ` : `
@@ -938,16 +960,13 @@ function renderVMsTable(vms) {
                             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
                         </svg>
                     </button>
-                    `}
-                    <!-- Other buttons: terminal, password, delete -->
-                    <button class="btn-icon" 
-                            onclick="window.openTerminal('${vm.id}')" 
-                            title="Web Terminal">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <button class="btn-icon" disabled title="VM must be running">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2">
                             <rect x="2" y="4" width="20" height="16" rx="2"/>
                             <path d="M6 8l4 4-4 4M12 16h6"/>
                         </svg>
                     </button>
+                    `}
                     <button class="btn-icon" 
                             onclick="window.revealPassword('${vm.id}')" 
                             title="Show Password">
@@ -1372,26 +1391,64 @@ async function deleteSSHKey(keyId, keyName) {
 // TERMINAL & CONNECT INFO
 // ============================================
 
-function openTerminal(vmId) {
-    showToast('Terminal feature coming soon', 'info');
+/**
+ * Open web terminal for VM
+ * @param {string} vmId - VM ID
+ * @param {string} nodeAgentHost - Node Agent host (from networkConfig)
+ * @param {number} nodeAgentPort - Node Agent port (from networkConfig)
+ * @param {string} vmIp - VM private IP
+ */
+function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
+    // Build terminal URL with connection parameters
+    const params = new URLSearchParams({
+        vmId: vmId,
+        nodeIp: nodeAgentHost,
+        nodePort: nodeAgentPort,
+        vmIp: vmIp,
+        autoConnect: 'true'
+    });
+
+    window.open(`/terminal.html?${params.toString()}`, '_blank');
 }
 
-function showConnectInfo(nodeIp, vmIp, vmName, nodePort = 5100) {
-    // Validate IPs to prevent injection
-    if (!isValidIp(nodeIp) || !isValidIp(vmIp)) {
+/**
+ * Display SSH connection information modal
+ * @param {string} sshJumpHost - Node's public IP for SSH jump host
+ * @param {number} sshJumpPort - SSH port on node (typically 22)
+ * @param {string} vmIp - VM's private IP address
+ * @param {string} vmName - VM's display name
+ * @param {string} nodeAgentHost - Node Agent API host (for web terminal)
+ * @param {number} nodeAgentPort - Node Agent API port (for web terminal)
+ */
+function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
+    // ========================================================================
+    // SECURITY VALIDATION: Input Sanitization
+    // ========================================================================
+    if (!isValidIp(sshJumpHost) || !isValidIp(vmIp)) {
         showToast('Invalid IP address format', 'error');
         return;
     }
 
-    if (nodePort < 1 || nodePort > 65535) {
+    if (!isValidIp(nodeAgentHost)) {
+        showToast('Invalid Node Agent host format', 'error');
+        return;
+    }
+
+    if (sshJumpPort < 1 || sshJumpPort > 65535 || nodeAgentPort < 1 || nodeAgentPort > 65535) {
         showToast('Invalid port number', 'error');
         return;
     }
 
+    // Build SSH command
+    const sshCommand = `ssh -J decloud@${sshJumpHost}:${sshJumpPort} decloud@${vmIp}`;
+
+    // Build alternate direct command (if WireGuard is configured)
+    const directSshCommand = `ssh decloud@${vmIp}`;
+
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
     modal.innerHTML = `
-        <div class="modal" style="max-width: 700px;">
+        <div class="modal" style="max-width: 750px;">
             <div class="modal-header">
                 <h2 class="modal-title">Connect to ${escapeHtml(vmName)}</h2>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
@@ -1401,28 +1458,83 @@ function showConnectInfo(nodeIp, vmIp, vmName, nodePort = 5100) {
                 </button>
             </div>
             <div class="modal-body connect-info">
+                <!-- SSH via Jump Host -->
                 <div class="connect-section">
-                    <div class="connect-section-title">SSH via Jump Host</div>
+                    <div class="connect-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
+                            <rect x="2" y="2" width="20" height="20" rx="2" ry="2"/>
+                            <line x1="7" y1="7" x2="7" y2="7"/>
+                            <line x1="7" y1="12" x2="17" y2="12"/>
+                            <line x1="7" y1="17" x2="17" y2="17"/>
+                        </svg>
+                        SSH via Jump Host (Recommended)
+                    </div>
                     <div class="connect-code">
-                        ssh -J decloud@${escapeHtml(nodeIp)} decloud@${escapeHtml(vmIp)}
-                        <button class="connect-code-copy" onclick="copyToClipboard('ssh -J decloud@${nodeIp} decloud@${vmIp}')">Copy</button>
+                        ${escapeHtml(sshCommand)}
+                        <button class="connect-code-copy" onclick="copyToClipboard('${sshCommand}')">Copy</button>
                     </div>
                     <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
-                        💡 Use this command to connect through the node as a jump host
+                        💡 This command connects through the node server as a jump host
                     </p>
                 </div>
                 
+                <!-- Connection Details -->
                 <div class="connect-section">
-                    <div class="connect-section-title">Direct Connection Info</div>
-                    <p style="color: #9ca3af; margin-bottom: 8px;">
-                        <strong>Node IP:</strong> <code>${escapeHtml(nodeIp)}</code>
+                    <div class="connect-section-title">Connection Details</div>
+                    <table style="width: 100%; color: #9ca3af; font-size: 0.875rem;">
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>SSH Jump Host:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(sshJumpHost)}:${sshJumpPort}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>VM Private IP:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(vmIp)}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>VM Hostname:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(vmName.toLowerCase())}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>Node Agent API:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(nodeAgentHost)}:${nodeAgentPort}</code> <span style="color: #666;">(WebSocket)</span></td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Alternative: Direct SSH (WireGuard) -->
+                <div class="connect-section">
+                    <div class="connect-section-title">
+                        Alternative: Direct SSH (WireGuard Required)
+                    </div>
+                    <div class="connect-code">
+                        ${escapeHtml(directSshCommand)}
+                        <button class="connect-code-copy" onclick="copyToClipboard('${directSshCommand}')">Copy</button>
+                    </div>
+                    <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
+                        ⚡ Requires WireGuard VPN connection to overlay network
                     </p>
-                    <p style="color: #9ca3af; margin-bottom: 8px;">
-                        <strong>Node Port:</strong> <code>${nodePort}</code>
+                </div>
+                
+                <!-- Web Terminal -->
+                <div class="connect-section">
+                    <div class="connect-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <path d="M6 8l4 4-4 4M12 16h6"/>
+                        </svg>
+                        Web Terminal (Browser-Based)
+                    </div>
+                    <p style="color: #9ca3af; margin-bottom: 12px; font-size: 0.875rem;">
+                        Access the VM directly in your browser via WebSocket connection
                     </p>
-                    <p style="color: #9ca3af;">
-                        <strong>VM IP:</strong> <code>${escapeHtml(vmIp)}</code>
-                    </p>
+                    <button class="btn btn-secondary" 
+                            onclick="window.openTerminal('${vmName}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort}, '${escapeHtml(vmIp)}'); this.closest('.modal-overlay').remove();">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <path d="M6 8l4 4-4 4M12 16h6"/>
+                        </svg>
+                        Open Web Terminal
+                    </button>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1514,6 +1626,8 @@ function escapeHtml(text) {
  * Validate IPv4 address format
  */
 function isValidIp(ip) {
+    if (!ip || typeof ip !== 'string') return false;
+
     const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
     if (!ipv4Regex.test(ip)) return false;
 

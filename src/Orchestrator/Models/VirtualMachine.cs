@@ -160,6 +160,28 @@ public class VmNetworkConfig
     public string? Hostname { get; set; }
     public List<PortMapping> PortMappings { get; set; } = new();
     public string? OverlayNetworkId { get; set; }
+
+    /// <summary>
+    /// Public IP of the node server hosting this VM (SSH jump host)
+    /// </summary>
+    public string? SshJumpHost { get; set; }
+
+    /// <summary>
+    /// Port for SSH jump host connection (typically 22)
+    /// Note: This is for SSH to the node, not the NodeAgent API port
+    /// </summary>
+    public int? SshJumpPort { get; set; } = 22;
+
+    /// <summary>
+    /// Node Agent API endpoint (for web terminal WebSocket connections)
+    /// Format: ws://{NodeAgentHost}:{NodeAgentPort}/api/vms/{vmId}/terminal
+    /// </summary>
+    public string? NodeAgentHost { get; set; }
+
+    /// <summary>
+    /// Node Agent API port (typically 5100)
+    /// </summary>
+    public int? NodeAgentPort { get; set; } = 5100;
 }
 
 public class PortMapping
