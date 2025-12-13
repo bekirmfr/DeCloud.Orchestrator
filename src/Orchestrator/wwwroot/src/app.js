@@ -1458,6 +1458,7 @@ window.openCreateVMModal = openCreateVMModal;
 window.closeModal = closeModal;
 window.createVM = createVM;
 window.deleteVM = deleteVM;
+window.copyToClipboard = copyToClipboard;
 window.revealPassword = revealPassword;
 window.openAddSSHKeyModal = openAddSSHKeyModal;
 window.addSSHKey = addSSHKey;
