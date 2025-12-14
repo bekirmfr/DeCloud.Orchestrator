@@ -199,7 +199,7 @@ public class SshCertificateController : ControllerBase
         var info = new SshConnectionInfo
         {
             VmIp = vm.NetworkConfig?.PrivateIp ?? "",
-            NodeIp = vm.AccessInfo.SshHost ?? vm.NetworkConfig?.SshJumpHost ?? "",  // ✅ Use NodePublicIp
+            NodeIp = vm.AccessInfo?.SshHost ?? vm.NetworkConfig?.SshJumpHost ?? "",  // ✅ Use NodePublicIp
             NodePort = vm.NetworkConfig?.SshJumpPort ?? 22,
             Username = "ubuntu",
             HasUserSshKey = hasUserKey,
