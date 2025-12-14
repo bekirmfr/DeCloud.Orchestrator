@@ -102,6 +102,7 @@ public class SshCertificateService : ISshCertificateService
         // Define principals (what this certificate can access)
         var principals = new List<string>
         {
+            "decloud",
             $"vm-{vm.Id}",                          // VM-specific access
             $"user-{user.Id}",                       // User-specific access
             $"wallet-{user.WalletAddress.ToLower()}" // Wallet-specific access
