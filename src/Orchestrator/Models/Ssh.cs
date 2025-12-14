@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Orchestrator.Models;
 
 /// <summary>
@@ -47,9 +49,16 @@ public class CertificateSignRequest
 /// </summary>
 public class CertificateSignResponse
 {
+    [JsonPropertyName("success")]
     public bool Success { get; set; }
+
+    [JsonPropertyName("signedCertificate")]
     public string SignedCertificate { get; set; } = "";
+
+    [JsonPropertyName("error")]
     public string? Error { get; set; }
+
+    [JsonPropertyName("validUntil")]
     public DateTime? ValidUntil { get; set; }
 }
 
