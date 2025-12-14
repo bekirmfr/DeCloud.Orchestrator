@@ -18,6 +18,7 @@ public class SshCertificateController : ControllerBase
     private readonly IVmService _vmService;
     private readonly IUserService _userService;
     private readonly IWalletSshKeyService _walletSshKeyService;
+    private readonly INodeService _nodeService;
     private readonly ILogger<SshCertificateController> _logger;
 
     public SshCertificateController(
@@ -25,12 +26,14 @@ public class SshCertificateController : ControllerBase
         IVmService vmService,
         IUserService userService,
         IWalletSshKeyService walletSshKeyService,
+        INodeService nodeService,
         ILogger<SshCertificateController> logger)
     {
         _certificateService = certificateService;
         _vmService = vmService;
         _userService = userService;
         _walletSshKeyService = walletSshKeyService;
+        _nodeService = nodeService;
         _logger = logger;
     }
 
@@ -113,6 +116,14 @@ public class SshCertificateController : ControllerBase
                 validity,
                 HttpContext.RequestAborted);
 
+            // Look up node to get public IP
+            var nodeIp = "";
+            if (!string.IsNullOrEmpty(vm.NodeId))
+            {
+                var node = await _nodeService.GetNodeAsync(vm.NodeId);
+                nodeIp = node?.PublicIp ?? "";
+            }
+
             var response = new SshCertificateResponse
             {
                 Certificate = certResult.Certificate.CertificateData,
@@ -123,8 +134,8 @@ public class SshCertificateController : ControllerBase
                 Principals = certResult.Certificate.Principals,
                 IsWalletDerived = certResult.IsWalletDerived,
                 VmIp = vm.NetworkConfig?.PrivateIp ?? "",
-                NodeIp = vm.AccessInfo?.SshHost ?? "",
-                NodePort = vm.AccessInfo?.SshPort ?? 22
+                NodeIp = nodeIp,
+                NodePort = 22
             };
 
             // Only include private key for wallet-derived keys
@@ -196,33 +207,39 @@ public class SshCertificateController : ControllerBase
         var user = await _userService.GetUserAsync(userId);
         var hasUserKey = user?.SshKeys.Any() ?? false;
 
+        // Look up node to get public IP
+        var nodeIp = "";
+        if (!string.IsNullOrEmpty(vm.NodeId))
+        {
+            var node = await _nodeService.GetNodeAsync(vm.NodeId);
+            nodeIp = node?.PublicIp ?? "";
+        }
+
         var info = new SshConnectionInfo
         {
             VmIp = vm.NetworkConfig?.PrivateIp ?? "",
-            NodeIp = vm.AccessInfo?.SshHost ?? vm.NetworkConfig?.SshJumpHost ?? "",  // ✅ Use NodePublicIp
-            NodePort = vm.NetworkConfig?.SshJumpPort ?? 22,
+            NodeIp = nodeIp,
+            NodePort = 22,
             Username = "ubuntu",
             HasUserSshKey = hasUserKey,
             RequiresWalletSignature = !hasUserKey,
-            SshCommand = GenerateSshCommand(vm, hasUserKey)
+            SshCommand = GenerateSshCommand(nodeIp, vm.NetworkConfig?.PrivateIp ?? "", vm.Id, hasUserKey)
         };
 
         return Ok(ApiResponse<SshConnectionInfo>.Ok(info));
     }
 
-    private string GenerateSshCommand(VirtualMachine vm, bool hasUserKey)
+    private string GenerateSshCommand(string nodeIp, string vmIp, string vmId, bool hasUserKey)
     {
-        var nodeIp = vm.AccessInfo?.SshHost ?? "NODE_IP";
-        var vmIp = vm.NetworkConfig?.PrivateIp ?? "VM_IP";
-        var vmId = vm.Id.Substring(0, 8);
+        var shortVmId = vmId.Substring(0, 8);
 
         if (hasUserKey)
         {
-            return $"ssh -i ~/.ssh/id_ed25519 -o CertificateFile=~/.ssh/decloud-{vmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
+            return $"ssh -i ~/.ssh/id_ed25519 -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
         }
         else
         {
-            return $"ssh -i ~/.ssh/decloud-wallet.pem -o CertificateFile=~/.ssh/decloud-{vmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
+            return $"ssh -i ~/.ssh/decloud-wallet.pem -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
         }
     }
 
