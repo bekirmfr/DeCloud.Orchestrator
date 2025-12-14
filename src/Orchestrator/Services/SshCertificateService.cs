@@ -79,7 +79,15 @@ public class SshCertificateService : ISshCertificateService
             isWalletDerived = true;
 
             // Inject the wallet-derived public key into the VM
-            await InjectPublicKeyIntoVmAsync(vm.Id, vm.NodeId, keyPair.PublicKey, ct);
+            try
+            {
+                await InjectPublicKeyIntoVmAsync(vm.Id, vm.NodeId, keyPair.PublicKey, ct);
+                _logger.LogInformation("Public key injected into VM for direct SSH access");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not inject public key into VM - certificate-based auth will still work");
+            }
         }
         else
         {
