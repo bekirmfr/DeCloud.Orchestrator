@@ -135,7 +135,7 @@ public class SshCertificateController : ControllerBase
                 IsWalletDerived = certResult.IsWalletDerived,
                 VmIp = vm.NetworkConfig?.PrivateIp ?? "",
                 NodeIp = nodeIp,
-                NodePort = 22
+                NodePort = 2222 // Alternative SSH port
             };
 
             // Only include private key for wallet-derived keys

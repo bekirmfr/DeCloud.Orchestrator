@@ -1157,6 +1157,7 @@ public class NodeService : INodeService
     /// <summary>
     /// Inject SSH public key into a VM's authorized_keys
     /// </summary>
+    [Obsolete("Use SSH certificates instead - VMs validate certificates end-to-end")]
     public async Task<bool> InjectSshKeyAsync(
         string nodeId,
         string vmId,

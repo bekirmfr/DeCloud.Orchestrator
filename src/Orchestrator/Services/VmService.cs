@@ -240,7 +240,7 @@ public class VmService : IVmService
 
                 // Default values (will be populated if node exists)
                 SshJumpHost = null,
-                SshJumpPort = 22,
+                SshJumpPort = 2222, // Alternative SSH port (22 blocked by some ISPs)
                 NodeAgentHost = null,
                 NodeAgentPort = 5100
             };
@@ -254,7 +254,7 @@ public class VmService : IVmService
                     // SECURITY: Only expose what's needed for connection
                     // ============================================================
                     enrichedNetworkConfig.SshJumpHost = node.PublicIp;
-                    enrichedNetworkConfig.SshJumpPort = 22; // Standard SSH port
+                    enrichedNetworkConfig.SshJumpPort = 2222; // Standard SSH port
                     enrichedNetworkConfig.NodeAgentHost = node.PublicIp;
                     enrichedNetworkConfig.NodeAgentPort = node.AgentPort > 0 ? node.AgentPort : 5100;
 

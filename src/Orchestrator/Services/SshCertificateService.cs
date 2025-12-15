@@ -78,16 +78,15 @@ public class SshCertificateService : ISshCertificateService
                 ct);
             isWalletDerived = true;
 
-            // Inject the wallet-derived public key into the VM
-            try
-            {
-                await InjectPublicKeyIntoVmAsync(vm.Id, vm.NodeId, keyPair.PublicKey, ct);
-                _logger.LogInformation("Public key injected into VM for direct SSH access");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not inject public key into VM - certificate-based auth will still work");
-            }
+            // =====================================================
+            // SECURITY: Do NOT inject keys into VMs
+            // VMs validate certificates end-to-end for proper isolation
+            // This ensures multi-tenant security - User A cannot access User B's VMs
+            // =====================================================
+            _logger.LogInformation(
+                "Certificate-based authentication configured for VM {VmId} - " +
+                "VM will validate certificate principal 'vm-{VmId}'",
+                vm.Id, vm.Id);
         }
         else
         {
@@ -99,13 +98,20 @@ public class SshCertificateService : ISshCertificateService
         // Generate certificate ID
         var certId = $"decloud-{user.Id.Substring(0, 8)}-{vm.Id.Substring(0, 8)}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
-        // Define principals (what this certificate can access)
+        // =====================================================
+        // Define certificate principals
+        // =====================================================
+        // SECURITY: Certificate must include both bastion and VM principals
+        //   - "decloud": Grants access to bastion jump host
+        //   - "vm-{id}": Grants access to specific VM (validated by VM's sshd)
+        //   - Each VM only accepts certificates with its own vm-{id}
+        //   - This ensures User A cannot access User B's VMs
         var principals = new List<string>
         {
-            "decloud",
-            $"vm-{vm.Id}",                          // VM-specific access
-            $"user-{user.Id}",                       // User-specific access
-            $"wallet-{user.WalletAddress.ToLower()}" // Wallet-specific access
+            "decloud",                               // Bastion jump host access
+            $"vm-{vm.Id}",                          // VM-specific access (validated by VM)
+            $"user-{user.Id}",                       // User identification
+            $"wallet-{user.WalletAddress.ToLower()}" // Wallet identification
         };
 
         _logger.LogInformation(
@@ -143,30 +149,6 @@ public class SshCertificateService : ISshCertificateService
             PublicKey = keyPair.PublicKey,
             IsWalletDerived = isWalletDerived
         };
-    }
-
-    /// <summary>
-    /// Inject wallet-derived public key into running VM
-    /// Uses the node agent's SSH key injection mechanism
-    /// </summary>
-    private async Task InjectPublicKeyIntoVmAsync(
-        string vmId,
-        string nodeId,
-        string publicKey,
-        CancellationToken ct)
-    {
-        _logger.LogInformation(
-            "Injecting wallet-derived public key into VM {VmId}",
-            vmId);
-
-        // This uses the existing ephemeral SSH key service on the node
-        // The node agent will add the public key to /home/ubuntu/.ssh/authorized_keys
-        await _nodeService.InjectSshKeyAsync(
-            nodeId,
-            vmId,
-            publicKey,
-            "ubuntu",
-            ct);
     }
 
     /// <summary>

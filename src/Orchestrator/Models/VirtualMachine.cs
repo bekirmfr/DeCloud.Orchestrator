@@ -167,10 +167,10 @@ public class VmNetworkConfig
     public string? SshJumpHost { get; set; }
 
     /// <summary>
-    /// Port for SSH jump host connection (typically 22)
+    /// Port for SSH jump host connection (2222 to bypass ISP blocks on port 22)
     /// Note: This is for SSH to the node, not the NodeAgent API port
     /// </summary>
-    public int? SshJumpPort { get; set; } = 22;
+    public int? SshJumpPort { get; set; } = 2222;
 
     /// <summary>
     /// Node Agent API endpoint (for web terminal WebSocket connections)
