@@ -1441,18 +1441,38 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, 
         return;
     }
 
-    // Build SSH command
-    const sshCommand = `ssh -J decloud@${sshJumpHost}:${sshJumpPort} decloud@${vmIp}`;
+    // Build SSH commands using SSH config (recommended approach)
+    const sshConfigCommand = `ssh ${escapeHtml(vmIp)}`;
 
-    // Build alternate direct command (if WireGuard is configured)
-    const directSshCommand = `ssh decloud@${vmIp}`;
+    // Build direct ProxyJump command (alternative)
+    const proxyJumpCommand = `ssh -p ${sshJumpPort} -i ~/.ssh/decloud-wallet.pem \\
+  -o CertificateFile=~/.ssh/decloud-XXXXX-cert.pub \\
+  -J decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort} \\
+  ubuntu@${escapeHtml(vmIp)}`;
+
+    // Build SSH config file content
+    const sshConfigContent = `# DeCloud SSH Configuration
+# Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
+
+Host decloud-bastion
+    HostName ${sshJumpHost}
+    Port ${sshJumpPort}
+    User decloud
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+
+Host ${vmIp}
+    User ubuntu
+    ProxyJump decloud-bastion
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
     modal.innerHTML = `
-        <div class="modal" style="max-width: 750px;">
+        <div class="modal" style="max-width: 850px;">
             <div class="modal-header">
-                <h2 class="modal-title">Connect to ${escapeHtml(vmName)}</h2>
+                <h2 class="modal-title">🔗 Connect to ${escapeHtml(vmName)}</h2>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
@@ -1460,7 +1480,50 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, 
                 </button>
             </div>
             <div class="modal-body connect-info">
-                <!-- SSH via Jump Host -->
+                
+                <!-- Recommended: SSH Config Method -->
+                <div class="connect-section" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+                    <div class="connect-section-title" style="color: white; font-size: 1.1rem; font-weight: 600;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
+                            <path d="M9 11l3 3L22 4"/>
+                            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                        </svg>
+                        ✨ Recommended: One-Time SSH Config Setup
+                    </div>
+                    <p style="color: rgba(255,255,255,0.9); font-size: 0.9rem; margin: 12px 0;">
+                        Set up SSH config once, then connect with a single command!
+                    </p>
+                    
+                    <!-- Step 1: Setup SSH Config -->
+                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 15px 0;">
+                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">📝 Step 1: Add to ~/.ssh/config</div>
+                        <div class="connect-code" style="background: #1f2937; margin: 0;">
+                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.85rem; overflow-x: auto;">${escapeHtml(sshConfigContent)}</pre>
+                            <button class="connect-code-copy" onclick="copyToClipboard(\`${sshConfigContent.replace(/`/g, '\\`')}\`)" style="background: #10b981;">
+                                Copy Config
+                            </button>
+                        </div>
+                        <button class="btn btn-secondary" onclick="downloadSSHConfig('${escapeHtml(vmIp)}', '${sshJumpHost}', ${sshJumpPort})" style="margin-top: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                            💾 Download config file
+                        </button>
+                    </div>
+                    
+                    <!-- Step 2: Connect -->
+                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">🚀 Step 2: Connect with Simple Command</div>
+                        <div class="connect-code" style="background: #1f2937; margin: 0;">
+                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.9rem;">${escapeHtml(sshConfigCommand)}</pre>
+                            <button class="connect-code-copy" onclick="copyToClipboard('${sshConfigCommand}')" style="background: #10b981;">
+                                Copy
+                            </button>
+                        </div>
+                        <p style="color: rgba(255,255,255,0.8); font-size: 0.85rem; margin: 8px 0 0 0;">
+                            ✅ That's it! Just <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">ssh ${escapeHtml(vmIp)}</code> from now on
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Alternative: Direct ProxyJump Command -->
                 <div class="connect-section">
                     <div class="connect-section-title">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
@@ -1469,83 +1532,102 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, 
                             <line x1="7" y1="12" x2="17" y2="12"/>
                             <line x1="7" y1="17" x2="17" y2="17"/>
                         </svg>
-                        SSH via Jump Host (Recommended)
+                        Alternative: Direct ProxyJump Command
                     </div>
                     <div class="connect-code">
-                        ${escapeHtml(sshCommand)}
-                        <button class="connect-code-copy" onclick="copyToClipboard('${sshCommand}')">Copy</button>
+                        <pre style="margin: 0; font-size: 0.85rem;">${escapeHtml(proxyJumpCommand)}</pre>
+                        <button class="connect-code-copy" onclick="copyToClipboard(\`${proxyJumpCommand.replace(/`/g, '\\`')}\`)">Copy</button>
                     </div>
                     <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
-                        💡 This command connects through the node server as a jump host
+                        ⚠️ Don't forget to replace <code>XXXXX</code> with your certificate ID!
                     </p>
                 </div>
                 
                 <!-- Connection Details -->
                 <div class="connect-section">
-                    <div class="connect-section-title">Connection Details</div>
+                    <div class="connect-section-title">📊 Connection Details</div>
                     <table style="width: 100%; color: #9ca3af; font-size: 0.875rem;">
                         <tr>
-                            <td style="padding: 4px 0;"><strong>SSH Jump Host:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(sshJumpHost)}:${sshJumpPort}</code></td>
+                            <td style="padding: 6px 0;"><strong>Bastion Host:</strong></td>
+                            <td style="padding: 6px 0;"><code>decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort}</code></td>
                         </tr>
                         <tr>
-                            <td style="padding: 4px 0;"><strong>VM Private IP:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(vmIp)}</code></td>
+                            <td style="padding: 6px 0;"><strong>VM IP Address:</strong></td>
+                            <td style="padding: 6px 0;"><code>ubuntu@${escapeHtml(vmIp)}</code></td>
                         </tr>
                         <tr>
-                            <td style="padding: 4px 0;"><strong>VM Hostname:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(vmName.toLowerCase())}</code></td>
+                            <td style="padding: 6px 0;"><strong>VM Hostname:</strong></td>
+                            <td style="padding: 6px 0;"><code>${escapeHtml(vmName.toLowerCase())}</code></td>
                         </tr>
                         <tr>
-                            <td style="padding: 4px 0;"><strong>Node Agent API:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(nodeAgentHost)}:${nodeAgentPort}</code> <span style="color: #666;">(WebSocket)</span></td>
+                            <td style="padding: 6px 0;"><strong>Authentication:</strong></td>
+                            <td style="padding: 6px 0;"><span style="color: #10b981;">✓ SSH Certificate (wallet-derived)</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>Web Terminal:</strong></td>
+                            <td style="padding: 6px 0;">
+                                <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 4px 12px; font-size: 0.85rem;">
+                                    Open Terminal
+                                </button>
+                            </td>
                         </tr>
                     </table>
                 </div>
-                
-                <!-- Alternative: Direct SSH (WireGuard) -->
-                <div class="connect-section">
-                    <div class="connect-section-title">
-                        Alternative: Direct SSH (WireGuard Required)
-                    </div>
-                    <div class="connect-code">
-                        ${escapeHtml(directSshCommand)}
-                        <button class="connect-code-copy" onclick="copyToClipboard('${directSshCommand}')">Copy</button>
-                    </div>
-                    <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
-                        ⚡ Requires WireGuard VPN connection to overlay network
-                    </p>
+
+                <!-- Security Info -->
+                <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
+                    <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
+                    <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
+                        <li>Certificates are valid for 1 hour and can be renewed anytime</li>
+                        <li>Your private key (~/.ssh/decloud-wallet.pem) is derived from your wallet and never changes</li>
+                        <li>Multi-tenant isolation: Your certificate only works for your VMs</li>
+                        <li>Port ${sshJumpPort} is used to bypass common ISP restrictions</li>
+                    </ul>
                 </div>
                 
-                <!-- Web Terminal -->
-                <div class="connect-section">
-                    <div class="connect-section-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
-                            <rect x="2" y="4" width="20" height="16" rx="2"/>
-                            <path d="M6 8l4 4-4 4M12 16h6"/>
-                        </svg>
-                        Web Terminal (Browser-Based)
-                    </div>
-                    <p style="color: #9ca3af; margin-bottom: 12px; font-size: 0.875rem;">
-                        Access the VM directly in your browser via WebSocket connection
-                    </p>
-                    <button class="btn btn-secondary" 
-                            onclick="window.openTerminal('${vmName}', '${escapeHtml(nodeAgentHost)}', ${nodeAgentPort}, '${escapeHtml(vmIp)}'); this.closest('.modal-overlay').remove();">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
-                            <rect x="2" y="4" width="20" height="16" rx="2"/>
-                            <path d="M6 8l4 4-4 4M12 16h6"/>
-                        </svg>
-                        Open Web Terminal
-                    </button>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Close</button>
             </div>
         </div>
     `;
+
     document.body.appendChild(modal);
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
+/**
+ * Download SSH config file
+ */
+function downloadSSHConfig(vmIp, bastionHost, bastionPort) {
+    const config = `# DeCloud SSH Configuration
+# Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
+
+Host decloud-bastion
+    HostName ${bastionHost}
+    Port ${bastionPort}
+    User decloud
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+
+Host ${vmIp}
+    User ubuntu
+    ProxyJump decloud-bastion
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+
+# Remember to replace XXXXX with your actual certificate ID!
+# Get your certificate from the VM dashboard.
+`;
+
+    const blob = new Blob([config], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'decloud-ssh-config';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('SSH config downloaded! Add it to ~/.ssh/config', 'success');
 }
 
 // ============================================
@@ -1685,6 +1767,7 @@ window.openTerminal = openTerminal;
 window.showConnectInfo = showConnectInfo;
 window.showSSHConnectionModal = showSSHConnectionModal;
 window.downloadSSHBundle = downloadSSHBundle;
+window.downloadSSHConfig = downloadSSHConfig;
 window.saveSettings = saveSettings;
 window.refreshData = refreshData;
 window.showToast = showToast;
