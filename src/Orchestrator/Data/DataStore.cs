@@ -389,57 +389,145 @@ public class DataStore
 
         _logger.LogDebug("Starting full sync to MongoDB...");
         var startTime = DateTime.UtcNow;
+        var syncResults = new
+        {
+            NodesSuccess = 0,
+            NodesFailed = 0,
+            VmsSuccess = 0,
+            VmsFailed = 0,
+            UsersSuccess = 0,
+            UsersFailed = 0
+        };
 
         try
         {
-            // Sync nodes
-            var nodeUpdates = Nodes.Values.Select(node =>
-                new ReplaceOneModel<Node>(
-                    Builders<Node>.Filter.Eq(n => n.Id, node.Id),
-                    node)
-                {
-                    IsUpsert = true
-                }).ToList();
-
-            if (nodeUpdates.Any())
+            // Sync nodes - bulk operation is safe here
+            try
             {
-                await NodesCollection!.BulkWriteAsync(nodeUpdates);
+                var nodeUpdates = Nodes.Values.Select(node =>
+                    new ReplaceOneModel<Node>(
+                        Builders<Node>.Filter.Eq(n => n.Id, node.Id),
+                        node)
+                    {
+                        IsUpsert = true
+                    }).ToList();
+
+                if (nodeUpdates.Any())
+                {
+                    var result = await NodesCollection!.BulkWriteAsync(nodeUpdates,
+                        new BulkWriteOptions { IsOrdered = false });
+                    syncResults = syncResults with { NodesSuccess = (int)result.ModifiedCount + (int)result.InsertedCount };
+                }
+            }
+            catch (MongoBulkWriteException ex)
+            {
+                syncResults = syncResults with { NodesFailed = ex.WriteErrors.Count };
+                _logger.LogWarning(ex, "Partial failure syncing nodes: {FailedCount} errors",
+                    ex.WriteErrors.Count);
             }
 
-            // Sync VMs
-            var vmUpdates = VirtualMachines.Values.Select(vm =>
-                new ReplaceOneModel<VirtualMachine>(
-                    Builders<VirtualMachine>.Filter.Eq(v => v.Id, vm.Id),
-                    vm)
-                {
-                    IsUpsert = true
-                }).ToList();
-
-            if (vmUpdates.Any())
+            // Sync VMs - bulk operation is safe here
+            try
             {
-                await VmsCollection!.BulkWriteAsync(vmUpdates);
+                var vmUpdates = VirtualMachines.Values.Select(vm =>
+                    new ReplaceOneModel<VirtualMachine>(
+                        Builders<VirtualMachine>.Filter.Eq(v => v.Id, vm.Id),
+                        vm)
+                    {
+                        IsUpsert = true
+                    }).ToList();
+
+                if (vmUpdates.Any())
+                {
+                    var result = await VmsCollection!.BulkWriteAsync(vmUpdates,
+                        new BulkWriteOptions { IsOrdered = false });
+                    syncResults = syncResults with { VmsSuccess = (int)result.ModifiedCount + (int)result.InsertedCount };
+                }
+            }
+            catch (MongoBulkWriteException ex)
+            {
+                syncResults = syncResults with { VmsFailed = ex.WriteErrors.Count };
+                _logger.LogWarning(ex, "Partial failure syncing VMs: {FailedCount} errors",
+                    ex.WriteErrors.Count);
             }
 
-            // Sync users
-            var userUpdates = Users.Values.Select(user =>
-                new ReplaceOneModel<User>(
-                    Builders<User>.Filter.Eq(u => u.Id, user.Id),
-                    user)
-                {
-                    IsUpsert = true
-                }).ToList();
-
-            if (userUpdates.Any())
+            // Sync users - INDIVIDUAL OPERATIONS to avoid bulk write constraint violations
+            // This is necessary because even with sparse indexes, bulk operations can fail
+            // if there are transient constraint violations or replication lag
+            var usersList = Users.Values.ToList();
+            foreach (var user in usersList)
             {
-                await UsersCollection!.BulkWriteAsync(userUpdates);
+                try
+                {
+                    await UsersCollection!.ReplaceOneAsync(
+                        u => u.Id == user.Id,
+                        user,
+                        new ReplaceOptions { IsUpsert = true });
+
+                    syncResults = syncResults with { UsersSuccess = syncResults.UsersSuccess + 1 };
+                }
+                catch (MongoWriteException ex) when (ex.WriteError.Code == 11000)
+                {
+                    // Duplicate key error - log details
+                    syncResults = syncResults with { UsersFailed = syncResults.UsersFailed + 1 };
+
+                    if (ex.WriteError.Message.Contains("idx_email"))
+                    {
+                        _logger.LogWarning(
+                            "User {UserId} ({Wallet}) sync failed due to email index constraint. " +
+                            "Email: {Email}. This may indicate a database/memory state mismatch. " +
+                            "Consider restarting the orchestrator to reload state from MongoDB.",
+                            user.Id, user.WalletAddress, user.Email ?? "null");
+                    }
+                    else if (ex.WriteError.Message.Contains("idx_wallet"))
+                    {
+                        _logger.LogWarning(
+                            "User {UserId} ({Wallet}) sync failed due to wallet index constraint. " +
+                            "This indicates a duplicate wallet address in memory vs database.",
+                            user.Id, user.WalletAddress);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(ex,
+                            "User {UserId} ({Wallet}) sync failed with duplicate key error: {Error}",
+                            user.Id, user.WalletAddress, ex.WriteError.Message);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    syncResults = syncResults with { UsersFailed = syncResults.UsersFailed + 1 };
+                    _logger.LogError(ex,
+                        "Failed to sync user {UserId} ({Wallet})",
+                        user.Id, user.WalletAddress);
+                }
             }
 
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
-            _logger.LogDebug("Full sync to MongoDB completed in {Elapsed}ms", elapsed);
+
+            if (syncResults.NodesFailed > 0 || syncResults.VmsFailed > 0 || syncResults.UsersFailed > 0)
+            {
+                _logger.LogWarning(
+                    "Full sync completed with errors in {Elapsed}ms. " +
+                    "Nodes: {NodesOk}/{NodesTotal} | VMs: {VmsOk}/{VmsTotal} | Users: {UsersOk}/{UsersTotal}",
+                    elapsed,
+                    syncResults.NodesSuccess, Nodes.Count,
+                    syncResults.VmsSuccess, VirtualMachines.Count,
+                    syncResults.UsersSuccess, Users.Count);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Full sync completed successfully in {Elapsed}ms. " +
+                    "Nodes: {Nodes} | VMs: {Vms} | Users: {Users}",
+                    elapsed,
+                    syncResults.NodesSuccess,
+                    syncResults.VmsSuccess,
+                    syncResults.UsersSuccess);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sync state to MongoDB");
+            _logger.LogError(ex, "Critical failure during MongoDB sync");
             throw;
         }
     }
