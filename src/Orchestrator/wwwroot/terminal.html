@@ -336,7 +336,7 @@
             vmId: params.get('vmId') || 'terminal',
             vmName: params.get('vmName'),
             username: params.get('user') || 'ubuntu',
-            password: params.get('password')
+            enabled: params.get('autoConnect')
         };
 
         function initTerminal() {
@@ -395,27 +395,34 @@
             terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
             terminal.writeln('');
 
-            // Auto-connect if wsUrl provided (from ephemeral key flow)
-            if (autoConnect.wsUrl) {
-                document.getElementById('connect-form').classList.add('hidden');
-                document.getElementById('terminal-info').textContent = autoConnect.vmName || 'VM Terminal';
-                terminal.writeln(`\x1b[90mConnecting with ephemeral key...\x1b[0m`);
-                setTimeout(() => connectWithWsUrl(autoConnect.wsUrl), 100);
-            }
             // Auto-connect if individual params provided (legacy flow)
-            else if (autoConnect.nodeIp && autoConnect.vmIp) {
-                document.getElementById('connect-form').classList.add('hidden');
-                document.getElementById('node-ip').value = autoConnect.nodeIp;
-                document.getElementById('node-port').value = autoConnect.nodePort;
-                document.getElementById('vm-ip').value = autoConnect.vmIp;
-                document.getElementById('username').value = autoConnect.username;
-                if (autoConnect.password) {
-                    document.getElementById('password').value = autoConnect.password;
+            if (autoConnect.nodeIp && autoConnect.vmIp) {
+                // Parse and populate form from URL params
+                if (autoConnect.nodeIp) {
+                    document.getElementById('node-ip').value = autoConnect.nodeIp;
                 }
-                // Small delay to let terminal initialize
-                setTimeout(() => connect(), 100);
+                if (autoConnect.nodePort) {
+                    document.getElementById('node-port').value = autoConnect.nodePort;
+                }
+                if (autoConnect.vmIp) {
+                    document.getElementById('vm-ip').value = autoConnect.vmIp;
+                }
+                if (params.get('sshPort')) {
+                    document.getElementById('ssh-port').value = params.get('sshPort');
+                }
+                if (autoConnect.username) {
+                    document.getElementById('username').value = autoConnect.username;
+                }
+
+                if (autoConnect.enabled) {
+                    // Small delay to let terminal initialize
+                    setTimeout(() => connect(), 100);
+                } else {
+                    showConnectForm();
+                }
             } else {
-                terminal.writeln('\x1b[90mEnter connection details to connect to a VM.\x1b[0m');
+                // Always show connect form - user must enter password manually
+                terminal.writeln('\x1b[90mEnter password to connect to the VM.\x1b[0m');
                 terminal.writeln('');
             }
         }
@@ -436,59 +443,6 @@
 
         function hideConnectForm() {
             document.getElementById('connect-form').classList.add('hidden');
-        }
-
-        function connectWithWsUrl(wsUrl) {
-            setStatus('connecting');
-
-            // Parse the URL to get display info
-            try {
-                const url = new URL(wsUrl);
-                const vmIp = url.searchParams.get('ip') || 'VM';
-                const user = url.searchParams.get('user') || 'ubuntu';
-                document.getElementById('terminal-info').textContent = `${user}@${vmIp}`;
-                terminal.writeln(`\x1b[90mConnecting to ${user}@${vmIp}...\x1b[0m`);
-            } catch (e) {
-                terminal.writeln(`\x1b[90mConnecting...\x1b[0m`);
-            }
-
-            if (socket) {
-                socket.close();
-            }
-
-            socket = new WebSocket(wsUrl);
-
-            socket.onopen = () => {
-                setStatus('connected');
-                fitAddon.fit();
-                socket.send(JSON.stringify({
-                    type: 'resize',
-                    cols: terminal.cols,
-                    rows: terminal.rows
-                }));
-            };
-
-            socket.onmessage = (event) => {
-                if (event.data instanceof Blob) {
-                    event.data.text().then(text => terminal.write(text));
-                } else {
-                    terminal.write(event.data);
-                }
-            };
-
-            socket.onerror = (error) => {
-                setStatus('disconnected');
-                terminal.writeln('\r\n\x1b[31mConnection error\x1b[0m');
-                console.error('WebSocket error:', error);
-            };
-
-            socket.onclose = (event) => {
-                setStatus('disconnected');
-                terminal.writeln(`\r\n\x1b[90mConnection closed (code: ${event.code})\x1b[0m`);
-            };
-
-            // Store for reconnect
-            connectionInfo = { wsUrl };
         }
 
         function connect() {

@@ -1407,7 +1407,7 @@ function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
         nodeIp: nodeAgentHost,
         nodePort: nodeAgentPort,
         vmIp: vmIp,
-        autoConnect: 'true'
+        //autoConnect: 'true'
     });
 
     window.open(`/terminal.html?${params.toString()}`, '_blank');
