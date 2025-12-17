@@ -315,7 +315,7 @@
         </div>
         <div class="form-group">
             <label>Password (optional)</label>
-            <input type="password" id="password" placeholder="Leave empty for key-based auth">
+            <input type="password" id="password" placeholder="Enter VM password" autocomplete="off">
         </div>
         <button class="connect-btn" onclick="connect()">Connect</button>
     </div>
@@ -525,6 +525,11 @@
 
         // Initialize on load
         document.addEventListener('DOMContentLoaded', initTerminal);
+
+        // Clear sensitive data when window closes
+        window.addEventListener('beforeunload', () => {
+            document.getElementById('password').value = '';
+        });
     </script>
 </body>
 </html>
