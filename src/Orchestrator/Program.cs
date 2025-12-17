@@ -81,7 +81,7 @@ builder.Services.AddSingleton(sp =>
     return new DataStore(database, logger);
 });
 
-builder.Services.AddScoped<INodeService, NodeService>();
+builder.Services.AddSingleton<INodeService, NodeService>();
 builder.Services.AddScoped<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService>(sp =>
@@ -92,7 +92,7 @@ builder.Services.AddScoped<IUserService>(sp =>
     var env = sp.GetRequiredService<IWebHostEnvironment>();
     return new UserService(dataStore, logger, config, env);
 });
-builder.Services.AddScoped<IEventService, EventService>();
+builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
 builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
