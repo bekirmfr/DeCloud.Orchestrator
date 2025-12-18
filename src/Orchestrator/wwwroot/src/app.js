@@ -1724,6 +1724,7 @@ window.openAddSSHKeyModal = openAddSSHKeyModal;
 window.addSSHKey = addSSHKey;
 window.deleteSSHKey = deleteSSHKey;
 window.openTerminal = openTerminal;
+window.openFileBrowser = openFileBrowser;
 window.showConnectInfo = showConnectInfo;
 window.showSSHConnectionModal = showSSHConnectionModal;
 window.downloadSSHBundle = downloadSSHBundle;
