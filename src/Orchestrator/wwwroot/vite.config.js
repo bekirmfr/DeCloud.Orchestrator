@@ -116,6 +116,28 @@ export default defineConfig({
                     console.warn('⚠ terminal.html not found in wwwroot/');
                 }
             }
+        },
+        {
+            name: 'copy-file-browser-html',
+            closeBundle() {
+                // Copy file-browser.html to dist after build completes
+                const sourceFile = path.resolve(__dirname, 'file-browser.html');
+                const destFile = path.resolve(__dirname, 'dist', 'file-browser.html');
+
+                if (existsSync(sourceFile)) {
+                    // Ensure dist directory exists
+                    const distDir = path.resolve(__dirname, 'dist');
+                    if (!existsSync(distDir)) {
+                        mkdirSync(distDir, { recursive: true });
+                    }
+
+                    // Copy the file
+                    copyFileSync(sourceFile, destFile);
+                    console.log('✓ Copied file-browser.html to dist/');
+                } else {
+                    console.warn('⚠ file-browser.html not found in wwwroot/');
+                }
+            }
         }
     ]
 });
