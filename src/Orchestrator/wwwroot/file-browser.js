@@ -975,3 +975,6 @@ function escapeHtml(str) {
 function escapeAttr(str) {
     return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
+
+// Make functions globally available for onclick handlers
+window.connect = connect; 

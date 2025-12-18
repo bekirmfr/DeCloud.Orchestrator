@@ -8,6 +8,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{8A9C7F6D-1234-4BCD-9ABC-DEF012345678}"
 	ProjectSection(SolutionItems) = preProject
 		src\Orchestrator\wwwroot\.env.example = src\Orchestrator\wwwroot\.env.example
+		src\Orchestrator\wwwroot\file-browser.html = src\Orchestrator\wwwroot\file-browser.html
+		src\Orchestrator\wwwroot\file-browser.js = src\Orchestrator\wwwroot\file-browser.js
 		src\Orchestrator\wwwroot\index.html = src\Orchestrator\wwwroot\index.html
 		src\Orchestrator\wwwroot\package.json = src\Orchestrator\wwwroot\package.json
 		src\Orchestrator\wwwroot\README.md = src\Orchestrator\wwwroot\README.md
@@ -19,7 +21,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B1D8E7F-2345-4CDE-9BCD-EF0123456789}"
 	ProjectSection(SolutionItems) = preProject
 		src\Orchestrator\wwwroot\src\app.js = src\Orchestrator\wwwroot\src\app.js
-		ssh-wallet.js = ssh-wallet.js
+		src\Orchestrator\wwwroot\src\ssh-wallet.js = src\Orchestrator\wwwroot\src\ssh-wallet.js
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Scripts", "Scripts", "{A1B2C3D4-3456-4DEF-ABCD-0123456789AB}"
