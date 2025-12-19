@@ -44,6 +44,19 @@ MONGODB_URI=""
 JWT_SECRET=""
 SKIP_MONGODB_CHECK=false
 
+# Caddy Ingress Gateway
+INSTALL_CADDY=${INSTALL_CADDY:-true}
+CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL:-""}
+CADDY_ACME_STAGING=${CADDY_ACME_STAGING:-false}
+CADDY_DATA_DIR="/var/lib/caddy"
+CADDY_LOG_DIR="/var/log/caddy"
+CADDY_CONFIG_DIR="/etc/caddy"
+
+# Security / fail2ban
+INSTALL_FAIL2BAN=${INSTALL_FAIL2BAN:-true}
+DECLOUD_LOG_DIR="/var/log/decloud"
+DECLOUD_AUDIT_LOG="${DECLOUD_LOG_DIR}/audit.log"
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -66,6 +79,22 @@ parse_args() {
                 SKIP_MONGODB_CHECK=true
                 shift
                 ;;
+           --skip-caddy)
+               INSTALL_CADDY=false
+               shift
+               ;;
+           --caddy-email)
+               CADDY_ACME_EMAIL="$2"
+               shift 2
+               ;;
+           --caddy-staging)
+               CADDY_ACME_STAGING=true
+               shift
+               ;;
+           --skip-fail2ban)
+               INSTALL_FAIL2BAN=false
+               shift
+               ;;
             --help|-h)
                 show_help
                 exit 0
@@ -90,6 +119,10 @@ Options:
   --mongodb <uri>            MongoDB connection string (optional, uses in-memory if not set)
   --jwt-secret <secret>      JWT signing key (default: auto-generated)
   --skip-mongodb-check       Skip MongoDB connectivity check
+  --skip-caddy               Skip Caddy ingress gateway installation
+  --caddy-email <email>      Email for Let's Encrypt TLS certificates
+  --caddy-staging            Use Let's Encrypt staging (for testing)
+  --skip-fail2ban            Skip fail2ban DDoS protection installation
   --help, -h                 Show this help message
 
 Examples:

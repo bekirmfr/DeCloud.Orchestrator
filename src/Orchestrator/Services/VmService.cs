@@ -457,6 +457,7 @@ public class VmService : IVmService
         // Resources will be freed after node confirms deletion
         return true;
     }
+
     /// <summary>
     /// Complete VM deletion after node confirmation
     /// Called by NodeService after receiving acknowledgment

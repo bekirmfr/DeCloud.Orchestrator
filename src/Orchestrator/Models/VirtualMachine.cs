@@ -35,7 +35,12 @@ public class VirtualMachine
     
     // Networking
     public VmNetworkConfig NetworkConfig { get; set; } = new();
-    
+
+    /// <summary>
+    /// Ingress configuration for this VM (auto-subdomain and custom domains)
+    /// </summary>
+    public VmIngressConfig? IngressConfig { get; set; }
+
     // Access
     public VmAccessInfo? AccessInfo { get; set; }
     

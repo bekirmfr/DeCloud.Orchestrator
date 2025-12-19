@@ -7,6 +7,7 @@ using Orchestrator.Background;
 using Orchestrator.Data;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
+using Orchestrator.Models;
 using Orchestrator.Services;
 using Serilog;
 using System.Text;
@@ -96,6 +97,11 @@ builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
 builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
+// Central Ingress Gateway (optional - for *.vms.decloud.io routing)
+builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
+builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
+builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
+
 // =====================================================
 // Background Services
 // =====================================================

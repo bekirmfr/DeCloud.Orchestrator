@@ -988,7 +988,7 @@ function renderVMsTable(vms) {
             }
 
             <!-- Delete -->
-            <button class="btn btn-sm btn-danger" onclick="showDeleteVmModal('${vm.id}', '${vm.name}')" title="Delete">
+            <button class="btn btn-sm btn-danger" onclick="deleteVm('${vm.id}', '${vm.name}')" title="Delete">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3 6 5 6 21 6"/>
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -1217,14 +1217,14 @@ async function deleteVM(vmId, vmName) {
         const data = await response.json();
 
         if (data.success) {
-            showToast('Virtual machine deleted', 'success');
+            showToast(`Deleting virtual machine ${vmName}`, 'success');
             refreshData();
         } else {
             showToast(data.message || 'Failed to delete VM', 'error');
         }
     } catch (error) {
         console.error('[VM] Delete error:', error);
-        showToast('Failed to delete virtual machine', 'error');
+        showToast(`Failed to delete virtual machine ${vmName}`, 'error');
     }
 }
 
@@ -1399,63 +1399,63 @@ async function deleteSSHKey(keyId, keyName) {
     }
 }
 
-    // ============================================
-    // FILE BROWSER INTEGRATION
-    // ============================================
+// ============================================
+// FILE BROWSER INTEGRATION
+// ============================================
 
-    /**
-     * Open file browser for VM
-     * @param {string} vmId - VM ID
-     * @param {string} nodeAgentHost - Node Agent host (from networkConfig)
-     * @param {number} nodeAgentPort - Node Agent port (from networkConfig)
-     * @param {string} vmIp - VM private IP
-     */
-    function openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
-        // Build file browser URL with connection parameters
-        const params = new URLSearchParams({
-            vmId: vmId,
-            nodeIp: nodeAgentHost,
-            nodePort: nodeAgentPort,
-            vmIp: vmIp
-        });
+/**
+* Open file browser for VM
+* @param {string} vmId - VM ID
+* @param {string} nodeAgentHost - Node Agent host (from networkConfig)
+* @param {number} nodeAgentPort - Node Agent port (from networkConfig)
+* @param {string} vmIp - VM private IP
+*/
+function openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
+    // Build file browser URL with connection parameters
+    const params = new URLSearchParams({
+        vmId: vmId,
+        nodeIp: nodeAgentHost,
+        nodePort: nodeAgentPort,
+        vmIp: vmIp
+    });
 
-        window.open(`/file-browser.html?${params.toString()}`, '_blank');
-    }
+    window.open(`/file-browser.html?${params.toString()}`, '_blank');
+}
 
-    /**
-     * Open file browser with password (for VMs using password auth)
-     * This retrieves the decrypted password and passes it to the file browser
-     * @param {string} vmId - VM ID
-     * @param {string} nodeAgentHost - Node Agent host
-     * @param {number} nodeAgentPort - Node Agent port
-     * @param {string} vmIp - VM private IP
-     */
-    async function openFileBrowserWithAuth(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
-        try {
-            // Try to get the VM password from the API
-            const response = await api(`/api/vms/${vmId}/password`);
-            const data = await response.json();
+/**
+* Open file browser with password (for VMs using password auth)
+* This retrieves the decrypted password and passes it to the file browser
+* @param {string} vmId - VM ID
+* @param {string} nodeAgentHost - Node Agent host
+* @param {number} nodeAgentPort - Node Agent port
+* @param {string} vmIp - VM private IP
+*/
+async function openFileBrowserWithAuth(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
+    try {
+        // Try to get the VM password from the API
+        const response = await api(`/api/vms/${vmId}/password`);
+        const data = await response.json();
         
-            if (data.success && data.data?.password) {
-                // Open file browser with password
-                const params = new URLSearchParams({
-                    vmId: vmId,
-                    nodeIp: nodeAgentHost,
-                    nodePort: nodeAgentPort,
-                    vmIp: vmIp,
-                    password: data.data.password
-                });
-                window.open(`/file-browser.html?${params.toString()}`, '_blank');
-            } else {
-                // Fall back to opening without password (user will need to enter it)
-                openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp);
-            }
-        } catch (error) {
-            console.error('[FileBrowser] Failed to get VM password:', error);
-            // Fall back to opening without password
+        if (data.success && data.data?.password) {
+            // Open file browser with password
+            const params = new URLSearchParams({
+                vmId: vmId,
+                nodeIp: nodeAgentHost,
+                nodePort: nodeAgentPort,
+                vmIp: vmIp,
+                password: data.data.password
+            });
+            window.open(`/file-browser.html?${params.toString()}`, '_blank');
+        } else {
+            // Fall back to opening without password (user will need to enter it)
             openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp);
         }
+    } catch (error) {
+        console.error('[FileBrowser] Failed to get VM password:', error);
+        // Fall back to opening without password
+        openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp);
     }
+}
 
 // ============================================
 // TERMINAL & CONNECT INFO
@@ -1481,28 +1481,28 @@ function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
     window.open(`/terminal.html?${params.toString()}`, '_blank');
 }
 
-    /**
-     * Display SSH connection information modal (UPDATED WITH FILE BROWSER)
-     * @param {string} sshJumpHost - Node's public IP for SSH jump host
-     * @param {number} sshJumpPort - SSH port on node (typically 22)
-     * @param {string} vmIp - VM's private IP address
-     * @param {string} vmName - VM's display name
-     * @param {string} nodeAgentHost - Node Agent API host (for web terminal)
-     * @param {number} nodeAgentPort - Node Agent API port (for web terminal)
-     */
-    function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
-        // Remove existing modal
-        const existing = document.getElementById('connect-info-modal');
-        if (existing) existing.remove();
+/**
+    * Display SSH connection information modal (UPDATED WITH FILE BROWSER)
+    * @param {string} sshJumpHost - Node's public IP for SSH jump host
+    * @param {number} sshJumpPort - SSH port on node (typically 22)
+    * @param {string} vmIp - VM's private IP address
+    * @param {string} vmName - VM's display name
+    * @param {string} nodeAgentHost - Node Agent API host (for web terminal)
+    * @param {number} nodeAgentPort - Node Agent API port (for web terminal)
+    */
+function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
+    // Remove existing modal
+    const existing = document.getElementById('connect-info-modal');
+    if (existing) existing.remove();
 
-        const modal = document.createElement('div');
-        modal.id = 'connect-info-modal';
-        modal.style.cssText = `
+    const modal = document.createElement('div');
+    modal.id = 'connect-info-modal';
+    modal.style.cssText = `
         position: fixed; inset: 0; background: rgba(0,0,0,0.7);
         display: flex; align-items: center; justify-content: center; z-index: 1000;
     `;
 
-        modal.innerHTML = `
+    modal.innerHTML = `
         <div style="background: #1a1d26; border: 1px solid #2a2d36; border-radius: 12px; padding: 28px; width: 520px; max-width: 90vw; color: #f0f2f5;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h3 style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to ${vmName}</h3>
@@ -1513,6 +1513,9 @@ function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
             <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
                 <div style="color: #10b981; font-weight: 600; margin-bottom: 12px;">⚡ Quick Actions</div>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', '${sshJumpPort}', ${vmIp}, '${vmName}', '${nodeAgentHost}', '${nodeAgentPort}')" style="padding: 8px 16px; font-size: 0.9rem;">
+                        🖥️ Open Terminal
+                    </button>
                     <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
                         🖥️ Open Terminal
                     </button>
@@ -1557,33 +1560,207 @@ function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
         </div>
     `;
 
-        document.body.appendChild(modal);
-        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
+function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
+    // ========================================================================
+    // SECURITY VALIDATION: Input Sanitization
+    // ========================================================================
+
+    if (!isValidIp(sshJumpHost) || !isValidIp(vmIp)) {
+        showToast('Invalid IP address format', 'error');
+        return;
     }
+
+    if (!isValidIp(nodeAgentHost)) {
+        showToast('Invalid Node Agent host format', 'error');
+        return;
+    }
+
+    if (sshJumpPort < 1 || sshJumpPort > 65535 || nodeAgentPort < 1 || nodeAgentPort > 65535) {
+        showToast('Invalid port number', 'error');
+        return;
+    }
+
+    // Build SSH commands using SSH config (recommended approach)
+    const sshConfigCommand = `ssh ${escapeHtml(vmIp)}`;
+
+    // Build direct ProxyJump command (alternative)
+    const proxyJumpCommand = `
+        ssh -p ${sshJumpPort} -i ~/.ssh/decloud-wallet.pem \\
+        -o CertificateFile=~/.ssh/decloud-XXXXX-cert.pub \\
+        -J decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort} \\
+        ubuntu@${escapeHtml(vmIp)}`;
+
+    // Build SSH config file content
+    const sshConfigContent = `
+        # DeCloud SSH Configuration
+        # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
+        Host decloud-bastion
+        HostName ${sshJumpHost}
+        Port ${sshJumpPort}
+        User decloud
+        IdentityFile ~/.ssh/decloud-wallet.pem
+        CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+
+        Host ${vmIp}
+        User ubuntu
+        ProxyJump decloud-bastion
+        IdentityFile ~/.ssh/decloud-wallet.pem
+        CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.innerHTML = `
+        <div class="modal" style="max-width: 850px;">
+            <div class="modal-header">
+                <h2 class="modal-title">🔗 Connect to ${escapeHtml(vmName)}</h2>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body connect-info">
+
+                <!-- Recommended: SSH Config Method -->
+                <div class="connect-section" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+                    <div class="connect-section-title" style="color: white; font-size: 1.1rem; font-weight: 600;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
+                            <path d="M9 11l3 3L22 4"/>
+                            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                        </svg>
+                        ✨ Recommended: One-Time SSH Config Setup
+                    </div>
+                    <p style="color: rgba(255,255,255,0.9); font-size: 0.9rem; margin: 12px 0;">
+                        Set up SSH config once, then connect with a single command!
+                    </p>
+
+                    <!-- Step 1: Setup SSH Config -->
+                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 15px 0;">
+                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">📝 Step 1: Add to ~/.ssh/config</div>
+                        <div class="connect-code" style="background: #1f2937; margin: 0;">
+                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.85rem; overflow-x: auto;">${escapeHtml(sshConfigContent)}</pre>
+                            <button class="connect-code-copy" onclick="copyToClipboard(\`${sshConfigContent.replace(/`/g, '\\`')}\`)" style="background: #10b981;">
+                                Copy Config
+                            </button>
+                        </div>
+                        <button class="btn btn-secondary" onclick="downloadSSHConfig('${escapeHtml(vmIp)}', '${sshJumpHost}', ${sshJumpPort})" style="margin-top: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                            💾 Download config file
+                        </button>
+                    </div>
+
+                    <!-- Step 2: Connect -->
+                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
+                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">🚀 Step 2: Connect with Simple Command</div>
+                        <div class="connect-code" style="background: #1f2937; margin: 0;">
+                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.9rem;">${escapeHtml(sshConfigCommand)}</pre>
+                            <button class="connect-code-copy" onclick="copyToClipboard('${sshConfigCommand}')" style="background: #10b981;">
+                                Copy
+                            </button>
+                        </div>
+                        <p style="color: rgba(255,255,255,0.8); font-size: 0.85rem; margin: 8px 0 0 0;">
+                            ✅ That's it! Just <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">ssh ${escapeHtml(vmIp)}</code> from now on
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Alternative: Direct ProxyJump Command -->
+                <div class="connect-section">
+                    <div class="connect-section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
+                            <rect x="2" y="2" width="20" height="20" rx="2" ry="2"/>
+                            <line x1="7" y1="7" x2="7" y2="7"/>
+                            <line x1="7" y1="12" x2="17" y2="12"/>
+                            <line x1="7" y1="17" x2="17" y2="17"/>
+                        </svg>
+                        Alternative: Direct ProxyJump Command
+                    </div>
+                    <div class="connect-code">
+                        <pre style="margin: 0; font-size: 0.85rem;">${escapeHtml(proxyJumpCommand)}</pre
+                        <button class="connect-code-copy" onclick="copyToClipboard(\`${proxyJumpCommand.replace(/`/g, '\\`')}\`)">Copy</button>
+                    </div>
+                    <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
+                        ⚠️ Don't forget to replace <code>XXXXX</code> with your certificate ID!
+                    </p>
+                </div>
+
+                <!-- Connection Details -->
+                <div class="connect-section">
+                    <div class="connect-section-title">📊 Connection Details</div>
+                    <table style="width: 100%; color: #9ca3af; font-size: 0.875rem;">
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>Bastion Host:</strong></td>
+                            <td style="padding: 6px 0;"><code>decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>VM IP Address:</strong></td>
+                            <td style="padding: 6px 0;"><code>ubuntu@${escapeHtml(vmIp)}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>VM Hostname:</strong></td>
+                            <td style="padding: 6px 0;"><code>${escapeHtml(vmName.toLowerCase())}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>Authentication:</strong></td>
+                            <td style="padding: 6px 0;"><span style="color: #10b981;">✓ SSH Certificate (wallet-derived)</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 6px 0;"><strong>Web Terminal:</strong></td>
+                            <td style="padding: 6px 0;">
+                                <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 4px 12px; font-size: 0.85rem;">
+                                    Open Terminal
+                                </button>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Security Info -->
+                <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
+                    <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
+                    <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
+                        <li>Certificates are valid for 1 hour and can be renewed anytime</li>
+                        <li>Your private key (~/.ssh/decloud-wallet.pem) is derived from your wallet and never changes</li>
+                        <li>Multi-tenant isolation: Your certificate only works for your VMs</li>
+                        <li>Port ${sshJumpPort} is used to bypass common ISP restrictions</li>
+                    </ul>
+                </div
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
 
 /**
  * Download SSH config file
  */
 function downloadSSHConfig(vmIp, bastionHost, bastionPort) {
-    const config = `# DeCloud SSH Configuration
-# Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
+    const config = `
+        # DeCloud SSH Configuration
+        # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
 
-Host decloud-bastion
-    HostName ${bastionHost}
-    Port ${bastionPort}
-    User decloud
-    IdentityFile ~/.ssh/decloud-wallet.pem
-    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+        Host decloud-bastion
+            HostName ${bastionHost}
+            Port ${bastionPort}
+            User decloud
+            IdentityFile ~/.ssh/decloud-wallet.pem
+            CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
 
-Host ${vmIp}
-    User ubuntu
-    ProxyJump decloud-bastion
-    IdentityFile ~/.ssh/decloud-wallet.pem
-    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+        Host ${vmIp}
+            User ubuntu
+            ProxyJump decloud-bastion
+            IdentityFile ~/.ssh/decloud-wallet.pem
+            CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
 
-# Remember to replace XXXXX with your actual certificate ID!
-# Get your certificate from the VM dashboard.
-`;
+        # Remember to replace XXXXX with your actual certificate ID!
+        # Get your certificate from the VM dashboard.
+        `;
 
     const blob = new Blob([config], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
