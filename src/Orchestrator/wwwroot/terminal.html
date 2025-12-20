@@ -280,7 +280,7 @@
     </div>
 
     <div class="connect-form" id="connect-form">
-        <h3>Connect to VM</h3>
+        <h3>Connect to <div id="vm-name"></div></h3>
         <div class="form-group">
             <label>Username</label>
             <input type="text" id="username" value="ubuntu">
@@ -369,6 +369,7 @@
 
                 if (config.vmName) {
                     document.getElementById('terminal-info').textContent = config.vmName;
+                    document.getElementById('vm-name').textContent = config.vmName ?? "VM";
                 }
 
                 terminal.writeln('\x1b[90mEnter password to connect to the VM.\x1b[0m');
