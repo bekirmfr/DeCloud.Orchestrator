@@ -518,17 +518,21 @@ build_orchestrator() {
 create_configuration() {
     log_step "Creating configuration..."
     
-    # Central ingress config
+    # Central ingress config - add if ingress domain is provided (regardless of Caddy install)
     local central_ingress_config=""
-    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
+    if [ -n "$INGRESS_DOMAIN" ]; then
         central_ingress_config=',
   "CentralIngress": {
     "Enabled": true,
     "BaseDomain": "'$INGRESS_DOMAIN'",
     "CaddyAdminUrl": "http://localhost:2019",
+    "AcmeEmail": "'${CADDY_ACME_EMAIL:-admin@$INGRESS_DOMAIN}'",
     "DefaultTargetPort": 80,
+    "SubdomainPattern": "{name}",
     "AutoRegisterOnStart": true,
-    "SubdomainPattern": "{vmId:short}"
+    "AutoRemoveOnStop": true,
+    "ProxyTimeoutSeconds": 30,
+    "EnableWebSocket": true
   }'
     fi
     
@@ -573,11 +577,12 @@ After=network.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
 WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
 ExecStart=/usr/bin/dotnet run --configuration Release --no-build
 Restart=always
 RestartSec=10
+TimeoutStartSec=120
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
 StandardOutput=journal
