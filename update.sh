@@ -1,9 +1,14 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Update Script (Updated for Integrated Build)
+# DeCloud Orchestrator Update Script
 #
-# Fetches latest code from GitHub, checks dependencies including Node.js,
-# rebuilds frontend+backend and restarts. Safe to run multiple times.
+# Updates the Orchestrator including:
+# - Code updates from GitHub
+# - Frontend + backend rebuild
+# - Caddy central ingress verification
+# - fail2ban security verification
+#
+# Version: 2.0.0
 #
 # Usage:
 #   sudo ./update.sh              # Normal update
@@ -13,7 +18,7 @@
 
 set -e
 
-VERSION="1.1.0"
+VERSION="2.0.0"
 
 # Colors
 RED='\033[0;31m'
@@ -35,11 +40,14 @@ REPO_DIR="$INSTALL_DIR/DeCloud.Orchestrator"
 REPO_URL="https://github.com/bekirmfr/DeCloud.Orchestrator.git"
 SERVICE_NAME="decloud-orchestrator"
 CONFIG_DIR="/etc/decloud"
+CADDY_LOG_DIR="/var/log/caddy"
 
 # Flags
 FORCE_REBUILD=false
 DEPS_ONLY=false
 CHANGES_DETECTED=false
+SKIP_CADDY=false
+SKIP_FAIL2BAN=false
 
 # ============================================================
 # Argument Parsing
@@ -53,6 +61,14 @@ parse_args() {
                 ;;
             --deps-only|-d)
                 DEPS_ONLY=true
+                shift
+                ;;
+            --skip-caddy)
+                SKIP_CADDY=true
+                shift
+                ;;
+            --skip-fail2ban)
+                SKIP_FAIL2BAN=true
                 shift
                 ;;
             --help|-h)
@@ -77,17 +93,19 @@ Usage: $0 [options]
 Options:
   --force, -f       Force rebuild even if no code changes detected
   --deps-only, -d   Only check and install dependencies, don't update code
+  --skip-caddy      Skip Caddy checks and updates
+  --skip-fail2ban   Skip fail2ban checks and updates
   --help, -h        Show this help message
 
 Examples:
-  $0                # Normal update
+  $0                # Normal update (code + security services)
   $0 --force        # Force rebuild
   $0 --deps-only    # Only check dependencies
 
-Changes in v1.1.0:
-  - Added Node.js dependency check
-  - Support for integrated frontend/backend builds
-  - Improved build verification
+Components Updated:
+  - Orchestrator code and build
+  - Caddy central ingress configuration
+  - fail2ban DDoS protection rules
 EOF
 }
 
@@ -104,8 +122,7 @@ check_root() {
 check_installation() {
     if [ ! -d "$REPO_DIR" ]; then
         log_error "Orchestrator not installed at $REPO_DIR"
-        log_error "Run the install script first:"
-        log_error "  curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.Orchestrator/main/install.sh | sudo bash"
+        log_error "Run the install script first"
         exit 1
     fi
 }
@@ -118,7 +135,7 @@ check_dependencies() {
     
     local deps_missing=false
     
-    # Check Node.js (required for frontend build)
+    # Check Node.js
     if command -v node &> /dev/null; then
         NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
         NODE_MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
@@ -130,16 +147,16 @@ check_dependencies() {
             deps_missing=true
         fi
     else
-        log_warn "Node.js not found (required for frontend build)"
+        log_warn "Node.js not found"
         deps_missing=true
     fi
     
-    # Check npm (required for frontend build)
+    # Check npm
     if command -v npm &> /dev/null; then
         NPM_VERSION=$(npm --version 2>/dev/null)
         log_success "npm: v$NPM_VERSION"
     else
-        log_warn "npm not found (required for frontend build)"
+        log_warn "npm not found"
         deps_missing=true
     fi
     
@@ -165,7 +182,7 @@ check_dependencies() {
         deps_missing=true
     fi
     
-    # Check jq (useful for API responses)
+    # Check jq
     if command -v jq &> /dev/null; then
         log_success "jq: installed"
     else
@@ -183,7 +200,6 @@ check_dependencies() {
 install_dependencies() {
     log_step "Installing missing dependencies..."
     
-    # Detect OS
     if [ ! -f /etc/os-release ]; then
         log_error "Cannot detect OS"
         exit 1
@@ -211,24 +227,18 @@ install_dependencies() {
     # Node.js 20 LTS
     if ! command -v node &> /dev/null; then
         log_info "Installing Node.js 20 LTS..."
-        
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
         apt-get install -y -qq nodejs > /dev/null 2>&1
-        
-        NODE_VERSION=$(node --version 2>/dev/null)
-        log_success "Node.js installed: $NODE_VERSION"
+        log_success "Node.js installed: $(node --version)"
     else
         NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
         NODE_MAJOR=$(echo $NODE_VERSION | cut -d. -f1)
         
         if [ "$NODE_MAJOR" -lt 18 ]; then
-            log_info "Upgrading Node.js from v$NODE_VERSION to v20..."
-            
+            log_info "Upgrading Node.js..."
             curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
             apt-get install -y -qq nodejs > /dev/null 2>&1
-            
-            NODE_VERSION=$(node --version 2>/dev/null)
-            log_success "Node.js upgraded: $NODE_VERSION"
+            log_success "Node.js upgraded: $(node --version)"
         fi
     fi
     
@@ -237,7 +247,8 @@ install_dependencies() {
         log_info "Installing .NET 8 SDK..."
         
         if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
-            wget -q https://packages.microsoft.com/config/$OS/$VERSION_ID/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
+            wget -q https://packages.microsoft.com/config/$OS/$VERSION_ID/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb 2>/dev/null || \
+            wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
             dpkg -i /tmp/packages-microsoft-prod.deb > /dev/null 2>&1
             rm /tmp/packages-microsoft-prod.deb
             apt-get update -qq
@@ -249,6 +260,302 @@ install_dependencies() {
 }
 
 # ============================================================
+# Caddy Central Ingress
+# ============================================================
+check_caddy() {
+    if [ "$SKIP_CADDY" = true ]; then
+        log_info "Skipping Caddy checks (--skip-caddy)"
+        return 0
+    fi
+    
+    log_step "Checking Caddy central ingress..."
+    
+    local caddy_issues=false
+    
+    # Check if Caddy is installed
+    if ! command -v caddy &> /dev/null; then
+        log_warn "Caddy not installed"
+        caddy_issues=true
+    else
+        log_success "Caddy installed: $(caddy version 2>/dev/null | head -1 | cut -d' ' -f1)"
+    fi
+    
+    # Check if Caddy service exists and is running
+    if systemctl list-unit-files | grep -q "caddy.service"; then
+        if systemctl is-active --quiet caddy; then
+            log_success "Caddy service: running"
+        else
+            log_warn "Caddy service: not running"
+            caddy_issues=true
+        fi
+    else
+        log_warn "Caddy service not found"
+        caddy_issues=true
+    fi
+    
+    # Check Caddy admin API
+    if curl -s --max-time 2 http://localhost:2019/config/ > /dev/null 2>&1; then
+        log_success "Caddy admin API: accessible"
+    else
+        log_warn "Caddy admin API: not accessible"
+        caddy_issues=true
+    fi
+    
+    # Check Caddyfile exists
+    if [ -f /etc/caddy/Caddyfile ]; then
+        log_success "Caddyfile: exists"
+    else
+        log_warn "Caddyfile not found"
+        caddy_issues=true
+    fi
+    
+    # Check log directory
+    if [ -d "$CADDY_LOG_DIR" ]; then
+        log_success "Caddy logs: $CADDY_LOG_DIR"
+    else
+        log_warn "Caddy log directory missing"
+    fi
+    
+    if [ "$caddy_issues" = true ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+install_caddy() {
+    log_step "Installing/configuring Caddy..."
+    
+    # Install Caddy if not present
+    if ! command -v caddy &> /dev/null; then
+        log_info "Installing Caddy..."
+        
+        apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl > /dev/null 2>&1
+        
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+            gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+        
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+            tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+        
+        apt-get update -qq
+        apt-get install -y -qq caddy > /dev/null 2>&1
+        
+        log_success "Caddy installed"
+    fi
+    
+    # Create directories
+    mkdir -p /var/lib/caddy "$CADDY_LOG_DIR" /etc/caddy
+    chown caddy:caddy /var/lib/caddy "$CADDY_LOG_DIR" 2>/dev/null || true
+    
+    # Create Caddyfile if missing
+    if [ ! -f /etc/caddy/Caddyfile ]; then
+        log_info "Creating default Caddyfile..."
+        
+        # Get API port from config
+        local api_port=5050
+        if [ -f "$CONFIG_DIR/orchestrator.appsettings.Production.json" ]; then
+            api_port=$(grep -oP '"Urls":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/orchestrator.appsettings.Production.json" 2>/dev/null || echo "5050")
+        fi
+        
+        cat > /etc/caddy/Caddyfile << EOF
+# DeCloud Orchestrator - Central Ingress Gateway
+# Generated by update.sh on $(date)
+
+{
+    admin localhost:2019
+    
+    log {
+        output file $CADDY_LOG_DIR/caddy.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
+# Health check endpoint
+:8080 {
+    respond /health "OK" 200
+    respond /ready "OK" 200
+}
+
+# Note: VM ingress routes (*.vms.decloud.io) are managed dynamically
+# via the Caddy Admin API by CentralIngressService
+EOF
+        log_success "Default Caddyfile created"
+    fi
+    
+    # Create systemd override
+    mkdir -p /etc/systemd/system/caddy.service.d
+    cat > /etc/systemd/system/caddy.service.d/decloud.conf << 'EOF'
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=1048576
+Restart=always
+RestartSec=5
+EOF
+    
+    systemctl daemon-reload
+    
+    # Enable and start
+    systemctl enable caddy --quiet 2>/dev/null || true
+    
+    if ! systemctl is-active --quiet caddy; then
+        log_info "Starting Caddy..."
+        systemctl start caddy 2>/dev/null || true
+        sleep 2
+    fi
+    
+    if systemctl is-active --quiet caddy; then
+        log_success "Caddy running"
+    else
+        log_warn "Failed to start Caddy"
+    fi
+}
+
+# ============================================================
+# fail2ban Security
+# ============================================================
+check_fail2ban() {
+    if [ "$SKIP_FAIL2BAN" = true ]; then
+        log_info "Skipping fail2ban checks (--skip-fail2ban)"
+        return 0
+    fi
+    
+    log_step "Checking fail2ban security..."
+    
+    local f2b_issues=false
+    
+    # Check if installed
+    if ! command -v fail2ban-client &> /dev/null; then
+        log_warn "fail2ban not installed"
+        f2b_issues=true
+    else
+        log_success "fail2ban installed"
+    fi
+    
+    # Check service status
+    if systemctl is-active --quiet fail2ban; then
+        log_success "fail2ban service: running"
+        
+        # Check jail status
+        local jails=$(fail2ban-client status 2>/dev/null | grep "Jail list" | cut -d: -f2 | tr -d ' \t')
+        if [ -n "$jails" ]; then
+            log_success "Active jails: $jails"
+        fi
+    else
+        log_warn "fail2ban service: not running"
+        f2b_issues=true
+    fi
+    
+    # Check DeCloud jail config
+    if [ -f /etc/fail2ban/jail.d/decloud.conf ]; then
+        log_success "DeCloud jail config: exists"
+    else
+        log_warn "DeCloud jail config: missing"
+        f2b_issues=true
+    fi
+    
+    # Check Caddy filter
+    if [ -f /etc/fail2ban/filter.d/caddy-abuse.conf ]; then
+        log_success "Caddy abuse filter: exists"
+    else
+        log_warn "Caddy abuse filter: missing"
+        f2b_issues=true
+    fi
+    
+    if [ "$f2b_issues" = true ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+install_fail2ban() {
+    log_step "Installing/configuring fail2ban..."
+    
+    # Install if not present
+    if ! command -v fail2ban-client &> /dev/null; then
+        log_info "Installing fail2ban..."
+        apt-get install -y -qq fail2ban > /dev/null 2>&1
+        log_success "fail2ban installed"
+    fi
+    
+    # Create DeCloud jail config
+    log_info "Configuring DeCloud jails..."
+    cat > /etc/fail2ban/jail.d/decloud.conf << EOF
+# DeCloud fail2ban configuration
+# Generated by update.sh on $(date)
+
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 10
+backend = auto
+
+[sshd]
+enabled = true
+port = ssh
+maxretry = 5
+bantime = 86400
+
+[caddy-abuse]
+enabled = true
+port = http,https
+filter = caddy-abuse
+logpath = ${CADDY_LOG_DIR}/caddy.log
+maxretry = 30
+findtime = 300
+bantime = 3600
+
+[caddy-auth]
+enabled = true
+port = http,https
+filter = caddy-auth
+logpath = ${CADDY_LOG_DIR}/caddy.log
+maxretry = 10
+findtime = 600
+bantime = 7200
+EOF
+    
+    # Create Caddy abuse filter
+    cat > /etc/fail2ban/filter.d/caddy-abuse.conf << 'EOF'
+# Caddy abuse filter - rate limiting and bad requests
+[Definition]
+failregex = ^.*"client_ip":"<HOST>".*"status":(400|401|403|404|405|429|503).*$
+ignoreregex =
+datepattern = "ts":{EPOCH}
+EOF
+    
+    # Create Caddy auth filter
+    cat > /etc/fail2ban/filter.d/caddy-auth.conf << 'EOF'
+# Caddy authentication failure filter
+[Definition]
+failregex = ^.*"client_ip":"<HOST>".*"status":401.*$
+            ^.*"client_ip":"<HOST>".*"status":403.*$
+ignoreregex =
+datepattern = "ts":{EPOCH}
+EOF
+    
+    # Enable and restart
+    systemctl enable fail2ban --quiet 2>/dev/null || true
+    systemctl restart fail2ban 2>/dev/null || true
+    
+    sleep 2
+    
+    if systemctl is-active --quiet fail2ban; then
+        log_success "fail2ban running"
+        
+        # Show jail status
+        local banned=$(fail2ban-client status 2>/dev/null | grep -c "Currently banned" || echo "0")
+        log_info "Currently banned IPs: $banned"
+    else
+        log_warn "Failed to start fail2ban"
+    fi
+}
+
+# ============================================================
 # Update Functions
 # ============================================================
 fetch_updates() {
@@ -256,13 +563,10 @@ fetch_updates() {
     
     cd "$REPO_DIR"
     
-    # Store current commit
     CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
     
-    # Fetch updates
     git fetch origin --quiet
     
-    # Check if there are updates
     LOCAL=$(git rev-parse HEAD)
     REMOTE=$(git rev-parse origin/master 2>/dev/null || git rev-parse origin/main 2>/dev/null)
     
@@ -270,17 +574,13 @@ fetch_updates() {
         log_info "Already up to date (commit: ${LOCAL:0:8})"
         CHANGES_DETECTED=false
     else
-        log_info "Updates available"
-        log_info "  Current: ${LOCAL:0:8}"
-        log_info "  Latest:  ${REMOTE:0:8}"
+        log_info "Updates available: ${LOCAL:0:8} → ${REMOTE:0:8}"
         
-        # Show what changed
         echo ""
-        log_info "Changes:"
+        log_info "Recent changes:"
         git log --oneline HEAD..origin/master 2>/dev/null || git log --oneline HEAD..origin/main 2>/dev/null | head -10
         echo ""
         
-        # Pull updates
         git pull --quiet origin master 2>/dev/null || git pull --quiet origin main 2>/dev/null
         
         CHANGES_DETECTED=true
@@ -293,38 +593,30 @@ build_orchestrator() {
     
     cd "$REPO_DIR"
     
-    log_info "This will:"
-    log_info "  1. Install/update frontend dependencies (npm install)"
-    log_info "  2. Build frontend with Vite (npm run build)"
-    log_info "  3. Build backend with .NET (dotnet build)"
-    echo ""
-    
-    # Clean previous build
+    # Clean
     log_info "Cleaning previous build..."
     dotnet clean --verbosity quiet > /dev/null 2>&1 || true
     rm -rf src/Orchestrator/bin src/Orchestrator/obj 2>/dev/null || true
     
-    # Build with integrated system
+    # Build
     log_info "Building... (this may take 2-3 minutes)"
     
     cd src/Orchestrator
     
     if dotnet build -c Release --verbosity minimal 2>&1 | tee /tmp/build.log; then
-        log_success "Build completed successfully"
+        log_success "Build completed"
         
-        # Verify frontend was built
+        # Verify frontend
         if [ -d "wwwroot/dist" ]; then
-            log_success "Frontend build found: wwwroot/dist/"
             DIST_FILES=$(find wwwroot/dist -type f | wc -l)
-            log_info "  Frontend files: $DIST_FILES"
+            log_success "Frontend: $DIST_FILES files"
         else
-            log_warn "Frontend dist/ folder not found"
-            log_warn "Frontend may not have been built"
+            log_warn "Frontend dist/ not found"
         fi
         
-        # Verify backend was built
+        # Verify backend
         if [ -f "bin/Release/net8.0/Orchestrator.dll" ]; then
-            log_success "Backend build found: bin/Release/net8.0/"
+            log_success "Backend: built"
         else
             log_error "Backend build failed"
             cat /tmp/build.log
@@ -340,28 +632,18 @@ build_orchestrator() {
 restart_service() {
     log_step "Restarting Orchestrator service..."
     
-    # Check if service exists
     if ! systemctl list-unit-files | grep -q "$SERVICE_NAME"; then
         log_warn "Service $SERVICE_NAME not found, skipping restart"
         return
     fi
     
-    # Stop service
-    log_info "Stopping service..."
     systemctl stop $SERVICE_NAME 2>/dev/null || true
-    
-    # Wait a moment
     sleep 2
-    
-    # Start service
-    log_info "Starting service..."
     systemctl start $SERVICE_NAME
-    
-    # Wait and verify
     sleep 3
     
     if systemctl is-active --quiet $SERVICE_NAME; then
-        log_success "Service restarted successfully"
+        log_success "Service restarted"
     else
         log_error "Service failed to start"
         log_error "Check logs: journalctl -u $SERVICE_NAME -n 50"
@@ -372,29 +654,26 @@ restart_service() {
 verify_health() {
     log_step "Verifying Orchestrator health..."
     
-    # Get port from config
     local port=5050
     if [ -f "$CONFIG_DIR/orchestrator.appsettings.Production.json" ]; then
-        port=$(grep -oP '"Url":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/orchestrator.appsettings.Production.json" 2>/dev/null || echo "5050")
+        port=$(grep -oP '"Urls":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/orchestrator.appsettings.Production.json" 2>/dev/null || echo "5050")
     fi
     
-    # Wait for service to be ready
     local max_attempts=10
     local attempt=1
     
     while [ $attempt -le $max_attempts ]; do
         if curl -s --max-time 2 "http://localhost:$port/health" > /dev/null 2>&1; then
-            log_success "Orchestrator is healthy (port $port)"
+            log_success "Orchestrator healthy (port $port)"
             return 0
         fi
         
-        log_info "Waiting for service to be ready... ($attempt/$max_attempts)"
+        log_info "Waiting for service... ($attempt/$max_attempts)"
         sleep 2
         ((attempt++))
     done
     
-    log_warn "Health check timed out, but service may still be starting"
-    log_info "Check status: systemctl status $SERVICE_NAME"
+    log_warn "Health check timed out"
 }
 
 show_status() {
@@ -404,44 +683,62 @@ show_status() {
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
-    # Service status
+    # Orchestrator service
+    echo "  Orchestrator:"
     if systemctl is-active --quiet $SERVICE_NAME; then
-        log_success "Service: running"
+        echo -e "    Service:       ${GREEN}Running${NC}"
     else
-        log_error "Service: stopped"
+        echo -e "    Service:       ${RED}Stopped${NC}"
     fi
     
-    # Current version/commit
     if [ -d "$REPO_DIR/.git" ]; then
         cd "$REPO_DIR"
         COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
         BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-        log_info "Version: $BRANCH @ $COMMIT"
+        echo "    Version:       $BRANCH @ $COMMIT"
     fi
     
-    # Runtime versions
-    if command -v node &> /dev/null; then
-        log_info "Node.js: $(node --version)"
-    fi
-    if command -v dotnet &> /dev/null; then
-        log_info ".NET: $(dotnet --version)"
+    # Caddy
+    echo ""
+    echo "  Caddy (Central Ingress):"
+    if systemctl is-active --quiet caddy; then
+        echo -e "    Service:       ${GREEN}Running${NC}"
+        if curl -s --max-time 2 http://localhost:2019/config/ > /dev/null 2>&1; then
+            echo -e "    Admin API:     ${GREEN}Accessible${NC}"
+        else
+            echo -e "    Admin API:     ${YELLOW}Not accessible${NC}"
+        fi
+    else
+        echo -e "    Service:       ${YELLOW}Not running${NC}"
     fi
     
-    # Get config info
+    # fail2ban
+    echo ""
+    echo "  fail2ban (Security):"
+    if systemctl is-active --quiet fail2ban; then
+        echo -e "    Service:       ${GREEN}Running${NC}"
+        local banned=$(fail2ban-client status 2>/dev/null | grep -oP "Currently banned:\s+\K\d+" | head -1 || echo "0")
+        echo "    Banned IPs:    $banned"
+    else
+        echo -e "    Service:       ${YELLOW}Not running${NC}"
+    fi
+    
+    # Endpoints
+    echo ""
     local port=5050
     if [ -f "$CONFIG_DIR/orchestrator.appsettings.Production.json" ]; then
-        port=$(grep -oP '"Url":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/orchestrator.appsettings.Production.json" 2>/dev/null || echo "5050")
+        port=$(grep -oP '"Urls":\s*"http://[^:]+:\K\d+' "$CONFIG_DIR/orchestrator.appsettings.Production.json" 2>/dev/null || echo "5050")
     fi
     
-    # Get public IP
     local public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
     
-    echo ""
-    log_info "Dashboard: http://$public_ip:$port/"
-    log_info "API: http://$public_ip:$port/api"
-    log_info "Swagger: http://$public_ip:$port/swagger"
+    echo "  Endpoints:"
+    echo "    Dashboard:     http://$public_ip:$port/"
+    echo "    API:           http://$public_ip:$port/api"
+    echo "    Swagger:       http://$public_ip:$port/swagger"
+    echo "    Caddy Health:  http://localhost:8080/health"
     
-    # Node count
+    # Stats
     local stats=$(curl -s --max-time 2 "http://localhost:$port/api/system/stats" 2>/dev/null)
     if echo "$stats" | grep -q '"success":true'; then
         local online_nodes=$(echo "$stats" | grep -o '"onlineNodes":[0-9]*' | cut -d: -f2)
@@ -449,8 +746,9 @@ show_status() {
         local running_vms=$(echo "$stats" | grep -o '"runningVms":[0-9]*' | cut -d: -f2)
         local total_vms=$(echo "$stats" | grep -o '"totalVms":[0-9]*' | cut -d: -f2)
         echo ""
-        log_info "Nodes: $online_nodes online / $total_nodes total"
-        log_info "VMs: $running_vms running / $total_vms total"
+        echo "  Stats:"
+        echo "    Nodes:         $online_nodes online / $total_nodes total"
+        echo "    VMs:           $running_vms running / $total_vms total"
     fi
     
     echo ""
@@ -463,24 +761,38 @@ main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       DeCloud Orchestrator Update Script v${VERSION}              ║"
-    echo "║       (Integrated Frontend/Backend Build)                    ║"
+    echo "║       (Central Ingress Architecture)                         ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
     parse_args "$@"
     check_root
     
-    # Check dependencies
+    # Check core dependencies
     if ! check_dependencies; then
-        log_info "Some dependencies are missing, installing..."
+        log_info "Installing missing dependencies..."
         install_dependencies
-        log_success "Dependencies installed"
+        echo ""
+    fi
+    
+    # Check Caddy
+    if ! check_caddy; then
+        log_info "Installing/configuring Caddy..."
+        install_caddy
+        echo ""
+    fi
+    
+    # Check fail2ban
+    if ! check_fail2ban; then
+        log_info "Installing/configuring fail2ban..."
+        install_fail2ban
         echo ""
     fi
     
     # If deps-only, stop here
     if [ "$DEPS_ONLY" = true ]; then
         log_success "Dependency check complete"
+        show_status
         exit 0
     fi
     

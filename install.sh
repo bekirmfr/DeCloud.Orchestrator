@@ -1,20 +1,28 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Installation Script (Updated for Integrated Build)
+# DeCloud Orchestrator Installation Script
 #
-# Installs the DeCloud Orchestrator with integrated frontend/backend build.
-# Now includes Node.js for automatic frontend builds.
+# Installs the Orchestrator with:
+# - .NET 8 Runtime
+# - Node.js for frontend build
+# - MongoDB connection
+# - Caddy for central ingress (*.vms.decloud.io)
+# - fail2ban for DDoS protection
+#
+# ARCHITECTURE:
+# The Orchestrator is the ONLY component that needs ports 80/443.
+# It handles all HTTP ingress centrally and routes to nodes via WireGuard.
+#
+# Version: 2.0.0
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.Orchestrator/main/install.sh | sudo bash
-#
-# Or with options:
-#   sudo ./install.sh --port 5050 --mongodb "mongodb+srv://..."
+#   sudo ./install.sh --port 5050 --mongodb "mongodb+srv://..." \
+#       --ingress-domain vms.decloud.io --caddy-email admin@example.com
 #
 
 set -e
 
-VERSION="1.3.0"
+VERSION="2.0.0"
 
 # Colors
 RED='\033[0;31m'
@@ -31,31 +39,31 @@ log_error() { echo -e "${RED}[✗]${NC} $1"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # ============================================================
-# Default Configuration
+# Configuration
 # ============================================================
+
+# Paths
 INSTALL_DIR="/opt/decloud"
 CONFIG_DIR="/etc/decloud"
+LOG_DIR="/var/log/decloud"
 REPO_URL="https://github.com/bekirmfr/DeCloud.Orchestrator.git"
-SERVICE_NAME="decloud-orchestrator"
 
-# Settings (can be overridden via arguments)
-PORT=5050
+# Ports
+API_PORT=5050
+
+# MongoDB
 MONGODB_URI=""
-JWT_SECRET=""
-SKIP_MONGODB_CHECK=false
 
-# Caddy Ingress Gateway
-INSTALL_CADDY=${INSTALL_CADDY:-true}
-CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL:-""}
-CADDY_ACME_STAGING=${CADDY_ACME_STAGING:-false}
+# Central Ingress (Caddy)
+INSTALL_CADDY=false
+INGRESS_DOMAIN=""
+CADDY_EMAIL=""
+CADDY_STAGING=false
 CADDY_DATA_DIR="/var/lib/caddy"
 CADDY_LOG_DIR="/var/log/caddy"
-CADDY_CONFIG_DIR="/etc/caddy"
 
-# Security / fail2ban
-INSTALL_FAIL2BAN=${INSTALL_FAIL2BAN:-true}
-DECLOUD_LOG_DIR="/var/log/decloud"
-DECLOUD_AUDIT_LOG="${DECLOUD_LOG_DIR}/audit.log"
+# fail2ban
+INSTALL_FAIL2BAN=false
 
 # ============================================================
 # Argument Parsing
@@ -64,37 +72,37 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             --port)
-                PORT="$2"
+                API_PORT="$2"
                 shift 2
                 ;;
             --mongodb)
                 MONGODB_URI="$2"
                 shift 2
                 ;;
-            --jwt-secret)
-                JWT_SECRET="$2"
+            --ingress-domain)
+                INGRESS_DOMAIN="$2"
+                INSTALL_CADDY=true
+                INSTALL_FAIL2BAN=true
                 shift 2
                 ;;
-            --skip-mongodb-check)
-                SKIP_MONGODB_CHECK=true
+            --caddy-email)
+                CADDY_EMAIL="$2"
+                INSTALL_CADDY=true
+                INSTALL_FAIL2BAN=true
+                shift 2
+                ;;
+            --caddy-staging)
+                CADDY_STAGING=true
                 shift
                 ;;
-           --skip-caddy)
-               INSTALL_CADDY=false
-               shift
-               ;;
-           --caddy-email)
-               CADDY_ACME_EMAIL="$2"
-               shift 2
-               ;;
-           --caddy-staging)
-               CADDY_ACME_STAGING=true
-               shift
-               ;;
-           --skip-fail2ban)
-               INSTALL_FAIL2BAN=false
-               shift
-               ;;
+            --skip-caddy)
+                INSTALL_CADDY=false
+                shift
+                ;;
+            --skip-fail2ban)
+                INSTALL_FAIL2BAN=false
+                shift
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -114,35 +122,42 @@ DeCloud Orchestrator Installer v${VERSION}
 
 Usage: $0 [options]
 
-Options:
+Required:
   --port <port>              API port (default: 5050)
-  --mongodb <uri>            MongoDB connection string (optional, uses in-memory if not set)
-  --jwt-secret <secret>      JWT signing key (default: auto-generated)
-  --skip-mongodb-check       Skip MongoDB connectivity check
-  --skip-caddy               Skip Caddy ingress gateway installation
-  --caddy-email <email>      Email for Let's Encrypt TLS certificates
+
+Database:
+  --mongodb <uri>            MongoDB connection string (recommended for persistence)
+
+Central Ingress (for *.vms.decloud.io routing):
+  --ingress-domain <domain>  Base domain for VM ingress (e.g., vms.decloud.io)
+  --caddy-email <email>      Email for Let's Encrypt certificates
   --caddy-staging            Use Let's Encrypt staging (for testing)
-  --skip-fail2ban            Skip fail2ban DDoS protection installation
-  --help, -h                 Show this help message
+  --skip-caddy               Skip Caddy installation
+  --skip-fail2ban            Skip fail2ban installation
 
 Examples:
-  $0
+  # Basic (no ingress, in-memory storage)
   $0 --port 5050
-  $0 --mongodb "mongodb+srv://user:pass@cluster.mongodb.net/decloud"
-  
-Environment Variables:
-  MONGODB_URI                MongoDB connection string
-  JWT_SECRET                 JWT signing key
-  
-Changes in v1.3.0:
-  - Added Node.js installation for integrated frontend build
-  - Frontend now builds automatically with backend
-  - Improved production deployment process
+
+  # With MongoDB persistence
+  $0 --port 5050 --mongodb "mongodb+srv://user:pass@cluster/db"
+
+  # Full setup with central ingress
+  $0 --port 5050 \\
+     --mongodb "mongodb+srv://user:pass@cluster/db" \\
+     --ingress-domain vms.decloud.io \\
+     --caddy-email admin@decloud.io
+
+ARCHITECTURE:
+  The Orchestrator is the central entry point for all HTTP traffic.
+  Node Agents do NOT need ports 80/443 - they connect via WireGuard.
+
+  User Request → Orchestrator (80/443) → WireGuard → Node → VM
 EOF
 }
 
 # ============================================================
-# System Checks
+# Checks
 # ============================================================
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -155,7 +170,7 @@ check_os() {
     log_step "Checking operating system..."
     
     if [ ! -f /etc/os-release ]; then
-        log_error "Cannot detect OS. This script requires Ubuntu 20.04+ or Debian 11+"
+        log_error "Cannot detect OS"
         exit 1
     fi
     
@@ -163,114 +178,68 @@ check_os() {
     OS=$ID
     OS_VERSION=$VERSION_ID
     
-    case $OS in
-        ubuntu)
-            if [ "${OS_VERSION%%.*}" -lt 20 ]; then
-                log_error "Ubuntu 20.04 or later required (found: $OS_VERSION)"
-                exit 1
-            fi
-            ;;
-        debian)
-            if [ "${OS_VERSION%%.*}" -lt 11 ]; then
-                log_error "Debian 11 or later required (found: $OS_VERSION)"
-                exit 1
-            fi
-            ;;
-        *)
-            log_warn "Untested OS: $OS $OS_VERSION (continuing anyway)"
-            ;;
-    esac
-    
     log_success "OS: $OS $OS_VERSION"
 }
 
 check_resources() {
     log_step "Checking system resources..."
     
-    # CPU cores
     CPU_CORES=$(nproc)
-    if [ "$CPU_CORES" -lt 1 ]; then
-        log_error "At least 1 CPU core required"
-        exit 1
-    fi
+    MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
+    DISK_GB=$(df -BG / | awk 'NR==2{print $4}' | tr -d 'G')
+    
     log_success "CPU cores: $CPU_CORES"
-    
-    # Memory (need at least 1GB for building frontend)
-    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$TOTAL_MEM" -lt 1024 ]; then
-        log_warn "At least 1GB RAM recommended (found: ${TOTAL_MEM}MB)"
-        log_warn "Frontend build may be slow or fail with limited memory"
-    else
-        log_success "Memory: ${TOTAL_MEM}MB"
-    fi
-    
-    # Disk space (need at least 3GB for Node.js + build artifacts)
-    FREE_DISK=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    if [ "$FREE_DISK" -lt 3 ]; then
-        log_error "At least 3GB free disk space required (found: ${FREE_DISK}GB)"
-        exit 1
-    fi
-    log_success "Free disk: ${FREE_DISK}GB"
+    log_success "Memory: ${MEMORY_MB}MB"
+    log_success "Free disk: ${DISK_GB}GB"
 }
 
 check_network() {
     log_step "Checking network connectivity..."
     
-    # Internet connectivity
-    if ! curl -s --max-time 10 https://api.github.com > /dev/null 2>&1; then
-        log_error "No internet connectivity (cannot reach GitHub)"
+    if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
+        log_success "Internet connectivity OK"
+    else
+        log_error "Cannot reach github.com"
         exit 1
     fi
-    log_success "Internet connectivity OK"
     
-    # Get public IP
-    PUBLIC_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || \
-                curl -s --max-time 5 https://ifconfig.me 2>/dev/null || \
-                hostname -I | awk '{print $1}')
-    
-    if [ -z "$PUBLIC_IP" ]; then
-        log_warn "Could not detect public IP"
-        PUBLIC_IP=$(hostname -I | awk '{print $1}')
-    fi
+    PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || echo "unknown")
     log_success "Public IP: $PUBLIC_IP"
     
-    # Check if port is available
-    if ss -tuln | grep -q ":${PORT} "; then
-        log_warn "Port $PORT is already in use"
-        log_info "Finding available port..."
-        
-        local new_port=$((PORT + 1))
-        while ss -tuln | grep -q ":${new_port} " && [ $new_port -lt $((PORT + 100)) ]; do
-            ((new_port++))
-        done
-        
-        if [ $new_port -lt $((PORT + 100)) ]; then
-            PORT=$new_port
-            log_success "Using available port: $PORT"
-        else
-            log_error "Could not find available port"
+    # Check API port
+    if ss -tlnp | grep -q ":${API_PORT} "; then
+        log_error "Port $API_PORT is already in use"
+        exit 1
+    fi
+    log_success "Port $API_PORT is available"
+    
+    # Check 80/443 if Caddy is enabled
+    if [ "$INSTALL_CADDY" = true ]; then
+        if ss -tlnp | grep -q ":80 "; then
+            log_error "Port 80 is already in use (required for Caddy)"
+            log_info "Disable the conflicting service or use --skip-caddy"
             exit 1
         fi
-    else
-        log_success "Port $PORT is available"
+        if ss -tlnp | grep -q ":443 "; then
+            log_error "Port 443 is already in use (required for Caddy)"
+            exit 1
+        fi
+        log_success "Ports 80/443 available for central ingress"
     fi
 }
 
 check_mongodb() {
-    if [ -n "$MONGODB_URI" ] && [ "$SKIP_MONGODB_CHECK" = false ]; then
-        log_step "Checking MongoDB connectivity..."
-        
-        # Basic URI validation
+    log_step "Checking MongoDB connectivity..."
+    
+    if [ -n "$MONGODB_URI" ]; then
         if [[ ! "$MONGODB_URI" =~ ^mongodb(\+srv)?:// ]]; then
             log_error "Invalid MongoDB URI format"
             exit 1
         fi
-        
         log_success "MongoDB URI provided"
         log_info "Connection will be verified at startup"
     else
-        log_info "No MongoDB URI provided - using in-memory storage"
-        log_warn "Data will not persist across restarts!"
+        log_warn "No MongoDB URI - using in-memory storage (data will not persist!)"
     fi
 }
 
@@ -281,7 +250,9 @@ install_dependencies() {
     log_step "Installing base dependencies..."
     
     apt-get update -qq
-    apt-get install -y -qq curl wget git jq apt-transport-https ca-certificates gnupg lsb-release > /dev/null 2>&1
+    apt-get install -y -qq \
+        curl wget git jq apt-transport-https ca-certificates \
+        gnupg lsb-release software-properties-common > /dev/null 2>&1
     
     log_success "Base dependencies installed"
 }
@@ -295,29 +266,14 @@ install_nodejs() {
         
         if [ "$NODE_MAJOR" -ge 18 ]; then
             log_success "Node.js already installed: v$NODE_VERSION"
-            
-            if command -v npm &> /dev/null; then
-                NPM_VERSION=$(npm --version 2>/dev/null)
-                log_success "npm already installed: v$NPM_VERSION"
-            fi
             return
-        else
-            log_warn "Node.js $NODE_VERSION found (need 18+), upgrading..."
         fi
     fi
     
-    # Install NodeSource repository
-    log_info "Adding NodeSource repository..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
-    
-    # Install Node.js
     apt-get install -y -qq nodejs > /dev/null 2>&1
     
-    NODE_VERSION=$(node --version 2>/dev/null)
-    NPM_VERSION=$(npm --version 2>/dev/null)
-    
-    log_success "Node.js installed: $NODE_VERSION"
-    log_success "npm installed: v$NPM_VERSION"
+    log_success "Node.js installed: $(node --version)"
 }
 
 install_dotnet() {
@@ -331,25 +287,188 @@ install_dotnet() {
         fi
     fi
     
-    # Add Microsoft repository
-    if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
-        wget -q https://packages.microsoft.com/config/$OS/$OS_VERSION/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
-        dpkg -i /tmp/packages-microsoft-prod.deb > /dev/null 2>&1
-        rm /tmp/packages-microsoft-prod.deb
-        apt-get update -qq
-    fi
+    wget -q https://packages.microsoft.com/config/$OS/$OS_VERSION/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb 2>/dev/null || \
+    wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb
     
+    dpkg -i /tmp/packages-microsoft-prod.deb > /dev/null 2>&1
+    rm /tmp/packages-microsoft-prod.deb
+    
+    apt-get update -qq
     apt-get install -y -qq dotnet-sdk-8.0 > /dev/null 2>&1
     
-    log_success ".NET 8 SDK installed: $(dotnet --version)"
+    log_success ".NET 8 SDK installed"
 }
 
+# ============================================================
+# Caddy Installation (Central Ingress)
+# ============================================================
+install_caddy() {
+    if [ "$INSTALL_CADDY" = false ]; then
+        log_info "Skipping Caddy installation"
+        return
+    fi
+    
+    log_step "Installing Caddy for central ingress..."
+    
+    if command -v caddy &> /dev/null; then
+        log_success "Caddy already installed: $(caddy version | head -1)"
+        return
+    fi
+    
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl > /dev/null 2>&1
+    
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+        gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+    
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+        tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+    
+    apt-get update -qq
+    apt-get install -y -qq caddy > /dev/null 2>&1
+    
+    log_success "Caddy installed: $(caddy version | head -1)"
+}
+
+configure_caddy() {
+    if [ "$INSTALL_CADDY" = false ]; then
+        return
+    fi
+    
+    log_step "Configuring Caddy for central ingress..."
+    
+    mkdir -p "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" /etc/caddy
+    chown caddy:caddy "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" 2>/dev/null || true
+    
+    # Build ACME configuration
+    local acme_config=""
+    if [ -n "$CADDY_EMAIL" ]; then
+        acme_config="    email $CADDY_EMAIL"
+    fi
+    if [ "$CADDY_STAGING" = true ]; then
+        acme_config="$acme_config
+    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory"
+    fi
+    
+    # Wildcard domain config
+    local wildcard_config=""
+    if [ -n "$INGRESS_DOMAIN" ]; then
+        wildcard_config="
+# Central Ingress: Route *.${INGRESS_DOMAIN} to VMs
+# Routes are managed dynamically via Admin API
+*.${INGRESS_DOMAIN} {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+    }
+    
+    # Default: proxy to orchestrator for routing decisions
+    reverse_proxy localhost:${API_PORT}
+}"
+    fi
+    
+    cat > /etc/caddy/Caddyfile << EOF
+# DeCloud Orchestrator - Central Ingress Gateway
+# All VM HTTP traffic routes through here
+
+{
+    admin localhost:2019
+    
+    log {
+        output file $CADDY_LOG_DIR/caddy.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+    }
+    
+$acme_config
+}
+
+# Health check endpoint
+:8080 {
+    respond /health "OK" 200
+    respond /ready "OK" 200
+}
+
+# Orchestrator API and Dashboard
+:${API_PORT} {
+    reverse_proxy localhost:5000
+}
+$wildcard_config
+EOF
+
+    # Systemd override
+    mkdir -p /etc/systemd/system/caddy.service.d
+    cat > /etc/systemd/system/caddy.service.d/decloud.conf << 'EOF'
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=1048576
+Restart=always
+RestartSec=5
+EOF
+
+    systemctl daemon-reload
+    log_success "Caddy configured"
+}
+
+# ============================================================
+# fail2ban Installation
+# ============================================================
+install_fail2ban() {
+    if [ "$INSTALL_FAIL2BAN" = false ]; then
+        log_info "Skipping fail2ban installation"
+        return
+    fi
+    
+    log_step "Installing fail2ban..."
+    
+    apt-get install -y -qq fail2ban > /dev/null 2>&1
+    
+    # Configure jails
+    cat > /etc/fail2ban/jail.d/decloud.conf << EOF
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 10
+
+[sshd]
+enabled = true
+port = ssh
+maxretry = 5
+bantime = 86400
+
+[caddy-abuse]
+enabled = true
+port = http,https
+filter = caddy-abuse
+logpath = ${CADDY_LOG_DIR}/caddy.log
+maxretry = 30
+findtime = 300
+bantime = 3600
+EOF
+
+    # Caddy abuse filter
+    cat > /etc/fail2ban/filter.d/caddy-abuse.conf << 'EOF'
+[Definition]
+failregex = ^.*"client_ip":"<HOST>".*"status":(400|401|403|404|405|429|503).*$
+ignoreregex =
+datepattern = "ts":{EPOCH}
+EOF
+
+    systemctl enable fail2ban --quiet 2>/dev/null || true
+    systemctl restart fail2ban 2>/dev/null || true
+    
+    log_success "fail2ban installed and configured"
+}
+
+# ============================================================
+# Orchestrator Setup
+# ============================================================
 create_directories() {
     log_step "Creating directories..."
     
     mkdir -p "$INSTALL_DIR"
     mkdir -p "$CONFIG_DIR"
-    mkdir -p /var/log/decloud
+    mkdir -p "$LOG_DIR"
     
     log_success "Directories created"
 }
@@ -363,7 +482,7 @@ download_orchestrator() {
     fi
     
     cd "$INSTALL_DIR"
-    git clone --depth 1 "$REPO_URL" > /dev/null 2>&1
+    git clone --depth 1 "$REPO_URL" DeCloud.Orchestrator > /dev/null 2>&1
     
     cd DeCloud.Orchestrator
     COMMIT=$(git rev-parse --short HEAD)
@@ -376,273 +495,211 @@ build_orchestrator() {
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator"
     
-    log_info "This will:"
-    log_info "  1. Install frontend dependencies (npm install)"
-    log_info "  2. Build frontend with Vite (npm run build)"
-    log_info "  3. Build backend with .NET (dotnet build)"
-    log_info "  4. Package everything for production"
-    echo ""
+    log_info "This may take 2-3 minutes..."
     
-    # Clean previous build
-    log_info "Cleaning previous build..."
+    # Clean
     dotnet clean --verbosity quiet > /dev/null 2>&1 || true
     
-    # Build (this now automatically builds frontend too!)
-    log_info "Building... (this may take 2-3 minutes)"
-    
+    # Build (includes frontend via MSBuild targets)
     cd src/Orchestrator
+    dotnet build --configuration Release --verbosity quiet 2>&1 | grep -E "(error|warning CS)" || true
     
-    # The integrated build system will:
-    # 1. Check if node_modules exists
-    # 2. Run npm install if needed
-    # 3. Run npm run build (creates wwwroot/dist/)
-    # 4. Build .NET project
-    # 5. Include dist/ in output
+    log_success "Build completed"
     
-    if dotnet build -c Release --verbosity minimal 2>&1 | tee /tmp/build.log; then
-        log_success "Build completed successfully"
-        
-        # Verify frontend was built
-        if [ -d "wwwroot/dist" ]; then
-            log_success "Frontend build found: wwwroot/dist/"
-            DIST_FILES=$(find wwwroot/dist -type f | wc -l)
-            log_info "  Frontend files: $DIST_FILES"
-        else
-            log_warn "Frontend dist/ folder not found"
-            log_warn "Build may have skipped frontend (check if node_modules exists)"
-        fi
-        
-        # Verify backend was built
-        if [ -f "bin/Release/net8.0/Orchestrator.dll" ]; then
-            log_success "Backend build found: bin/Release/net8.0/"
-        else
-            log_error "Backend build failed"
-            cat /tmp/build.log
-            exit 1
-        fi
+    # Verify frontend
+    if [ -d "wwwroot/dist" ]; then
+        local file_count=$(find wwwroot/dist -type f | wc -l)
+        log_success "Frontend built: $file_count files"
     else
-        log_error "Build failed!"
-        cat /tmp/build.log
-        exit 1
-    fi
-}
-
-generate_jwt_secret() {
-    if [ -z "$JWT_SECRET" ]; then
-        JWT_SECRET=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+        log_warn "Frontend dist not found - may need manual build"
     fi
 }
 
 create_configuration() {
     log_step "Creating configuration..."
     
-    generate_jwt_secret
+    # Central ingress config
+    local central_ingress_config=""
+    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
+        central_ingress_config=',
+  "CentralIngress": {
+    "Enabled": true,
+    "BaseDomain": "'$INGRESS_DOMAIN'",
+    "CaddyAdminUrl": "http://localhost:2019",
+    "DefaultTargetPort": 80,
+    "AutoRegisterOnStart": true,
+    "SubdomainPattern": "{vmId:short}"
+  }'
+    fi
     
-    # Create MongoDB config section if URI provided
+    # MongoDB config
     local mongodb_config=""
     if [ -n "$MONGODB_URI" ]; then
-        mongodb_config="\"ConnectionStrings\": {
-    \"MongoDB\": \"$MONGODB_URI\"
-  },"
+        mongodb_config=',
+  "MongoDB": {
+    "ConnectionString": "'$MONGODB_URI'"
+  }'
     fi
     
     cat > "$CONFIG_DIR/orchestrator.appsettings.Production.json" << EOF
 {
-  $mongodb_config
   "Logging": {
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning"
     }
   },
-  "Serilog": {
-    "MinimumLevel": {
-      "Default": "Information",
-      "Override": {
-        "Microsoft": "Warning",
-        "System": "Warning"
-      }
-    },
-    "WriteTo": [
-      {
-        "Name": "Console"
-      },
-      {
-        "Name": "File",
-        "Args": {
-          "path": "/var/log/decloud/orchestrator-.log",
-          "rollingInterval": "Day",
-          "retainedFileCountLimit": 7
-        }
-      }
-    ]
-  },
+  "Urls": "http://0.0.0.0:${API_PORT}",
   "Jwt": {
-    "Key": "$JWT_SECRET",
+    "Key": "$(openssl rand -base64 32)",
     "Issuer": "decloud-orchestrator",
-    "Audience": "decloud-client",
+    "Audience": "decloud-users",
     "ExpiryMinutes": 1440
-  },
-  "AllowedHosts": "*",
-  "Kestrel": {
-    "Endpoints": {
-      "Http": {
-        "Url": "http://0.0.0.0:$PORT"
-      }
-    }
-  }
+  }$mongodb_config$central_ingress_config
 }
 EOF
 
-    # Symlink to project directory
-    ln -sf "$CONFIG_DIR/orchestrator.appsettings.Production.json" \
-        "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
-    
+    chmod 640 "$CONFIG_DIR/orchestrator.appsettings.Production.json"
     log_success "Configuration created"
 }
 
 create_systemd_service() {
     log_step "Creating systemd service..."
     
-    cat > /etc/systemd/system/$SERVICE_NAME.service << EOF
+    cat > /etc/systemd/system/decloud-orchestrator.service << EOF
 [Unit]
-Description=DeCloud Orchestrator - Decentralized Cloud Coordination Service
-Documentation=https://github.com/bekirmfr/DeCloud.Orchestrator
+Description=DeCloud Orchestrator
 After=network.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-User=root
+Type=notify
 WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
-ExecStart=/usr/bin/dotnet $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll
+ExecStart=/usr/bin/dotnet run --configuration Release --no-build
 Restart=always
 RestartSec=10
-
-# Environment
-Environment=DOTNET_ENVIRONMENT=Production
 Environment=ASPNETCORE_ENVIRONMENT=Production
-Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
-
-# Logging
+Environment=DOTNET_ENVIRONMENT=Production
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=$SERVICE_NAME
-
-# Security hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/log/decloud $INSTALL_DIR $CONFIG_DIR
+SyslogIdentifier=decloud-orchestrator
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable $SERVICE_NAME --quiet
-    
     log_success "Systemd service created"
 }
 
 configure_firewall() {
     log_step "Configuring firewall..."
     
-    # UFW
-    if command -v ufw &> /dev/null; then
-        ufw allow $PORT/tcp > /dev/null 2>&1 || true
-    fi
-    
-    # iptables fallback
-    iptables -C INPUT -p tcp --dport $PORT -j ACCEPT 2>/dev/null || \
-        iptables -I INPUT 1 -p tcp --dport $PORT -j ACCEPT 2>/dev/null || true
-    
-    log_success "Firewall configured"
-}
-
-create_cli_tool() {
-    log_step "Installing DeCloud CLI..."
-    
-    cat > /usr/local/bin/decloud << 'EOF'
-#!/bin/bash
-# DeCloud CLI - See 'decloud help' for usage
-ORCHESTRATOR_URL="${DECLOUD_ORCHESTRATOR_URL:-http://localhost:5050}"
-CONFIG_FILE="$HOME/.decloud/config"
-[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
-
-case "${1:-help}" in
-    status)
-        curl -s "$ORCHESTRATOR_URL/api/system/stats" | jq .
-        ;;
-    nodes)
-        curl -s "$ORCHESTRATOR_URL/api/nodes" | jq '.data[] | {id: .id[0:8], name, status, ip: .publicIp}'
-        ;;
-    vms)
-        curl -s "$ORCHESTRATOR_URL/api/vms" | jq '.data.items[] | {id: .id[0:8], name, status}'
-        ;;
-    help|*)
-        echo "DeCloud CLI - Quick Commands"
-        echo ""
-        echo "Usage: decloud <command>"
-        echo ""
-        echo "Commands:"
-        echo "  status    Show system status"
-        echo "  nodes     List nodes"
-        echo "  vms       List VMs"
-        ;;
-esac
-EOF
-    
-    chmod +x /usr/local/bin/decloud
-    
-    log_success "CLI installed: decloud"
-}
-
-start_service() {
-    log_step "Starting Orchestrator..."
-    
-    systemctl start $SERVICE_NAME
-    
-    # Wait for service to be ready
-    local max_attempts=15
-    local attempt=1
-    
-    while [ $attempt -le $max_attempts ]; do
-        if curl -s --max-time 2 "http://localhost:$PORT/health" > /dev/null 2>&1; then
-            log_success "Orchestrator is running"
-            return 0
+    if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
+        ufw allow ${API_PORT}/tcp comment "DeCloud Orchestrator API" > /dev/null 2>&1 || true
+        
+        if [ "$INSTALL_CADDY" = true ]; then
+            ufw allow 80/tcp comment "DeCloud Ingress HTTP" > /dev/null 2>&1 || true
+            ufw allow 443/tcp comment "DeCloud Ingress HTTPS" > /dev/null 2>&1 || true
         fi
         
-        sleep 2
-        ((attempt++))
-    done
+        log_success "Firewall configured"
+    else
+        log_info "UFW not active, skipping"
+    fi
+}
+
+start_services() {
+    log_step "Starting services..."
     
-    if systemctl is-active --quiet $SERVICE_NAME; then
-        log_success "Orchestrator is running (health check pending)"
+    # Start Caddy if installed
+    if [ "$INSTALL_CADDY" = true ]; then
+        systemctl enable caddy --quiet 2>/dev/null || true
+        systemctl start caddy 2>/dev/null || true
+        
+        if systemctl is-active --quiet caddy; then
+            log_success "Caddy started"
+        else
+            log_warn "Caddy failed to start"
+        fi
+    fi
+    
+    # Start Orchestrator
+    systemctl enable decloud-orchestrator --quiet 2>/dev/null || true
+    systemctl start decloud-orchestrator 2>/dev/null || true
+    
+    sleep 3
+    
+    if systemctl is-active --quiet decloud-orchestrator; then
+        log_success "Orchestrator is running"
     else
         log_error "Orchestrator failed to start"
-        log_error "Check logs: journalctl -u $SERVICE_NAME -n 50"
-        exit 1
+        log_info "Check logs: journalctl -u decloud-orchestrator -n 50"
     fi
 }
 
 # ============================================================
-# Main Installation
+# Summary
+# ============================================================
+print_summary() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Installation Complete!                          ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "  Dashboard:       http://${PUBLIC_IP}:${API_PORT}/"
+    echo "  API Endpoint:    http://${PUBLIC_IP}:${API_PORT}/api"
+    echo "  Swagger UI:      http://${PUBLIC_IP}:${API_PORT}/swagger"
+    echo ""
+    
+    if [ "$INSTALL_CADDY" = true ]; then
+        echo "  ─────────────────────────────────────────────────────────────"
+        echo "  Central Ingress (Caddy):"
+        echo "  ─────────────────────────────────────────────────────────────"
+        if [ -n "$INGRESS_DOMAIN" ]; then
+            echo "    Base Domain:   *.${INGRESS_DOMAIN}"
+            echo "    Example:       https://vm-abc123.${INGRESS_DOMAIN}"
+        fi
+        echo "    Admin API:     http://localhost:2019"
+        echo "    Health:        http://localhost:8080/health"
+        echo ""
+    fi
+    
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  Commands:"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Status:        sudo systemctl status decloud-orchestrator"
+    echo "    Logs:          sudo journalctl -u decloud-orchestrator -f"
+    echo "    Restart:       sudo systemctl restart decloud-orchestrator"
+    if [ "$INSTALL_CADDY" = true ]; then
+        echo "    Caddy logs:    sudo tail -f $CADDY_LOG_DIR/caddy.log"
+    fi
+    echo ""
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  To add a node, run on the node server:"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo ""
+    echo "    curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/main/install.sh | \\"
+    echo "      sudo bash -s -- --orchestrator http://${PUBLIC_IP}:${API_PORT}"
+    echo ""
+    echo "  Note: Nodes do NOT need ports 80/443 - ingress is handled here!"
+    echo ""
+}
+
+# ============================================================
+# Main
 # ============================================================
 main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       DeCloud Orchestrator Installer v${VERSION}                  ║"
-    echo "║       (Integrated Frontend/Backend Build)                    ║"
+    echo "║       (Central Ingress Architecture)                         ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
     parse_args "$@"
     
-    # Environment variable overrides
-    MONGODB_URI="${MONGODB_URI:-$MONGODB_URI}"
-    JWT_SECRET="${JWT_SECRET:-$JWT_SECRET}"
-    
+    # Checks
     check_root
     check_os
     check_resources
@@ -653,66 +710,27 @@ main() {
     log_info "All requirements met. Starting installation..."
     echo ""
     
+    # Install dependencies
     install_dependencies
-    install_nodejs        # NEW: Required for frontend build
+    install_nodejs
     install_dotnet
+    
+    # Central ingress
+    install_caddy
+    configure_caddy
+    install_fail2ban
+    
+    # Orchestrator
     create_directories
     download_orchestrator
-    build_orchestrator    # Now builds BOTH frontend and backend
+    build_orchestrator
     create_configuration
     create_systemd_service
     configure_firewall
-    create_cli_tool
-    start_service
+    start_services
     
-    # ============================================================
-    # Summary
-    # ============================================================
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║              Installation Complete!                          ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    log_success "DeCloud Orchestrator v${VERSION} installed successfully!"
-    echo ""
-    echo "  Dashboard:       http://${PUBLIC_IP}:${PORT}/"
-    echo "  API Endpoint:    http://${PUBLIC_IP}:${PORT}/api"
-    echo "  Swagger UI:      http://${PUBLIC_IP}:${PORT}/swagger"
-    echo "  Health Check:    http://${PUBLIC_IP}:${PORT}/health"
-    echo ""
-    if [ -n "$MONGODB_URI" ]; then
-        echo "  Database:        MongoDB (persistent)"
-    else
-        echo "  Database:        In-memory (non-persistent)"
-        echo ""
-        echo -e "  ${YELLOW}Warning: Data will be lost on restart!${NC}"
-        echo "  Add --mongodb to use persistent storage"
-    fi
-    echo ""
-    echo "  Node.js:         $(node --version)"
-    echo "  .NET:            $(dotnet --version)"
-    echo ""
-    echo "─────────────────────────────────────────────────────────────────"
-    echo ""
-    echo "Useful commands:"
-    echo "  Status:          sudo systemctl status $SERVICE_NAME"
-    echo "  Logs:            sudo journalctl -u $SERVICE_NAME -f"
-    echo "  Restart:         sudo systemctl restart $SERVICE_NAME"
-    echo "  Update:          sudo ./update.sh"
-    echo "  CLI:             decloud status"
-    echo ""
-    echo "Configuration:     $CONFIG_DIR/orchestrator.appsettings.Production.json"
-    echo "Logs directory:    /var/log/decloud/"
-    echo ""
-    echo "─────────────────────────────────────────────────────────────────"
-    echo ""
-    echo "To add a node, run on the node server:"
-    echo ""
-    echo "  curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/main/install.sh | \\"
-    echo "    sudo bash -s -- --orchestrator http://${PUBLIC_IP}:${PORT}"
-    echo ""
-    log_success "Frontend and backend deployed as a single integrated application!"
-    echo ""
+    # Done
+    print_summary
 }
 
 main "$@"
