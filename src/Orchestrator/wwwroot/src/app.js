@@ -942,7 +942,7 @@ function renderVMsTable(vms) {
                 <div class="table-actions">
                     <!-- Connect Info -->
             <button class="btn btn-sm btn-primary" 
-                    onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})" 
+                    onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})" 
                     title="Connection Info">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
@@ -952,7 +952,7 @@ function renderVMsTable(vms) {
 
             <!-- Terminal -->
             <button class="btn btn-sm" 
-                    onclick="openTerminal('${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
+                    onclick="openTerminal('${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
                     title="Open Terminal">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="4 17 10 11 4 5"/>
@@ -1468,10 +1468,11 @@ async function openFileBrowserWithAuth(vmId, nodeAgentHost, nodeAgentPort, vmIp)
  * @param {number} nodeAgentPort - Node Agent port (from networkConfig)
  * @param {string} vmIp - VM private IP
  */
-function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
+function openTerminal(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp) {
     // Build terminal URL with connection parameters
     const params = new URLSearchParams({
         vmId: vmId,
+        vmName: vmName,
         nodeIp: nodeAgentHost,
         nodePort: nodeAgentPort,
         vmIp: vmIp,
@@ -1490,7 +1491,7 @@ function openTerminal(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
     * @param {string} nodeAgentHost - Node Agent API host (for web terminal)
     * @param {number} nodeAgentPort - Node Agent API port (for web terminal)
     */
-function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
+function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort) {
     // Remove existing modal
     const existing = document.getElementById('connect-info-modal');
     if (existing) existing.remove();
@@ -1513,10 +1514,10 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, 
             <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
                 <div style="color: #10b981; font-weight: 600; margin-bottom: 12px;">⚡ Quick Actions</div>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', '${sshJumpPort}', ${vmIp}, '${vmName}', '${nodeAgentHost}', '${nodeAgentPort}')" style="padding: 8px 16px; font-size: 0.9rem;">
+                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', '${sshJumpPort}', ${vmIp}, '${vmId}', '${vmName}', '${nodeAgentHost}', '${nodeAgentPort}')" style="padding: 8px 16px; font-size: 0.9rem;">
                         🖥️ Open Terminal
                     </button>
-                    <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
+                    <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
                         🖥️ Open Terminal
                     </button>
                     <button class="btn btn-sm btn-secondary" onclick="openFileBrowser('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">
@@ -1564,7 +1565,7 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, 
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 }
 
-function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHost, nodeAgentPort) {
+function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort) {
     // ========================================================================
     // SECURITY VALIDATION: Input Sanitization
     // ========================================================================
@@ -1710,7 +1711,7 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmName, nodeAgentHo
                         <tr>
                             <td style="padding: 6px 0;"><strong>Web Terminal:</strong></td>
                             <td style="padding: 6px 0;">
-                                <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 4px 12px; font-size: 0.85rem;">
+                                <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}', ${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 4px 12px; font-size: 0.85rem;">
                                     Open Terminal
                                 </button>
                             </td>

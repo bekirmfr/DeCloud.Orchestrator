@@ -142,9 +142,6 @@
 		<!-- Note: dist/ files are automatically included by .NET SDK -->
 		<!-- No explicit include needed - avoids NETSDK1022 duplicate error -->
 	</ItemGroup>
-	<ItemGroup>
-	  <Folder Include="Middleware\" />
-	</ItemGroup>
 
 	<!-- ============================================== -->
 	<!-- TARGET: Show Frontend Build Status -->
