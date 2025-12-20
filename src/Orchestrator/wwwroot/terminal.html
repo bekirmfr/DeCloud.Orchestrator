@@ -202,7 +202,8 @@
                 color: var(--text-secondary);
             }
 
-            .form-group input {
+            .form-group input,
+            .form-group select {
                 width: 100%;
                 padding: 10px 12px;
                 background: var(--bg-deep);
@@ -213,19 +214,11 @@
                 font-size: 14px;
             }
 
-                .form-group input:focus {
+                .form-group input:focus,
+                .form-group select:focus {
                     outline: none;
                     border-color: var(--accent-primary);
                 }
-
-        .form-row {
-            display: flex;
-            gap: 12px;
-        }
-
-            .form-row .form-group {
-                flex: 1;
-            }
 
         .connect-btn {
             width: 100%;
@@ -298,7 +291,7 @@
         </div>
         <div class="form-group">
             <label>Terminal Type</label>
-            <select id="terminal-type" style="width: 100%; padding: 10px 12px; background: var(--bg-deep); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-family: inherit; font-size: 14px;">
+            <select id="terminal-type">
                 <option value="ssh">SSH</option>
                 <option value="console">Console (VNC)</option>
             </select>
