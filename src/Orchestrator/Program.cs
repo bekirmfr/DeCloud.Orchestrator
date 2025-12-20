@@ -7,6 +7,7 @@ using Orchestrator.Background;
 using Orchestrator.Data;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
+using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Services;
 using Serilog;
@@ -448,6 +449,9 @@ app.UseSwaggerUI(c =>
 
 app.UseRequestLogging();
 app.UseErrorHandling();
+
+// WebSocket terminal proxy (MUST be before CORS)
+app.UseTerminalProxy();
 
 app.UseCors();
 

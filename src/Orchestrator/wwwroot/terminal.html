@@ -11,8 +11,6 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
-    <!-- SignalR Client -->
-    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
     <style>
         :root {
             --bg-deep: #0a0b0f;
@@ -202,8 +200,7 @@
                 color: var(--text-secondary);
             }
 
-            .form-group input,
-            .form-group select {
+            .form-group input {
                 width: 100%;
                 padding: 10px 12px;
                 background: var(--bg-deep);
@@ -214,8 +211,7 @@
                 font-size: 14px;
             }
 
-                .form-group input:focus,
-                .form-group select:focus {
+                .form-group input:focus {
                     outline: none;
                     border-color: var(--accent-primary);
                 }
@@ -287,32 +283,32 @@
         <h3>Connect to VM</h3>
         <div class="form-group">
             <label>VM ID</label>
-            <input type="text" id="vm-id" placeholder="Enter VM ID">
+            <input type="text" id="vm-id" placeholder="Enter VM ID" readonly>
         </div>
         <div class="form-group">
-            <label>Terminal Type</label>
-            <select id="terminal-type">
-                <option value="ssh">SSH</option>
-                <option value="console">Console (VNC)</option>
-            </select>
+            <label>Username</label>
+            <input type="text" id="username" value="ubuntu">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="Enter VM password" autocomplete="off">
         </div>
         <button class="connect-btn" onclick="connect()" id="connect-btn">Connect</button>
         <div class="error-msg" id="error-msg"></div>
     </div>
 
     <script>let terminal = null;
-        let hubConnection = null;
+        let socket = null;
         let fitAddon = null;
-        let currentSessionId = null;
-        let currentVmId = null;
+        let connectionInfo = null;
 
-        // Parse URL params for auto-connect
+        // Parse URL params
         const params = new URLSearchParams(window.location.search);
-        const autoConnect = {
+        const config = {
             vmId: params.get('vmId'),
             vmName: params.get('vmName'),
-            terminalType: params.get('type') || 'ssh',
-            autoStart: params.get('autoConnect') === 'true'
+            username: params.get('user') || 'ubuntu',
+            autoConnect: params.get('autoConnect') === 'true'
         };
 
         function initTerminal() {
@@ -354,37 +350,37 @@
 
             window.addEventListener('resize', () => {
                 fitAddon.fit();
-                if (currentSessionId && hubConnection?.state === signalR.HubConnectionState.Connected) {
-                    hubConnection.invoke('TerminalResize', currentSessionId, terminal.cols, terminal.rows)
-                        .catch(err => console.error('Resize error:', err));
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
                 }
             });
 
             terminal.onData(data => {
-                if (currentSessionId && hubConnection?.state === signalR.HubConnectionState.Connected) {
-                    hubConnection.invoke('TerminalInput', currentSessionId, data)
-                        .catch(err => console.error('Input error:', err));
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(data);
                 }
             });
 
             terminal.writeln('\x1b[36m╔══════════════════════════════════════════════════════════════╗');
             terminal.writeln('║                    DeCloud Terminal                          ║');
-            terminal.writeln('║              SignalR Hub Connection                          ║');
+            terminal.writeln('║           WebSocket Proxy via Orchestrator                   ║');
             terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
             terminal.writeln('');
 
-            // Pre-fill form from URL params
-            if (autoConnect.vmId) {
-                document.getElementById('vm-id').value = autoConnect.vmId;
-                document.getElementById('terminal-type').value = autoConnect.terminalType;
+            // Pre-fill form
+            if (config.vmId) {
+                document.getElementById('vm-id').value = config.vmId;
+                document.getElementById('username').value = config.username;
 
-                if (autoConnect.vmName) {
-                    document.getElementById('terminal-info').textContent = autoConnect.vmName;
+                if (config.vmName) {
+                    document.getElementById('terminal-info').textContent = config.vmName;
                 }
 
-                if (autoConnect.autoStart) {
-                    setTimeout(() => connect(), 500);
-                }
+                terminal.writeln('\x1b[90mEnter password to connect to the VM.\x1b[0m');
+                terminal.writeln('');
+            } else {
+                terminal.writeln('\x1b[31mError: VM ID not provided in URL\x1b[0m');
+                document.getElementById('connect-btn').disabled = true;
             }
         }
 
@@ -395,7 +391,7 @@
             dot.className = 'status-dot ' + status;
             text.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 
-            document.getElementById('reconnect-btn').disabled = (status !== 'disconnected') || !currentVmId;
+            document.getElementById('reconnect-btn').disabled = status !== 'disconnected' || !connectionInfo;
         }
 
         function showError(msg) {
@@ -408,157 +404,119 @@
             document.getElementById('error-msg').classList.remove('show');
         }
 
-        function showConnectForm() {
-            document.getElementById('connect-form').classList.remove('hidden');
-        }
-
         function hideConnectForm() {
             document.getElementById('connect-form').classList.add('hidden');
         }
 
-        async function connect() {
+        function showConnectForm() {
+            document.getElementById('connect-form').classList.remove('hidden');
+        }
+
+        function connect() {
             const vmId = document.getElementById('vm-id').value.trim();
-            const terminalType = document.getElementById('terminal-type').value;
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
 
             if (!vmId) {
-                showError('Please enter a VM ID');
+                showError('VM ID is required');
+                return;
+            }
+
+            if (!password) {
+                showError('Password is required');
                 return;
             }
 
             hideError();
-            currentVmId = vmId;
+            connectionInfo = { vmId, username, password };
+            hideConnectForm();
+
             setStatus('connecting');
-            terminal.writeln(`\x1b[90mConnecting to VM ${vmId}...\x1b[0m`);
+            terminal.writeln(`\x1b[90mConnecting to VM ${vmId} as ${username}...\x1b[0m`);
 
-            try {
-                // Build SignalR hub URL
-                const hubUrl = `${window.location.origin}/hub/orchestrator`;
+            // Build WebSocket URL through orchestrator proxy
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal-proxy/${vmId}?user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
 
-                // Get auth token from localStorage if available
-                const token = localStorage.getItem('authToken');
-
-                hubConnection = new signalR.HubConnectionBuilder()
-                    .withUrl(hubUrl, {
-                        accessTokenFactory: () => token
-                    })
-                    .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
-                    .configureLogging(signalR.LogLevel.Information)
-                    .build();
-
-                // Set up event handlers
-                hubConnection.on('TerminalOpening', (data) => {
-                    terminal.writeln(`\x1b[90mSession ${data.sessionId} opening...\x1b[0m`);
-                    currentSessionId = data.sessionId;
-                });
-
-                hubConnection.on('TerminalReady', (data) => {
-                    setStatus('connected');
-                    hideConnectForm();
-                    terminal.writeln('\x1b[32mConnected!\x1b[0m');
-                    terminal.writeln('');
-
-                    // Send initial resize
-                    fitAddon.fit();
-                    hubConnection.invoke('TerminalResize', currentSessionId, terminal.cols, terminal.rows)
-                        .catch(err => console.error('Initial resize error:', err));
-                });
-
-                hubConnection.on('TerminalOutput', (data) => {
-                    if (data.data) {
-                        terminal.write(data.data);
-                    }
-                });
-
-                hubConnection.on('TerminalError', (data) => {
-                    setStatus('disconnected');
-                    terminal.writeln(`\r\n\x1b[31mError: ${data.message}\x1b[0m`);
-                    showError(data.message);
-                    currentSessionId = null;
-                });
-
-                hubConnection.onclose((error) => {
-                    setStatus('disconnected');
-                    if (error) {
-                        terminal.writeln(`\r\n\x1b[31mConnection lost: ${error}\x1b[0m`);
-                    } else {
-                        terminal.writeln('\r\n\x1b[90mConnection closed\x1b[0m');
-                    }
-                    currentSessionId = null;
-                });
-
-                hubConnection.onreconnecting((error) => {
-                    setStatus('connecting');
-                    terminal.writeln('\r\n\x1b[33mReconnecting...\x1b[0m');
-                });
-
-                hubConnection.onreconnected((connectionId) => {
-                    setStatus('connected');
-                    terminal.writeln('\r\n\x1b[32mReconnected!\x1b[0m');
-                    // Re-open terminal session after reconnect
-                    if (currentVmId) {
-                        hubConnection.invoke('OpenTerminal', currentVmId, terminalType)
-                            .catch(err => console.error('Reopen terminal error:', err));
-                    }
-                });
-
-                // Start connection
-                await hubConnection.start();
-                terminal.writeln('\x1b[90mHub connected, opening terminal...\x1b[0m');
-
-                // Subscribe to VM events
-                await hubConnection.invoke('SubscribeToVm', vmId);
-
-                // Open terminal
-                await hubConnection.invoke('OpenTerminal', vmId, terminalType);
-
-                document.getElementById('terminal-info').textContent = `VM: ${vmId}`;
-
-            } catch (err) {
-                setStatus('disconnected');
-                terminal.writeln(`\r\n\x1b[31mConnection failed: ${err.message}\x1b[0m`);
-                showError(err.message);
-                console.error('Connection error:', err);
+            if (socket) {
+                socket.close();
             }
+
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                setStatus('connected');
+                terminal.writeln('\x1b[32mConnected!\x1b[0m');
+                terminal.writeln('');
+
+                fitAddon.fit();
+                socket.send(JSON.stringify({
+                    type: 'resize',
+                    cols: terminal.cols,
+                    rows: terminal.rows
+                }));
+
+                document.getElementById('terminal-info').textContent = `${username}@VM:${vmId.substring(0, 8)}`;
+            };
+
+            socket.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    event.data.text().then(text => terminal.write(text));
+                } else {
+                    terminal.write(event.data);
+                }
+            };
+
+            socket.onerror = (error) => {
+                setStatus('disconnected');
+                terminal.writeln('\r\n\x1b[31mConnection error\x1b[0m');
+                console.error('WebSocket error:', error);
+                showConnectForm();
+            };
+
+            socket.onclose = (event) => {
+                setStatus('disconnected');
+                terminal.writeln(`\r\n\x1b[90mConnection closed (code: ${event.code})\x1b[0m`);
+
+                if (event.code === 1006) {
+                    terminal.writeln('\x1b[33mTip: Check password and VM status\x1b[0m');
+                }
+            };
         }
 
-        async function disconnect() {
-            if (currentSessionId && hubConnection) {
-                try {
-                    await hubConnection.invoke('CloseTerminal', currentSessionId);
-                } catch (err) {
-                    console.error('Close terminal error:', err);
-                }
+        function disconnect() {
+            if (socket) {
+                socket.close();
+                socket = null;
             }
-
-            if (hubConnection) {
-                await hubConnection.stop();
-                hubConnection = null;
-            }
-
-            currentSessionId = null;
             setStatus('disconnected');
-            terminal.writeln('\r\n\x1b[90mDisconnected\x1b[0m');
             showConnectForm();
         }
 
-        async function reconnect() {
-            if (currentVmId) {
+        function reconnect() {
+            if (connectionInfo) {
                 terminal.clear();
                 terminal.writeln('\x1b[36m╔══════════════════════════════════════════════════════════════╗');
                 terminal.writeln('║                    DeCloud Terminal                          ║');
                 terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
                 terminal.writeln('');
-                await connect();
+
+                // Re-populate and connect
+                document.getElementById('vm-id').value = connectionInfo.vmId;
+                document.getElementById('username').value = connectionInfo.username;
+                document.getElementById('password').value = connectionInfo.password;
+                connect();
             }
         }
 
         // Initialize on load
         document.addEventListener('DOMContentLoaded', initTerminal);
 
-        // Cleanup on window close
+        // Clear sensitive data on close
         window.addEventListener('beforeunload', () => {
-            if (hubConnection) {
-                hubConnection.stop();
+            document.getElementById('password').value = '';
+            if (socket) {
+                socket.close();
             }
         });</script>
 </body>
