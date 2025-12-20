@@ -5,19 +5,19 @@ using Orchestrator.Models;
 namespace Orchestrator.Middleware;
 
 /// <summary>
-/// WebSocket proxy middleware that routes terminal connections through the orchestrator.
+/// WebSocket proxy middleware that routes terminal and SFTP connections through the orchestrator.
 /// This solves the TLS issue where browsers can't connect directly to nodes without TLS.
 /// 
-/// Flow:
-/// Browser → wss://orchestrator/api/terminal-proxy/{vmId}?password=... 
-///         → ws://node:5100/api/vms/{vmId}/terminal?ip={vmIp}&password=...
+/// Endpoints:
+/// - /api/terminal-proxy/{vmId} → ws://node:5100/api/vms/{vmId}/terminal
+/// - /api/sftp-proxy/{vmId}     → ws://node:5100/api/vms/{vmId}/sftp
 /// </summary>
-public class TerminalProxyMiddleware
+public class WebSocketProxyMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly ILogger<TerminalProxyMiddleware> _logger;
+    private readonly ILogger<WebSocketProxyMiddleware> _logger;
 
-    public TerminalProxyMiddleware(RequestDelegate next, ILogger<TerminalProxyMiddleware> logger)
+    public WebSocketProxyMiddleware(RequestDelegate next, ILogger<WebSocketProxyMiddleware> logger)
     {
         _next = next;
         _logger = logger;
@@ -25,10 +25,32 @@ public class TerminalProxyMiddleware
 
     public async Task InvokeAsync(HttpContext context, DataStore dataStore)
     {
-        // Only handle /api/terminal-proxy/{vmId} WebSocket requests
-        if (!context.Request.Path.StartsWithSegments("/api/terminal-proxy", out var remaining))
+        var path = context.Request.Path.Value ?? "";
+
+        // Determine proxy type and extract vmId
+        string? vmId = null;
+        string nodeEndpoint;
+
+        if (path.StartsWith("/api/terminal-proxy/"))
+        {
+            vmId = path.Substring("/api/terminal-proxy/".Length).Split('?')[0];
+            nodeEndpoint = "terminal";
+        }
+        else if (path.StartsWith("/api/sftp-proxy/"))
+        {
+            vmId = path.Substring("/api/sftp-proxy/".Length).Split('?')[0];
+            nodeEndpoint = "sftp";
+        }
+        else
         {
             await _next(context);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(vmId))
+        {
+            context.Response.StatusCode = 400;
+            await context.Response.WriteAsync("VM ID required");
             return;
         }
 
@@ -39,16 +61,7 @@ public class TerminalProxyMiddleware
             return;
         }
 
-        // Extract vmId from path
-        var vmId = remaining.Value?.TrimStart('/');
-        if (string.IsNullOrEmpty(vmId))
-        {
-            context.Response.StatusCode = 400;
-            await context.Response.WriteAsync("VM ID required");
-            return;
-        }
-
-        _logger.LogInformation("Terminal proxy request for VM {VmId}", vmId);
+        _logger.LogInformation("{Endpoint} proxy request for VM {VmId}", nodeEndpoint, vmId);
 
         // Look up VM to get node info
         if (!dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
@@ -84,20 +97,20 @@ public class TerminalProxyMiddleware
         var nodePort = node.AgentPort > 0 ? node.AgentPort : 5100;
         var nodeHost = node.PublicIp;
 
-        // Pass through query parameters
-        var query = context.Request.QueryString.Value ?? "";
+        // Pass through query parameters and ensure ip is set
+        var queryParams = context.Request.Query
+            .ToDictionary(q => q.Key, q => q.Value.ToString());
 
-        // Ensure ip parameter is set
-        if (!query.Contains("ip="))
+        if (!queryParams.ContainsKey("ip"))
         {
-            query = string.IsNullOrEmpty(query)
-                ? $"?ip={vmIp}"
-                : $"{query}&ip={vmIp}";
+            queryParams["ip"] = vmIp;
         }
 
-        var upstreamUrl = $"ws://{nodeHost}:{nodePort}/api/vms/{vmId}/terminal{query}";
+        var queryString = string.Join("&", queryParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
+        var upstreamUrl = $"ws://{nodeHost}:{nodePort}/api/vms/{vmId}/{nodeEndpoint}?{queryString}";
 
-        _logger.LogInformation("Proxying terminal: {VmId} → {Upstream}", vmId, upstreamUrl);
+        _logger.LogInformation("Proxying {Endpoint}: {VmId} → {Upstream}",
+            nodeEndpoint, vmId, upstreamUrl.Split('?')[0] + "?...");
 
         try
         {
@@ -111,11 +124,11 @@ public class TerminalProxyMiddleware
             var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await nodeWs.ConnectAsync(new Uri(upstreamUrl), cts.Token);
 
-            _logger.LogInformation("Terminal proxy connected for VM {VmId}", vmId);
+            _logger.LogInformation("{Endpoint} proxy connected for VM {VmId}", nodeEndpoint, vmId);
 
             // Bidirectional proxy
-            var clientToNode = ProxyOneWay(clientWs, nodeWs, "client→node", vmId);
-            var nodeToClient = ProxyOneWay(nodeWs, clientWs, "node→client", vmId);
+            var clientToNode = ProxyOneWay(clientWs, nodeWs, "client→node", vmId, nodeEndpoint);
+            var nodeToClient = ProxyOneWay(nodeWs, clientWs, "node→client", vmId, nodeEndpoint);
 
             await Task.WhenAny(clientToNode, nodeToClient);
 
@@ -123,21 +136,21 @@ public class TerminalProxyMiddleware
             await CloseWebSocket(clientWs, "Proxy closing");
             await CloseWebSocket(nodeWs, "Proxy closing");
 
-            _logger.LogInformation("Terminal proxy closed for VM {VmId}", vmId);
+            _logger.LogInformation("{Endpoint} proxy closed for VM {VmId}", nodeEndpoint, vmId);
         }
         catch (WebSocketException ex)
         {
-            _logger.LogError(ex, "WebSocket error proxying terminal for VM {VmId}", vmId);
+            _logger.LogError(ex, "WebSocket error proxying {Endpoint} for VM {VmId}", nodeEndpoint, vmId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error proxying terminal for VM {VmId}", vmId);
+            _logger.LogError(ex, "Error proxying {Endpoint} for VM {VmId}", nodeEndpoint, vmId);
         }
     }
 
-    private async Task ProxyOneWay(WebSocket source, WebSocket dest, string direction, string vmId)
+    private async Task ProxyOneWay(WebSocket source, WebSocket dest, string direction, string vmId, string endpoint)
     {
-        var buffer = new byte[4096];
+        var buffer = new byte[64 * 1024]; // 64KB buffer for file transfers
 
         try
         {
@@ -147,7 +160,8 @@ public class TerminalProxyMiddleware
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    _logger.LogDebug("Terminal proxy {Direction} close received for {VmId}", direction, vmId);
+                    _logger.LogDebug("{Endpoint} proxy {Direction} close received for {VmId}",
+                        endpoint, direction, vmId);
                     break;
                 }
 
@@ -160,11 +174,13 @@ public class TerminalProxyMiddleware
         }
         catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
-            _logger.LogDebug("Terminal proxy {Direction} connection closed for {VmId}", direction, vmId);
+            _logger.LogDebug("{Endpoint} proxy {Direction} connection closed for {VmId}",
+                endpoint, direction, vmId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Terminal proxy {Direction} error for {VmId}", direction, vmId);
+            _logger.LogWarning(ex, "{Endpoint} proxy {Direction} error for {VmId}",
+                endpoint, direction, vmId);
         }
     }
 
@@ -185,12 +201,12 @@ public class TerminalProxyMiddleware
 }
 
 /// <summary>
-/// Extension methods for registering the terminal proxy middleware
+/// Extension methods for registering the WebSocket proxy middleware
 /// </summary>
-public static class TerminalProxyExtensions
+public static class WebSocketProxyExtensions
 {
-    public static IApplicationBuilder UseTerminalProxy(this IApplicationBuilder app)
+    public static IApplicationBuilder UseWebSocketProxy(this IApplicationBuilder app)
     {
-        return app.UseMiddleware<TerminalProxyMiddleware>();
+        return app.UseMiddleware<WebSocketProxyMiddleware>();
     }
 }

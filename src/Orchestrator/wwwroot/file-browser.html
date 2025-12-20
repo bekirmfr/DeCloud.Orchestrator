@@ -1104,13 +1104,11 @@ function connect() {
         return;
     }
 
-    // Build WebSocket URL
-    const nodeHost = connectionParams.nodeIp || window.location.hostname;
-    const nodePort = connectionParams.nodePort || '5100';
+    // Build WebSocket URL through orchestrator proxy (for TLS support)
     const vmId = connectionParams.vmId || 'sftp-session';
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${nodeHost}:${nodePort}/api/vms/${vmId}/sftp?ip=${ip}&user=${user}&password=${encodeURIComponent(password)}`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/sftp-proxy/${vmId}?user=${user}&password=${encodeURIComponent(password)}`;
 
     console.log('[SFTP] Connecting to:', wsUrl.replace(password, '***'));
 
