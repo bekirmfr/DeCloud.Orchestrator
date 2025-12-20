@@ -50,6 +50,7 @@ public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
     private readonly IEventService _eventService;
+    private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
     private readonly HttpClient _httpClient;
     private readonly SchedulingConfiguration _schedulingConfig;
@@ -57,12 +58,14 @@ public class NodeService : INodeService
     public NodeService(
         DataStore dataStore,
         IEventService eventService,
+        ICentralIngressService ingressService,
         ILogger<NodeService> logger,
         HttpClient httpClient,
         SchedulingConfiguration? schedulingConfig = null)
     {
         _dataStore = dataStore;
         _eventService = eventService;
+        _ingressService = ingressService;
         _logger = logger;
         _httpClient = httpClient;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
@@ -756,6 +759,8 @@ public class NodeService : INodeService
                 NodeId = nodeId,
                 UserId = affectedVm.OwnerId
             });
+
+            await _ingressService.OnVmStartedAsync(affectedVm.Id);
         }
         else if (affectedVm.Status == VmStatus.Stopping)
         {
@@ -779,6 +784,8 @@ public class NodeService : INodeService
                 UserId = affectedVm.OwnerId
             });
         }
+
+        await _ingressService.OnVmStoppedAsync(affectedVm.Id);
 
         return true;
     }
@@ -861,6 +868,8 @@ public class NodeService : INodeService
                 user.Id, user.Quotas.CurrentVms, user.Quotas.MaxVms,
                 user.Quotas.CurrentCpuCores, user.Quotas.CurrentMemoryMb);
         }
+
+        await _ingressService.OnVmDeletedAsync(vm.Id);
 
         // Step 4: Emit completion event
         await _eventService.EmitAsync(new OrchestratorEvent
