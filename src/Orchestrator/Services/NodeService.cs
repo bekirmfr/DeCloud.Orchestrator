@@ -783,9 +783,9 @@ public class NodeService : INodeService
                 NodeId = nodeId,
                 UserId = affectedVm.OwnerId
             });
-        }
 
-        await _ingressService.OnVmStoppedAsync(affectedVm.Id);
+            await _ingressService.OnVmStoppedAsync(affectedVm.Id);
+        }
 
         return true;
     }
@@ -920,6 +920,7 @@ public class NodeService : INodeService
 
                 if (vm.Status != newStatus || vm.PowerState != newPowerState)
                 {
+                    var wasRunning = vm.Status == VmStatus.Running;
                     vm.Status = newStatus;
                     vm.PowerState = newPowerState;
 
@@ -927,6 +928,11 @@ public class NodeService : INodeService
                         vm.StartedAt = reported.StartedAt ?? DateTime.UtcNow;
 
                     await _dataStore.SaveVmAsync(vm);
+
+                    if (newStatus == VmStatus.Running && !wasRunning)
+                        await _ingressService.OnVmStartedAsync(vmId);
+                    else if (newStatus != VmStatus.Running && wasRunning)
+                        await _ingressService.OnVmStoppedAsync(vmId);
 
                     _logger.LogInformation(
                         "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
