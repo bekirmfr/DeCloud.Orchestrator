@@ -451,6 +451,11 @@ app.UseRequestLogging();
 app.UseErrorHandling();
 
 // WebSocket terminal proxy (MUST be before CORS)
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
+
 app.UseTerminalProxy();
 
 app.UseCors();
