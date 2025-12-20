@@ -1068,8 +1068,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Update VM badge
-    if (connectionParams.vmId) {
-        document.getElementById('vm-badge').textContent = connectionParams.vmId;
+    if (connectionParams.vmName) {
+        document.getElementById('vm-badge').textContent = connectionParams.vmName;
     }
 
     // Auto-connect if we have all params
