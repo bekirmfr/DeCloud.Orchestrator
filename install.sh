@@ -65,6 +65,9 @@ CADDY_LOG_DIR="/var/log/caddy"
 # fail2ban
 INSTALL_FAIL2BAN=false
 
+# Update mode (detected if orchestrator already running)
+UPDATE_MODE=false
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -207,24 +210,45 @@ check_network() {
     log_success "Public IP: $PUBLIC_IP"
     
     # Check API port
-    if ss -tlnp | grep -q ":${API_PORT} "; then
-        log_error "Port $API_PORT is already in use"
-        exit 1
+    local api_port_process=""
+    api_port_process=$(ss -tlnp 2>/dev/null | grep ":${API_PORT} " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
+    
+    if [ -n "$api_port_process" ]; then
+        if [ "$api_port_process" = "decloud-orch" ] || [ "$api_port_process" = "dotnet" ]; then
+            log_warn "Orchestrator already running on port $API_PORT - will update in place"
+            UPDATE_MODE=true
+        else
+            log_error "Port $API_PORT is already in use by '$api_port_process'"
+            exit 1
+        fi
+    else
+        log_success "Port $API_PORT is available"
     fi
-    log_success "Port $API_PORT is available"
     
     # Check 80/443 if Caddy is enabled
     if [ "$INSTALL_CADDY" = true ]; then
-        if ss -tlnp | grep -q ":80 "; then
-            log_error "Port 80 is already in use (required for Caddy)"
-            log_info "Disable the conflicting service or use --skip-caddy"
+        local port80_process=""
+        local port443_process=""
+        
+        # Get process using port 80
+        port80_process=$(ss -tlnp 2>/dev/null | grep ":80 " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
+        port443_process=$(ss -tlnp 2>/dev/null | grep ":443 " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
+        
+        if [ -n "$port80_process" ]; then
+            if [ "$port80_process" = "caddy" ]; then
+                log_success "Caddy already running on ports 80/443 - skipping Caddy installation"
+                INSTALL_CADDY=false
+            else
+                log_error "Port 80 is already in use by '$port80_process' (required for Caddy)"
+                log_info "Disable the conflicting service or use --skip-caddy"
+                exit 1
+            fi
+        elif [ -n "$port443_process" ] && [ "$port443_process" != "caddy" ]; then
+            log_error "Port 443 is already in use by '$port443_process' (required for Caddy)"
             exit 1
+        else
+            log_success "Ports 80/443 available for central ingress"
         fi
-        if ss -tlnp | grep -q ":443 "; then
-            log_error "Port 443 is already in use (required for Caddy)"
-            exit 1
-        fi
-        log_success "Ports 80/443 available for central ingress"
     fi
 }
 
@@ -475,6 +499,13 @@ create_directories() {
 
 download_orchestrator() {
     log_step "Downloading Orchestrator..."
+    
+    # Stop service if running (update mode)
+    if [ "$UPDATE_MODE" = true ]; then
+        log_info "Stopping existing orchestrator service..."
+        systemctl stop decloud-orchestrator 2>/dev/null || true
+        sleep 2
+    fi
     
     if [ -d "$INSTALL_DIR/DeCloud.Orchestrator" ]; then
         log_info "Removing existing installation..."
