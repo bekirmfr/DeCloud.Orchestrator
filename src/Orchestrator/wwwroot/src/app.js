@@ -962,7 +962,7 @@ function renderVMsTable(vms) {
 
             <!-- File Browser -->
             <button class="btn btn-sm" 
-                    onclick="openFileBrowser('${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
+                    onclick="openFileBrowser('${vm.id}','${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
                     title="File Browser">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -1410,51 +1410,17 @@ async function deleteSSHKey(keyId, keyName) {
 * @param {number} nodeAgentPort - Node Agent port (from networkConfig)
 * @param {string} vmIp - VM private IP
 */
-function openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
+function openFileBrowser(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp) {
     // Build file browser URL with connection parameters
     const params = new URLSearchParams({
         vmId: vmId,
+        vmName: vmName,
         nodeIp: nodeAgentHost,
         nodePort: nodeAgentPort,
         vmIp: vmIp
     });
 
     window.open(`/file-browser.html?${params.toString()}`, '_blank');
-}
-
-/**
-* Open file browser with password (for VMs using password auth)
-* This retrieves the decrypted password and passes it to the file browser
-* @param {string} vmId - VM ID
-* @param {string} nodeAgentHost - Node Agent host
-* @param {number} nodeAgentPort - Node Agent port
-* @param {string} vmIp - VM private IP
-*/
-async function openFileBrowserWithAuth(vmId, nodeAgentHost, nodeAgentPort, vmIp) {
-    try {
-        // Try to get the VM password from the API
-        const response = await api(`/api/vms/${vmId}/password`);
-        const data = await response.json();
-        
-        if (data.success && data.data?.password) {
-            // Open file browser with password
-            const params = new URLSearchParams({
-                vmId: vmId,
-                nodeIp: nodeAgentHost,
-                nodePort: nodeAgentPort,
-                vmIp: vmIp,
-                password: data.data.password
-            });
-            window.open(`/file-browser.html?${params.toString()}`, '_blank');
-        } else {
-            // Fall back to opening without password (user will need to enter it)
-            openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp);
-        }
-    } catch (error) {
-        console.error('[FileBrowser] Failed to get VM password:', error);
-        // Fall back to opening without password
-        openFileBrowser(vmId, nodeAgentHost, nodeAgentPort, vmIp);
-    }
 }
 
 // ============================================
@@ -1520,7 +1486,7 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
                     <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
                         🖥️ Open Terminal
                     </button>
-                    <button class="btn btn-sm btn-secondary" onclick="openFileBrowser('${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">
+                    <button class="btn btn-sm btn-secondary" onclick="openFileBrowser('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">
                         📁 File Browser
                     </button>
                 </div>

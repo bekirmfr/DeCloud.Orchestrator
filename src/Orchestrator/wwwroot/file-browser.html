@@ -762,7 +762,7 @@
                 </svg>
                 File Browser
             </h2>
-            <p class="connection-subtitle">Connect to VM via secure SFTP</p>
+            <p class="connection-subtitle">Connect to <div id="connect-name">VM</div> via secure SFTP</p>
 
             <div class="form-group">
                 <label class="form-label">VM IP Address</label>
@@ -1040,6 +1040,7 @@ let pendingChunks = new Map();
 const params = new URLSearchParams(window.location.search);
 const connectionParams = {
     vmId: params.get('vmId') || '',
+    vmName: params.get('vmName') || '',
     nodeIp: params.get('nodeIp') || '',
     nodePort: params.get('nodePort') || '5100',
     vmIp: params.get('vmIp') || '',
@@ -1056,6 +1057,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (connectionParams.vmIp) {
         document.getElementById('connect-ip').value = connectionParams.vmIp;
     }
+    if (connectionParams.vmName) {
+    document.getElementById('connect-name').value = connectionParams.vmName;
+}
     if (connectionParams.username) {
         document.getElementById('connect-user').value = connectionParams.username;
     }
