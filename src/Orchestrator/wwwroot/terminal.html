@@ -11,6 +11,8 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <!-- SignalR Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.0/dist/browser/signalr.min.js"></script>
     <style>
         :root {
             --bg-deep: #0a0b0f;
@@ -187,7 +189,6 @@
                 margin-bottom: 20px;
                 font-size: 18px;
                 font-weight: 600;
-                font-family: 'Outfit', sans-serif;
             }
 
         .form-group {
@@ -248,6 +249,17 @@
                 opacity: 0.5;
                 cursor: not-allowed;
             }
+
+        .error-msg {
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 8px;
+            display: none;
+        }
+
+            .error-msg.show {
+                display: block;
+            }
     </style>
 </head>
 <body>
@@ -261,23 +273,15 @@
             <span class="terminal-info" id="terminal-info">DeCloud Terminal</span>
         </div>
         <div class="terminal-status">
-            <div class="status-dot" id="status-dot"></div>
+            <span class="status-dot" id="status-dot"></span>
             <span id="status-text">Disconnected</span>
         </div>
         <div class="terminal-actions">
-            <button class="terminal-btn" id="reconnect-btn" onclick="reconnect()" disabled>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M23 4v6h-6M1 20v-6h6" />
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                </svg>
-                Reconnect
+            <button class="terminal-btn" onclick="reconnect()" id="reconnect-btn" disabled>
+                ↻ Reconnect
             </button>
-            <button class="terminal-btn" onclick="showConnectForm()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24" />
-                </svg>
-                Settings
+            <button class="terminal-btn" onclick="disconnect()">
+                ✕ Disconnect
             </button>
         </div>
     </div>
@@ -286,57 +290,36 @@
         <div id="terminal"></div>
     </div>
 
-    <!-- Connection Form -->
     <div class="connect-form" id="connect-form">
         <h3>Connect to VM</h3>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Node IP</label>
-                <input type="text" id="node-ip" placeholder="142.234.200.95">
-            </div>
-            <div class="form-group" style="flex: 0 0 100px;">
-                <label>Node Port</label>
-                <input type="text" id="node-port" value="5100">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>VM IP</label>
-                <input type="text" id="vm-ip" placeholder="192.168.122.111">
-            </div>
-            <div class="form-group" style="flex: 0 0 100px;">
-                <label>SSH Port</label>
-                <input type="text" id="ssh-port" value="22">
-            </div>
+        <div class="form-group">
+            <label>VM ID</label>
+            <input type="text" id="vm-id" placeholder="Enter VM ID">
         </div>
         <div class="form-group">
-            <label>Username</label>
-            <input type="text" id="username" value="ubuntu">
+            <label>Terminal Type</label>
+            <select id="terminal-type" style="width: 100%; padding: 10px 12px; background: var(--bg-deep); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-primary); font-family: inherit; font-size: 14px;">
+                <option value="ssh">SSH</option>
+                <option value="console">Console (VNC)</option>
+            </select>
         </div>
-        <div class="form-group">
-            <label>Password (optional)</label>
-            <input type="password" id="password" placeholder="Enter VM password" autocomplete="off">
-        </div>
-        <button class="connect-btn" onclick="connect()">Connect</button>
+        <button class="connect-btn" onclick="connect()" id="connect-btn">Connect</button>
+        <div class="error-msg" id="error-msg"></div>
     </div>
 
-    <script>
-        let terminal = null;
-        let socket = null;
+    <script>let terminal = null;
+        let hubConnection = null;
         let fitAddon = null;
-        let connectionInfo = null;
+        let currentSessionId = null;
+        let currentVmId = null;
 
         // Parse URL params for auto-connect
         const params = new URLSearchParams(window.location.search);
         const autoConnect = {
-            wsUrl: params.get('wsUrl'),
-            nodeIp: params.get('nodeIp'),
-            nodePort: params.get('nodePort') || '5100',
-            vmIp: params.get('vmIp'),
-            vmId: params.get('vmId') || 'terminal',
+            vmId: params.get('vmId'),
             vmName: params.get('vmName'),
-            username: params.get('user') || 'ubuntu',
-            enabled: params.get('autoConnect')
+            terminalType: params.get('type') || 'ssh',
+            autoStart: params.get('autoConnect') === 'true'
         };
 
         function initTerminal() {
@@ -376,54 +359,39 @@
             terminal.open(document.getElementById('terminal'));
             fitAddon.fit();
 
-            window.addEventListener('resize', () => fitAddon.fit());
-
-            terminal.onResize(({ cols, rows }) => {
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+                if (currentSessionId && hubConnection?.state === signalR.HubConnectionState.Connected) {
+                    hubConnection.invoke('TerminalResize', currentSessionId, terminal.cols, terminal.rows)
+                        .catch(err => console.error('Resize error:', err));
                 }
             });
 
             terminal.onData(data => {
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(data);
+                if (currentSessionId && hubConnection?.state === signalR.HubConnectionState.Connected) {
+                    hubConnection.invoke('TerminalInput', currentSessionId, data)
+                        .catch(err => console.error('Input error:', err));
                 }
             });
 
             terminal.writeln('\x1b[36m╔══════════════════════════════════════════════════════════════╗');
             terminal.writeln('║                    DeCloud Terminal                          ║');
+            terminal.writeln('║              SignalR Hub Connection                          ║');
             terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
             terminal.writeln('');
 
-            // Auto-connect if individual params provided (legacy flow)
-            if (autoConnect.nodeIp && autoConnect.vmIp) {
-                // Parse and populate form from URL params
-                if (autoConnect.nodeIp) {
-                    document.getElementById('node-ip').value = autoConnect.nodeIp;
-                }
-                if (autoConnect.nodePort) {
-                    document.getElementById('node-port').value = autoConnect.nodePort;
-                }
-                if (autoConnect.vmIp) {
-                    document.getElementById('vm-ip').value = autoConnect.vmIp;
-                }
-                if (params.get('sshPort')) {
-                    document.getElementById('ssh-port').value = params.get('sshPort');
-                }
-                if (autoConnect.username) {
-                    document.getElementById('username').value = autoConnect.username;
+            // Pre-fill form from URL params
+            if (autoConnect.vmId) {
+                document.getElementById('vm-id').value = autoConnect.vmId;
+                document.getElementById('terminal-type').value = autoConnect.terminalType;
+
+                if (autoConnect.vmName) {
+                    document.getElementById('terminal-info').textContent = autoConnect.vmName;
                 }
 
-                if (autoConnect.enabled) {
-                    // Small delay to let terminal initialize
-                    setTimeout(() => connect(), 100);
-                } else {
-                    showConnectForm();
+                if (autoConnect.autoStart) {
+                    setTimeout(() => connect(), 500);
                 }
-            } else {
-                // Always show connect form - user must enter password manually
-                terminal.writeln('\x1b[90mEnter password to connect to the VM.\x1b[0m');
-                terminal.writeln('');
             }
         }
 
@@ -434,7 +402,17 @@
             dot.className = 'status-dot ' + status;
             text.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 
-            document.getElementById('reconnect-btn').disabled = status === 'disconnected' && !connectionInfo;
+            document.getElementById('reconnect-btn').disabled = (status !== 'disconnected') || !currentVmId;
+        }
+
+        function showError(msg) {
+            const errorEl = document.getElementById('error-msg');
+            errorEl.textContent = msg;
+            errorEl.classList.add('show');
+        }
+
+        function hideError() {
+            document.getElementById('error-msg').classList.remove('show');
         }
 
         function showConnectForm() {
@@ -445,91 +423,150 @@
             document.getElementById('connect-form').classList.add('hidden');
         }
 
-        function connect() {
-            const nodeIp = document.getElementById('node-ip').value.trim();
-            const nodePort = document.getElementById('node-port').value.trim();
-            const vmIp = document.getElementById('vm-ip').value.trim();
-            const sshPort = document.getElementById('ssh-port').value.trim();
-            const username = document.getElementById('username').value.trim();
-            const password = document.getElementById('password').value;
+        async function connect() {
+            const vmId = document.getElementById('vm-id').value.trim();
+            const terminalType = document.getElementById('terminal-type').value;
 
-            if (!nodeIp || !vmIp) {
-                alert('Please enter Node IP and VM IP');
+            if (!vmId) {
+                showError('Please enter a VM ID');
                 return;
             }
 
-            connectionInfo = { nodeIp, nodePort, vmIp, sshPort, username, password };
-            hideConnectForm();
-
-            // Get vmId from URL params or use a default
-            const vmId = autoConnect.vmId || document.getElementById('vm-id')?.value || 'terminal';
-
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            let wsUrl = `${wsProtocol}//${nodeIp}:${nodePort}/api/vms/${vmId}/terminal?ip=${vmIp}&port=${sshPort}&user=${username}`;
-
-            if (password) {
-                wsUrl += `&password=${encodeURIComponent(password)}`;
-            }
-
+            hideError();
+            currentVmId = vmId;
             setStatus('connecting');
-            terminal.writeln(`\x1b[90mConnecting to ${username}@${vmIp} via ${nodeIp}:${nodePort}...\x1b[0m`);
+            terminal.writeln(`\x1b[90mConnecting to VM ${vmId}...\x1b[0m`);
 
-            document.getElementById('terminal-info').textContent = `${username}@${vmIp}`;
+            try {
+                // Build SignalR hub URL
+                const hubUrl = `${window.location.origin}/hub/orchestrator`;
 
-            if (socket) {
-                socket.close();
+                // Get auth token from localStorage if available
+                const token = localStorage.getItem('authToken');
+
+                hubConnection = new signalR.HubConnectionBuilder()
+                    .withUrl(hubUrl, {
+                        accessTokenFactory: () => token
+                    })
+                    .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
+                    .configureLogging(signalR.LogLevel.Information)
+                    .build();
+
+                // Set up event handlers
+                hubConnection.on('TerminalOpening', (data) => {
+                    terminal.writeln(`\x1b[90mSession ${data.sessionId} opening...\x1b[0m`);
+                    currentSessionId = data.sessionId;
+                });
+
+                hubConnection.on('TerminalReady', (data) => {
+                    setStatus('connected');
+                    hideConnectForm();
+                    terminal.writeln('\x1b[32mConnected!\x1b[0m');
+                    terminal.writeln('');
+
+                    // Send initial resize
+                    fitAddon.fit();
+                    hubConnection.invoke('TerminalResize', currentSessionId, terminal.cols, terminal.rows)
+                        .catch(err => console.error('Initial resize error:', err));
+                });
+
+                hubConnection.on('TerminalOutput', (data) => {
+                    if (data.data) {
+                        terminal.write(data.data);
+                    }
+                });
+
+                hubConnection.on('TerminalError', (data) => {
+                    setStatus('disconnected');
+                    terminal.writeln(`\r\n\x1b[31mError: ${data.message}\x1b[0m`);
+                    showError(data.message);
+                    currentSessionId = null;
+                });
+
+                hubConnection.onclose((error) => {
+                    setStatus('disconnected');
+                    if (error) {
+                        terminal.writeln(`\r\n\x1b[31mConnection lost: ${error}\x1b[0m`);
+                    } else {
+                        terminal.writeln('\r\n\x1b[90mConnection closed\x1b[0m');
+                    }
+                    currentSessionId = null;
+                });
+
+                hubConnection.onreconnecting((error) => {
+                    setStatus('connecting');
+                    terminal.writeln('\r\n\x1b[33mReconnecting...\x1b[0m');
+                });
+
+                hubConnection.onreconnected((connectionId) => {
+                    setStatus('connected');
+                    terminal.writeln('\r\n\x1b[32mReconnected!\x1b[0m');
+                    // Re-open terminal session after reconnect
+                    if (currentVmId) {
+                        hubConnection.invoke('OpenTerminal', currentVmId, terminalType)
+                            .catch(err => console.error('Reopen terminal error:', err));
+                    }
+                });
+
+                // Start connection
+                await hubConnection.start();
+                terminal.writeln('\x1b[90mHub connected, opening terminal...\x1b[0m');
+
+                // Subscribe to VM events
+                await hubConnection.invoke('SubscribeToVm', vmId);
+
+                // Open terminal
+                await hubConnection.invoke('OpenTerminal', vmId, terminalType);
+
+                document.getElementById('terminal-info').textContent = `VM: ${vmId}`;
+
+            } catch (err) {
+                setStatus('disconnected');
+                terminal.writeln(`\r\n\x1b[31mConnection failed: ${err.message}\x1b[0m`);
+                showError(err.message);
+                console.error('Connection error:', err);
             }
-
-            socket = new WebSocket(wsUrl);
-
-            socket.onopen = () => {
-                setStatus('connected');
-                fitAddon.fit();
-                socket.send(JSON.stringify({
-                    type: 'resize',
-                    cols: terminal.cols,
-                    rows: terminal.rows
-                }));
-            };
-
-            socket.onmessage = (event) => {
-                if (event.data instanceof Blob) {
-                    event.data.text().then(text => terminal.write(text));
-                } else {
-                    terminal.write(event.data);
-                }
-            };
-
-            socket.onerror = (error) => {
-                setStatus('disconnected');
-                terminal.writeln('\r\n\x1b[31mConnection error\x1b[0m');
-                console.error('WebSocket error:', error);
-            };
-
-            socket.onclose = (event) => {
-                setStatus('disconnected');
-                terminal.writeln(`\r\n\x1b[90mConnection closed (code: ${event.code})\x1b[0m`);
-            };
         }
 
-        function reconnect() {
-            if (connectionInfo) {
-                terminal.clear();
-                if (connectionInfo.wsUrl) {
-                    connectWithWsUrl(connectionInfo.wsUrl);
-                } else {
-                    connect();
+        async function disconnect() {
+            if (currentSessionId && hubConnection) {
+                try {
+                    await hubConnection.invoke('CloseTerminal', currentSessionId);
+                } catch (err) {
+                    console.error('Close terminal error:', err);
                 }
+            }
+
+            if (hubConnection) {
+                await hubConnection.stop();
+                hubConnection = null;
+            }
+
+            currentSessionId = null;
+            setStatus('disconnected');
+            terminal.writeln('\r\n\x1b[90mDisconnected\x1b[0m');
+            showConnectForm();
+        }
+
+        async function reconnect() {
+            if (currentVmId) {
+                terminal.clear();
+                terminal.writeln('\x1b[36m╔══════════════════════════════════════════════════════════════╗');
+                terminal.writeln('║                    DeCloud Terminal                          ║');
+                terminal.writeln('╚══════════════════════════════════════════════════════════════╝\x1b[0m');
+                terminal.writeln('');
+                await connect();
             }
         }
 
         // Initialize on load
         document.addEventListener('DOMContentLoaded', initTerminal);
 
-        // Clear sensitive data when window closes
+        // Cleanup on window close
         window.addEventListener('beforeunload', () => {
-            document.getElementById('password').value = '';
-        });
-    </script>
+            if (hubConnection) {
+                hubConnection.stop();
+            }
+        });</script>
 </body>
 </html>
