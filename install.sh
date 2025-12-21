@@ -604,8 +604,12 @@ build_orchestrator() {
     cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
     
     # Build backend
-    dotnet restore --quiet
-    dotnet build --configuration Release --quiet --no-restore
+    log_info "Restoring .NET packages..."
+    dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
+    
+    log_info "Building .NET project..."
+    dotnet build --configuration Release --no-restore --verbosity minimal > /dev/null 2>&1 || \
+        dotnet build --configuration Release --no-restore
     
     # Build frontend
     if [ -d "wwwroot" ] && [ -f "wwwroot/package.json" ]; then
@@ -620,8 +624,8 @@ build_orchestrator() {
             fi
         fi
         
-        npm install --quiet --no-progress > /dev/null 2>&1
-        npm run build --quiet > /dev/null 2>&1
+        npm install --silent --no-progress > /dev/null 2>&1 || npm install
+        npm run build --silent > /dev/null 2>&1 || npm run build
         cd ..
         
         log_success "Frontend built"
