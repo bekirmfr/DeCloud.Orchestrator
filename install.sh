@@ -13,16 +13,17 @@
 # The Orchestrator is the ONLY component that needs ports 80/443.
 # It handles all HTTP ingress centrally and routes to nodes via WireGuard.
 #
-# Version: 2.0.0
+# Version: 2.1.0
 #
 # Usage:
 #   sudo ./install.sh --port 5050 --mongodb "mongodb+srv://..." \
-#       --ingress-domain vms.decloud.io --caddy-email admin@example.com
+#       --ingress-domain vms.decloud.io --caddy-email admin@example.com \
+#       --cloudflare-token YOUR_CF_TOKEN
 #
 
 set -e
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -61,6 +62,8 @@ CADDY_EMAIL=""
 CADDY_STAGING=false
 CADDY_DATA_DIR="/var/lib/caddy"
 CADDY_LOG_DIR="/var/log/caddy"
+DNS_PROVIDER="cloudflare"
+CLOUDFLARE_TOKEN=""
 
 # fail2ban
 INSTALL_FAIL2BAN=false
@@ -91,7 +94,15 @@ parse_args() {
             --caddy-email)
                 CADDY_EMAIL="$2"
                 INSTALL_CADDY=true
-                INSTALL_FAIL2BAN=true
+                shift 2
+                ;;
+            --cloudflare-token)
+                CLOUDFLARE_TOKEN="$2"
+                DNS_PROVIDER="cloudflare"
+                shift 2
+                ;;
+            --dns-provider)
+                DNS_PROVIDER="$2"
                 shift 2
                 ;;
             --caddy-staging)
@@ -123,44 +134,61 @@ show_help() {
     cat << EOF
 DeCloud Orchestrator Installer v${VERSION}
 
-Usage: $0 [options]
+USAGE:
+    sudo ./install.sh [OPTIONS]
 
-Required:
-  --port <port>              API port (default: 5050)
+REQUIRED:
+    --mongodb <uri>           MongoDB connection string
+                              Example: mongodb+srv://user:pass@cluster.mongodb.net/decloud
 
-Database:
-  --mongodb <uri>            MongoDB connection string (recommended for persistence)
+OPTIONAL - Central Ingress (Caddy):
+    --ingress-domain <domain> Enable central ingress (e.g., vms.decloud.io)
+                              VMs will get URLs like: app.vms.decloud.io
+    --caddy-email <email>     Email for Let's Encrypt certificates
+    --cloudflare-token <token> Cloudflare API token for DNS-01 challenge
+                              Required for wildcard certificates
+    --dns-provider <provider> DNS provider (default: cloudflare)
+                              Options: cloudflare, route53, digitalocean
+    --caddy-staging           Use Let's Encrypt staging (for testing)
+    --skip-caddy              Skip Caddy installation
 
-Central Ingress (for *.vms.decloud.io routing):
-  --ingress-domain <domain>  Base domain for VM ingress (e.g., vms.decloud.io)
-  --caddy-email <email>      Email for Let's Encrypt certificates
-  --caddy-staging            Use Let's Encrypt staging (for testing)
-  --skip-caddy               Skip Caddy installation
-  --skip-fail2ban            Skip fail2ban installation
+OPTIONAL - General:
+    --port <port>             API port (default: 5050)
+    --skip-fail2ban           Skip fail2ban installation
+    --help, -h                Show this help message
 
-Examples:
-  # Basic (no ingress, in-memory storage)
-  $0 --port 5050
+EXAMPLES:
+    # Minimal installation (no ingress)
+    sudo ./install.sh --mongodb "mongodb+srv://..."
 
-  # With MongoDB persistence
-  $0 --port 5050 --mongodb "mongodb+srv://user:pass@cluster/db"
+    # With central ingress
+    sudo ./install.sh \\
+        --mongodb "mongodb+srv://..." \\
+        --ingress-domain vms.decloud.io \\
+        --caddy-email admin@decloud.io \\
+        --cloudflare-token YOUR_CLOUDFLARE_API_TOKEN
 
-  # Full setup with central ingress
-  $0 --port 5050 \\
-     --mongodb "mongodb+srv://user:pass@cluster/db" \\
-     --ingress-domain vms.decloud.io \\
-     --caddy-email admin@decloud.io
+    # Testing with Let's Encrypt staging
+    sudo ./install.sh \\
+        --mongodb "mongodb+srv://..." \\
+        --ingress-domain vms.decloud.io \\
+        --caddy-email admin@decloud.io \\
+        --cloudflare-token YOUR_TOKEN \\
+        --caddy-staging
 
-ARCHITECTURE:
-  The Orchestrator is the central entry point for all HTTP traffic.
-  Node Agents do NOT need ports 80/443 - they connect via WireGuard.
+CLOUDFLARE TOKEN:
+    To get a Cloudflare API token:
+    1. Go to https://dash.cloudflare.com/profile/api-tokens
+    2. Click "Create Token"
+    3. Use "Edit zone DNS" template
+    4. Scope to your domain's zone
+    5. Create token and copy it
 
-  User Request → Orchestrator (80/443) → WireGuard → Node → VM
 EOF
 }
 
 # ============================================================
-# Checks
+# Requirement Checks
 # ============================================================
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -173,7 +201,7 @@ check_os() {
     log_step "Checking operating system..."
     
     if [ ! -f /etc/os-release ]; then
-        log_error "Cannot detect OS"
+        log_error "Cannot detect OS. Only Ubuntu/Debian are supported."
         exit 1
     fi
     
@@ -181,39 +209,76 @@ check_os() {
     OS=$ID
     OS_VERSION=$VERSION_ID
     
-    log_success "OS: $OS $OS_VERSION"
+    case $OS in
+        ubuntu)
+            if [[ "${VERSION_ID%%.*}" -lt 20 ]]; then
+                log_error "Ubuntu 20.04 or later required. Found: $VERSION_ID"
+                exit 1
+            fi
+            log_success "Ubuntu $VERSION_ID detected"
+            ;;
+        debian)
+            if [[ "${VERSION_ID%%.*}" -lt 11 ]]; then
+                log_error "Debian 11 or later required. Found: $VERSION_ID"
+                exit 1
+            fi
+            log_success "Debian $VERSION_ID detected"
+            ;;
+        *)
+            log_error "Unsupported OS: $OS"
+            log_error "Only Ubuntu 20.04+ and Debian 11+ are supported"
+            exit 1
+            ;;
+    esac
 }
 
 check_resources() {
     log_step "Checking system resources..."
     
-    CPU_CORES=$(nproc)
-    MEMORY_MB=$(free -m | awk '/^Mem:/{print $2}')
-    DISK_GB=$(df -BG / | awk 'NR==2{print $4}' | tr -d 'G')
+    # CPU cores
+    local cpu_cores=$(nproc)
+    if [ "$cpu_cores" -lt 2 ]; then
+        log_warn "Only $cpu_cores CPU core(s) - 2+ recommended"
+    else
+        log_success "$cpu_cores CPU cores available"
+    fi
     
-    log_success "CPU cores: $CPU_CORES"
-    log_success "Memory: ${MEMORY_MB}MB"
-    log_success "Free disk: ${DISK_GB}GB"
+    # Memory
+    local mem_mb=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$mem_mb" -lt 2048 ]; then
+        log_warn "Only ${mem_mb}MB RAM - 2GB+ recommended"
+    else
+        log_success "${mem_mb}MB RAM available"
+    fi
+    
+    # Disk space
+    local disk_gb=$(df -BG / | awk 'NR==2 {print int($4)}')
+    if [ "$disk_gb" -lt 20 ]; then
+        log_warn "Only ${disk_gb}GB free disk space - 20GB+ recommended"
+    else
+        log_success "${disk_gb}GB free disk space"
+    fi
 }
 
 check_network() {
     log_step "Checking network connectivity..."
     
-    if curl -s --max-time 5 https://github.com > /dev/null 2>&1; then
-        log_success "Internet connectivity OK"
-    else
-        log_error "Cannot reach github.com"
+    if ! ping -c 1 google.com &> /dev/null; then
+        log_error "No internet connectivity"
         exit 1
     fi
     
-    PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || echo "unknown")
-    log_success "Public IP: $PUBLIC_IP"
+    # Get public IP
+    PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "unknown")
+    log_success "Network OK (Public IP: $PUBLIC_IP)"
+    
+    # Check port availability
+    log_step "Checking port availability..."
     
     # Check API port
-    local api_port_process=""
-    api_port_process=$(ss -tlnp 2>/dev/null | grep ":${API_PORT} " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
-    
-    if [ -n "$api_port_process" ]; then
+    if ss -tlnp 2>/dev/null | grep -q ":$API_PORT "; then
+        local api_port_process=$(ss -tlnp 2>/dev/null | grep ":$API_PORT " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
+        
         if [ "$api_port_process" = "decloud-orch" ] || [ "$api_port_process" = "dotnet" ]; then
             log_warn "Orchestrator already running on port $API_PORT - will update in place"
             UPDATE_MODE=true
@@ -230,13 +295,12 @@ check_network() {
         local port80_process=""
         local port443_process=""
         
-        # Get process using port 80
         port80_process=$(ss -tlnp 2>/dev/null | grep ":80 " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
         port443_process=$(ss -tlnp 2>/dev/null | grep ":443 " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
         
         if [ -n "$port80_process" ]; then
             if [ "$port80_process" = "caddy" ]; then
-                log_success "Caddy already running on ports 80/443 - skipping Caddy installation"
+                log_success "Caddy already running on ports 80/443"
                 INSTALL_CADDY=false
             else
                 log_error "Port 80 is already in use by '$port80_process' (required for Caddy)"
@@ -253,17 +317,46 @@ check_network() {
 }
 
 check_mongodb() {
-    log_step "Checking MongoDB connectivity..."
+    log_step "Checking MongoDB configuration..."
     
-    if [ -n "$MONGODB_URI" ]; then
-        if [[ ! "$MONGODB_URI" =~ ^mongodb(\+srv)?:// ]]; then
-            log_error "Invalid MongoDB URI format"
-            exit 1
+    if [ -z "$MONGODB_URI" ]; then
+        log_error "MongoDB URI is required"
+        log_error "Use: --mongodb \"mongodb+srv://...\""
+        exit 1
+    fi
+    
+    if [[ ! "$MONGODB_URI" =~ ^mongodb(\+srv)?:// ]]; then
+        log_error "Invalid MongoDB URI format"
+        exit 1
+    fi
+    
+    log_success "MongoDB URI provided"
+    log_info "Connection will be verified at startup"
+}
+
+check_cloudflare_token() {
+    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
+        if [ -z "$CLOUDFLARE_TOKEN" ]; then
+            log_warn "Cloudflare token not provided - wildcard certificates will fail!"
+            echo ""
+            log_info "To get a Cloudflare API token:"
+            log_info "1. Go to https://dash.cloudflare.com/profile/api-tokens"
+            log_info "2. Click 'Create Token'"
+            log_info "3. Use 'Edit zone DNS' template"
+            log_info "4. Scope to your domain's zone"
+            log_info "5. Create and copy the token"
+            echo ""
+            read -p "Enter Cloudflare API token (or press Enter to skip): " CLOUDFLARE_TOKEN
+            
+            if [ -z "$CLOUDFLARE_TOKEN" ]; then
+                log_warn "Skipping Cloudflare token - central ingress will be disabled"
+                INSTALL_CADDY=false
+            fi
         fi
-        log_success "MongoDB URI provided"
-        log_info "Connection will be verified at startup"
-    else
-        log_warn "No MongoDB URI - using in-memory storage (data will not persist!)"
+        
+        if [ -n "$CLOUDFLARE_TOKEN" ]; then
+            log_success "Cloudflare token provided"
+        fi
     fi
 }
 
@@ -273,10 +366,11 @@ check_mongodb() {
 install_dependencies() {
     log_step "Installing base dependencies..."
     
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y -qq \
         curl wget git jq apt-transport-https ca-certificates \
-        gnupg lsb-release software-properties-common > /dev/null 2>&1
+        gnupg lsb-release software-properties-common openssl > /dev/null 2>&1
     
     log_success "Base dependencies installed"
 }
@@ -363,6 +457,25 @@ configure_caddy() {
     mkdir -p "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" /etc/caddy
     chown caddy:caddy "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" 2>/dev/null || true
     
+    # CRITICAL: Add Cloudflare token to systemd environment
+    if [ -n "$CLOUDFLARE_TOKEN" ]; then
+        log_info "Configuring Cloudflare API token for Caddy..."
+        mkdir -p /etc/systemd/system/caddy.service.d
+        
+        cat > /etc/systemd/system/caddy.service.d/cloudflare.conf << EOF
+[Service]
+Environment="CF_API_TOKEN=${CLOUDFLARE_TOKEN}"
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=1048576
+Restart=always
+RestartSec=5
+EOF
+        
+        chmod 600 /etc/systemd/system/caddy.service.d/cloudflare.conf
+        systemctl daemon-reload
+        log_success "Cloudflare token configured in systemd"
+    fi
+    
     # Build ACME configuration
     local acme_config=""
     if [ -n "$CADDY_EMAIL" ]; then
@@ -373,25 +486,12 @@ configure_caddy() {
     acme_ca https://acme-staging-v02.api.letsencrypt.org/directory"
     fi
     
-    # Wildcard domain config
-    local wildcard_config=""
-    if [ -n "$INGRESS_DOMAIN" ]; then
-        wildcard_config="
-# Central Ingress: Route *.${INGRESS_DOMAIN} to VMs
-# Routes are managed dynamically via Admin API
-*.${INGRESS_DOMAIN} {
-    tls {
-        dns cloudflare {env.CF_API_TOKEN}
-    }
-    
-    # Default: proxy to orchestrator for routing decisions
-    reverse_proxy localhost:${API_PORT}
-}"
-    fi
-    
+    # Wildcard domain config (Caddyfile is managed by Orchestrator via Admin API)
+    # This creates a minimal Caddyfile - the real config comes from CentralCaddyManager
     cat > /etc/caddy/Caddyfile << EOF
 # DeCloud Orchestrator - Central Ingress Gateway
-# All VM HTTP traffic routes through here
+# This file is managed by the Orchestrator via Admin API
+# Do not edit manually - changes will be overwritten
 
 {
     admin localhost:2019
@@ -403,35 +503,17 @@ configure_caddy() {
         }
         format json
     }
-    
-$acme_config
 }
 
-# Health check endpoint
-:8080 {
+# Health check endpoint (HTTP only, no TLS)
+:8081 {
     respond /health "OK" 200
     respond /ready "OK" 200
 }
-
-# Orchestrator API and Dashboard
-:${API_PORT} {
-    reverse_proxy localhost:5000
-}
-$wildcard_config
 EOF
 
-    # Systemd override
-    mkdir -p /etc/systemd/system/caddy.service.d
-    cat > /etc/systemd/system/caddy.service.d/decloud.conf << 'EOF'
-[Service]
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-LimitNOFILE=1048576
-Restart=always
-RestartSec=5
-EOF
-
-    systemctl daemon-reload
     log_success "Caddy configured"
+    log_info "Caddy will be dynamically managed by Orchestrator"
 }
 
 # ============================================================
@@ -475,7 +557,6 @@ EOF
 [Definition]
 failregex = ^.*"client_ip":"<HOST>".*"status":(400|401|403|404|405|429|503).*$
 ignoreregex =
-datepattern = "ts":{EPOCH}
 EOF
 
     systemctl enable fail2ban --quiet 2>/dev/null || true
@@ -485,7 +566,7 @@ EOF
 }
 
 # ============================================================
-# Orchestrator Setup
+# Application Installation
 # ============================================================
 create_directories() {
     log_step "Creating directories..."
@@ -500,64 +581,90 @@ create_directories() {
 download_orchestrator() {
     log_step "Downloading Orchestrator..."
     
-    # Stop service if running (update mode)
-    if [ "$UPDATE_MODE" = true ]; then
-        log_info "Stopping existing orchestrator service..."
-        systemctl stop decloud-orchestrator 2>/dev/null || true
-        sleep 2
-    fi
-    
     if [ -d "$INSTALL_DIR/DeCloud.Orchestrator" ]; then
-        log_info "Removing existing installation..."
-        rm -rf "$INSTALL_DIR/DeCloud.Orchestrator"
+        if [ "$UPDATE_MODE" = true ]; then
+            log_info "Updating existing installation..."
+            cd "$INSTALL_DIR/DeCloud.Orchestrator"
+            git pull origin main --quiet 2>/dev/null || git pull origin master --quiet 2>/dev/null
+        else
+            log_success "Source already present"
+            return
+        fi
+    else
+        cd "$INSTALL_DIR"
+        git clone "$REPO_URL" DeCloud.Orchestrator --quiet
     fi
     
-    cd "$INSTALL_DIR"
-    git clone --depth 1 "$REPO_URL" DeCloud.Orchestrator > /dev/null 2>&1
-    
-    cd DeCloud.Orchestrator
-    COMMIT=$(git rev-parse --short HEAD)
-    
-    log_success "Code downloaded (commit: $COMMIT)"
+    log_success "Orchestrator downloaded"
 }
 
 build_orchestrator() {
-    log_step "Building Orchestrator (frontend + backend)..."
+    log_step "Building Orchestrator..."
     
-    cd "$INSTALL_DIR/DeCloud.Orchestrator"
+    cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
     
-    log_info "This may take 2-3 minutes..."
+    # Build backend
+    dotnet restore --quiet
+    dotnet build --configuration Release --quiet --no-restore
     
-    # Clean
-    dotnet clean --verbosity quiet > /dev/null 2>&1 || true
-    
-    # Build (includes frontend via MSBuild targets)
-    cd src/Orchestrator
-    dotnet build --configuration Release --verbosity quiet 2>&1 | grep -E "(error|warning CS)" || true
-    
-    log_success "Build completed"
-    
-    # Verify frontend
-    if [ -d "wwwroot/dist" ]; then
-        local file_count=$(find wwwroot/dist -type f | wc -l)
-        log_success "Frontend built: $file_count files"
+    # Build frontend
+    if [ -d "wwwroot" ] && [ -f "wwwroot/package.json" ]; then
+        log_info "Building frontend..."
+        cd wwwroot
+        
+        # Create .env file if it doesn't exist
+        if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+                cp .env.example .env
+                log_info "Created .env from .env.example"
+            fi
+        fi
+        
+        npm install --quiet --no-progress > /dev/null 2>&1
+        npm run build --quiet > /dev/null 2>&1
+        cd ..
+        
+        log_success "Frontend built"
     else
-        log_warn "Frontend dist not found - may need manual build"
+        log_warn "Frontend source not found - skipping frontend build"
     fi
+    
+    log_success "Orchestrator built"
 }
 
 create_configuration() {
     log_step "Creating configuration..."
     
-    # Central ingress config - add if ingress domain is provided (regardless of Caddy install)
+    # Generate JWT key
+    local jwt_key=$(openssl rand -base64 32)
+    
+    # MongoDB config
+    local mongodb_config=""
+    if [ -n "$MONGODB_URI" ]; then
+        mongodb_config=',
+  "ConnectionStrings": {
+    "MongoDB": "'$MONGODB_URI'"
+  }'
+    fi
+    
+    # Central ingress config
+    # CRITICAL: Include DnsProvider and DnsApiToken for CentralCaddyManager
     local central_ingress_config=""
     if [ -n "$INGRESS_DOMAIN" ]; then
+        local dns_token_json="null"
+        if [ -n "$CLOUDFLARE_TOKEN" ]; then
+            dns_token_json="\"$CLOUDFLARE_TOKEN\""
+        fi
+        
         central_ingress_config=',
   "CentralIngress": {
     "Enabled": true,
     "BaseDomain": "'$INGRESS_DOMAIN'",
     "CaddyAdminUrl": "http://localhost:2019",
-    "AcmeEmail": "'${CADDY_ACME_EMAIL:-admin@$INGRESS_DOMAIN}'",
+    "AcmeEmail": "'${CADDY_EMAIL:-admin@$INGRESS_DOMAIN}'",
+    "UseAcmeStaging": '$([ "$CADDY_STAGING" = true ] && echo "true" || echo "false")',
+    "DnsProvider": "'$DNS_PROVIDER'",
+    "DnsApiToken": '$dns_token_json',
     "DefaultTargetPort": 80,
     "SubdomainPattern": "{name}",
     "AutoRegisterOnStart": true,
@@ -567,35 +674,34 @@ create_configuration() {
   }'
     fi
     
-    # MongoDB config
-    local mongodb_config=""
-    if [ -n "$MONGODB_URI" ]; then
-        mongodb_config=',
-  "MongoDB": {
-    "ConnectionString": "'$MONGODB_URI'"
-  }'
-    fi
-    
-    cat > "$CONFIG_DIR/orchestrator.appsettings.Production.json" << EOF
+    # Create appsettings.Production.json in the Orchestrator directory
+    cat > "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json" << EOF
 {
   "Logging": {
     "LogLevel": {
       "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
+      "Microsoft.AspNetCore": "Warning",
+      "DeCloud": "Debug"
     }
   },
   "Urls": "http://0.0.0.0:${API_PORT}",
   "Jwt": {
-    "Key": "$(openssl rand -base64 32)",
+    "Key": "${jwt_key}",
     "Issuer": "decloud-orchestrator",
     "Audience": "decloud-users",
     "ExpiryMinutes": 1440
-  }$mongodb_config$central_ingress_config
+  }${mongodb_config}${central_ingress_config}
 }
 EOF
 
-    chmod 640 "$CONFIG_DIR/orchestrator.appsettings.Production.json"
+    chmod 640 "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
+    
+    # Also create a copy in /etc/decloud for reference
+    cp "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json" \
+       "$CONFIG_DIR/orchestrator.appsettings.Production.json"
+    
     log_success "Configuration created"
+    log_info "Config file: $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
 }
 
 create_systemd_service() {
@@ -616,9 +722,8 @@ RestartSec=10
 TimeoutStartSec=120
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=decloud-orchestrator
+StandardOutput=append:$LOG_DIR/orchestrator.log
+StandardError=append:$LOG_DIR/orchestrator.log
 
 [Install]
 WantedBy=multi-user.target
@@ -631,56 +736,68 @@ EOF
 configure_firewall() {
     log_step "Configuring firewall..."
     
-    if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
-        ufw allow ${API_PORT}/tcp comment "DeCloud Orchestrator API" > /dev/null 2>&1 || true
-        
-        if [ "$INSTALL_CADDY" = true ]; then
-            ufw allow 80/tcp comment "DeCloud Ingress HTTP" > /dev/null 2>&1 || true
-            ufw allow 443/tcp comment "DeCloud Ingress HTTPS" > /dev/null 2>&1 || true
-        fi
-        
-        log_success "Firewall configured"
-    else
-        log_info "UFW not active, skipping"
+    # Enable UFW if not already enabled
+    if ! ufw status | grep -q "Status: active"; then
+        log_info "Enabling firewall..."
+        ufw --force enable > /dev/null 2>&1
     fi
+    
+    # Allow SSH
+    ufw allow ssh > /dev/null 2>&1
+    
+    # Allow API port
+    ufw allow $API_PORT/tcp comment "DeCloud Orchestrator API" > /dev/null 2>&1
+    
+    # Allow Caddy if enabled
+    if [ "$INSTALL_CADDY" = true ]; then
+        ufw allow 80/tcp comment "Caddy HTTP" > /dev/null 2>&1
+        ufw allow 443/tcp comment "Caddy HTTPS" > /dev/null 2>&1
+    fi
+    
+    log_success "Firewall configured"
 }
 
 start_services() {
     log_step "Starting services..."
     
-    # Start Caddy if installed
+    # Start Caddy first if enabled
     if [ "$INSTALL_CADDY" = true ]; then
         systemctl enable caddy --quiet 2>/dev/null || true
-        systemctl start caddy 2>/dev/null || true
+        systemctl restart caddy 2>/dev/null || true
         
         if systemctl is-active --quiet caddy; then
             log_success "Caddy started"
         else
-            log_warn "Caddy failed to start"
+            log_warn "Caddy failed to start - check: journalctl -u caddy"
         fi
     fi
     
     # Start Orchestrator
     systemctl enable decloud-orchestrator --quiet 2>/dev/null || true
-    systemctl start decloud-orchestrator 2>/dev/null || true
+    systemctl restart decloud-orchestrator
     
-    sleep 3
+    # Wait for startup
+    sleep 5
     
     if systemctl is-active --quiet decloud-orchestrator; then
-        log_success "Orchestrator is running"
+        log_success "Orchestrator started"
     else
         log_error "Orchestrator failed to start"
-        log_info "Check logs: journalctl -u decloud-orchestrator -n 50"
+        log_error "Check logs: journalctl -u decloud-orchestrator -n 50"
+        exit 1
+    fi
+    
+    # Wait a bit more for Caddy config to be applied by Orchestrator
+    if [ "$INSTALL_CADDY" = true ]; then
+        log_info "Waiting for Orchestrator to configure Caddy..."
+        sleep 10
     fi
 }
 
-# ============================================================
-# Summary
-# ============================================================
 print_summary() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║              Installation Complete!                          ║"
+    echo "║       DeCloud Orchestrator - Installation Complete!         ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     echo "  Dashboard:       http://${PUBLIC_IP}:${API_PORT}/"
@@ -688,16 +805,21 @@ print_summary() {
     echo "  Swagger UI:      http://${PUBLIC_IP}:${API_PORT}/swagger"
     echo ""
     
-    if [ "$INSTALL_CADDY" = true ]; then
+    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
         echo "  ─────────────────────────────────────────────────────────────"
         echo "  Central Ingress (Caddy):"
         echo "  ─────────────────────────────────────────────────────────────"
-        if [ -n "$INGRESS_DOMAIN" ]; then
-            echo "    Base Domain:   *.${INGRESS_DOMAIN}"
-            echo "    Example:       https://vm-abc123.${INGRESS_DOMAIN}"
+        echo "    Wildcard Domain: *.${INGRESS_DOMAIN}"
+        echo "    Example VM URL:  https://myapp.${INGRESS_DOMAIN}"
+        echo "    Admin API:       http://localhost:2019"
+        echo "    Health Check:    http://localhost:8081/health"
+        echo ""
+        if [ -n "$CLOUDFLARE_TOKEN" ]; then
+            echo "    ✓ Cloudflare token configured"
+            echo "    ✓ Wildcard certificates enabled"
+        else
+            echo "    ✗ No Cloudflare token - certificates may fail"
         fi
-        echo "    Admin API:     http://localhost:2019"
-        echo "    Health:        http://localhost:8080/health"
         echo ""
     fi
     
@@ -708,17 +830,43 @@ print_summary() {
     echo "    Logs:          sudo journalctl -u decloud-orchestrator -f"
     echo "    Restart:       sudo systemctl restart decloud-orchestrator"
     if [ "$INSTALL_CADDY" = true ]; then
-        echo "    Caddy logs:    sudo tail -f $CADDY_LOG_DIR/caddy.log"
+        echo "    Caddy status:  sudo systemctl status caddy"
+        echo "    Caddy logs:    sudo journalctl -u caddy -f"
+        echo "    Caddy config:  curl -s http://localhost:2019/config/ | jq ."
     fi
     echo ""
     echo "  ─────────────────────────────────────────────────────────────"
-    echo "  To add a node, run on the node server:"
+    echo "  Configuration:"
     echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Main config:   $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
+    echo "    Logs:          $LOG_DIR/orchestrator.log"
+    echo "    Port:          $API_PORT"
+    if [ -n "$MONGODB_URI" ]; then
+        echo "    MongoDB:       Connected"
+    else
+        echo "    MongoDB:       Not configured (using in-memory storage)"
+    fi
     echo ""
-    echo "    curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/main/install.sh | \\"
-    echo "      sudo bash -s -- --orchestrator http://${PUBLIC_IP}:${API_PORT}"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  Next Steps:"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    1. Open dashboard: http://${PUBLIC_IP}:${API_PORT}/"
+    echo "    2. Connect your wallet to start using DeCloud"
+    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
+        echo "    3. Configure DNS:"
+        echo "       - Point *.${INGRESS_DOMAIN} to ${PUBLIC_IP}"
+        echo "       - Wildcard certificates will be auto-provisioned"
+    fi
     echo ""
-    echo "  Note: Nodes do NOT need ports 80/443 - ingress is handled here!"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  Troubleshooting:"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Check service:  systemctl status decloud-orchestrator"
+    echo "    View logs:      journalctl -u decloud-orchestrator -n 100"
+    if [ "$INSTALL_CADDY" = true ]; then
+        echo "    Check TLS:      curl -s http://localhost:2019/config/apps/tls | jq ."
+        echo "    Test HTTPS:     curl -I https://${INGRESS_DOMAIN}/"
+    fi
     echo ""
 }
 
@@ -741,6 +889,7 @@ main() {
     check_resources
     check_network
     check_mongodb
+    check_cloudflare_token
     
     echo ""
     log_info "All requirements met. Starting installation..."
