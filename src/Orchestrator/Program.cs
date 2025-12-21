@@ -103,6 +103,17 @@ builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSecti
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
 
+builder.Services.AddHttpClient("SubdomainProxy")
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(60);
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false
+    });
+
 // =====================================================
 // Background Services
 // =====================================================
@@ -456,6 +467,7 @@ app.UseWebSockets(new WebSocketOptions
     KeepAliveInterval = TimeSpan.FromSeconds(30)
 });
 app.UseWebSocketProxy();
+app.UseSubdomainProxy();
 
 app.UseCors();
 
