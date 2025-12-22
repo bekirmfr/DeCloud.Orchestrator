@@ -322,6 +322,34 @@ if (mongoDatabase != null)
         {
             await dataStore.LoadStateFromDatabaseAsync();
             logger.LogInformation("✓ State loaded successfully from MongoDB");
+
+            var ingressService = scope.ServiceProvider.GetRequiredService<ICentralIngressService>();
+            if (ingressService.IsEnabled)
+            {
+                logger.LogInformation("🔄 Initializing CentralIngress for running VMs...");
+
+                var runningVms = dataStore.VirtualMachines.Values
+                    .Where(vm => vm.Status == VmStatus.Running)
+                    .ToList();
+
+                logger.LogInformation("Found {Count} running VMs to register", runningVms.Count);
+
+                foreach (var vm in runningVms)
+                {
+                    try
+                    {
+                        await ingressService.OnVmStartedAsync(vm.Id);
+                        logger.LogInformation("✓ Registered VM {VmId} ({Name}) with CentralIngress",
+                            vm.Id, vm.Name);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to register VM {VmId} with CentralIngress", vm.Id);
+                    }
+                }
+
+                logger.LogInformation("✓ CentralIngress initialization complete");
+            }
         }
         catch (Exception ex)
         {
