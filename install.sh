@@ -360,10 +360,27 @@ check_cloudflare_token() {
 install_dependencies() {
     log_step "Installing system dependencies..."
     
+    local deps_to_install=()
+    local deps_missing=false
+    
+    # Check each dependency
+    local required_pkgs=(curl wget git jq apt-transport-https ca-certificates gnupg lsb-release software-properties-common)
+    
+    for pkg in "${required_pkgs[@]}"; do
+        if ! dpkg -l | grep -q "^ii  $pkg "; then
+            deps_to_install+=("$pkg")
+            deps_missing=true
+        fi
+    done
+    
+    if [ "$deps_missing" = false ]; then
+        log_success "System dependencies already installed"
+        return
+    fi
+    
+    log_info "Installing missing packages: ${deps_to_install[*]}"
     apt-get update -qq
-    apt-get install -y -qq \
-        curl wget git jq apt-transport-https ca-certificates \
-        gnupg lsb-release software-properties-common > /dev/null 2>&1
+    apt-get install -y -qq "${deps_to_install[@]}" > /dev/null 2>&1
     
     log_success "System dependencies installed"
 }
@@ -835,9 +852,18 @@ install_fail2ban() {
     
     log_step "Installing fail2ban..."
     
-    apt-get install -y -qq fail2ban > /dev/null 2>&1
+    # Check if fail2ban is already installed
+    if command -v fail2ban-client &> /dev/null; then
+        log_success "fail2ban already installed: $(fail2ban-client --version 2>&1 | head -1)"
+        
+        # Update configuration even if already installed
+        log_info "Updating fail2ban configuration..."
+    else
+        apt-get install -y -qq fail2ban > /dev/null 2>&1
+        log_success "fail2ban installed"
+    fi
     
-    # Configure jails
+    # Configure jails (always update in case of changes)
     cat > /etc/fail2ban/jail.d/decloud.conf << EOF
 [DEFAULT]
 bantime = 3600
@@ -871,7 +897,7 @@ EOF
     systemctl enable fail2ban --quiet 2>/dev/null || true
     systemctl restart fail2ban 2>/dev/null || true
     
-    log_success "fail2ban installed and configured"
+    log_success "fail2ban configured"
 }
 
 # ============================================================
@@ -893,19 +919,35 @@ download_orchestrator() {
     
     if [ -d "$INSTALL_DIR/DeCloud.Orchestrator" ]; then
         if [ "$UPDATE_MODE" = true ]; then
-            log_info "Updating existing installation..."
+            log_info "Repository exists, checking for updates..."
             cd "$INSTALL_DIR/DeCloud.Orchestrator"
-            git pull origin main --quiet 2>/dev/null || git pull origin master --quiet 2>/dev/null
+            
+            # Get current commit
+            local current_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+            
+            # Fetch updates
+            git fetch origin --quiet 2>/dev/null || true
+            
+            # Check if updates available
+            local remote_commit=$(git rev-parse origin/main 2>/dev/null || git rev-parse origin/master 2>/dev/null || echo "unknown")
+            
+            if [ "$current_commit" = "$remote_commit" ]; then
+                log_success "Source code is up to date (${current_commit:0:8})"
+            else
+                log_info "Pulling updates: ${current_commit:0:8} → ${remote_commit:0:8}"
+                git pull origin main --quiet 2>/dev/null || git pull origin master --quiet 2>/dev/null
+                log_success "Source code updated"
+            fi
         else
-            log_success "Source already present"
+            log_success "Source code already present"
             return
         fi
     else
+        log_info "Cloning repository..."
         cd "$INSTALL_DIR"
         git clone "$REPO_URL" DeCloud.Orchestrator --quiet
+        log_success "Repository cloned"
     fi
-    
-    log_success "Orchestrator downloaded"
 }
 
 build_orchestrator() {
@@ -1030,8 +1072,13 @@ EOF
 configure_firewall() {
     log_step "Configuring firewall..."
     
+    # Check if UFW is installed
     if ! command -v ufw &> /dev/null; then
+        log_info "Installing UFW..."
         apt-get install -y -qq ufw > /dev/null 2>&1
+        log_success "UFW installed"
+    else
+        log_info "UFW already installed"
     fi
     
     # Enable firewall if not already enabled
@@ -1040,10 +1087,8 @@ configure_firewall() {
         ufw --force enable > /dev/null 2>&1
     fi
     
-    # Allow SSH
+    # Configure rules (idempotent - ufw allow checks if rule exists)
     ufw allow ssh > /dev/null 2>&1
-    
-    # Allow API port
     ufw allow $API_PORT/tcp comment "DeCloud Orchestrator API" > /dev/null 2>&1
     
     # Allow Caddy if enabled
