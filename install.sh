@@ -275,7 +275,8 @@ check_network() {
     if ss -tlnp 2>/dev/null | grep -q ":$API_PORT "; then
         local api_port_process=$(ss -tlnp 2>/dev/null | grep ":$API_PORT " | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1)
         
-        if [ "$api_port_process" = "decloud-orch" ] || [ "$api_port_process" = "dotnet" ]; then
+        # Match various possible process names for the orchestrator
+        if [[ "$api_port_process" =~ ^(decloud-orch|dotnet|Orchestrator)$ ]]; then
             log_warn "Orchestrator already running on port $API_PORT - will update in place"
             UPDATE_MODE=true
         else
