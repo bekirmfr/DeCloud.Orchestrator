@@ -1100,6 +1100,172 @@ configure_firewall() {
     log_success "Firewall configured"
 }
 
+load_initial_caddy_config() {
+    if [ "$INSTALL_CADDY" = false ]; then
+        return
+    fi
+    
+    log_step "Loading initial Caddy configuration..."
+    
+    # Wait for Caddy admin API
+    local max_wait=30
+    local waited=0
+    while ! curl -sf http://localhost:2019/config/ > /dev/null 2>&1; do
+        if [ $waited -ge $max_wait ]; then
+            log_error "Caddy admin API timeout"
+            return 1
+        fi
+        sleep 1
+        ((waited++))
+    done
+    
+    log_info "Caddy admin API ready"
+    
+    # Determine TLS policy for dashboard domains
+    local dashboard_tls_policy=""
+    if [ -n "$CLOUDFLARE_TOKEN" ]; then
+        # Use DNS-01 challenge if Cloudflare token provided
+        dashboard_tls_policy='{
+          "subjects": ["decloud.stackfi.tech", "stackfi.tech", "www.stackfi.tech"],
+          "issuers": [{
+            "module": "acme",
+            "ca": "https://acme-v02.api.letsencrypt.org/directory",
+            "email": "'"$CADDY_EMAIL"'",
+            "challenges": {
+              "dns": {
+                "provider": {
+                  "name": "cloudflare",
+                  "api_token": "'"$CLOUDFLARE_TOKEN"'"
+                }
+              }
+            }
+          }]
+        }'
+    else
+        # Use HTTP-01 challenge (default)
+        dashboard_tls_policy='{
+          "subjects": ["decloud.stackfi.tech", "stackfi.tech", "www.stackfi.tech"],
+          "issuers": [{
+            "module": "acme",
+            "email": "'"$CADDY_EMAIL"'"
+          }]
+        }'
+    fi
+    
+    # Load complete initial configuration
+    log_info "Loading initial routes and TLS policies..."
+    
+    curl -X POST http://localhost:2019/load \
+      -H "Content-Type: application/json" \
+      -d '{
+      "admin": {
+        "listen": "localhost:2019"
+      },
+      "logging": {
+        "logs": {
+          "default": {
+            "encoder": {"format": "json"},
+            "level": "INFO",
+            "writer": {
+              "output": "file",
+              "filename": "'"$CADDY_LOG_DIR"'/caddy.log",
+              "roll_size_mb": 100,
+              "roll_keep": 10
+            }
+          }
+        }
+      },
+      "apps": {
+        "http": {
+          "servers": {
+            "srv1": {
+              "listen": [":8081"],
+              "routes": [
+                {
+                  "match": [{"path": ["/health", "/ready"]}],
+                  "handle": [{"handler": "static_response", "status_code": 200, "body": "OK"}]
+                }
+              ]
+            },
+            "central_ingress": {
+              "listen": [":80", ":443"],
+              "routes": [
+                {
+                  "match": [{"host": ["decloud.stackfi.tech"]}],
+                  "handle": [{
+                    "handler": "subroute",
+                    "routes": [{
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Strict-Transport-Security": ["max-age=31536000; includeSubDomains; preload"],
+                              "X-Frame-Options": ["SAMEORIGIN"],
+                              "X-Content-Type-Options": ["nosniff"],
+                              "Referrer-Policy": ["strict-origin-when-cross-origin"],
+                              "Permissions-Policy": ["geolocation=(), microphone=(), camera=()"]
+                            }
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [{"dial": "localhost:'"$API_PORT"'"}]
+                        }
+                      ]
+                    }]
+                  }],
+                  "terminal": true
+                },
+                {
+                  "match": [{"host": ["stackfi.tech", "www.stackfi.tech"]}],
+                  "handle": [{
+                    "handler": "static_response",
+                    "status_code": 301,
+                    "headers": {"Location": ["https://decloud.stackfi.tech{http.request.uri}"]}
+                  }],
+                  "terminal": true
+                }
+              ],
+              "automatic_https": {
+                "disable": false
+              }
+            }
+          }
+        },
+        "tls": {
+          "automation": {
+            "policies": [
+              {
+                "subjects": ["*.'"$INGRESS_DOMAIN"'"],
+                "issuers": [{
+                  "module": "acme",
+                  "ca": "https://acme-v02.api.letsencrypt.org/directory",
+                  "email": "'"$CADDY_EMAIL"'",
+                  "challenges": {
+                    "dns": {
+                      "provider": {
+                        "name": "'"$DNS_PROVIDER"'",
+                        "api_token": "'"$CLOUDFLARE_TOKEN"'"
+                      }
+                    }
+                  }
+                }]
+              },
+              '"$dashboard_tls_policy"'
+            ]
+          }
+        }
+      }
+    }' > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        log_success "Initial configuration loaded"
+    else
+        log_warn "Failed to load initial configuration, will retry on restart"
+    fi
+}
+
 start_services() {
     log_step "Starting services..."
     
@@ -1114,10 +1280,22 @@ start_services() {
             log_warn "Caddy failed to start - check: journalctl -u caddy"
         fi
         
+        # Load initial Caddy configuration with dashboard routes
+        sleep 3
+        load_initial_caddy_config
+        
+        # Wait for certificate provisioning
+        log_info "Waiting for certificate provisioning (this may take 60-90 seconds)..."
+        sleep 60
+        
         # Start monitoring timers
         systemctl start decloud-ingress-recovery.timer 2>/dev/null || true
         systemctl start caddy-backup.timer 2>/dev/null || true
         log_info "Monitoring timers started"
+        
+        # Create initial golden master backup
+        log_info "Creating golden master backup..."
+        /usr/local/bin/backup-caddy-config > /dev/null 2>&1 || true
     fi
     
     # Start Orchestrator
@@ -1135,16 +1313,15 @@ start_services() {
         exit 1
     fi
     
-    # Wait for Orchestrator to initialize Caddy
+    # Wait for Orchestrator to add any dynamic routes
     if [ "$INSTALL_CADDY" = true ]; then
-        log_info "Waiting for Orchestrator to configure Caddy..."
+        log_info "Orchestrator initializing..."
         sleep 10
         
-        # Backup the initial configuration as golden master
-        if curl -sf http://localhost:2019/config/ > /dev/null 2>&1; then
-            /usr/local/bin/backup-caddy-config > /dev/null 2>&1 || true
-            log_success "Golden master configuration saved"
-        fi
+        # Backup the final configuration
+        log_info "Updating golden master with Orchestrator routes..."
+        /usr/local/bin/backup-caddy-config > /dev/null 2>&1 || true
+        log_success "Golden master updated"
     fi
 }
 

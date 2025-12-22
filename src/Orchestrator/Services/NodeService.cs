@@ -1062,6 +1062,14 @@ public class NodeService : INodeService
                     ["recoveryTimestamp"] = DateTime.UtcNow
                 }
             });
+
+            if (recoveredVm.Status == VmStatus.Running)
+            {
+                _logger.LogInformation(
+                    "Registering recovered running VM {VmId} with CentralIngress",
+                    vmId);
+                await _ingressService.OnVmStartedAsync(vmId);
+            }
         }
         catch (Exception ex)
         {
