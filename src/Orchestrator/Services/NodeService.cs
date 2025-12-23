@@ -1,4 +1,5 @@
 ﻿using System.Security.Cryptography;
+using DeCloud.Shared;
 using Orchestrator.Data;
 using Orchestrator.Models;
 
@@ -378,17 +379,78 @@ public class NodeService : INodeService
     // Registration and Heartbeat
     // ============================================================================
 
+    // Implements deterministic node ID validation and registration
+
     public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request)
     {
-        var existingNode = _dataStore.Nodes.Values
-            .FirstOrDefault(n => n.WalletAddress == request.WalletAddress);
+        // =====================================================
+        // STEP 1: Validate Wallet Address
+        // =====================================================
+        if (string.IsNullOrWhiteSpace(request.WalletAddress) ||
+            request.WalletAddress == "0x0000000000000000000000000000000000000000")
+        {
+            _logger.LogError("Node registration rejected: null wallet address");
+            throw new ArgumentException(
+                "Valid wallet address required for node registration. " +
+                "Null address (0x000...000) is not allowed.");
+        }
+
+        // =====================================================
+        // STEP 2: Validate Machine ID
+        // =====================================================
+        if (string.IsNullOrWhiteSpace(request.MachineId))
+        {
+            _logger.LogError("Node registration rejected: missing machine ID");
+            throw new ArgumentException("Machine ID is required for node registration");
+        }
+
+        // =====================================================
+        // STEP 3: Generate and Validate Node ID
+        // =====================================================
+        string expectedNodeId;
+        try
+        {
+            expectedNodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate node ID");
+            throw new ArgumentException("Invalid machine ID or wallet address", ex);
+        }
+
+        // If node provides a claimed ID, validate it matches
+        if (!string.IsNullOrEmpty(request.NodeId))
+        {
+            if (!request.NodeId.Equals(expectedNodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Node ID mismatch: claimed={ClaimedId}, expected={ExpectedId} (Machine={MachineId}, Wallet={Wallet})",
+                    request.NodeId, expectedNodeId, request.MachineId, request.WalletAddress);
+
+                throw new ArgumentException(
+                    "Node ID validation failed. The provided node ID does not match " +
+                    "the deterministic ID for this machine + wallet combination.");
+            }
+        }
+
+        // Use the deterministic node ID (calculated or validated)
+        var nodeId = expectedNodeId;
+
+        // =====================================================
+        // STEP 4: Check if Node Exists (Re-registration)
+        // =====================================================
+        var existingNode = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == nodeId);
 
         if (existingNode != null)
         {
-            _logger.LogInformation("Node re-registration: {NodeId} ({Wallet})",
-                existingNode.Id, request.WalletAddress);
+            // RE-REGISTRATION: Update existing node
+            _logger.LogInformation(
+                "Node re-registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
+                nodeId, request.MachineId, request.WalletAddress);
 
             existingNode.Name = request.Name;
+            existingNode.MachineId = request.MachineId;
+            existingNode.WalletAddress = request.WalletAddress;
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
             existingNode.TotalResources = request.Resources;
@@ -396,30 +458,45 @@ public class NodeService : INodeService
             existingNode.SupportedImages = request.SupportedImages;
             existingNode.SupportsGpu = request.SupportsGpu;
             existingNode.GpuInfo = request.GpuInfo;
+            existingNode.Region = request.Region ?? "default";
+            existingNode.Zone = request.Zone ?? "default";
             existingNode.Status = NodeStatus.Online;
             existingNode.LastHeartbeat = DateTime.UtcNow;
 
             await _dataStore.SaveNodeAsync(existingNode);
 
-            var existingToken = GenerateAuthToken();
-            _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(existingToken);
+            // Generate new auth token
+            var token = GenerateAuthToken();
+            _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(token);
+
+            _logger.LogInformation(
+                "✓ Node re-registered successfully: {NodeId}",
+                existingNode.Id);
 
             return new NodeRegistrationResponse(
                 existingNode.Id,
-                existingToken,
+                token,
                 TimeSpan.FromSeconds(15));
         }
 
+        // =====================================================
+        // STEP 5: Create New Node
+        // =====================================================
+        _logger.LogInformation(
+            "New node registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
+            nodeId, request.MachineId, request.WalletAddress);
+
         var node = new Node
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = nodeId,  // ← Deterministic node ID
+            MachineId = request.MachineId,
             Name = request.Name,
             WalletAddress = request.WalletAddress,
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             TotalResources = request.Resources,
-            AvailableResources = request.Resources, // ✓ OK for new nodes
+            AvailableResources = request.Resources,
             ReservedResources = new NodeResources(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -427,38 +504,35 @@ public class NodeService : INodeService
             GpuInfo = request.GpuInfo,
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
-            RegisteredAt = DateTime.UtcNow,
             LastHeartbeat = DateTime.UtcNow
         };
 
-        var authToken = GenerateAuthToken();
-        var tokenHash = HashToken(authToken);
-
         await _dataStore.SaveNodeAsync(node);
-        _dataStore.NodeAuthTokens[node.Id] = tokenHash;
 
-        _logger.LogInformation("New node registered: {NodeId} ({Name}) - {Wallet}",
-            node.Id, node.Name, node.WalletAddress);
+        var newToken = GenerateAuthToken();
+        _dataStore.NodeAuthTokens[node.Id] = HashToken(newToken);
+
+        _logger.LogInformation(
+            "✓ New node registered successfully: {NodeId}",
+            node.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.NodeRegistered,
             ResourceType = "node",
             ResourceId = node.Id,
+            NodeId = node.Id,
             Payload = new Dictionary<string, object>
             {
                 ["name"] = node.Name,
-                ["publicIp"] = node.PublicIp,
-                ["cpuCores"] = node.TotalResources.CpuCores,
-                ["memoryMb"] = node.TotalResources.MemoryMb,
-                ["storageGb"] = node.TotalResources.StorageGb
+                ["region"] = node.Region,
+                ["machineId"] = node.MachineId,
+                ["wallet"] = node.WalletAddress,
+                ["resources"] = node.TotalResources
             }
         });
 
-        return new NodeRegistrationResponse(
-            node.Id,
-            authToken,
-            TimeSpan.FromSeconds(15));
+        return new NodeRegistrationResponse(node.Id, newToken, TimeSpan.FromSeconds(15));
     }
 
     public Task<bool> ValidateNodeTokenAsync(string nodeId, string token)

@@ -7,6 +7,12 @@ public class Node
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Machine fingerprint - stable identifier for the physical hardware
+    /// Used to generate deterministic node ID
+    /// </summary>
+    public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
     
     // Connection info
@@ -81,19 +87,38 @@ public enum NodeStatus
 }
 
 // DTOs for API communication
-public record NodeRegistrationRequest(
-    string Name,
-    string WalletAddress,
-    string PublicIp,
-    int AgentPort,
-    NodeResources Resources,
-    string AgentVersion,
-    List<string> SupportedImages,
-    bool SupportsGpu,
-    GpuInfo? GpuInfo,
-    string Region,
-    string Zone
-);
+public class NodeRegistrationRequest
+{
+    /// <summary>
+    /// Deterministic node ID (generated from MachineId + WalletAddress)
+    /// Optional: if not provided, orchestrator will calculate it
+    /// If provided, must match calculated value for validation
+    /// </summary>
+    public string? NodeId { get; set; }
+
+    /// <summary>
+    /// Machine fingerprint (from /etc/machine-id or fallback)
+    /// Required for node ID generation and validation
+    /// </summary>
+    public required string MachineId { get; set; }
+
+    /// <summary>
+    /// Wallet address for ownership and billing
+    /// Required - cannot be null address (0x000...000)
+    /// </summary>
+    public required string WalletAddress { get; set; }
+
+    public required string Name { get; set; }
+    public required string PublicIp { get; set; }
+    public required int AgentPort { get; set; }
+    public required NodeResources Resources { get; set; }
+    public required string AgentVersion { get; set; }
+    public List<string> SupportedImages { get; set; } = new();
+    public bool SupportsGpu { get; set; }
+    public GpuInfo? GpuInfo { get; set; }
+    public string? Region { get; set; }
+    public string? Zone { get; set; }
+}
 
 public record NodeRegistrationResponse(
     string NodeId,

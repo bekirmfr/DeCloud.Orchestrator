@@ -8,6 +8,10 @@
 		<UserSecretsId>orchestrator-dev-secrets</UserSecretsId>
 	</PropertyGroup>
 
+<ItemGroup>
+  <Compile Include="../Shared/NodeIdGenerator.cs" Link="Shared/NodeIdGenerator.cs" />
+</ItemGroup>
+
 	<!-- ============================================== -->
 	<!-- NuGet Package References -->
 	<!-- ============================================== -->
