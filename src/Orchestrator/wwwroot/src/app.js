@@ -1506,7 +1506,7 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
                     </tr>
                     <tr>
                         <td style="padding: 6px 0; color: #9ca3af;">Username:</td>
-                        <td style="padding: 6px 0;"><code style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">ubuntu</code></td>
+                        <td style="padding: 6px 0;"><code style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">root</code></td>
                     </tr>
                     <tr>
                         <td style="padding: 6px 0; color: #9ca3af;">Auth:</td>

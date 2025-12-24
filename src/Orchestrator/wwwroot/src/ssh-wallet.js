@@ -131,7 +131,7 @@ Host decloud-bastion
     CertificateFile ~/.ssh/${certId}-cert.pub
 
 Host ${cert.vmIp}
-    User ubuntu
+    User root
     ProxyJump decloud-bastion
     IdentityFile ~/.ssh/decloud-wallet.pem
     CertificateFile ~/.ssh/${certId}-cert.pub`;

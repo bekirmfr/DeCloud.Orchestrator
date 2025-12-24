@@ -220,7 +220,7 @@ public class SshCertificateController : ControllerBase
             VmIp = vm.NetworkConfig?.PrivateIp ?? "",
             NodeIp = nodeIp,
             NodePort = 22,
-            Username = "ubuntu",
+            Username = "root",
             HasUserSshKey = hasUserKey,
             RequiresWalletSignature = !hasUserKey,
             SshCommand = GenerateSshCommand(nodeIp, vm.NetworkConfig?.PrivateIp ?? "", vm.Id, hasUserKey)
@@ -235,11 +235,11 @@ public class SshCertificateController : ControllerBase
 
         if (hasUserKey)
         {
-            return $"ssh -i ~/.ssh/id_ed25519 -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
+            return $"ssh -i ~/.ssh/id_ed25519 -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh root@{vmIp}";  // ← Changed to root
         }
         else
         {
-            return $"ssh -i ~/.ssh/decloud-wallet.pem -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh ubuntu@{vmIp}";
+            return $"ssh -i ~/.ssh/decloud-wallet.pem -o CertificateFile=~/.ssh/decloud-{shortVmId}-cert.pub decloud@{nodeIp} ssh root@{vmIp}";  // ← Changed to root
         }
     }
 
