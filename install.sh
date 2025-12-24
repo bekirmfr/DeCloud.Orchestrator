@@ -1103,7 +1103,7 @@ configure_firewall() {
 }
 
 load_initial_caddy_config() {
-    if [ "$INSTALL_CADDY" = false ]; then
+    if [ "$ENABLE_INGRESS" != "true" ]; then
         return
     fi
     
