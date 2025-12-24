@@ -1272,7 +1272,7 @@ start_services() {
     log_step "Starting services..."
     
     # Start Caddy first if enabled
-    if [ "$INSTALL_CADDY" = true ]; then
+    if [ "$ENABLE_INGRESS" = "true" ]; then
         systemctl enable caddy --quiet 2>/dev/null || true
         systemctl restart caddy 2>/dev/null || true
         
