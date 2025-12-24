@@ -61,6 +61,7 @@ MONGODB_URI=""
 # Central Ingress (Caddy)
 INSTALL_CADDY=false
 INGRESS_DOMAIN=""
+ENABLE_INGRESS="false"
 CADDY_EMAIL=""
 CADDY_STAGING=false
 CADDY_DATA_DIR="/var/lib/caddy"
@@ -92,6 +93,7 @@ parse_args() {
                 INGRESS_DOMAIN="$2"
                 INSTALL_CADDY=true
                 INSTALL_FAIL2BAN=true
+                ENABLE_INGRESS="true"
                 shift 2
                 ;;
             --caddy-email)
@@ -1009,7 +1011,7 @@ create_configuration() {
     "MongoDB": "${MONGODB_URI}"
   },
   "CentralIngress": {
-    "Enabled": $([ "$INSTALL_CADDY" = true ] && echo "true" || echo "false"),
+    "Enabled": ${ENABLE_INGRESS},
     "BaseDomain": "${INGRESS_DOMAIN}",
     "CaddyAdminUrl": "http://localhost:2019",
     "AcmeEmail": "${CADDY_EMAIL}",
