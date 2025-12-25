@@ -1559,7 +1559,7 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
         ssh -p ${sshJumpPort} -i ~/.ssh/decloud-wallet.pem \\
         -o CertificateFile=~/.ssh/decloud-XXXXX-cert.pub \\
         -J decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort} \\
-        ubuntu@${escapeHtml(vmIp)}`;
+        root@${escapeHtml(vmIp)}`;
 
     // Build SSH config file content
     const sshConfigContent = `
@@ -1573,7 +1573,7 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
         CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
 
         Host ${vmIp}
-        User ubuntu
+        User root
         ProxyJump decloud-bastion
         IdentityFile ~/.ssh/decloud-wallet.pem
         CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
@@ -1664,7 +1664,7 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
                         </tr>
                         <tr>
                             <td style="padding: 6px 0;"><strong>VM IP Address:</strong></td>
-                            <td style="padding: 6px 0;"><code>ubuntu@${escapeHtml(vmIp)}</code></td>
+                            <td style="padding: 6px 0;"><code>root@${escapeHtml(vmIp)}</code></td>
                         </tr>
                         <tr>
                             <td style="padding: 6px 0;"><strong>VM Hostname:</strong></td>
@@ -1720,7 +1720,7 @@ function downloadSSHConfig(vmIp, bastionHost, bastionPort) {
             CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
 
         Host ${vmIp}
-            User ubuntu
+            User root
             ProxyJump decloud-bastion
             IdentityFile ~/.ssh/decloud-wallet.pem
             CertificateFile ~/.ssh/decloud-XXXXX-cert.pub

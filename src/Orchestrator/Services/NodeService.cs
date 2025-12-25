@@ -43,7 +43,7 @@ public interface INodeService
         string nodeId,
         string vmId,
         string publicKey,
-        string username = "ubuntu",
+        string username = "root",
         CancellationToken ct = default);
 }
 
@@ -1259,7 +1259,7 @@ public class NodeService : INodeService
         string nodeId,
         string vmId,
         string publicKey,
-        string username = "ubuntu",
+        string username = "root",
         CancellationToken ct = default)
     {
         try

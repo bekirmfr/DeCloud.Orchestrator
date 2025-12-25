@@ -68,6 +68,6 @@ public class CertificateSignResponse
 public class InjectSshKeyRequest
 {
     public string PublicKey { get; set; } = "";
-    public string Username { get; set; } = "ubuntu";
+    public string Username { get; set; } = "root";
     public bool Temporary { get; set; } = true;
 }

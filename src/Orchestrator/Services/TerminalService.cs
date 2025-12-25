@@ -109,7 +109,7 @@ public class TerminalService : ITerminalService
 
             var setupRequest = new
             {
-                Username = "ubuntu",
+                Username = "root",
                 TtlSeconds = ttlSeconds,
                 VmIp = vmIp,
                 Port = vm.AccessInfo?.SshPort ?? 22,
@@ -145,7 +145,7 @@ public class TerminalService : ITerminalService
                 UserId = userId,
                 NodeId = vm.NodeId,
                 VmIp = vmIp,
-                Username = "ubuntu",
+                Username = "root",
                 Fingerprint = setupResult.Fingerprint,
                 StartedAt = DateTime.UtcNow,
                 ExpiresAt = setupResult.ExpiresAt ?? DateTime.UtcNow.AddSeconds(ttlSeconds)
@@ -168,7 +168,7 @@ public class TerminalService : ITerminalService
                 NodeIp = node.PublicIp,
                 NodePort = nodePort,
                 VmIp = vmIp,
-                Username = "ubuntu",
+                Username = "root",
                 PrivateKey = setupResult.PrivateKey,
                 PrivateKeyBase64 = setupResult.PrivateKeyBase64,
                 Fingerprint = setupResult.Fingerprint,
@@ -252,7 +252,7 @@ public class TerminalService : ITerminalService
 
         // Note: We don't include the private key in the URL for security.
         // The client should add it via header or the private key should be passed separately.
-        return $"ws://{ip}:{port}/api/vms/{vmId}/terminal?ip={vmIp}&user=ubuntu";
+        return $"ws://{ip}:{port}/api/vms/{vmId}/terminal?ip={vmIp}&user=root";
     }
 }
 
@@ -278,7 +278,7 @@ public class TerminalCredentials
     public string NodeIp { get; init; } = "";
     public int NodePort { get; init; }
     public string VmIp { get; init; } = "";
-    public string Username { get; init; } = "ubuntu";
+    public string Username { get; init; } = "root";
     public string PrivateKey { get; init; } = "";
     public string PrivateKeyBase64 { get; init; } = "";
     public string Fingerprint { get; init; } = "";

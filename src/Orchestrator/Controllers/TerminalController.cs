@@ -155,7 +155,7 @@ public class TerminalAccessResponse
     /// <summary>
     /// SSH username
     /// </summary>
-    public string Username { get; init; } = "ubuntu";
+    public string Username { get; init; } = "root";
 
     /// <summary>
     /// Ephemeral private key (PEM format) - use this for SSH connection.

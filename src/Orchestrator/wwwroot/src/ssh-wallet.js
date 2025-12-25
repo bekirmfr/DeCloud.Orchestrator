@@ -143,7 +143,7 @@ Host ${cert.vmIp}
     const proxyJumpCommand = `ssh -p ${nodePort} -i ~/.ssh/decloud-wallet.pem \\
   -o CertificateFile=~/.ssh/${certId}-cert.pub \\
   -J decloud@${cert.nodeIp}:${nodePort} \\
-  ubuntu@${cert.vmIp}`;
+  root@${cert.vmIp}`;
 
     return `
         <div class="modal-content" style="max-width: 900px;">
@@ -329,7 +329,7 @@ EOF</code></pre>
                 <pre><code id="ssh-command">ssh -p ${nodePort} -i ~/.ssh/id_ed25519 \\
     -o CertificateFile=~/.ssh/decloud-${vmIdShort}-cert.pub \\
     -J decloud@${escapeHtml(cert.nodeIp)}:${nodePort} \\
-    ubuntu@${escapeHtml(cert.vmIp)}</code></pre>
+    root@${escapeHtml(cert.vmIp)}</code></pre>
                 <button class="btn btn-secondary" onclick="copyToClipboard(document.getElementById('ssh-command').textContent)" style="margin-top: 8px;">
                     📋 Copy
                 </button>
@@ -359,7 +359,7 @@ Host decloud-bastion
     CertificateFile ~/.ssh/${certId}-cert.pub
 
 Host ${vmIp}
-    User ubuntu
+    User root
     ProxyJump decloud-bastion
     IdentityFile ~/.ssh/decloud-wallet.pem
     CertificateFile ~/.ssh/${certId}-cert.pub
@@ -420,7 +420,7 @@ ALTERNATIVE (No Config):
 $ ssh -p ${nodePort} -i ~/.ssh/decloud-wallet.pem \\
   -o CertificateFile=~/.ssh/${certId}-cert.pub \\
   -J decloud@${cert.nodeIp}:${nodePort} \\
-  ubuntu@${cert.vmIp}
+  root@${cert.vmIp}
 
 CERTIFICATE RENEWAL:
 --------------------
@@ -455,7 +455,7 @@ Host decloud-bastion
     CertificateFile ~/.ssh/${certId}-cert.pub
 
 Host ${cert.vmIp}
-    User ubuntu
+    User root
     ProxyJump decloud-bastion
     IdentityFile ~/.ssh/decloud-wallet.pem
     CertificateFile ~/.ssh/${certId}-cert.pub
@@ -469,7 +469,7 @@ Host ${cert.vmIp}
 ssh -p ${nodePort} -i ~/.ssh/decloud-wallet.pem \\
     -o CertificateFile=~/.ssh/${certId}-cert.pub \\
     -J decloud@${cert.nodeIp}:${nodePort} \\
-    ubuntu@${cert.vmIp}
+    root@${cert.vmIp}
 `;
 
     // Create files
