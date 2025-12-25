@@ -49,12 +49,60 @@ public class Node
     public string Zone { get; set; } = "default";
 }
 
+/// <summary>
+/// Node resource capacity tracking.
+/// 
+/// CPU OVERCOMMIT DESIGN:
+/// - CpuCores = Physical cores (the TRUE scheduling capacity)
+/// - CpuThreads = Logical cores/hyperthreads (informational)
+/// - Overcommit ratios apply to CpuCores (physical)
+/// 
+/// Example: 4-core/8-thread CPU (Intel i7 with HT)
+/// - CpuCores = 4 (physical cores)
+/// - CpuThreads = 8 (logical processors)
+/// 
+/// Effective vCPU capacity by tier:
+/// - Guaranteed (1.0x): 4 × 1.0 = 4 vCPUs (dedicated physical cores)
+/// - Standard (2.0x):   4 × 2.0 = 8 vCPUs (moderate sharing)
+/// - Burstable (4.0x):  4 × 4.0 = 16 vCPUs (aggressive sharing)
+/// </summary>
 public class NodeResources
 {
+    /// <summary>
+    /// Physical CPU cores - base for overcommit calculations.
+    /// This is the TRUE capacity of the node.
+    /// </summary>
     public int CpuCores { get; set; }
+
+    /// <summary>
+    /// Logical CPU cores (threads/hyperthreads).
+    /// Informational - shows maximum parallelism available.
+    /// Not used for scheduling calculations.
+    /// </summary>
+    public int CpuThreads { get; set; }
+
+    /// <summary>
+    /// Total memory in megabytes
+    /// </summary>
     public long MemoryMb { get; set; }
+
+    /// <summary>
+    /// Total storage in gigabytes
+    /// </summary>
     public long StorageGb { get; set; }
+
+    /// <summary>
+    /// Network bandwidth in Mbps
+    /// </summary>
     public long BandwidthMbps { get; set; }
+
+    /// <summary>
+    /// Hyperthreading ratio (CpuThreads / CpuCores).
+    /// Typical values: 1.0 (no HT), 2.0 (Intel HT/AMD SMT)
+    /// </summary>
+    public double HyperthreadingRatio => CpuCores > 0
+        ? (double)CpuThreads / CpuCores
+        : 1.0;
 }
 
 public class GpuInfo
