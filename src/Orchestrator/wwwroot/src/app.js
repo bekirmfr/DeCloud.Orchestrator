@@ -1222,9 +1222,9 @@ function closeModal(modalId) {
 
 async function createVM() {
     const name = document.getElementById('vm-name').value.trim();
-    const cpuCores = parseInt(document.getElementById('cpu-cores').value);
-    const memoryMb = parseInt(document.getElementById('memory-mb').value);
-    const diskGb = parseInt(document.getElementById('disk-gb').value);
+    const cpuCores = parseInt(document.getElementById('vm-cpu').value);
+    const memoryMb = parseInt(document.getElementById('vm-memory').value);
+    const diskGb = parseInt(document.getElementById('vm-disk').value);
     const imageId = document.getElementById('os-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     
