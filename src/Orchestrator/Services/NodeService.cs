@@ -182,11 +182,15 @@ public class NodeService : INodeService
             var availability = CalculateResourceAvailability(node, tier, policy);
             scored.Availability = availability;
 
+            // Calculate point cost for this VM
+            var pointCost = spec.CpuCores * policy.PointsPerVCpu;
+            availability.RequiredComputePoints = pointCost;
+
             // Step 3: Check if VM fits after overcommit calculation
-            if (!availability.CanFit(spec))
+            if (!availability.CanFit(spec, pointCost))
             {
                 scored.RejectionReason = $"Insufficient resources after overcommit " +
-                    $"(CPU: {availability.RemainingCpu:F1}/{spec.CpuCores}, " +
+                    $"(Points: {availability.RemainingComputePoints}/{pointCost}, " +
                     $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
                     $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
                 scored.TotalScore = 0;
@@ -278,6 +282,14 @@ public class NodeService : INodeService
         QualityTier tier,
         TierPolicy policy)
     {
+
+        // ========================================
+        // NEW: POINT-BASED CPU CALCULATION
+        // ========================================
+
+        var totalComputePoints = node.TotalResources.TotalComputePoints;
+        var allocatedComputePoints = node.ReservedResources.ReservedComputePoints;
+
         // Calculate effective capacity with overcommit ratios
         var effectiveCpu = node.TotalResources.CpuCores * policy.CpuOvercommitRatio;
         var effectiveMemory = node.TotalResources.MemoryMb * policy.MemoryOvercommitRatio;
@@ -292,6 +304,13 @@ public class NodeService : INodeService
         {
             NodeId = node.Id,
             Tier = tier,
+
+            // NEW: Point-based tracking
+            TotalComputePoints = totalComputePoints,
+            AllocatedComputePoints = allocatedComputePoints,
+            RequiredComputePoints = 0, // Set during fit check
+
+            // Legacy fields
             EffectiveCpuCapacity = effectiveCpu,
             EffectiveMemoryCapacity = effectiveMemory,
             EffectiveStorageCapacity = effectiveStorage,
@@ -449,8 +468,6 @@ public class NodeService : INodeService
                 nodeId, request.MachineId, request.WalletAddress);
 
             existingNode.Name = request.Name;
-            existingNode.MachineId = request.MachineId;
-            existingNode.WalletAddress = request.WalletAddress;
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
             existingNode.TotalResources = request.Resources;
@@ -462,6 +479,13 @@ public class NodeService : INodeService
             existingNode.Zone = request.Zone ?? "default";
             existingNode.Status = NodeStatus.Online;
             existingNode.LastHeartbeat = DateTime.UtcNow;
+
+            // NEW: Re-initialize compute points if not set
+            if (existingNode.TotalResources.TotalComputePoints == 0)
+            {
+                existingNode.TotalResources.InitializeComputePoints();
+                existingNode.AvailableResources.InitializeComputePoints();
+            }
 
             await _dataStore.SaveNodeAsync(existingNode);
 
@@ -488,7 +512,7 @@ public class NodeService : INodeService
 
         var node = new Node
         {
-            Id = nodeId,  // ← Deterministic node ID
+            Id = nodeId,
             MachineId = request.MachineId,
             Name = request.Name,
             WalletAddress = request.WalletAddress,
@@ -506,6 +530,10 @@ public class NodeService : INodeService
             Zone = request.Zone ?? "default",
             LastHeartbeat = DateTime.UtcNow
         };
+
+        // Initialize compute points
+        node.TotalResources.InitializeComputePoints();
+        node.AvailableResources.InitializeComputePoints();
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -894,13 +922,19 @@ public class NodeService : INodeService
             var cpuToFree = vm.Spec.CpuCores;
             var memToFree = vm.Spec.MemoryMb;
             var storageToFree = vm.Spec.DiskGb;
+            var pointsToFree = vm.Spec.ComputePointCost;  // NEW
 
+            // Free CPU cores (legacy)
             node.ReservedResources.CpuCores = Math.Max(0,
                 node.ReservedResources.CpuCores - cpuToFree);
             node.ReservedResources.MemoryMb = Math.Max(0,
                 node.ReservedResources.MemoryMb - memToFree);
             node.ReservedResources.StorageGb = Math.Max(0,
                 node.ReservedResources.StorageGb - storageToFree);
+
+            // NEW: Free compute points
+            node.ReservedResources.ReservedComputePoints = Math.Max(0,
+                node.ReservedResources.ReservedComputePoints - pointsToFree);
 
             // Also update available resources
             node.AvailableResources.CpuCores += cpuToFree;
@@ -911,11 +945,12 @@ public class NodeService : INodeService
 
             _logger.LogInformation(
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB. " +
-                "Node now has: Reserved={ResCpu}c/{ResMem}MB, Available={AvCpu}c/{AvMem}MB",
-                vm.Id, node.Id, cpuToFree, memToFree, storageToFree,
-                node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb,
-                node.AvailableResources.CpuCores, node.AvailableResources.MemoryMb);
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +  // UPDATED
+                "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",  // UPDATED
+                vm.Id, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,  // UPDATED
+                node.ReservedResources.CpuCores, node.ReservedResources.ReservedComputePoints,  // UPDATED
+                node.AvailableResources.CpuCores,
+                node.AvailableResources.TotalComputePoints - node.ReservedResources.ReservedComputePoints);  // UPDATED
         }
         else
         {

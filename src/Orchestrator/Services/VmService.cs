@@ -25,17 +25,23 @@ public class VmService : IVmService
     private readonly DataStore _dataStore;
     private readonly INodeService _nodeService;
     private readonly IEventService _eventService;
+    private readonly ICentralIngressService _ingressService;
+    private readonly SchedulingConfiguration _schedulingConfig;
     private readonly ILogger<VmService> _logger;
 
     public VmService(
         DataStore dataStore,
         INodeService nodeService,
         IEventService eventService,
+        ICentralIngressService ingressService,
+        SchedulingConfiguration schedulingConfig,
         ILogger<VmService> logger)
     {
         _dataStore = dataStore;
         _nodeService = nodeService;
         _eventService = eventService;
+        _ingressService = ingressService;
+        _schedulingConfig = schedulingConfig;
         _logger = logger;
     }
 
@@ -466,15 +472,13 @@ public class VmService : IVmService
     {
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
         {
-            _logger.LogWarning(
-                "CompleteVmDeletion called for non-existent VM {VmId}",
-                vmId);
+            _logger.LogWarning("VM {VmId} not found for deletion", vmId);
             return;
         }
 
         _logger.LogInformation(
             "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
-            vmId, vm.OwnerId, vm.NodeId ?? "none");
+            vm.Id, vm.OwnerId, vm.NodeId ?? "none");
 
         // Mark as Deleted (final state before removal)
         vm.Status = VmStatus.Deleted;
@@ -483,26 +487,45 @@ public class VmService : IVmService
         vm.UpdatedAt = DateTime.UtcNow;
         await _dataStore.SaveVmAsync(vm);
 
+        // ========================================
+        // FREE RESOURCES INCLUDING POINTS
+        // ========================================
+
         // Free reserved resources from node
         if (!string.IsNullOrEmpty(vm.NodeId) &&
             _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
+            var cpuToFree = vm.Spec.CpuCores;
+            var memToFree = vm.Spec.MemoryMb;
+            var storageToFree = vm.Spec.DiskGb;
+            var pointsToFree = vm.Spec.ComputePointCost;  // NEW
+
+            // Free legacy resources
             node.ReservedResources.CpuCores = Math.Max(0,
-                node.ReservedResources.CpuCores - vm.Spec.CpuCores);
+                node.ReservedResources.CpuCores - cpuToFree);
             node.ReservedResources.MemoryMb = Math.Max(0,
-                node.ReservedResources.MemoryMb - vm.Spec.MemoryMb);
+                node.ReservedResources.MemoryMb - memToFree);
             node.ReservedResources.StorageGb = Math.Max(0,
-                node.ReservedResources.StorageGb - vm.Spec.DiskGb);
+                node.ReservedResources.StorageGb - storageToFree);
+
+            // NEW: Free compute points
+            node.ReservedResources.ReservedComputePoints = Math.Max(0,
+                node.ReservedResources.ReservedComputePoints - pointsToFree);
 
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB",
-                vmId, node.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb);
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
+                "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
+                vmId, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,
+                node.ReservedResources.ReservedComputePoints,
+                node.TotalResources.TotalComputePoints,
+                (double)node.ReservedResources.ReservedComputePoints /
+                Math.Max(1, node.TotalResources.TotalComputePoints) * 100);
         }
 
-        // Update user quotas
+        // Update user quotas (unchanged)
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
         {
             user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
@@ -521,7 +544,9 @@ public class VmService : IVmService
                 user.Quotas.CurrentMemoryMb);
         }
 
-        // Emit completion event
+        await _ingressService.OnVmDeletedAsync(vm.Id);
+
+        // Emit completion event (unchanged)
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmDeleted,
@@ -532,10 +557,6 @@ public class VmService : IVmService
         });
 
         _logger.LogInformation("VM {VmId} deletion completed successfully", vmId);
-
-        // OPTIONAL: Remove from database after a grace period
-        // For now, keep it with Status=Deleted for audit/billing
-        // A cleanup job can purge old Deleted VMs later
     }
 
     public async Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null)
@@ -594,9 +615,10 @@ public class VmService : IVmService
         vm.Status = VmStatus.Scheduling;
         await _dataStore.SaveVmAsync(vm);
 
-        var availableNodes = await _nodeService.GetAvailableNodesForVmAsync(vm.Spec);
+        // Use the smart scheduling from NodeService
+        var selectedNode = await _nodeService.SelectBestNodeForVmAsync(vm.Spec, vm.Spec.QualityTier);
 
-        if (!availableNodes.Any())
+        if (selectedNode == null)
         {
             _logger.LogWarning("No available nodes for VM {VmId}", vm.Id);
             vm.Status = VmStatus.Pending;
@@ -605,17 +627,41 @@ public class VmService : IVmService
             return;
         }
 
-        var selectedNode = availableNodes.First();
+        // ========================================
+        // CALCULATE AND RESERVE POINTS
+        // ========================================
 
-        // Reserve resources
+        // Get tier policy to calculate point cost
+        var policy = _schedulingConfig.TierPolicies[vm.Spec.QualityTier];
+        var pointCost = vm.Spec.CpuCores * policy.PointsPerVCpu;
+
+        // Store point cost in VM spec for future reference
+        vm.Spec.ComputePointCost = pointCost;
+
+        // Reserve resources (legacy fields for backward compat)
         selectedNode.AvailableResources.CpuCores -= vm.Spec.CpuCores;
         selectedNode.AvailableResources.MemoryMb -= vm.Spec.MemoryMb;
         selectedNode.AvailableResources.StorageGb -= vm.Spec.DiskGb;
+
         selectedNode.ReservedResources.CpuCores += vm.Spec.CpuCores;
         selectedNode.ReservedResources.MemoryMb += vm.Spec.MemoryMb;
         selectedNode.ReservedResources.StorageGb += vm.Spec.DiskGb;
 
+        // Reserve compute points
+        selectedNode.ReservedResources.ReservedComputePoints += pointCost;
+
         await _dataStore.SaveNodeAsync(selectedNode);
+
+        _logger.LogInformation(
+            "Reserved resources for VM {VmId} on node {NodeId}: " +
+            "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points ({Tier}). " +
+            "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
+            vm.Id, selectedNode.Id,
+            vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb, pointCost, vm.Spec.QualityTier,
+            selectedNode.ReservedResources.ReservedComputePoints,
+            selectedNode.TotalResources.TotalComputePoints,
+            (double)selectedNode.ReservedResources.ReservedComputePoints /
+            selectedNode.TotalResources.TotalComputePoints * 100);
 
         vm.NodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;

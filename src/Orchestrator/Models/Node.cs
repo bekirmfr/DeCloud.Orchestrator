@@ -14,47 +14,84 @@ public class Node
     /// </summary>
     public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
-    
+
     // Connection info
     public string Endpoint { get; set; } = string.Empty;  // How orchestrator reaches the node
     public string PublicIp { get; set; } = string.Empty;
     public int AgentPort { get; set; } = 5050;
-    
+
     // Resources
     public NodeResources TotalResources { get; set; } = new();
     public NodeResources AvailableResources { get; set; } = new();
     public NodeResources ReservedResources { get; set; } = new();
-    
+
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
     public DateTime LastHeartbeat { get; set; } = DateTime.UtcNow;
     public string AgentVersion { get; set; } = string.Empty;
-    
+
     // Capabilities
     public List<string> SupportedImages { get; set; } = new();
     public bool SupportsGpu { get; set; }
     public GpuInfo? GpuInfo { get; set; }
-    
+
     // Performance metrics
     public NodeMetrics? LatestMetrics { get; set; }
-    
+
     // Reputation/Trust
     public double UptimePercentage { get; set; } = 100.0;
     public int TotalVmsHosted { get; set; }
     public int SuccessfulVmCompletions { get; set; }
-    
+
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
 }
 
+/// <summary>
+/// Node resource allocation with point-based CPU tracking
+/// </summary>
 public class NodeResources
 {
+    // ========================================
+    // LEGACY FIELDS (Backward Compatible)
+    // ========================================
     public int CpuCores { get; set; }
     public long MemoryMb { get; set; }
     public long StorageGb { get; set; }
     public long BandwidthMbps { get; set; }
+
+    // ========================================
+    // NEW: POINT-BASED CPU ALLOCATION
+    // ========================================
+
+    /// <summary>
+    /// Total compute points available (CpuCores × 8)
+    /// Each physical core = 8 compute points
+    /// Example: 2-core node = 16 total points
+    /// </summary>
+    public int TotalComputePoints { get; set; }
+
+    /// <summary>
+    /// Currently reserved compute points (sum of all VM point costs)
+    /// </summary>
+    public int ReservedComputePoints { get; set; }
+
+    /// <summary>
+    /// Available compute points for new VMs
+    /// </summary>
+    public int AvailableComputePoints => TotalComputePoints - ReservedComputePoints;
+
+    /// <summary>
+    /// Initialize compute points from physical CPU cores
+    /// Call this during node registration
+    /// </summary>
+    public void InitializeComputePoints()
+    {
+        TotalComputePoints = CpuCores * 8;
+        // ReservedComputePoints starts at 0 for new nodes
+    }
 }
 
 public class GpuInfo
@@ -178,7 +215,9 @@ public record NodeHeartbeatResponse(
     List<NodeCommand>? PendingCommands
 );
 
-
+/// <summary>
+/// Command sent from orchestrator to node agent
+/// </summary>
 public record NodeCommand(
     string CommandId,
     NodeCommandType Type,
@@ -208,9 +247,12 @@ public record NodeCommand(
     public TimeSpan Age => DateTime.UtcNow - QueuedAt;
 }
 
-public record PendingCommandDto(
+/// <summary>
+/// Pending command details for orchestrator tracking
+/// </summary>
+public record PendingCommand(
     string CommandId,
-    string Type,
+    NodeCommandType Type,
     string? TargetResourceId,
     DateTime QueuedAt,
     double AgeSeconds,

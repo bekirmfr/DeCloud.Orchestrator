@@ -16,7 +16,7 @@ public class VirtualMachine
     public string OwnerWallet { get; set; } = string.Empty;    // Wallet address
     
     // Placement
-    public string? NodeId { get; set; }                        // Which node it's running on
+    public string NodeId { get; set; }                        // Which node it's running on
     public string? TargetNodeId { get; set; }                  // For migrations
     
     // Specification
@@ -85,6 +85,25 @@ public class VmSpec
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }
 
+    // ========================================
+    // COMPUTE POINT COST TRACKING
+    // ========================================
+
+    /// <summary>
+    /// Compute point cost for this VM based on tier and vCPU count
+    /// Calculated during scheduling: CpuCores × PointsPerVCpu[QualityTier]
+    /// Examples on 2-core (16-point) node:
+    /// - Guaranteed 1vCPU: 1 × 8 = 8 points
+    /// - Standard 1vCPU: 1 × 4 = 4 points
+    /// - Balanced 1vCPU: 1 × 2 = 2 points
+    /// - Burstable 1vCPU: 1 × 1 = 1 point
+    /// </summary>
+    public int ComputePointCost { get; set; }
+
+    // ========================================
+    // SCHEDULING PREFERENCES
+    // ========================================
+
     // Scheduling preferences and requirements
     /// <summary>
     /// Preferred quality tier for scheduling (Guaranteed, Standard, Burstable)
@@ -131,7 +150,9 @@ public class VmSpec
     /// </summary>
     public Dictionary<string, string> SchedulingTags { get; set; } = new();
 
-    // Image
+    // ========================================
+    // IMAGE & ACCESS
+    // ========================================
     public string ImageId { get; set; } = string.Empty;       // e.g., "ubuntu-22.04"
     public string? ImageUrl { get; set; }                     // Custom image URL
     
@@ -244,11 +265,9 @@ public enum VmStatus
 public enum VmPowerState
 {
     Off,
-    Starting,
     Running,
     Paused,
-    Suspended,
-    ShuttingDown
+    Suspended
 }
 
 // DTOs for API

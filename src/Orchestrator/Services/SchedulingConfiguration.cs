@@ -8,33 +8,46 @@ namespace Orchestrator.Services;
 public class SchedulingConfiguration
 {
     /// <summary>
-    /// Quality tier definitions with different overcommit guarantees
+    /// Quality tier definitions with point-based CPU allocation
+    /// Each physical core = 8 compute points
     /// </summary>
     public Dictionary<QualityTier, TierPolicy> TierPolicies { get; set; } = new()
     {
         [QualityTier.Guaranteed] = new TierPolicy
         {
-            CpuOvercommitRatio = 1.0,      // 1:1 - No overcommit
-            MemoryOvercommitRatio = 1.0,   // 1:1 - No overcommit
-            StorageOvercommitRatio = 1.0,  // 1:1 - No overcommit
-            PriceMultiplier = 2.0m,         // 2x price premium
-            Description = "Dedicated resources, guaranteed performance"
+            PointsPerVCpu = 8,              // 1:1 - Full core per vCPU
+            CpuOvercommitRatio = 1.0,       // No overcommit
+            MemoryOvercommitRatio = 1.0,    // No overcommit
+            StorageOvercommitRatio = 1.0,   // No overcommit
+            PriceMultiplier = 2.5m,         // Premium pricing
+            Description = "Dedicated resources, guaranteed 1:1 CPU performance"
         },
         [QualityTier.Standard] = new TierPolicy
         {
-            CpuOvercommitRatio = 2.0,      // 2:1 - Moderate overcommit
-            MemoryOvercommitRatio = 1.2,   // 1.2:1 - Slight overcommit
-            StorageOvercommitRatio = 1.5,  // 1.5:1 - Storage can be overcommitted more
-            PriceMultiplier = 1.0m,         // Base price
-            Description = "Balanced performance and cost"
+            PointsPerVCpu = 4,              // 2:1 - Half core per vCPU
+            CpuOvercommitRatio = 2.0,       // 2:1 overcommit
+            MemoryOvercommitRatio = 1.2,    // Slight memory overcommit
+            StorageOvercommitRatio = 1.5,   // Storage overcommit
+            PriceMultiplier = 1.0m,          // Base price
+            Description = "Balanced performance and cost, 2:1 CPU overcommit"
+        },
+        [QualityTier.Balanced] = new TierPolicy
+        {
+            PointsPerVCpu = 2,              // 4:1 - Quarter core per vCPU
+            CpuOvercommitRatio = 4.0,       // 4:1 overcommit
+            MemoryOvercommitRatio = 1.5,    // Moderate memory overcommit
+            StorageOvercommitRatio = 2.0,   // Storage overcommit
+            PriceMultiplier = 0.6m,          // Reduced pricing
+            Description = "Cost-optimized for consistent workloads, 4:1 CPU overcommit"
         },
         [QualityTier.Burstable] = new TierPolicy
         {
-            CpuOvercommitRatio = 4.0,      // 4:1 - Aggressive overcommit
-            MemoryOvercommitRatio = 1.5,   // 1.5:1 - Moderate memory overcommit
-            StorageOvercommitRatio = 2.0,  // 2:1 - Storage overcommit
-            PriceMultiplier = 0.5m,         // 50% cheaper
-            Description = "Cost-optimized, variable performance"
+            PointsPerVCpu = 1,              // 8:1 - Eighth core per vCPU
+            CpuOvercommitRatio = 8.0,       // 8:1 aggressive overcommit
+            MemoryOvercommitRatio = 2.0,    // Significant memory overcommit
+            StorageOvercommitRatio = 2.5,   // High storage overcommit
+            PriceMultiplier = 0.3m,          // Lowest pricing
+            Description = "Best-effort, lowest cost, 8:1 CPU overcommit"
         }
     };
 
@@ -66,7 +79,20 @@ public class SchedulingConfiguration
 
 public class TierPolicy
 {
+    /// <summary>
+    /// Compute points required per vCPU for this tier
+    /// - Guaranteed: 8 points (1:1 ratio)
+    /// - Standard: 4 points (2:1 ratio)
+    /// - Balanced: 2 points (4:1 ratio)
+    /// - Burstable: 1 point (8:1 ratio)
+    /// </summary>
+    public int PointsPerVCpu { get; set; }
+
+    /// <summary>
+    /// CPU overcommit ratio (kept for reference and backward compat)
+    /// </summary>
     public double CpuOvercommitRatio { get; set; }
+
     public double MemoryOvercommitRatio { get; set; }
     public double StorageOvercommitRatio { get; set; }
     public decimal PriceMultiplier { get; set; }
@@ -110,35 +136,70 @@ public class ScoringWeights
 }
 
 /// <summary>
-/// Quality tier for VM scheduling
+/// Quality tier for VM scheduling with point-based allocation
 /// </summary>
 public enum QualityTier
 {
     /// <summary>
     /// No overcommit, guaranteed resources, highest cost
+    /// 8 points per vCPU (1:1 ratio)
     /// </summary>
     Guaranteed,
 
     /// <summary>
     /// Moderate overcommit, balanced, standard pricing
+    /// 4 points per vCPU (2:1 ratio)
     /// </summary>
     Standard,
 
     /// <summary>
+    /// Cost-optimized for consistent workloads
+    /// 2 points per vCPU (4:1 ratio)
+    /// </summary>
+    Balanced,
+
+    /// <summary>
     /// Aggressive overcommit, lowest cost, variable performance
+    /// 1 point per vCPU (8:1 ratio)
     /// </summary>
     Burstable
 }
 
 /// <summary>
-/// Calculated resource availability for a node considering overcommit
+/// Calculated resource availability for a node considering overcommit and points
 /// </summary>
 public class NodeResourceAvailability
 {
     public string NodeId { get; set; } = string.Empty;
     public QualityTier Tier { get; set; }
 
-    // Effective capacity with overcommit applied
+    // ========================================
+    // POINT-BASED CPU TRACKING
+    // ========================================
+
+    /// <summary>
+    /// Total compute points available on this node
+    /// </summary>
+    public int TotalComputePoints { get; set; }
+
+    /// <summary>
+    /// Currently allocated compute points
+    /// </summary>
+    public int AllocatedComputePoints { get; set; }
+
+    /// <summary>
+    /// Remaining compute points for new VMs
+    /// </summary>
+    public int RemainingComputePoints => TotalComputePoints - AllocatedComputePoints;
+
+    /// <summary>
+    /// Point cost required for the VM being evaluated
+    /// </summary>
+    public int RequiredComputePoints { get; set; }
+
+    // ========================================
+    // LEGACY: EFFECTIVE CAPACITY (kept for backward compat)
+    // ========================================
     public double EffectiveCpuCapacity { get; set; }
     public double EffectiveMemoryCapacity { get; set; }
     public double EffectiveStorageCapacity { get; set; }
@@ -154,17 +215,24 @@ public class NodeResourceAvailability
     public double RemainingStorage => EffectiveStorageCapacity - AllocatedStorage;
 
     // Utilization percentages
-    public double CpuUtilization => EffectiveCpuCapacity > 0
-        ? (AllocatedCpu / EffectiveCpuCapacity) * 100
+    public double CpuUtilization => TotalComputePoints > 0
+        ? ((double)AllocatedComputePoints / TotalComputePoints) * 100
         : 0;
+
     public double MemoryUtilization => EffectiveMemoryCapacity > 0
         ? (AllocatedMemory / EffectiveMemoryCapacity) * 100
         : 0;
 
-    // Can this node fit the VM?
-    public bool CanFit(VmSpec spec)
+    // ========================================
+    // CAPACITY CHECK (POINT-BASED)
+    // ========================================
+
+    /// <summary>
+    /// Can this node fit the VM based on point-based allocation?
+    /// </summary>
+    public bool CanFit(VmSpec spec, int pointCost)
     {
-        return RemainingCpu >= spec.CpuCores
+        return RemainingComputePoints >= pointCost
             && RemainingMemory >= spec.MemoryMb
             && RemainingStorage >= spec.DiskGb;
     }
@@ -172,8 +240,8 @@ public class NodeResourceAvailability
     // Utilization after adding this VM
     public double ProjectedCpuUtilization(VmSpec spec)
     {
-        return EffectiveCpuCapacity > 0
-            ? ((AllocatedCpu + spec.CpuCores) / EffectiveCpuCapacity) * 100
+        return TotalComputePoints > 0
+            ? ((double)(AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
             : 100;
     }
 
