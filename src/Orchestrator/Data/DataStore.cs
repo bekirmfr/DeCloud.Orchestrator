@@ -571,12 +571,25 @@ public class DataStore
             ActiveUsers = Users.Values
                 .Count(u => u.LastLoginAt > DateTime.UtcNow.AddDays(-30)),
 
-            // Resource statistics (from online nodes)
+            // ========================================
+            // LEGACY CPU STATISTICS (backward compat)
+            // ========================================
             TotalCpuCores = nodes.Sum(n => n.TotalResources.CpuCores),
             AvailableCpuCores = onlineNodes.Sum(n => n.AvailableResources.CpuCores),
             UsedCpuCores = nodes.Sum(n =>
                 n.TotalResources.CpuCores - n.AvailableResources.CpuCores),
 
+            // ========================================
+            // POINT-BASED CPU STATISTICS
+            // ========================================
+            TotalComputePoints = nodes.Sum(n => n.TotalResources.TotalComputePoints),
+            AvailableComputePoints = onlineNodes.Sum(n =>
+                n.TotalResources.TotalComputePoints - n.ReservedResources.ReservedComputePoints),
+            UsedComputePoints = nodes.Sum(n => n.ReservedResources.ReservedComputePoints),
+
+            // ========================================
+            // MEMORY & STORAGE STATISTICS
+            // ========================================
             TotalMemoryMb = nodes.Sum(n => n.TotalResources.MemoryMb),
             AvailableMemoryMb = onlineNodes.Sum(n => n.AvailableResources.MemoryMb),
             UsedMemoryMb = nodes.Sum(n =>
@@ -588,9 +601,14 @@ public class DataStore
                 n.TotalResources.StorageGb - n.AvailableResources.StorageGb),
         };
 
-        // Calculate utilization percentages
+        // Calculate legacy utilization percentages
         stats.CpuUtilizationPercent = stats.TotalCpuCores > 0
             ? (double)stats.UsedCpuCores / stats.TotalCpuCores * 100
+            : 0;
+
+        // Calculate point-based utilization
+        stats.ComputePointUtilizationPercent = stats.TotalComputePoints > 0
+            ? (double)stats.UsedComputePoints / stats.TotalComputePoints * 100
             : 0;
 
         stats.MemoryUtilizationPercent = stats.TotalMemoryMb > 0

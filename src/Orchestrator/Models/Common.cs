@@ -118,12 +118,27 @@ public class SystemStats
     public int TotalUsers { get; set; }
     public int ActiveUsers { get; set; }
 
+    // ========================================
+    // CPU RESOURCE STATISTICS
+    // ========================================
+
+    // Legacy: Physical core tracking (backward compatibility)
+
     // Resource statistics
     public long TotalCpuCores { get; set; }
     public long AvailableCpuCores { get; set; }
     public long UsedCpuCores { get; set; }
     public double CpuUtilizationPercent { get; set; }
 
+    // Point-based CPU tracking
+    public long TotalComputePoints { get; set; }
+    public long AvailableComputePoints { get; set; }
+    public long UsedComputePoints { get; set; }
+    public double ComputePointUtilizationPercent { get; set; }
+
+    // ========================================
+    // MEMORY & STORAGE STATISTICS
+    // ========================================
     public long TotalMemoryMb { get; set; }
     public long AvailableMemoryMb { get; set; }
     public long UsedMemoryMb { get; set; }

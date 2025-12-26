@@ -859,16 +859,35 @@ async function refreshData() {
 
 async function loadDashboardStats() {
     try {
-        const response = await api('/api/system/stats');  // ← Fix endpoint
+        const response = await api('/api/system/stats');
         const data = await response.json();
 
         if (data.success) {
             const stats = data.data;
 
+            // VM and Node counts
             document.getElementById('stat-vms').textContent = stats.totalVms || 0;
             document.getElementById('stat-nodes').textContent = stats.onlineNodes || 0;
-            document.getElementById('stat-cpu').textContent = `${stats.availableCpuCores || 0} cores`;
-            document.getElementById('stat-memory').textContent = `${((stats.availableMemoryMb || 0) / 1024).toFixed(1)} GB`;
+
+            // ========================================
+            // DISPLAY COMPUTE POINTS (not raw cores)
+            // ========================================
+            const totalPoints = stats.totalComputePoints || 0;
+            const availablePoints = stats.availableComputePoints || 0;
+            const usedPoints = stats.usedComputePoints || 0;
+            const utilizationPercent = stats.computePointUtilizationPercent || 0;
+
+            // Show "X / Y points (Z% used)"
+            document.getElementById('stat-cpu').textContent = 
+                `${availablePoints} / ${totalPoints} points`;
+            
+            // Optional: Add a tooltip or secondary display showing percentage
+            const cpuElement = document.getElementById('stat-cpu');
+            cpuElement.title = `${utilizationPercent.toFixed(1)}% utilized (${usedPoints} points used)`;
+
+            // Memory display (unchanged)
+            document.getElementById('stat-memory').textContent = 
+                `${((stats.availableMemoryMb || 0) / 1024).toFixed(1)} GB`;
         }
     } catch (error) {
         console.error('[Dashboard] Failed to load stats:', error);
