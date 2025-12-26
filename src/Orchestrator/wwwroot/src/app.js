@@ -1289,7 +1289,7 @@ function updateTierInfo() {
 }
 
 function updateEstimatedCost() {
-    const cpuCores = parseInt(document.getElementById('vn-cpu').value);
+    const cpuCores = parseInt(document.getElementById('vm-cpu').value);
     const memoryMb = parseInt(document.getElementById('vm-memory').value);
     const diskGb = parseInt(document.getElementById('vm-disk').value);
     const tierId = parseInt(document.getElementById('quality-tier').value);
