@@ -96,7 +96,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!sessionRestored) {
         showLogin();
     }
+
+    updateTierInfo();
+    updateEstimatedCost();
 });
+
+// ============================================
+// Event listeners to CPU/Memory/Disk fields to update cost in real-time:
+// ============================================
+document.getElementById('cpu-cores').addEventListener('change', updateEstimatedCost);
+document.getElementById('memory-mb').addEventListener('change', updateEstimatedCost);
+document.getElementById('disk-gb').addEventListener('change', updateEstimatedCost);
 
 // ============================================
 // APPKIT INITIALIZATION
@@ -971,12 +981,22 @@ function renderVMsTable(vms) {
             sshJumpHost !== 'pending' &&
             vmIp !== 'pending';
 
+        const tierBadges = {
+            0: '<span class="tier-badge tier-guaranteed">Guaranteed</span>',
+            1: '<span class="tier-badge tier-standard">Standard</span>',
+            2: '<span class="tier-badge tier-burstable">Burstable</span>',
+            3: '<span class="tier-badge tier-balanced">Balanced</span>'
+        };
+
+        const tierBadge = tierBadges[vm.spec.qualityTier] || '';
+
         return `
         <tr>
             <td>
                 <div class="vm-name">
                     <div class="vm-status ${getStatusClass(vm.status)}"></div>
                     ${escapeHtml(vm.name)}
+                    ${tierBadge}
                 </div>
             </td>
             <td>${escapeHtml(nodeName)}</td>
