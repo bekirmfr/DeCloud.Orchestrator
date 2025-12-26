@@ -260,6 +260,19 @@ public record PendingCommand(
     DateTime? ExpiresAt
 );
 
+/// <summary>
+/// DTO for API responses containing pending command information
+/// </summary>
+public record PendingCommandDto(
+    string CommandId,
+    string Type,
+    string? TargetResourceId,
+    DateTime QueuedAt,
+    double AgeSeconds,
+    bool IsExpired,
+    DateTime? ExpiresAt
+);
+
 public enum NodeCommandType
 {
     CreateVm,
