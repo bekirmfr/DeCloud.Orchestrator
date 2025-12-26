@@ -1011,35 +1011,35 @@ function renderVMsTable(vms) {
             <td>
                 <div class="table-actions">
                     <!-- Connect Info -->
-            <button class="btn btn-sm btn-primary" 
-                    onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})" 
-                    title="Connection Info">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                </svg>
-            </button>
+                    <button class="btn btn-sm btn-primary" 
+                            onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})" 
+                            title="Connection Info">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                    </button>
 
-            <!-- Terminal -->
-            <button class="btn btn-sm" 
-                    onclick="openTerminal('${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
-                    title="Open Terminal">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="4 17 10 11 4 5"/>
-                    <line x1="12" y1="19" x2="20" y2="19"/>
-                </svg>
-            </button>
+                    <!-- Terminal -->
+                    <button class="btn btn-sm" 
+                            onclick="openTerminal('${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
+                            title="Open Terminal">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="4 17 10 11 4 5"/>
+                            <line x1="12" y1="19" x2="20" y2="19"/>
+                        </svg>
+                    </button>
 
-            <!-- File Browser -->
-            <button class="btn btn-sm" 
-                    onclick="openFileBrowser('${vm.id}','${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
-                    title="File Browser">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                </svg>
-            </button>
-            <!-- Reveal Password -->
-            <button class="btn-icon" 
+                    <!-- File Browser -->
+                    <button class="btn btn-sm" 
+                            onclick="openFileBrowser('${vm.id}','${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
+                            title="File Browser">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                    </button>
+                    <!-- Reveal Password -->
+                    <button class="btn-icon" 
                             onclick="window.revealPassword('${vm.id}')" 
                             title="Show Password">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1047,23 +1047,23 @@ function renderVMsTable(vms) {
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
                     </button>
-            <!-- Start/Stop -->
-            ${vm.state === 'Running' 
-                ? `<button class="btn btn-sm btn-warning" onclick="stopVm('${vm.id}')" title="Stop">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                   </button>`
-                : `<button class="btn btn-sm btn-success" onclick="startVm('${vm.id}')" title="Start">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                   </button>`
-            }
+                    <!-- Start/Stop -->
+                    ${vm.state === 'Running' 
+                        ? `<button class="btn btn-sm btn-warning" onclick="stopVm('${vm.id}')" title="Stop">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                           </button>`
+                        : `<button class="btn btn-sm btn-success" onclick="startVm('${vm.id}')" title="Start">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                           </button>`
+                    }
 
-            <!-- Delete -->
-            <button class="btn btn-sm btn-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                </svg>
-            </button>
+                    <!-- Delete -->
+                    <button class="btn btn-sm btn-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
                 </div>
             </td>
         </tr>
@@ -1289,9 +1289,9 @@ function updateTierInfo() {
 }
 
 function updateEstimatedCost() {
-    const cpuCores = parseInt(document.getElementById('cpu-cores').value);
-    const memoryMb = parseInt(document.getElementById('memory-mb').value);
-    const diskGb = parseInt(document.getElementById('disk-gb').value);
+    const cpuCores = parseInt(document.getElementById('vn-cpu').value);
+    const memoryMb = parseInt(document.getElementById('vm-memory').value);
+    const diskGb = parseInt(document.getElementById('vm-disk').value);
     const tierId = parseInt(document.getElementById('quality-tier').value);
     const tier = QUALITY_TIERS[tierId];
     
