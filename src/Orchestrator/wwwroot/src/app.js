@@ -104,9 +104,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================
 // Event listeners to CPU/Memory/Disk fields to update cost in real-time:
 // ============================================
-document.getElementById('cpu-cores').addEventListener('change', updateEstimatedCost);
-document.getElementById('memory-mb').addEventListener('change', updateEstimatedCost);
-document.getElementById('disk-gb').addEventListener('change', updateEstimatedCost);
+document.getElementById('vm-cpu').addEventListener('change', updateEstimatedCost);
+document.getElementById('vm-memory').addEventListener('change', updateEstimatedCost);
+document.getElementById('vm-disk').addEventListener('change', updateEstimatedCost);
 
 // ============================================
 // APPKIT INITIALIZATION
