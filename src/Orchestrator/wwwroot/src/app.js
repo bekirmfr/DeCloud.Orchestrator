@@ -1225,7 +1225,7 @@ async function createVM() {
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
     const memoryMb = parseInt(document.getElementById('vm-memory').value);
     const diskGb = parseInt(document.getElementById('vm-disk').value);
-    const imageId = document.getElementById('os-image').value;
+    const imageId = document.getElementById('vm-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     
     if (!name) {
