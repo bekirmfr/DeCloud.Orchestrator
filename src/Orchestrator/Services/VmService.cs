@@ -694,6 +694,8 @@ public class VmService : IVmService
                 VCpus = vm.Spec.CpuCores,
                 MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
                 DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
+                QualityTier = (int)vm.Spec.QualityTier,
+                ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
