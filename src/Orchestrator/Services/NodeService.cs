@@ -1,8 +1,7 @@
-﻿using DeCloud.Shared;
+﻿using System.Security.Cryptography;
+using DeCloud.Shared;
 using Orchestrator.Data;
 using Orchestrator.Models;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace Orchestrator.Services;
 
@@ -121,55 +120,36 @@ public class NodeService : INodeService
         return best?.Node;
     }
 
-    /// <summary>
-    /// Score and rank nodes for VM placement.
-    /// Returns nodes sorted by score (highest first).
-    /// </summary>
     public async Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
-        QualityTier tier)
+        QualityTier tier = QualityTier.Standard)
     {
         var policy = _schedulingConfig.TierPolicies[tier];
-        var onlineNodes = _dataStore.Nodes.Values
-            .Where(n => n.Status == NodeStatus.Online)
-            .ToList();
-
-        _logger.LogInformation(
-            "Scoring {NodeCount} online nodes for VM spec: {CpuCores}c/{MemoryMb}MB/{DiskGb}GB [{Tier}]",
-            onlineNodes.Count,
-            spec.CpuCores,
-            spec.MemoryMb,
-            spec.DiskGb,
-            tier);
-
+        var allNodes = _dataStore.Nodes.Values.ToList();
+        _logger.LogInformation("Scoring {TotalNodesCount} nodes", allNodes.Count);
         var scoredNodes = new List<ScoredNode>();
 
-        foreach (var node in onlineNodes)
+        foreach (var node in allNodes)
         {
             var scored = await ScoreNodeForVmAsync(node, spec, tier, policy);
-
-            if (!string.IsNullOrEmpty(scored.RejectionReason))
-            {
-                _logger.LogDebug(
-                    "Node {NodeId} rejected: {Reason}",
-                    node.Id,
-                    scored.RejectionReason);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "Node {NodeId} scored: {Score:F3} (Capacity: {CapScore:F2}, Load: {LoadScore:F2})",
-                    node.Id,
-                    scored.TotalScore,
-                    scored.ComponentScores.CapacityScore,
-                    scored.ComponentScores.LoadScore);
-            }
+            _logger.LogInformation("Scoring result:");
+            // Add scroring logs
+             _logger.LogInformation("Node {NodeId} - Total Score: {TotalScore:F2}, " +
+                 "Capacity: {CapacityScore:F2}, Load: {LoadScore:F2}, " +
+                 "Reputation: {ReputationScore:F2}, Locality: {LocalityScore:F2}, " +
+                 "Rejection: {RejectionReason}",
+                 node.Id,
+                 scored.TotalScore,
+                 scored.ComponentScores.CapacityScore,
+                 scored.ComponentScores.LoadScore,
+                 scored.ComponentScores.ReputationScore,
+                 scored.ComponentScores.LocalityScore,
+                 scored.RejectionReason ?? "None");
 
             scoredNodes.Add(scored);
         }
 
         return scoredNodes
-            .Where(sn => string.IsNullOrEmpty(sn.RejectionReason))
             .OrderByDescending(sn => sn.TotalScore)
             .ToList();
     }
@@ -178,172 +158,140 @@ public class NodeService : INodeService
     // SMART SCHEDULING - Scoring & Filtering
     // ============================================================================
 
-    /// <summary>
-    /// Score a single node for VM placement
-    /// </summary>
     private async Task<ScoredNode> ScoreNodeForVmAsync(
         Node node,
         VmSpec spec,
         QualityTier tier,
         TierPolicy policy)
     {
-        var scored = new ScoredNode { Node = node };
-
-        // Step 1: Hard filters (must pass or node is rejected)
-        var rejection = ApplyHardFilters(node, spec, policy);
-        if (rejection != null)
+        try
         {
-            scored.RejectionReason = rejection;
-            scored.TotalScore = 0;
-            return scored;
+            var scored = new ScoredNode { Node = node };
+
+            // Step 1: Hard filters (must pass or node is rejected)
+            var rejection = ApplyHardFilters(node, spec, policy);
+            if (rejection != null)
+            {
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
+                scored.RejectionReason = rejection;
+                scored.TotalScore = 0;
+                return scored;
+            }
+
+            // Step 2: Calculate resource availability with overcommit
+            var availability = CalculateResourceAvailability(node, tier, policy);
+            scored.Availability = availability;
+
+            // Step 3: Check if VM fits after overcommit calculation
+            if (!availability.CanFit(spec))
+            {
+                scored.RejectionReason = $"Insufficient resources after overcommit " +
+                    $"(CPU: {availability.RemainingCpu:F1}/{spec.CpuCores}, " +
+                    $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
+                    $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
+                scored.TotalScore = 0;
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
+                return scored;
+            }
+
+            // Step 4: Check utilization safety threshold
+            var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
+            var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
+
+            if (projectedCpuUtil > _schedulingConfig.MaxUtilizationPercent ||
+                projectedMemUtil > _schedulingConfig.MaxUtilizationPercent)
+            {
+                scored.RejectionReason = $"Would exceed max utilization " +
+                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
+                scored.TotalScore = 0;
+                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
+                return scored;
+            }
+
+            // Step 5: Calculate component scores
+            var scores = new NodeScores
+            {
+                CapacityScore = CalculateCapacityScore(availability, spec),
+                LoadScore = CalculateLoadScore(node, availability),
+                ReputationScore = CalculateReputationScore(node),
+                LocalityScore = CalculateLocalityScore(node, spec)
+            };
+
+            scored.ComponentScores = scores;
+
+            // Step 6: Calculate weighted total score
+            var weights = _schedulingConfig.Weights;
+            scored.TotalScore =
+                (scores.CapacityScore * weights.Capacity) +
+                (scores.LoadScore * weights.Load) +
+                (scores.ReputationScore * weights.Reputation) +
+                (scores.LocalityScore * weights.Locality);
+
+            return await Task.FromResult(scored);
         }
-
-        // Step 2: Calculate resource availability with overcommit
-        var availability = CalculateResourceAvailability(node, tier, policy);
-        scored.Availability = availability;
-
-        // Step 3: Check if VM fits after overcommit calculation
-        if (!availability.CanFit(spec))
+        catch (Exception ex)
         {
-            scored.RejectionReason = $"Insufficient resources after overcommit " +
-                $"(Requested: {spec.CpuCores}c/{spec.MemoryMb}MB/{spec.DiskGb}GB, " +
-                $"Available: {availability.RemainingCpu:F1}c/{availability.RemainingMemory:F0}MB/{availability.RemainingStorage:F0}GB)";
-            scored.TotalScore = 0;
-            return scored;
+            _logger.LogError(ex, "Failed to score node {NodeId}", node.Id);
+            throw;
         }
-
-        // Step 4: Check utilization safety threshold
-        var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
-        var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
-
-        if (projectedCpuUtil > _schedulingConfig.MaxUtilizationPercent ||
-            projectedMemUtil > _schedulingConfig.MaxUtilizationPercent)
-        {
-            scored.RejectionReason = $"Would exceed max utilization " +
-                $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
-            scored.TotalScore = 0;
-            return scored;
-        }
-
-        // Step 5: Calculate component scores
-        scored.ComponentScores = new NodeScores
-        {
-            CapacityScore = CalculateCapacityScore(availability, spec),
-            LoadScore = CalculateLoadScore(node),
-            ReputationScore = CalculateReputationScore(node),
-            LocalityScore = CalculateLocalityScore(node, spec)
-        };
-
-        // Step 6: Calculate weighted total score
-        var weights = _schedulingConfig.Weights;
-        scored.TotalScore =
-            (scored.ComponentScores.CapacityScore * weights.Capacity) +
-            (scored.ComponentScores.LoadScore * weights.Load) +
-            (scored.ComponentScores.ReputationScore * weights.Reputation) +
-            (scored.ComponentScores.LocalityScore * weights.Locality);
-
-        return scored;
+        
     }
 
-    /// <summary>
-    /// Apply hard filters that immediately reject a node
-    /// </summary>
     private string? ApplyHardFilters(Node node, VmSpec spec, TierPolicy policy)
     {
-        // Check node status
+        // Filter 1: Node must be online
         if (node.Status != NodeStatus.Online)
-        {
-            return $"Node is {node.Status}";
-        }
+            return $"Node offline (status: {node.Status})";
 
-        // Check GPU requirement
-        if (spec.RequiresGpu && !node.SupportsGpu)
-        {
-            return "Node does not support GPU";
-        }
-
-        // Check specific GPU model if requested
-        if (!string.IsNullOrEmpty(spec.GpuModel) &&
-            (node.GpuInfo == null || !node.GpuInfo.Model.Contains(spec.GpuModel, StringComparison.OrdinalIgnoreCase)))
-        {
-            return $"Node does not have required GPU model: {spec.GpuModel}";
-        }
-
-        // Check image support
+        // Filter 2: Must support required image
         if (!string.IsNullOrEmpty(spec.ImageId) &&
-            node.SupportedImages.Count > 0 &&
+            node.SupportedImages != null &&
             !node.SupportedImages.Contains(spec.ImageId))
-        {
-            return $"Node does not support image: {spec.ImageId}";
-        }
+            return $"Image {spec.ImageId} not supported";
 
-        // Check minimum physical capacity (before overcommit)
-        // A node with 1 physical core cannot realistically host VMs requesting 4+ cores
-        if (node.TotalResources.CpuCores < spec.CpuCores && policy.CpuOvercommitRatio == 1.0)
-        {
-            return $"Guaranteed tier requires {spec.CpuCores} physical cores, node has {node.TotalResources.CpuCores}";
-        }
+        // Filter 3: GPU requirement
+        if (spec.RequiresGpu && !node.SupportsGpu)
+            return "GPU required but not available";
 
-        // Check if node has any heartbeat (not stale)
-        var staleness = DateTime.UtcNow - node.LastHeartbeat;
-        if (staleness > TimeSpan.FromMinutes(2))
-        {
-            return $"Node heartbeat is stale ({staleness.TotalMinutes:F1} minutes)";
-        }
+        // Filter 4: Minimum total resources check (physical capacity)
+        if (node.TotalResources.MemoryMb < _schedulingConfig.MinFreeMemoryMb)
+            return $"Node total memory too low ({node.TotalResources.MemoryMb}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
 
-        return null; // Passes all hard filters
+        // Filter 5: Load average check (if metrics available)
+        if (node.LatestMetrics?.LoadAverage > _schedulingConfig.MaxLoadAverage)
+            return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {_schedulingConfig.MaxLoadAverage})";
+
+        // Filter 6: Region requirement (if specified)
+        if (!string.IsNullOrEmpty(spec.PreferredRegion) &&
+            spec.RequirePreferredRegion &&
+            node.Region != spec.PreferredRegion)
+            return $"Region mismatch (required: {spec.PreferredRegion}, node: {node.Region})";
+
+        return null; // Passed all filters
     }
 
-    // ============================================================================
-    // RESOURCE AVAILABILITY CALCULATION
-    // ============================================================================
-
     /// <summary>
-    /// Calculate resource availability for a node with overcommit applied.
-    /// 
-    /// CRITICAL: Overcommit is applied to PHYSICAL cores, not logical threads.
-    /// 
-    /// Example: Node with 8 physical cores, 16 threads (hyperthreading)
-    /// - TotalResources.CpuCores = 8 (physical)
-    /// - TotalResources.CpuThreads = 16 (logical)
-    /// 
-    /// For Standard tier (2:1 overcommit):
-    /// - EffectiveCpuCapacity = 8 × 2.0 = 16 vCPUs
-    /// 
-    /// This means we can allocate up to 16 vCPUs on this node,
-    /// where each vCPU shares a physical core with one other vCPU.
+    /// This is the source of truth for scheduling decisions
     /// </summary>
     private NodeResourceAvailability CalculateResourceAvailability(
         Node node,
         QualityTier tier,
         TierPolicy policy)
     {
-        // Physical cores are the BASE for overcommit calculations
-        var physicalCores = node.TotalResources.CpuCores;
-        var logicalThreads = node.TotalResources.CpuThreads;
-
-        // If CpuThreads wasn't set (legacy data), assume no hyperthreading
-        if (logicalThreads == 0)
-        {
-            logicalThreads = physicalCores;
-        }
-
-        // Calculate effective capacity: Physical cores × Overcommit ratio
-        var effectiveCpu = physicalCores * policy.CpuOvercommitRatio;
+        // Calculate effective capacity with overcommit ratios
+        var effectiveCpu = node.TotalResources.CpuCores * policy.CpuOvercommitRatio;
         var effectiveMemory = node.TotalResources.MemoryMb * policy.MemoryOvercommitRatio;
         var effectiveStorage = node.TotalResources.StorageGb * policy.StorageOvercommitRatio;
 
-        // Currently allocated resources (from orchestrator tracking)
+        // This ensures scheduling decisions are based on reserved resources
         var allocatedCpu = (double)node.ReservedResources.CpuCores;
         var allocatedMemory = (double)node.ReservedResources.MemoryMb;
         var allocatedStorage = (double)node.ReservedResources.StorageGb;
 
-        var availability = new NodeResourceAvailability
+        return new NodeResourceAvailability
         {
             NodeId = node.Id,
             Tier = tier,
-            PhysicalCpuCores = physicalCores,
-            LogicalCpuThreads = logicalThreads,
             EffectiveCpuCapacity = effectiveCpu,
             EffectiveMemoryCapacity = effectiveMemory,
             EffectiveStorageCapacity = effectiveStorage,
@@ -351,229 +299,142 @@ public class NodeService : INodeService
             AllocatedMemory = allocatedMemory,
             AllocatedStorage = allocatedStorage
         };
-
-        _logger.LogDebug(
-            "Node {NodeId} capacity calculation: {Summary}",
-            node.Id,
-            availability.GetCapacitySummary());
-
-        return availability;
     }
 
-    /// <summary>
-    /// Calculate capacity score (0.0 - 1.0)
-    /// Higher score = more remaining capacity after placing VM
-    /// </summary>
     private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
     {
-        // Calculate headroom after placing this VM
+        // Calculate how much capacity remains AFTER placing this VM
         var cpuHeadroom = availability.RemainingCpu - spec.CpuCores;
         var memoryHeadroom = availability.RemainingMemory - spec.MemoryMb;
 
         // Normalize to 0-1 range (prefer nodes that will have 50%+ capacity remaining)
         var cpuScore = Math.Min(1.0, cpuHeadroom / (availability.EffectiveCpuCapacity * 0.5));
-        var memScore = Math.Min(1.0, memoryHeadroom / (availability.EffectiveMemoryCapacity * 0.5));
+        var memoryScore = Math.Min(1.0, memoryHeadroom / (availability.EffectiveMemoryCapacity * 0.5));
 
         // Average of CPU and memory scores
-        return Math.Max(0, (cpuScore + memScore) / 2);
+        return (cpuScore + memoryScore) / 2.0;
     }
 
-    /// <summary>
-    /// Calculate load score (0.0 - 1.0)
-    /// Higher score = lower current load
-    /// </summary>
-    private double CalculateLoadScore(Node node)
+    private double CalculateLoadScore(Node node, NodeResourceAvailability availability)
     {
-        if (node.LatestMetrics == null)
+        // Use current utilization as primary indicator
+        var cpuUtil = availability.CpuUtilization;
+        var memoryUtil = availability.MemoryUtilization;
+
+        // Convert utilization to score (inverse relationship)
+        var cpuScore = 1.0 - (cpuUtil / 100.0);
+        var memoryScore = 1.0 - (memoryUtil / 100.0);
+
+        // Factor in load average if available
+        double loadScore = 1.0;
+        if (node.LatestMetrics?.LoadAverage != null)
         {
-            return 0.5; // Default score if no metrics
+            // Normalize load average (assume 1.0 per core is normal)
+            var normalizedLoad = node.LatestMetrics.LoadAverage / node.TotalResources.CpuCores;
+            loadScore = Math.Max(0, 1.0 - normalizedLoad);
         }
 
-        var cpuLoad = node.LatestMetrics.CpuUsagePercent;
-        var memLoad = node.LatestMetrics.MemoryUsagePercent;
-        var loadAvg = node.LatestMetrics.LoadAverage;
-
-        // Invert: lower load = higher score
-        var cpuScore = 1.0 - (cpuLoad / 100.0);
-        var memScore = 1.0 - (memLoad / 100.0);
-
-        // Load average penalty (high load average = lower score)
-        var loadPenalty = Math.Min(1.0, loadAvg / _schedulingConfig.MaxLoadAverage);
-
-        return Math.Max(0, ((cpuScore + memScore) / 2) - (loadPenalty * 0.2));
+        // Weighted average: utilization (70%), load average (30%)
+        return (cpuScore * 0.35) + (memoryScore * 0.35) + (loadScore * 0.30);
     }
 
-    /// <summary>
-    /// Calculate reputation score (0.0 - 1.0)
-    /// Higher score = better track record
-    /// </summary>
     private double CalculateReputationScore(Node node)
     {
-        // Uptime component (0-0.5)
-        var uptimeScore = (node.UptimePercentage / 100.0) * 0.5;
+        double score = 0.5; // Start with neutral score
 
-        // Success rate component (0-0.5)
-        var successRate = node.TotalVmsHosted > 0
-            ? (double)node.SuccessfulVmCompletions / node.TotalVmsHosted
-            : 0.8; // Default for new nodes
+        // Uptime bonus (max +0.3)
+        var uptime = DateTime.UtcNow - node.RegisteredAt;
+        var uptimeBonus = Math.Min(0.3, uptime.TotalDays / 30.0 * 0.3); // Max after 30 days
+        score += uptimeBonus;
 
-        var successScore = successRate * 0.5;
+        // Recent heartbeat bonus (max +0.2)
+        var timeSinceHeartbeat = DateTime.UtcNow - node.LastHeartbeat;
+        if (timeSinceHeartbeat.TotalSeconds < 30)
+            score += 0.2; // Very recent
+        else if (timeSinceHeartbeat.TotalMinutes < 2)
+            score += 0.1; // Recent
 
-        return uptimeScore + successScore;
+        return Math.Clamp(score, 0.0, 1.0);
     }
 
-    /// <summary>
-    /// Calculate locality score (0.0 - 1.0)
-    /// Higher score = closer to preferred region/zone
-    /// </summary>
     private double CalculateLocalityScore(Node node, VmSpec spec)
     {
         if (string.IsNullOrEmpty(spec.PreferredRegion))
-        {
-            return 0.5; // No preference, neutral score
-        }
+            return 0.5; // Neutral if no preference
 
-        // Same region = high score
-        if (node.Region.Equals(spec.PreferredRegion, StringComparison.OrdinalIgnoreCase))
-        {
-            // Same zone = perfect score
-            if (!string.IsNullOrEmpty(spec.PreferredZone) &&
-                node.Zone.Equals(spec.PreferredZone, StringComparison.OrdinalIgnoreCase))
-            {
-                return 1.0;
-            }
-            return 0.8; // Same region, different zone
-        }
+        // Same region and zone
+        if (node.Region == spec.PreferredRegion &&
+            node.Zone == spec.PreferredZone)
+            return 1.0;
 
-        return 0.2; // Different region
-    }
+        // Same region, different zone
+        if (node.Region == spec.PreferredRegion)
+            return 0.7;
 
-    // ============================================================================
-    // RESOURCE RESERVATION
-    // ============================================================================
-
-    /// <summary>
-    /// Reserve resources on a node for a VM.
-    /// Called when VM is scheduled (before actual creation).
-    /// </summary>
-    public async Task<bool> ReserveResourcesForVmAsync(Node node, VmSpec spec)
-    {
-        // Add to reserved resources
-        node.ReservedResources.CpuCores += spec.CpuCores;
-        node.ReservedResources.MemoryMb += spec.MemoryMb;
-        node.ReservedResources.StorageGb += spec.DiskGb;
-
-        // Update available (inverse of reserved)
-        node.AvailableResources.CpuCores =
-            node.TotalResources.CpuCores - node.ReservedResources.CpuCores;
-        node.AvailableResources.MemoryMb =
-            node.TotalResources.MemoryMb - node.ReservedResources.MemoryMb;
-        node.AvailableResources.StorageGb =
-            node.TotalResources.StorageGb - node.ReservedResources.StorageGb;
-
-        await _dataStore.SaveNodeAsync(node);
-
-        _logger.LogInformation(
-            "Reserved resources on node {NodeId} for VM: {CpuCores}c/{MemoryMb}MB/{DiskGb}GB. " +
-            "Node now has: Reserved={ResCpu}c/{ResMem}MB, " +
-            "Physical={PhysCpu}c, EffectiveCapacity={EffCpu:F1}c (Standard tier)",
-            node.Id,
-            spec.CpuCores, spec.MemoryMb, spec.DiskGb,
-            node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb,
-            node.TotalResources.CpuCores,
-            node.TotalResources.CpuCores * 2.0); // Standard tier example
-
-        return true;
-    }
-
-    /// <summary>
-    /// Release resources when a VM is deleted or failed to create.
-    /// </summary>
-    public async Task ReleaseResourcesForVmAsync(Node node, VmSpec spec)
-    {
-        // Subtract from reserved (with floor of 0)
-        node.ReservedResources.CpuCores = Math.Max(0,
-            node.ReservedResources.CpuCores - spec.CpuCores);
-        node.ReservedResources.MemoryMb = Math.Max(0,
-            node.ReservedResources.MemoryMb - spec.MemoryMb);
-        node.ReservedResources.StorageGb = Math.Max(0,
-            node.ReservedResources.StorageGb - spec.DiskGb);
-
-        // Update available
-        node.AvailableResources.CpuCores =
-            node.TotalResources.CpuCores - node.ReservedResources.CpuCores;
-        node.AvailableResources.MemoryMb =
-            node.TotalResources.MemoryMb - node.ReservedResources.MemoryMb;
-        node.AvailableResources.StorageGb =
-            node.TotalResources.StorageGb - node.ReservedResources.StorageGb;
-
-        await _dataStore.SaveNodeAsync(node);
-
-        _logger.LogInformation(
-            "Released resources on node {NodeId}: {CpuCores}c/{MemoryMb}MB/{DiskGb}GB. " +
-            "Node now has: Reserved={ResCpu}c/{ResMem}MB",
-            node.Id,
-            spec.CpuCores, spec.MemoryMb, spec.DiskGb,
-            node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb);
+        // Different region
+        return 0.3;
     }
 
     // ============================================================================
     // Registration and Heartbeat
     // ============================================================================
 
-    /// <summary>
-    /// Register a new node or re-register an existing one.
-    /// 
-    /// CPU Resource Handling:
-    /// - Accepts both CpuCores (physical) and CpuThreads (logical)
-    /// - If only CpuCores is provided, CpuThreads defaults to same value
-    /// - For legacy clients sending logical cores as CpuCores, a heuristic is applied
-    /// </summary>
+    // Implements deterministic node ID validation and registration
+
     public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request)
     {
         // =====================================================
-        // STEP 1: Validate Request
+        // STEP 1: Validate Wallet Address
         // =====================================================
-        if (string.IsNullOrEmpty(request.MachineId))
-        {
-            throw new ArgumentException("MachineId is required for node registration");
-        }
-
-        if (string.IsNullOrEmpty(request.WalletAddress) ||
+        if (string.IsNullOrWhiteSpace(request.WalletAddress) ||
             request.WalletAddress == "0x0000000000000000000000000000000000000000")
         {
-            throw new ArgumentException("Valid wallet address is required");
-        }
-
-        // =====================================================
-        // STEP 2: Generate Deterministic Node ID
-        // =====================================================
-        var expectedNodeId = GenerateDeterministicNodeId(request.MachineId, request.WalletAddress);
-
-        if (!string.IsNullOrEmpty(request.NodeId) && request.NodeId != expectedNodeId)
-        {
-            _logger.LogWarning(
-                "Node ID mismatch: provided {Provided}, expected {Expected}",
-                request.NodeId, expectedNodeId);
+            _logger.LogError("Node registration rejected: null wallet address");
             throw new ArgumentException(
-                "The provided node ID does not match the deterministic ID for this machine + wallet combination.");
+                "Valid wallet address required for node registration. " +
+                "Null address (0x000...000) is not allowed.");
         }
 
+        // =====================================================
+        // STEP 2: Validate Machine ID
+        // =====================================================
+        if (string.IsNullOrWhiteSpace(request.MachineId))
+        {
+            _logger.LogError("Node registration rejected: missing machine ID");
+            throw new ArgumentException("Machine ID is required for node registration");
+        }
+
+        // =====================================================
+        // STEP 3: Generate and Validate Node ID
+        // =====================================================
+        string expectedNodeId;
+        try
+        {
+            expectedNodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate node ID");
+            throw new ArgumentException("Invalid machine ID or wallet address", ex);
+        }
+
+        // If node provides a claimed ID, validate it matches
+        if (!string.IsNullOrEmpty(request.NodeId))
+        {
+            if (!request.NodeId.Equals(expectedNodeId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Node ID mismatch: claimed={ClaimedId}, expected={ExpectedId} (Machine={MachineId}, Wallet={Wallet})",
+                    request.NodeId, expectedNodeId, request.MachineId, request.WalletAddress);
+
+                throw new ArgumentException(
+                    "Node ID validation failed. The provided node ID does not match " +
+                    "the deterministic ID for this machine + wallet combination.");
+            }
+        }
+
+        // Use the deterministic node ID (calculated or validated)
         var nodeId = expectedNodeId;
-
-        // =====================================================
-        // STEP 3: Normalize CPU Resources
-        // =====================================================
-        var resources = NormalizeCpuResources(request.Resources);
-
-        _logger.LogInformation(
-            "Node {NodeId} registering with resources: " +
-            "CPU={PhysicalCores}c/{LogicalThreads}t, MEM={MemoryMb}MB, DISK={StorageGb}GB",
-            nodeId,
-            resources.CpuCores,
-            resources.CpuThreads,
-            resources.MemoryMb,
-            resources.StorageGb);
 
         // =====================================================
         // STEP 4: Check if Node Exists (Re-registration)
@@ -582,7 +443,40 @@ public class NodeService : INodeService
 
         if (existingNode != null)
         {
-            return await HandleReRegistrationAsync(existingNode, request, resources);
+            // RE-REGISTRATION: Update existing node
+            _logger.LogInformation(
+                "Node re-registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
+                nodeId, request.MachineId, request.WalletAddress);
+
+            existingNode.Name = request.Name;
+            existingNode.MachineId = request.MachineId;
+            existingNode.WalletAddress = request.WalletAddress;
+            existingNode.PublicIp = request.PublicIp;
+            existingNode.AgentPort = request.AgentPort;
+            existingNode.TotalResources = request.Resources;
+            existingNode.AgentVersion = request.AgentVersion;
+            existingNode.SupportedImages = request.SupportedImages;
+            existingNode.SupportsGpu = request.SupportsGpu;
+            existingNode.GpuInfo = request.GpuInfo;
+            existingNode.Region = request.Region ?? "default";
+            existingNode.Zone = request.Zone ?? "default";
+            existingNode.Status = NodeStatus.Online;
+            existingNode.LastHeartbeat = DateTime.UtcNow;
+
+            await _dataStore.SaveNodeAsync(existingNode);
+
+            // Generate new auth token
+            var token = GenerateAuthToken();
+            _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(token);
+
+            _logger.LogInformation(
+                "✓ Node re-registered successfully: {NodeId}",
+                existingNode.Id);
+
+            return new NodeRegistrationResponse(
+                existingNode.Id,
+                token,
+                TimeSpan.FromSeconds(15));
         }
 
         // =====================================================
@@ -594,22 +488,15 @@ public class NodeService : INodeService
 
         var node = new Node
         {
-            Id = nodeId,
+            Id = nodeId,  // ← Deterministic node ID
             MachineId = request.MachineId,
             Name = request.Name,
             WalletAddress = request.WalletAddress,
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
-            TotalResources = resources,
-            AvailableResources = new NodeResources
-            {
-                CpuCores = resources.CpuCores,
-                CpuThreads = resources.CpuThreads,
-                MemoryMb = resources.MemoryMb,
-                StorageGb = resources.StorageGb,
-                BandwidthMbps = resources.BandwidthMbps
-            },
+            TotalResources = request.Resources,
+            AvailableResources = request.Resources,
             ReservedResources = new NodeResources(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -626,11 +513,8 @@ public class NodeService : INodeService
         _dataStore.NodeAuthTokens[node.Id] = HashToken(newToken);
 
         _logger.LogInformation(
-            "✓ New node registered successfully: {NodeId} " +
-            "(Physical cores: {PhysCores}, Logical threads: {LogicalThreads})",
-            node.Id,
-            resources.CpuCores,
-            resources.CpuThreads);
+            "✓ New node registered successfully: {NodeId}",
+            node.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -644,124 +528,11 @@ public class NodeService : INodeService
                 ["region"] = node.Region,
                 ["machineId"] = node.MachineId,
                 ["wallet"] = node.WalletAddress,
-                ["physicalCores"] = resources.CpuCores,
-                ["logicalThreads"] = resources.CpuThreads,
-                ["memoryMb"] = resources.MemoryMb,
-                ["storageGb"] = resources.StorageGb
+                ["resources"] = node.TotalResources
             }
         });
 
         return new NodeRegistrationResponse(node.Id, newToken, TimeSpan.FromSeconds(15));
-    }
-
-    /// <summary>
-    /// Handle re-registration of an existing node.
-    /// Preserves reserved resources but updates total capacity.
-    /// </summary>
-    private async Task<NodeRegistrationResponse> HandleReRegistrationAsync(
-        Node existingNode,
-        NodeRegistrationRequest request,
-        NodeResources resources)
-    {
-        _logger.LogInformation(
-            "Node re-registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
-            existingNode.Id, request.MachineId, request.WalletAddress);
-
-        // Update node properties
-        existingNode.Name = request.Name;
-        existingNode.MachineId = request.MachineId;
-        existingNode.WalletAddress = request.WalletAddress;
-        existingNode.PublicIp = request.PublicIp;
-        existingNode.AgentPort = request.AgentPort;
-        existingNode.TotalResources = resources;
-        existingNode.AgentVersion = request.AgentVersion;
-        existingNode.SupportedImages = request.SupportedImages;
-        existingNode.SupportsGpu = request.SupportsGpu;
-        existingNode.GpuInfo = request.GpuInfo;
-        existingNode.Region = request.Region ?? "default";
-        existingNode.Zone = request.Zone ?? "default";
-        existingNode.Status = NodeStatus.Online;
-        existingNode.LastHeartbeat = DateTime.UtcNow;
-
-        // Recalculate available resources (preserving reservations)
-        existingNode.AvailableResources = new NodeResources
-        {
-            CpuCores = resources.CpuCores - existingNode.ReservedResources.CpuCores,
-            CpuThreads = resources.CpuThreads - existingNode.ReservedResources.CpuThreads,
-            MemoryMb = resources.MemoryMb - existingNode.ReservedResources.MemoryMb,
-            StorageGb = resources.StorageGb - existingNode.ReservedResources.StorageGb,
-            BandwidthMbps = resources.BandwidthMbps
-        };
-
-        await _dataStore.SaveNodeAsync(existingNode);
-
-        var token = GenerateAuthToken();
-        _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(token);
-
-        _logger.LogInformation(
-            "✓ Node re-registered successfully: {NodeId} " +
-            "(Physical cores: {PhysCores}, Reserved: {ResCores})",
-            existingNode.Id,
-            resources.CpuCores,
-            existingNode.ReservedResources.CpuCores);
-
-        return new NodeRegistrationResponse(
-            existingNode.Id,
-            token,
-            TimeSpan.FromSeconds(15));
-    }
-
-    /// <summary>
-    /// Normalize CPU resources from registration request.
-    /// 
-    /// Handles several scenarios:
-    /// 1. New format: Both CpuCores (physical) and CpuThreads (logical) provided
-    /// 2. Legacy format: Only CpuCores provided (could be physical or logical)
-    /// 3. Heuristic: If CpuCores is suspiciously high, might be logical cores
-    /// </summary>
-    private NodeResources NormalizeCpuResources(NodeResources input)
-    {
-        var output = new NodeResources
-        {
-            MemoryMb = input.MemoryMb,
-            StorageGb = input.StorageGb,
-            BandwidthMbps = input.BandwidthMbps
-        };
-
-        // Case 1: Both values provided (new format)
-        if (input.CpuCores > 0 && input.CpuThreads > 0)
-        {
-            output.CpuCores = input.CpuCores;
-            output.CpuThreads = input.CpuThreads;
-
-            _logger.LogDebug(
-                "CPU resources (new format): {Physical}c/{Logical}t",
-                output.CpuCores, output.CpuThreads);
-        }
-        // Case 2: Only CpuCores provided (legacy or no HT)
-        else if (input.CpuCores > 0)
-        {
-            // Heuristic: Common server CPUs have 4-64 physical cores
-            // If value is very high and even, it might be logical cores
-            // Conservative approach: assume it's physical unless clearly wrong
-
-            output.CpuCores = input.CpuCores;
-            output.CpuThreads = input.CpuCores; // Assume no hyperthreading
-
-            _logger.LogDebug(
-                "CPU resources (legacy format): {Cores}c (assuming physical)",
-                output.CpuCores);
-        }
-        else
-        {
-            // Fallback: minimum viable
-            output.CpuCores = 1;
-            output.CpuThreads = 1;
-
-            _logger.LogWarning("No CPU cores reported, defaulting to 1");
-        }
-
-        return output;
     }
 
     public Task<bool> ValidateNodeTokenAsync(string nodeId, string token)
@@ -774,12 +545,9 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// Process heartbeat without overwriting orchestrator resource tracking.
-    /// Logs resource discrepancies for debugging.
+    /// Process heartbeat without overwriting orchestrator resource tracking
     /// </summary>
-    public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(
-        string nodeId,
-        NodeHeartbeat heartbeat)
+    public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
     {
         if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
         {
@@ -791,12 +559,11 @@ public class NodeService : INodeService
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
 
-        // Log resource discrepancy between node-reported and orchestrator-tracked
+        // Optional: Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
         var orchestratorTrackedFree = new NodeResources
         {
             CpuCores = node.TotalResources.CpuCores - node.ReservedResources.CpuCores,
-            CpuThreads = node.TotalResources.CpuThreads - node.ReservedResources.CpuThreads,
             MemoryMb = node.TotalResources.MemoryMb - node.ReservedResources.MemoryMb,
             StorageGb = node.TotalResources.StorageGb - node.ReservedResources.StorageGb
         };
@@ -807,14 +574,12 @@ public class NodeService : INodeService
         if (cpuDiff > 1 || memDiff > 1024)
         {
             _logger.LogDebug(
-                "Resource tracking drift on node {NodeId}: " +
-                "Node reports {NodeCpu}c/{NodeMem}MB free, " +
-                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free " +
-                "(Total: {TotalCpu}c, Reserved: {ResCpu}c)",
+                "Resource tracking drift on node {NodeId}: Node reports {NodeCpu}c/{NodeMem}MB free, " +
+                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu}c/{ResMem}MB)",
                 nodeId,
                 nodeReportedFree.CpuCores, nodeReportedFree.MemoryMb,
                 orchestratorTrackedFree.CpuCores, orchestratorTrackedFree.MemoryMb,
-                node.TotalResources.CpuCores, node.ReservedResources.CpuCores);
+                node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb);
         }
 
         await _dataStore.SaveNodeAsync(node);
@@ -1666,26 +1431,17 @@ public class NodeService : INodeService
     // Utilities
     // ============================================================================
 
-    private string GenerateDeterministicNodeId(string machineId, string walletAddress)
-    {
-        var input = $"{machineId.ToLowerInvariant()}:{walletAddress.ToLowerInvariant()}";
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
-        return $"node-{Convert.ToHexString(hash[..8]).ToLowerInvariant()}";
-    }
-
-    private string GenerateAuthToken()
+    private static string GenerateAuthToken()
     {
         var bytes = new byte[32];
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(bytes);
+        RandomNumberGenerator.Fill(bytes);
         return Convert.ToBase64String(bytes);
     }
 
-    private string HashToken(string token)
+    private static string HashToken(string token)
     {
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(token));
+        var bytes = System.Text.Encoding.UTF8.GetBytes(token);
+        var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash);
     }
 

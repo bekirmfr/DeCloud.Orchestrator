@@ -3,25 +3,7 @@
 namespace Orchestrator.Services;
 
 /// <summary>
-/// Configuration for VM scheduling and resource overcommit policies.
-/// 
-/// OVERCOMMIT DESIGN PHILOSOPHY:
-/// =============================
-/// Overcommit ratios are applied to PHYSICAL CPU cores, not logical threads.
-/// This aligns with industry standards (AWS, GCP, Azure) where:
-/// - 1 vCPU = 1 hyperthread in most cases
-/// - Overcommit determines how many vCPUs can be sold per physical core
-/// 
-/// Example: Server with 16 physical cores, 32 threads (hyperthreading)
-/// 
-/// Tier        | Ratio | Effective vCPUs | vCPU:Physical | Reality
-/// ------------|-------|-----------------|---------------|------------------
-/// Guaranteed  | 1.0   | 16              | 1:1           | Dedicated core per vCPU
-/// Standard    | 2.0   | 32              | 2:1           | Shared, good for most workloads
-/// Burstable   | 4.0   | 64              | 4:1           | Heavily shared, burst capacity
-/// 
-/// Note: Standard tier at 2:1 effectively matches the hyperthread count,
-/// which provides good performance for typical workloads.
+/// Configuration for VM scheduling and resource overcommit policies
 /// </summary>
 public class SchedulingConfiguration
 {
@@ -36,7 +18,7 @@ public class SchedulingConfiguration
             MemoryOvercommitRatio = 1.0,   // 1:1 - No overcommit
             StorageOvercommitRatio = 1.0,  // 1:1 - No overcommit
             PriceMultiplier = 2.0m,         // 2x price premium
-            Description = "Dedicated physical , guaranteed performance"
+            Description = "Dedicated resources, guaranteed performance"
         },
         [QualityTier.Standard] = new TierPolicy
         {
@@ -44,7 +26,7 @@ public class SchedulingConfiguration
             MemoryOvercommitRatio = 1.2,   // 1.2:1 - Slight overcommit
             StorageOvercommitRatio = 1.5,  // 1.5:1 - Storage can be overcommitted more
             PriceMultiplier = 1.0m,         // Base price
-            Description = "Shared cores (2:1), balanced performance and cost"
+            Description = "Balanced performance and cost"
         },
         [QualityTier.Burstable] = new TierPolicy
         {
@@ -52,7 +34,7 @@ public class SchedulingConfiguration
             MemoryOvercommitRatio = 1.5,   // 1.5:1 - Moderate memory overcommit
             StorageOvercommitRatio = 2.0,  // 2:1 - Storage overcommit
             PriceMultiplier = 0.5m,         // 50% cheaper
-            Description = "Heavily shared cores (4:1), burst capacity, variable performance"
+            Description = "Cost-optimized, variable performance"
         }
     };
 
@@ -84,10 +66,6 @@ public class SchedulingConfiguration
 
 public class TierPolicy
 {
-    /// <summary>
-    /// CPU overcommit ratio applied to PHYSICAL cores.
-    /// Example: 2.0 means 2 vCPUs can be allocated per physical core.
-    /// </summary>
     public double CpuOvercommitRatio { get; set; }
     public double MemoryOvercommitRatio { get; set; }
     public double StorageOvercommitRatio { get; set; }
@@ -160,10 +138,6 @@ public class NodeResourceAvailability
     public string NodeId { get; set; } = string.Empty;
     public QualityTier Tier { get; set; }
 
-    // Raw physical resources (from node registration)
-    public int PhysicalCpuCores { get; set; }
-    public int LogicalCpuThreads { get; set; }
-
     // Effective capacity with overcommit applied
     public double EffectiveCpuCapacity { get; set; }
     public double EffectiveMemoryCapacity { get; set; }
@@ -208,17 +182,6 @@ public class NodeResourceAvailability
         return EffectiveMemoryCapacity > 0
             ? ((AllocatedMemory + spec.MemoryMb) / EffectiveMemoryCapacity) * 100
             : 100;
-    }
-
-    /// <summary>
-    /// Generate a human-readable capacity summary
-    /// </summary>
-    public string GetCapacitySummary()
-    {
-        return $"Physical: {PhysicalCpuCores}c/{LogicalCpuThreads}t | " +
-               $"Effective: {EffectiveCpuCapacity:F1} vCPUs ({Tier}) | " +
-               $"Allocated: {AllocatedCpu:F1} | " +
-               $"Remaining: {RemainingCpu:F1}";
     }
 }
 
