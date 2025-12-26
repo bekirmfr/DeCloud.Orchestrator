@@ -383,6 +383,28 @@
                     <label class="form-label">VM Name</label>
                     <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">
                 </div>
+                <!-- Quality Tier Section (NEW) -->
+                <div class="form-group">
+                    <label for="quality-tier" class="form-label">
+                        Quality Tier
+                        <span class="quality-tier-help" id="tier-help-text">Standard</span>
+                    </label>
+                    <select id="quality-tier" class="form-control" onchange="updateTierInfo()">
+                        <option value="2">Burstable (Lowest Cost)</option>
+                        <option value="1" selected>Standard (Balanced)</option>
+                        <option value="3">Balanced (Cost-Optimized)</option>
+                        <option value="0">Guaranteed (Premium)</option>
+                    </select>
+                    <div class="tier-info" id="tier-info">
+                        <div class="tier-description">
+                            Balanced performance and cost, 2:1 CPU overcommit
+                        </div>
+                        <div class="tier-pricing">
+                            <span class="tier-points">4 points per vCPU</span>
+                            <span class="tier-multiplier">Base price (1.0x)</span>
+                        </div>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">CPU Cores</label>
@@ -395,6 +417,16 @@
                     <div class="form-group">
                         <label class="form-label">Disk (GB)</label>
                         <input type="number" class="form-input" id="vm-disk" value="20" min="10">
+                    </div>
+                </div>
+                <div class="cost-estimate" id="cost-estimate">
+                    <div class="cost-row">
+                        <span>Compute Points:</span>
+                        <strong id="compute-points">8 points</strong>
+                    </div>
+                    <div class="cost-row">
+                        <span>Estimated Cost:</span>
+                        <strong id="estimated-cost">$0.02/hour</strong>
                     </div>
                 </div>
                 <div class="form-group">

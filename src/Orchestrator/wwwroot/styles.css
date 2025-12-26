@@ -957,6 +957,132 @@ body {
     color: var(--accent-danger);
 }
 
+/* ============================================
+   QUALITY TIER STYLES
+   ============================================ */
+
+.quality-tier-help {
+    font-size: 0.875rem;
+    color: #10b981;
+    font-weight: 600;
+    margin-left: 0.5rem;
+}
+
+.tier-info {
+    margin-top: 0.75rem;
+    padding: 1rem;
+    background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+    border: 1px solid #374151;
+    border-radius: 8px;
+}
+
+.tier-description {
+    color: #9ca3af;
+    font-size: 0.875rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+}
+
+.tier-pricing {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.tier-points {
+    color: #10b981;
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.tier-multiplier {
+    color: #60a5fa;
+    font-size: 0.875rem;
+}
+
+/* Cost Estimate Panel */
+.cost-estimate {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: linear-gradient(135deg, #065f46 0%, #064e3b 100%);
+    border: 1px solid #10b981;
+    border-radius: 8px;
+}
+
+.cost-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+}
+
+    .cost-row:not(:last-child) {
+        border-bottom: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .cost-row span {
+        color: #d1fae5;
+        font-size: 0.875rem;
+    }
+
+    .cost-row strong {
+        color: #ffffff;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+#compute-points {
+    color: #10b981;
+}
+
+#estimated-cost {
+    color: #34d399;
+}
+
+/* Tier-specific badges for VM cards (optional) */
+.tier-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.tier-guaranteed {
+    background: #7c3aed;
+    color: #ffffff;
+}
+
+.tier-standard {
+    background: #3b82f6;
+    color: #ffffff;
+}
+
+.tier-balanced {
+    background: #10b981;
+    color: #ffffff;
+}
+
+.tier-burstable {
+    background: #f59e0b;
+    color: #ffffff;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .tier-pricing {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .cost-estimate {
+        padding: 0.75rem;
+    }
+}
+
 /* Node Items */
 .node-item {
     display: flex;

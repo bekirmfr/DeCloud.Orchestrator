@@ -35,6 +35,37 @@ const CONFIG = {
 };
 
 // ============================================
+// QUALITY TIER CONFIGURATION
+// ============================================
+
+const QUALITY_TIERS = {
+    0: { // Guaranteed
+        name: 'Guaranteed',
+        pointsPerVCpu: 8,
+        priceMultiplier: 2.5,
+        description: 'Dedicated resources, guaranteed 1:1 CPU performance'
+    },
+    1: { // Standard
+        name: 'Standard',
+        pointsPerVCpu: 4,
+        priceMultiplier: 1.0,
+        description: 'Balanced performance and cost, 2:1 CPU overcommit'
+    },
+    2: { // Burstable
+        name: 'Burstable',
+        pointsPerVCpu: 1,
+        priceMultiplier: 0.4,
+        description: 'Aggressive overcommit, lowest cost, variable performance'
+    },
+    3: { // Balanced
+        name: 'Balanced',
+        pointsPerVCpu: 2,
+        priceMultiplier: 0.6,
+        description: 'Cost-optimized for consistent workloads'
+    }
+};
+
+// ============================================
 // STATE
 // ============================================
 let authToken = null;
@@ -1171,56 +1202,93 @@ function closeModal(modalId) {
 
 async function createVM() {
     const name = document.getElementById('vm-name').value.trim();
-    const cpu = parseInt(document.getElementById('vm-cpu').value);
-    const memory = parseInt(document.getElementById('vm-memory').value);
-    const disk = parseInt(document.getElementById('vm-disk').value);
-    const image = document.getElementById('vm-image').value;
-
+    const cpuCores = parseInt(document.getElementById('cpu-cores').value);
+    const memoryMb = parseInt(document.getElementById('memory-mb').value);
+    const diskGb = parseInt(document.getElementById('disk-gb').value);
+    const imageId = document.getElementById('os-image').value;
+    const qualityTier = parseInt(document.getElementById('quality-tier').value);
+    
     if (!name) {
         showToast('Please enter a VM name', 'error');
         return;
     }
-
+    
     try {
         const response = await api('/api/vms', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                name,
+                name: name,
                 spec: {
-                    cpuCores: cpu,
-                    memoryMb: memory,
-                    diskGb: disk,
-                    imageId: image,
-                    requiresGpu: false
+                    cpuCores: cpuCores,
+                    memoryMb: memoryMb,
+                    diskGb: diskGb,
+                    imageId: imageId,
+                    qualityTier: qualityTier
                 }
             })
         });
-
+        
         const data = await response.json();
-
+        
         if (data.success) {
-            const vmId = data.data.vmId;
-            const password = data.data.password
-
-            // Only show password modal if we got a valid password (not an error code)
-            if (password && !password.includes('_') && password.includes('-')) {
-                await showPasswordModal(vmId, name, password);
-            }
-            showToast('Virtual machine created successfully', 'success');
+            showToast(`VM "${name}" created successfully!`, 'success');
             closeModal('create-vm-modal');
-            refreshData();
-
+            
             document.getElementById('vm-name').value = '';
-            document.getElementById('vm-cpu').value = '2';
-            document.getElementById('vm-memory').value = '2048';
-            document.getElementById('vm-disk').value = '20';
+            document.getElementById('quality-tier').value = '1';  // ← RESET TO STANDARD
+            updateTierInfo();  // ← REFRESH TIER INFO
+            
+            await refreshData();
         } else {
             showToast(data.message || 'Failed to create VM', 'error');
         }
     } catch (error) {
-        console.error('[VM] Create error:', error);
-        showToast('Failed to create virtual machine', 'error');
+        console.error('[Create VM] Error:', error);
+        showToast('Failed to create VM', 'error');
     }
+}
+
+function updateTierInfo() {
+    const tierSelect = document.getElementById('quality-tier');
+    const tierId = parseInt(tierSelect.value);
+    const tier = QUALITY_TIERS[tierId];
+    
+    document.getElementById('tier-help-text').textContent = tier.name;
+    
+    const tierInfo = document.getElementById('tier-info');
+    tierInfo.innerHTML = `
+        <div class="tier-description">${tier.description}</div>
+        <div class="tier-pricing">
+            <span class="tier-points">${tier.pointsPerVCpu} points per vCPU</span>
+            <span class="tier-multiplier">Price: ${tier.priceMultiplier}x</span>
+        </div>
+        `;
+    
+    updateEstimatedCost();
+}
+
+function updateEstimatedCost() {
+    const cpuCores = parseInt(document.getElementById('cpu-cores').value);
+    const memoryMb = parseInt(document.getElementById('memory-mb').value);
+    const diskGb = parseInt(document.getElementById('disk-gb').value);
+    const tierId = parseInt(document.getElementById('quality-tier').value);
+    const tier = QUALITY_TIERS[tierId];
+    
+    const computePoints = cpuCores * tier.pointsPerVCpu;
+    
+    const baseCpuRate = 0.01;
+    const baseMemoryRate = 0.005;
+    const baseStorageRate = 0.0001;
+    
+    const cpuCost = cpuCores * baseCpuRate;
+    const memoryCost = (memoryMb / 1024) * baseMemoryRate;
+    const storageCost = diskGb * baseStorageRate;
+    
+    const hourlyTotal = (cpuCost + memoryCost + storageCost) * tier.priceMultiplier;
+    
+    document.getElementById('compute-points').textContent = `${computePoints} points`;
+    document.getElementById('estimated-cost').textContent = `$${hourlyTotal.toFixed(4)}/hour`;
 }
 
 async function deleteVM(vmId, vmName) {
