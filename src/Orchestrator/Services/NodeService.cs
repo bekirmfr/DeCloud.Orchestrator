@@ -284,11 +284,11 @@ public class NodeService : INodeService
     {
 
         // ========================================
-        // NEW: POINT-BASED CPU CALCULATION
+        // POINT-BASED CPU CALCULATION
         // ========================================
 
         var totalComputePoints = node.TotalResources.TotalComputePoints;
-        var allocatedComputePoints = node.ReservedResources.ReservedComputePoints;
+        var allocatedComputePoints = node.AvailableResources.TotalComputePoints;
 
         // Calculate effective capacity with overcommit ratios
         var effectiveCpu = node.TotalResources.CpuCores * policy.CpuOvercommitRatio;
@@ -305,7 +305,7 @@ public class NodeService : INodeService
             NodeId = node.Id,
             Tier = tier,
 
-            // NEW: Point-based tracking
+            // Point-based tracking
             TotalComputePoints = totalComputePoints,
             AllocatedComputePoints = allocatedComputePoints,
             RequiredComputePoints = 0, // Set during fit check
