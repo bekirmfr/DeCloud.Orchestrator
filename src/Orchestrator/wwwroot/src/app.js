@@ -51,17 +51,17 @@ const QUALITY_TIERS = {
         priceMultiplier: 1.0,
         description: 'Balanced performance and cost, 2:1 CPU overcommit'
     },
-    2: { // Burstable
-        name: 'Burstable',
-        pointsPerVCpu: 1,
-        priceMultiplier: 0.4,
-        description: 'Aggressive overcommit, lowest cost, variable performance'
-    },
-    3: { // Balanced
+    2: { // Balanced
         name: 'Balanced',
         pointsPerVCpu: 2,
         priceMultiplier: 0.6,
         description: 'Cost-optimized for consistent workloads'
+    },
+    3: { // Burstable
+        name: 'Burstable',
+        pointsPerVCpu: 1,
+        priceMultiplier: 0.4,
+        description: 'Aggressive overcommit, lowest cost, variable performance'
     }
 };
 

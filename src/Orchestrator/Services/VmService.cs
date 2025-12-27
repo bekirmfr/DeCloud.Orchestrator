@@ -112,7 +112,7 @@ public class VmService : IVmService
             await _dataStore.SaveUserAsync(user);
         }
 
-        _logger.LogInformation("VM created: {VmId} ({Name}) for user {UserId}",
+        _logger.LogInformation("VM queued for scheduling: {VmId} ({Name}) for user {UserId}",
             vm.Id, vm.Name, userId);
 
         await _eventService.EmitAsync(new OrchestratorEvent
@@ -498,7 +498,7 @@ public class VmService : IVmService
             var cpuToFree = vm.Spec.CpuCores;
             var memToFree = vm.Spec.MemoryMb;
             var storageToFree = vm.Spec.DiskGb;
-            var pointsToFree = vm.Spec.ComputePointCost;  // NEW
+            var pointsToFree = vm.Spec.ComputePointCost;
 
             // Free legacy resources
             node.ReservedResources.CpuCores = Math.Max(0,
@@ -695,7 +695,6 @@ public class VmService : IVmService
                 MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
                 DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
                 QualityTier = (int)vm.Spec.QualityTier,
-                ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
@@ -730,7 +729,8 @@ public class VmService : IVmService
             Payload = new Dictionary<string, object>
             {
                 ["nodeId"] = selectedNode.Id,
-                ["nodeName"] = selectedNode.Name
+                ["nodeName"] = selectedNode.Name,
+                ["commandPayload"] = command.Payload
             }
         });
     }
