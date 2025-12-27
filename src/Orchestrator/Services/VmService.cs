@@ -612,63 +612,67 @@ public class VmService : IVmService
 
     private async Task TryScheduleVmAsync(VirtualMachine vm)
     {
-        vm.Status = VmStatus.Scheduling;
-        await _dataStore.SaveVmAsync(vm);
+        // ========================================
+        // STEP 1: Calculate compute point cost FIRST
+        // ========================================
+        var policy = _schedulingConfig.TierPolicies[vm.Spec.QualityTier];
+        var pointCost = vm.Spec.CpuCores * policy.PointsPerVCpu;
 
-        // Use the smart scheduling from NodeService
-        var selectedNode = await _nodeService.SelectBestNodeForVmAsync(vm.Spec, vm.Spec.QualityTier);
+        // CRITICAL: Store point cost in VM spec before scheduling
+        vm.Spec.ComputePointCost = pointCost;
+
+        _logger.LogInformation(
+            "VM {VmId} ({Name}): Tier={Tier}, vCPUs={VCpus}, ComputePointCost={Points}",
+            vm.Id, vm.Name, vm.Spec.QualityTier, vm.Spec.CpuCores, pointCost);
+
+        // ========================================
+        // STEP 2: Select node (now with correct point cost)
+        // ========================================
+        var selectedNode = await _nodeService.SelectBestNodeForVmAsync(
+            vm.Spec,
+            vm.Spec.QualityTier);
 
         if (selectedNode == null)
         {
-            _logger.LogWarning("No available nodes for VM {VmId}", vm.Id);
+            _logger.LogWarning(
+                "No suitable node found for VM {VmId} - Tier: {Tier}, Points: {Points}",
+                vm.Id, vm.Spec.QualityTier, pointCost);
+
             vm.Status = VmStatus.Pending;
-            vm.StatusMessage = "Waiting for available resources";
+            vm.StatusMessage = "No suitable node available";
             await _dataStore.SaveVmAsync(vm);
             return;
         }
 
         // ========================================
-        // CALCULATE AND RESERVE POINTS
+        // STEP 3: Reserve resources on node
         // ========================================
-
-        // Get tier policy to calculate point cost
-        var policy = _schedulingConfig.TierPolicies[vm.Spec.QualityTier];
-        var pointCost = vm.Spec.CpuCores * policy.PointsPerVCpu;
-
-        // Store point cost in VM spec for future reference
-        vm.Spec.ComputePointCost = pointCost;
-
-        // Reserve resources (legacy fields for backward compat)
-        selectedNode.AvailableResources.CpuCores -= vm.Spec.CpuCores;
-        selectedNode.AvailableResources.MemoryMb -= vm.Spec.MemoryMb;
-        selectedNode.AvailableResources.StorageGb -= vm.Spec.DiskGb;
-
         selectedNode.ReservedResources.CpuCores += vm.Spec.CpuCores;
         selectedNode.ReservedResources.MemoryMb += vm.Spec.MemoryMb;
         selectedNode.ReservedResources.StorageGb += vm.Spec.DiskGb;
-
-        // Reserve compute points
-        selectedNode.ReservedResources.ReservedComputePoints += pointCost;
+        selectedNode.ReservedResources.ReservedComputePoints += pointCost;  // ← Use calculated value
 
         await _dataStore.SaveNodeAsync(selectedNode);
 
         _logger.LogInformation(
-            "Reserved resources for VM {VmId} on node {NodeId}: " +
-            "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points ({Tier}). " +
-            "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
-            vm.Id, selectedNode.Id,
-            vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb, pointCost, vm.Spec.QualityTier,
+            "Reserved resources for VM {VmId} on node {NodeId}: {Cpu}c, {Mem}MB, {Storage}GB, {Points} points ({Tier}). " +
+            "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
+            vm.Id, selectedNode.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb, pointCost, vm.Spec.QualityTier,
             selectedNode.ReservedResources.ReservedComputePoints,
             selectedNode.TotalResources.TotalComputePoints,
             (double)selectedNode.ReservedResources.ReservedComputePoints /
-            selectedNode.TotalResources.TotalComputePoints * 100);
+            Math.Max(1, selectedNode.TotalResources.TotalComputePoints) * 100);
 
+        // ========================================
+        // STEP 4: Update VM assignment
+        // ========================================
         vm.NodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
-        await _dataStore.SaveVmAsync(vm);
-
+        // ========================================
+        // STEP 5: Get SSH public key
+        // ========================================
         string? sshPublicKey = vm.Spec.SshPublicKey;
         if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
         {
@@ -678,12 +682,18 @@ public class VmService : IVmService
             }
         }
 
+        // ========================================
+        // STEP 6: Get image URL
+        // ========================================
         string? imageUrl = vm.Spec.ImageUrl;
         if (string.IsNullOrEmpty(imageUrl) && !string.IsNullOrEmpty(vm.Spec.ImageId))
         {
             imageUrl = GetImageUrl(vm.Spec.ImageId);
         }
 
+        // ========================================
+        // STEP 7: Create command with ALL required fields
+        // ========================================
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             NodeCommandType.CreateVm,
@@ -695,6 +705,7 @@ public class VmService : IVmService
                 MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
                 DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
                 QualityTier = (int)vm.Spec.QualityTier,
+                ComputePointCost = vm.Spec.ComputePointCost,  // ← NOW HAS CORRECT VALUE!
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
@@ -710,14 +721,16 @@ public class VmService : IVmService
                 },
                 Password = vm.Spec.Password ?? ""
             }),
-            RequiresAck: true,              // ← Explicit
-            TargetResourceId: vm.Id         // ← Automatic tracking!
+            RequiresAck: true,
+            TargetResourceId: vm.Id
         );
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
 
-        _logger.LogInformation("VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
+        _logger.LogInformation(
+            "VM {VmId} scheduled on node {NodeId} with command containing ComputePointCost={Points}",
+            vm.Id, selectedNode.Id, vm.Spec.ComputePointCost);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -725,13 +738,7 @@ public class VmService : IVmService
             ResourceType = "vm",
             ResourceId = vm.Id,
             UserId = vm.OwnerId,
-            NodeId = selectedNode.Id,
-            Payload = new Dictionary<string, object>
-            {
-                ["nodeId"] = selectedNode.Id,
-                ["nodeName"] = selectedNode.Name,
-                ["commandPayload"] = command.Payload
-            }
+            NodeId = selectedNode.Id
         });
     }
 
