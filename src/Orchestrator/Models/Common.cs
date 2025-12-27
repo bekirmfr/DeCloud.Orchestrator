@@ -108,9 +108,11 @@ public class SystemStats
     public int TotalNodes { get; set; }
     public int OnlineNodes { get; set; }
     public int OfflineNodes { get; set; }
+    public int MaintenanceNodes { get; set; }
 
     // VM statistics
     public int TotalVms { get; set; }
+    public int PendingVms { get; set; }
     public int RunningVms { get; set; }
     public int StoppedVms { get; set; }
 

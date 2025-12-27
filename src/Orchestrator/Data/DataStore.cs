@@ -543,70 +543,70 @@ public class DataStore
     /// <summary>
     /// Get system statistics
     /// </summary>
+    // src/Orchestrator/Data/DataStore.cs
+
     public async Task<SystemStats> GetSystemStatsAsync()
     {
-        // Only count VMs that are "active" (not Deleting or Deleted)
-        var activeVms = VirtualMachines.Values
-            .Where(v => v.Status != VmStatus.Deleting &&
-                        v.Status != VmStatus.Deleted)
-            .ToList();
-
         var nodes = Nodes.Values.ToList();
         var onlineNodes = nodes.Where(n => n.Status == NodeStatus.Online).ToList();
+        var vms = VirtualMachines.Values.ToList();
+
+        // ========================================
+        // CALCULATE ACTUAL RESOURCE USAGE FROM VMs
+        // This provides self-healing against reservation drift
+        // ========================================
+        var activeVms = vms.Where(v =>
+            v.Status == VmStatus.Running ||
+            v.Status == VmStatus.Provisioning).ToList();
+
+        var actualUsedPoints = activeVms.Sum(v => v.Spec.ComputePointCost);
+        var actualUsedMemory = activeVms.Sum(v => (long)v.Spec.MemoryMb);
+        var actualUsedStorage = activeVms.Sum(v => (long)v.Spec.DiskGb);
+        var actualUsedCores = activeVms.Sum(v => v.Spec.CpuCores);
 
         var stats = new SystemStats
         {
-            // Node statistics
             TotalNodes = nodes.Count,
             OnlineNodes = onlineNodes.Count,
             OfflineNodes = nodes.Count(n => n.Status == NodeStatus.Offline),
+            MaintenanceNodes = nodes.Count(n => n.Status == NodeStatus.Maintenance),
 
-            // VM statistics - ONLY ACTIVE VMs
-            TotalVms = activeVms.Count,
-            RunningVms = activeVms.Count(v => v.Status == VmStatus.Running),
-            StoppedVms = activeVms.Count(v => v.Status == VmStatus.Stopped),
-
-            // User statistics
-            TotalUsers = Users.Count,
-            ActiveUsers = Users.Values
-                .Count(u => u.LastLoginAt > DateTime.UtcNow.AddDays(-30)),
+            TotalVms = vms.Count,
+            RunningVms = vms.Count(v => v.Status == VmStatus.Running),
+            PendingVms = vms.Count(v => v.Status == VmStatus.Pending),
+            StoppedVms = vms.Count(v => v.Status == VmStatus.Stopped),
 
             // ========================================
             // LEGACY CPU STATISTICS (backward compat)
             // ========================================
-            TotalCpuCores = nodes.Sum(n => n.TotalResources.CpuCores),
-            AvailableCpuCores = onlineNodes.Sum(n => n.AvailableResources.CpuCores),
-            UsedCpuCores = nodes.Sum(n =>
-                n.TotalResources.CpuCores - n.AvailableResources.CpuCores),
+            TotalCpuCores = onlineNodes.Sum(n => n.TotalResources.CpuCores),
+            UsedCpuCores = actualUsedCores,  // From actual VMs
+            AvailableCpuCores = onlineNodes.Sum(n => n.TotalResources.CpuCores) - actualUsedCores,
 
             // ========================================
-            // POINT-BASED CPU STATISTICS
+            // POINT-BASED CPU STATISTICS (SELF-HEALING)
             // ========================================
-            TotalComputePoints = nodes.Sum(n => n.TotalResources.TotalComputePoints),
-            AvailableComputePoints = onlineNodes.Sum(n =>
-                n.TotalResources.TotalComputePoints - n.ReservedResources.ReservedComputePoints),
-            UsedComputePoints = nodes.Sum(n => n.ReservedResources.ReservedComputePoints),
+            TotalComputePoints = onlineNodes.Sum(n => n.TotalResources.TotalComputePoints),
+            UsedComputePoints = actualUsedPoints,  // From actual VMs
+            AvailableComputePoints = onlineNodes.Sum(n => n.TotalResources.TotalComputePoints) - actualUsedPoints,
 
             // ========================================
-            // MEMORY & STORAGE STATISTICS
+            // MEMORY & STORAGE STATISTICS (SELF-HEALING)
             // ========================================
-            TotalMemoryMb = nodes.Sum(n => n.TotalResources.MemoryMb),
-            AvailableMemoryMb = onlineNodes.Sum(n => n.AvailableResources.MemoryMb),
-            UsedMemoryMb = nodes.Sum(n =>
-                n.TotalResources.MemoryMb - n.AvailableResources.MemoryMb),
+            TotalMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryMb),
+            UsedMemoryMb = actualUsedMemory,  // From actual VMs
+            AvailableMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryMb) - actualUsedMemory,
 
-            TotalStorageGb = nodes.Sum(n => n.TotalResources.StorageGb),
-            AvailableStorageGb = onlineNodes.Sum(n => n.AvailableResources.StorageGb),
-            UsedStorageGb = nodes.Sum(n =>
-                n.TotalResources.StorageGb - n.AvailableResources.StorageGb),
+            TotalStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageGb),
+            UsedStorageGb = actualUsedStorage,  // From actual VMs
+            AvailableStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageGb) - actualUsedStorage,
         };
 
-        // Calculate legacy utilization percentages
+        // Calculate utilization percentages
         stats.CpuUtilizationPercent = stats.TotalCpuCores > 0
             ? (double)stats.UsedCpuCores / stats.TotalCpuCores * 100
             : 0;
 
-        // Calculate point-based utilization
         stats.ComputePointUtilizationPercent = stats.TotalComputePoints > 0
             ? (double)stats.UsedComputePoints / stats.TotalComputePoints * 100
             : 0;
