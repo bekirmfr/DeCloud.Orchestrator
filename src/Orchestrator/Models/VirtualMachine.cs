@@ -80,8 +80,10 @@ public class VirtualMachine
 public class VmSpec
 {
     public int CpuCores { get; set; } = 1;
-    public long MemoryMb { get; set; } = 1024;
-    public long DiskGb { get; set; } = 20;
+    public long MemoryBytes { get; set; } = 1 * 1024L * 1024L;
+    public long MemoryMb => MemoryBytes / (1024L * 1024L);
+    public long DiskBytes { get; set; } = 20 * 1024L * 1024L * 1024L;
+    public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }
 
@@ -183,6 +185,8 @@ public class VmNetworkConfig
 {
     public string? PrivateIp { get; set; }
     public string? PublicIp { get; set; }
+
+    public string? MacAddress { get; set; }
     public string? Hostname { get; set; }
     public List<PortMapping> PortMappings { get; set; } = new();
     public string? OverlayNetworkId { get; set; }

@@ -1025,7 +1025,7 @@ public class NodeService : INodeService
 
         foreach (var reported in heartbeat.ActiveVms)
         {
-            var vmId = reported.VmId;
+            var vmId = reported.Id;
 
             if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             {
@@ -1056,26 +1056,26 @@ public class NodeService : INodeService
 
                 // Check if VM ownership has changed
                 if (string.IsNullOrWhiteSpace(vm.OwnerId) ||
-                    (vm.OwnerId != reported.TenantId && !string.IsNullOrEmpty(reported.TenantId)))
+                    (vm.OwnerId != reported.OwnerId && !string.IsNullOrEmpty(reported.OwnerId)))
                 {
                     var oldOwner = vm.OwnerId;
-                    vm.OwnerId = reported.TenantId;
+                    vm.OwnerId = reported.OwnerId;
                     await _dataStore.SaveVmAsync(vm);
                     _logger.LogWarning(
                         "VM {VmId} ownership changed from {OldOwner} to {NewOwner} based on heartbeat report",
-                        vmId, oldOwner, reported.TenantId);
+                        vmId, oldOwner, reported.OwnerId);
                 }
 
                 // Check if VM owner wallet has changed
                 if (string.IsNullOrWhiteSpace(vm.OwnerWallet) ||
-                    (vm.OwnerWallet != reported.TenantWalletAddress && !string.IsNullOrEmpty(reported.TenantWalletAddress)))
+                    (vm.OwnerWallet != reported.OwnerWallet && !string.IsNullOrEmpty(reported.OwnerWallet)))
                 {
                     var oldWallet = vm.OwnerWallet;
-                    vm.OwnerWallet = reported.TenantWalletAddress;
+                    vm.OwnerWallet = reported.OwnerWallet;
                     await _dataStore.SaveVmAsync(vm);
                     _logger.LogWarning(
                         "VM {VmId} owner wallet changed from {OldWallet} to {NewWallet} based on heartbeat report",
-                        vmId, oldWallet, reported.TenantWalletAddress);
+                        vmId, oldWallet, reported.OwnerWallet);
                 }
 
                 // Update metrics if provided
@@ -1095,13 +1095,13 @@ public class NodeService : INodeService
                 {
                     vm.AccessInfo ??= new VmAccessInfo();
                     vm.AccessInfo.SshHost = reported.IpAddress;
-                    vm.AccessInfo.SshPort = int.Parse(reported.VncPort);
+                    vm.AccessInfo.SshPort = 22;
 
-                    if (!string.IsNullOrEmpty(reported.VncPort))
+                    if (reported.VncPort != null)
                     {
                         // VNC accessible through WireGuard at node IP
                         vm.AccessInfo.VncHost = node?.PublicIp ?? reported.IpAddress;
-                        vm.AccessInfo.VncPort = int.Parse(reported.VncPort);
+                        vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
                     }
 
                     // Update network config with actual libvirt IP
@@ -1110,7 +1110,7 @@ public class NodeService : INodeService
                     await _dataStore.SaveVmAsync(vm);
                 }
             }
-            else if (!string.IsNullOrEmpty(reported.TenantId))
+            else if (!string.IsNullOrEmpty(reported.OwnerId))
             {
                 // Orphaned VM recovery
                 await RecoverOrphanedVmAsync(nodeId, reported);
@@ -1124,19 +1124,20 @@ public class NodeService : INodeService
     /// </summary>
     private async Task RecoverOrphanedVmAsync(string nodeId, HeartbeatVmInfo reported)
     {
-        var vmId = reported.VmId;
+        var vmId = reported.Id;
 
         try
         {
             _logger.LogInformation(
                 "Recovering orphaned VM {VmId} on node {NodeId} (Owner: {OwnerId}, State: {State})",
-                vmId, nodeId, reported.TenantId, reported.State);
+                vmId, nodeId, reported.OwnerId, reported.State);
 
             var recoveredVm = new VirtualMachine
             {
                 Id = vmId,
                 Name = reported.Name ?? $"recovered-{vmId[..8]}",
-                OwnerId = reported.TenantId ?? "unknown",
+                OwnerId = reported.OwnerId,
+                OwnerWallet = reported.OwnerWallet,
                 NodeId = nodeId,
                 Status = ParseVmStatus(reported.State),
                 PowerState = ParsePowerState(reported.State),
@@ -1146,21 +1147,28 @@ public class NodeService : INodeService
                 {
                     PrivateIp = reported.IpAddress ?? "",
                     Hostname = reported.Name ?? "",
+                    MacAddress = reported.MacAddress ?? "",
                     //PublicIp = ,
                     //PortMappings = [reported.VncPort],
                     //OverlayNetworkId = 
                 },
+                AccessInfo = new VmAccessInfo
+                {
+                    SshHost = reported.IpAddress ?? "",
+                    SshPort = reported.SshPort,
+                    VncHost = reported.IpAddress ?? "",
+                    VncPort = reported.VncPort ?? 5900
+                },
                 Spec = new VmSpec
                 {
-                    CpuCores = reported.VCpus ?? 1,
-                    MemoryMb = reported.MemoryBytes.HasValue
-                        ? reported.MemoryBytes.Value / 1024 / 1024
-                        : 1024,
-                    DiskGb = reported.DiskBytes.HasValue
-                        ? reported.DiskBytes.Value / 1024 / 1024 / 1024
-                        : 20,
-                    ImageId = "unknown",
-                    EncryptedPassword = reported.EncryptedPassword ?? null
+                    CpuCores = reported.CpuCores,
+                    MemoryBytes = reported.MemoryBytes.Value,
+                    DiskBytes = reported.DiskBytes.Value,
+                    ImageId = reported.ImageId ?? "unknown",
+                    EncryptedPassword = reported.EncryptedPassword ?? null,
+                    PasswordSecured = !string.IsNullOrEmpty(reported.EncryptedPassword),
+                    QualityTier = (QualityTier)reported.QualityTier,
+                    ComputePointCost = reported.ComputePointCost,
                 },
                 StatusMessage = "Recovered from node heartbeat after orchestrator restart",
                 Labels = new Dictionary<string, string>

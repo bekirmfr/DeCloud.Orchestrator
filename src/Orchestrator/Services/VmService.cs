@@ -709,8 +709,8 @@ public class VmService : IVmService
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
-                TenantId = vm.OwnerId,
-                TenantWalletAddress = vm.OwnerWallet,
+                OwnerId = vm.OwnerId,
+                OwnerWallet = vm.OwnerWallet,
                 LeaseId = vm.Id,
                 Network = new
                 {

@@ -560,8 +560,8 @@ public class DataStore
             v.Status == VmStatus.Provisioning).ToList();
 
         var actualUsedPoints = activeVms.Sum(v => v.Spec.ComputePointCost);
-        var actualUsedMemory = activeVms.Sum(v => (long)v.Spec.MemoryMb);
-        var actualUsedStorage = activeVms.Sum(v => (long)v.Spec.DiskGb);
+        var actualUsedMemory = activeVms.Sum(v => (long)v.Spec.MemoryBytes);
+        var actualUsedStorage = activeVms.Sum(v => (long)v.Spec.DiskBytes);
         var actualUsedCores = activeVms.Sum(v => v.Spec.CpuCores);
 
         var stats = new SystemStats
@@ -586,9 +586,9 @@ public class DataStore
             // ========================================
             // POINT-BASED CPU STATISTICS (SELF-HEALING)
             // ========================================
-            TotalComputePoints = onlineNodes.Sum(n => n.TotalResources.TotalComputePoints),
+            TotalComputePoints = onlineNodes.Sum(n => n.TotalResources.ComputePoints),
             UsedComputePoints = actualUsedPoints,  // From actual VMs
-            AvailableComputePoints = onlineNodes.Sum(n => n.TotalResources.TotalComputePoints) - actualUsedPoints,
+            AvailableComputePoints = onlineNodes.Sum(n => n.AvailableResources.ComputePoints) - actualUsedPoints,
 
             // ========================================
             // MEMORY & STORAGE STATISTICS (SELF-HEALING)

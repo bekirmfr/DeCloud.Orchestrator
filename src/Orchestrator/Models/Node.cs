@@ -161,28 +161,30 @@ public record NodeHeartbeat(
 /// </summary>
 public class HeartbeatVmInfo
 {
-    public string VmId { get; set; } = string.Empty;
+    public string Id { get; set; } = string.Empty;
     public string? Name { get; set; }
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
-    public string TenantId { get; set; } = string.Empty;  // Owner ID
-    public string TenantWalletAddress { get; set; } = string.Empty;
+    public string OwnerId { get; set; } = string.Empty;  // Owner ID
+    public string OwnerWallet { get; set; } = string.Empty;
     public string LeaseId { get; set; } = string.Empty;
     public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
-    // Complete recovery fields
-    /// <summary>
-    /// VNC port for console access (e.g., "5900")
-    /// </summary>
-    public string? VncPort { get; set; }
-
     /// <summary>
     /// MAC address assigned to VM's network interface
     /// </summary>
     public string? MacAddress { get; set; }
+    public int SshPort { get; set; } = 22;
+    // Complete recovery fields
+    /// <summary>
+    /// VNC port for console access (e.g., "5900")
+    /// </summary>
+    public int? VncPort { get; set; }
+
     
     // Resource specifications
-    public int? VCpus { get; set; }
+    public int CpuCores { get; set; }
     public int QualityTier { get; set; }
+    public int ComputePointCost { get; set; }
     public long? MemoryBytes { get; set; }
     public long? DiskBytes { get; set; }
     public double? CpuUsagePercent { get; set; }
@@ -192,6 +194,8 @@ public class HeartbeatVmInfo
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
     public string? EncryptedPassword { get; set; }
+    public string? SshPublicKey { get; set; }  // or recovery
+    public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
 }
 
