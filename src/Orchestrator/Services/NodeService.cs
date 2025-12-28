@@ -1109,6 +1109,21 @@ public class NodeService : INodeService
 
                     await _dataStore.SaveVmAsync(vm);
                 }
+
+                // Sync encrypted password if present and different
+                if (!string.IsNullOrEmpty(reported.EncryptedPassword))
+                {
+                    if (vm.Spec.EncryptedPassword != reported.EncryptedPassword)
+                    {
+                        vm.Spec.EncryptedPassword = reported.EncryptedPassword;
+                        vm.Spec.PasswordSecured = true;
+                        await _dataStore.SaveVmAsync(vm);
+
+                        _logger.LogInformation(
+                            "VM {VmId} encrypted password synced from heartbeat",
+                            vmId);
+                    }
+                }
             }
             else if (!string.IsNullOrEmpty(reported.OwnerId))
             {

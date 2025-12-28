@@ -1,3 +1,4 @@
+using MongoDB.Bson.Serialization.Attributes;
 using Orchestrator.Services;
 using System.Text.Json.Serialization;
 
@@ -81,8 +82,12 @@ public class VmSpec
 {
     public int CpuCores { get; set; } = 1;
     public long MemoryBytes { get; set; } = 1 * 1024L * 1024L;
+    [BsonIgnore]
+    [JsonIgnore]
     public long MemoryMb => MemoryBytes / (1024L * 1024L);
     public long DiskBytes { get; set; } = 20 * 1024L * 1024L * 1024L;
+    [BsonIgnore]
+    [JsonIgnore]
     public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }

@@ -1,7 +1,8 @@
-﻿using System.Security.Cryptography;
-using System.Text.Json;
+﻿using DeCloud.Shared.Models;
 using Orchestrator.Data;
 using Orchestrator.Models;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Orchestrator.Services;
 
@@ -694,6 +695,7 @@ public class VmService : IVmService
         // ========================================
         // STEP 7: Create command with ALL required fields
         // ========================================
+
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             NodeCommandType.CreateVm,
@@ -701,6 +703,8 @@ public class VmService : IVmService
             {
                 VmId = vm.Id,
                 Name = vm.Name,
+                OwnerId = vm.OwnerId,
+                OwnerWallet = vm.OwnerWallet,
                 VCpus = vm.Spec.CpuCores,
                 MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
                 DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
@@ -709,8 +713,6 @@ public class VmService : IVmService
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
-                OwnerId = vm.OwnerId,
-                OwnerWallet = vm.OwnerWallet,
                 LeaseId = vm.Id,
                 Network = new
                 {
