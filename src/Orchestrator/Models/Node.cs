@@ -180,8 +180,10 @@ public class HeartbeatVmInfo
 {
     public string VmId { get; set; } = string.Empty;
     public string? Name { get; set; }
-    public string? TenantId { get; set; }  // Owner ID
+    public string TenantId { get; set; } = string.Empty;  // Owner ID
+    public string TenantWalletAddress { get; set; } = string.Empty;
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
+    public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
     public double? CpuUsagePercent { get; set; }
     public DateTime? StartedAt { get; set; }

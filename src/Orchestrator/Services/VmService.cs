@@ -705,11 +705,12 @@ public class VmService : IVmService
                 MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
                 DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
                 QualityTier = (int)vm.Spec.QualityTier,
-                ComputePointCost = vm.Spec.ComputePointCost,  // ← NOW HAS CORRECT VALUE!
+                ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
                 TenantId = vm.OwnerId,
+                TenanatWalletAddress = vm.OwnerWallet,
                 LeaseId = vm.Id,
                 Network = new
                 {

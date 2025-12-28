@@ -1048,6 +1048,18 @@ public class NodeService : INodeService
                         vmId, newStatus, newPowerState);
                 }
 
+                // Check if VM ownership has changed
+                if (vm.OwnerId != reported.TenantId &&
+                    !string.IsNullOrEmpty(reported.TenantId))
+                {
+                    var oldOwner = vm.OwnerId;
+                    vm.OwnerId = reported.TenantId;
+                    await _dataStore.SaveVmAsync(vm);
+                    _logger.LogWarning(
+                        "VM {VmId} ownership changed from {OldOwner} to {NewOwner} based on heartbeat report",
+                        vmId, oldOwner, reported.TenantId);
+                }
+
                 // Update metrics if provided
                 if (reported.CpuUsagePercent.HasValue)
                 {
@@ -1060,7 +1072,7 @@ public class NodeService : INodeService
                 }
 
                 // Update access info if available
-                if (!string.IsNullOrEmpty(reported.IpAddress) &&
+                if (reported.IsIpAssigned &&
                     vm.NetworkConfig.PrivateIp != reported.IpAddress)
                 {
                     vm.AccessInfo ??= new VmAccessInfo();
