@@ -287,8 +287,8 @@ public class NodeService : INodeService
         // POINT-BASED CPU CALCULATION
         // ========================================
 
-        var totalComputePoints = node.TotalResources.TotalComputePoints;
-        var allocatedComputePoints = node.AvailableResources.TotalComputePoints;
+        var totalComputePoints = node.TotalResources.ComputePoints;
+        var allocatedComputePoints = node.ReservedResources.ComputePoints;
 
         // Calculate effective capacity with overcommit ratios
         var effectiveCpu = node.TotalResources.CpuCores * policy.CpuOvercommitRatio;
@@ -470,7 +470,7 @@ public class NodeService : INodeService
             existingNode.Name = request.Name;
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
-            existingNode.TotalResources = request.Resources;
+            existingNode.ReservedResources = request.ReservedResources;
             existingNode.AgentVersion = request.AgentVersion;
             existingNode.SupportedImages = request.SupportedImages;
             existingNode.SupportsGpu = request.SupportsGpu;
@@ -480,11 +480,10 @@ public class NodeService : INodeService
             existingNode.Status = NodeStatus.Online;
             existingNode.LastHeartbeat = DateTime.UtcNow;
 
-            // NEW: Re-initialize compute points if not set
-            if (existingNode.TotalResources.TotalComputePoints == 0)
+            // Re-initialize compute points if not set
+            if (existingNode.TotalResources.ComputePoints == 0)
             {
-                existingNode.TotalResources.InitializeComputePoints();
-                existingNode.AvailableResources.InitializeComputePoints();
+                existingNode.InitializeComputePoints();
             }
 
             await _dataStore.SaveNodeAsync(existingNode);
@@ -519,8 +518,8 @@ public class NodeService : INodeService
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
-            TotalResources = request.Resources,
-            AvailableResources = request.Resources,
+            TotalResources = new NodeResources(),
+            AvailableResources = new NodeResources(),
             ReservedResources = new NodeResources(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -532,8 +531,7 @@ public class NodeService : INodeService
         };
 
         // Initialize compute points
-        node.TotalResources.InitializeComputePoints();
-        node.AvailableResources.InitializeComputePoints();
+        node.InitializeComputePoints();
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -587,7 +585,7 @@ public class NodeService : INodeService
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
 
-        // Optional: Log discrepancy between node-reported and orchestrator-tracked resources
+        // Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
         var orchestratorTrackedFree = new NodeResources
         {
@@ -597,17 +595,25 @@ public class NodeService : INodeService
         };
 
         var cpuDiff = Math.Abs(nodeReportedFree.CpuCores - orchestratorTrackedFree.CpuCores);
+        var computePointDiff = Math.Abs(
+            (node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints) -
+            (nodeReportedFree.ComputePoints));
         var memDiff = Math.Abs(nodeReportedFree.MemoryMb - orchestratorTrackedFree.MemoryMb);
 
-        if (cpuDiff > 1 || memDiff > 1024)
+        if (cpuDiff > 1 || computePointDiff > 1 || memDiff > 1024)
         {
+            _logger.LogWarning("Resource drift detected on node {NodeId}", nodeId);
+
             _logger.LogDebug(
-                "Resource tracking drift on node {NodeId}: Node reports {NodeCpu}c/{NodeMem}MB free, " +
-                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu}c/{ResMem}MB)",
+                "Resource tracking drift on node {NodeId}: Node reports {NodeCpu} core(s) / {NodeComputePoints} point(s) / {NodeMem} MB free, " +
+                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu} core(s) / {ResComputePoints} point(s) / {ResMem} MB)",
                 nodeId,
-                nodeReportedFree.CpuCores, nodeReportedFree.MemoryMb,
-                orchestratorTrackedFree.CpuCores, orchestratorTrackedFree.MemoryMb,
+                nodeReportedFree.CpuCores, nodeReportedFree.ComputePoints, nodeReportedFree.MemoryMb,
+                orchestratorTrackedFree.CpuCores, orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryMb,
                 node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb);
+
+            // TO-DO: Implement resource reconciliation logic here
+            // For now, we just log the discrepancy and update the node based on the ehartbeat
         }
 
         await _dataStore.SaveNodeAsync(node);
@@ -933,8 +939,8 @@ public class NodeService : INodeService
                 node.ReservedResources.StorageGb - storageToFree);
 
             // NEW: Free compute points
-            node.ReservedResources.ReservedComputePoints = Math.Max(0,
-                node.ReservedResources.ReservedComputePoints - pointsToFree);
+            node.ReservedResources.ComputePoints = Math.Max(0,
+                node.ReservedResources.ComputePoints - pointsToFree);
 
             // Also update available resources
             node.AvailableResources.CpuCores += cpuToFree;
@@ -948,9 +954,9 @@ public class NodeService : INodeService
                 "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +  // UPDATED
                 "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",  // UPDATED
                 vm.Id, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,  // UPDATED
-                node.ReservedResources.CpuCores, node.ReservedResources.ReservedComputePoints,  // UPDATED
+                node.ReservedResources.CpuCores, node.ReservedResources.ComputePoints,  // UPDATED
                 node.AvailableResources.CpuCores,
-                node.AvailableResources.TotalComputePoints - node.ReservedResources.ReservedComputePoints);  // UPDATED
+                node.AvailableResources.ComputePoints - node.ReservedResources.ComputePoints);  // UPDATED
         }
         else
         {
@@ -1049,8 +1055,8 @@ public class NodeService : INodeService
                 }
 
                 // Check if VM ownership has changed
-                if (vm.OwnerId != reported.TenantId &&
-                    !string.IsNullOrEmpty(reported.TenantId))
+                if (string.IsNullOrWhiteSpace(vm.OwnerId) ||
+                    (vm.OwnerId != reported.TenantId && !string.IsNullOrEmpty(reported.TenantId)))
                 {
                     var oldOwner = vm.OwnerId;
                     vm.OwnerId = reported.TenantId;
@@ -1058,6 +1064,18 @@ public class NodeService : INodeService
                     _logger.LogWarning(
                         "VM {VmId} ownership changed from {OldOwner} to {NewOwner} based on heartbeat report",
                         vmId, oldOwner, reported.TenantId);
+                }
+
+                // Check if VM owner wallet has changed
+                if (string.IsNullOrWhiteSpace(vm.OwnerWallet) ||
+                    (vm.OwnerWallet != reported.TenantWalletAddress && !string.IsNullOrEmpty(reported.TenantWalletAddress)))
+                {
+                    var oldWallet = vm.OwnerWallet;
+                    vm.OwnerWallet = reported.TenantWalletAddress;
+                    await _dataStore.SaveVmAsync(vm);
+                    _logger.LogWarning(
+                        "VM {VmId} owner wallet changed from {OldWallet} to {NewWallet} based on heartbeat report",
+                        vmId, oldWallet, reported.TenantWalletAddress);
                 }
 
                 // Update metrics if provided

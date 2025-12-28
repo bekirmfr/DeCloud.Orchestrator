@@ -22,8 +22,8 @@ public class Node
 
     // Resources
     public NodeResources TotalResources { get; set; } = new();
-    public NodeResources AvailableResources { get; set; } = new();
     public NodeResources ReservedResources { get; set; } = new();
+    public NodeResources AvailableResources { get; set; } = new();
 
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
@@ -47,41 +47,6 @@ public class Node
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
-}
-
-/// <summary>
-/// Node resource allocation with point-based CPU tracking
-/// </summary>
-public class NodeResources
-{
-    // ========================================
-    // LEGACY FIELDS (Backward Compatible)
-    // ========================================
-    public int CpuCores { get; set; }
-    public long MemoryMb { get; set; }
-    public long StorageGb { get; set; }
-    public long BandwidthMbps { get; set; }
-
-    // ========================================
-    // NEW: POINT-BASED CPU ALLOCATION
-    // ========================================
-
-    /// <summary>
-    /// Total compute points available (CpuCores × 8)
-    /// Each physical core = 8 compute points
-    /// Example: 2-core node = 16 total points
-    /// </summary>
-    public int TotalComputePoints { get; set; }
-
-    /// <summary>
-    /// Currently reserved compute points (sum of all VM point costs)
-    /// </summary>
-    public int ReservedComputePoints { get; set; }
-
-    /// <summary>
-    /// Available compute points for new VMs
-    /// </summary>
-    public int AvailableComputePoints => TotalComputePoints - ReservedComputePoints;
 
     /// <summary>
     /// Initialize compute points from physical CPU cores
@@ -89,9 +54,27 @@ public class NodeResources
     /// </summary>
     public void InitializeComputePoints()
     {
-        TotalComputePoints = CpuCores * 8;
+        TotalResources.ComputePoints = TotalResources.CpuCores * 8;
         // ReservedComputePoints starts at 0 for new nodes
+        AvailableResources.ComputePoints = TotalResources.ComputePoints - ReservedResources.ComputePoints;
     }
+}
+
+/// <summary>
+/// Node resource allocation with point-based CPU tracking
+/// </summary>
+public class NodeResources
+{
+    /// <summary>
+    /// Compute points (CpuCores × 8)
+    /// Each physical core = 8 compute points
+    /// Example: 2-core node = 16 total points
+    /// </summary>
+    public int ComputePoints { get; set; }
+    public int CpuCores { get; set; }
+    public long MemoryMb { get; set; }
+    public long StorageGb { get; set; }
+    public long BandwidthMbps { get; set; }
 }
 
 public class GpuInfo
@@ -148,7 +131,7 @@ public class NodeRegistrationRequest
     public required string Name { get; set; }
     public required string PublicIp { get; set; }
     public required int AgentPort { get; set; }
-    public required NodeResources Resources { get; set; }
+    public required NodeResources ReservedResources { get; set; }
     public required string AgentVersion { get; set; }
     public List<string> SupportedImages { get; set; } = new();
     public bool SupportsGpu { get; set; }
@@ -180,20 +163,12 @@ public class HeartbeatVmInfo
 {
     public string VmId { get; set; } = string.Empty;
     public string? Name { get; set; }
+    public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
     public string TenantId { get; set; } = string.Empty;  // Owner ID
     public string TenantWalletAddress { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
+    public string LeaseId { get; set; } = string.Empty;
     public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
-    public double? CpuUsagePercent { get; set; }
-    public DateTime? StartedAt { get; set; }
-
-    // Optional extended info
-    // Resource specifications
-    public int? VCpus { get; set; }
-    public long? MemoryBytes { get; set; }
-    public long? DiskBytes { get; set; }
-
     // Complete recovery fields
     /// <summary>
     /// VNC port for console access (e.g., "5900")
@@ -204,12 +179,20 @@ public class HeartbeatVmInfo
     /// MAC address assigned to VM's network interface
     /// </summary>
     public string? MacAddress { get; set; }
+    
+    // Resource specifications
+    public int? VCpus { get; set; }
+    public int QualityTier { get; set; }
+    public long? MemoryBytes { get; set; }
+    public long? DiskBytes { get; set; }
+    public double? CpuUsagePercent { get; set; }
 
     /// <summary>
     /// Wallet-encrypted password for VM access
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
     public string? EncryptedPassword { get; set; }
+    public DateTime? StartedAt { get; set; }
 }
 
 public record NodeHeartbeatResponse(

@@ -8,9 +8,9 @@
 		<UserSecretsId>orchestrator-dev-secrets</UserSecretsId>
 	</PropertyGroup>
 
-<ItemGroup>
-  <Compile Include="../Shared/NodeIdGenerator.cs" Link="Shared/NodeIdGenerator.cs" />
-</ItemGroup>
+	<ItemGroup>
+		<Compile Include="../Shared/**/*.cs" Link="Shared/%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
 
 	<!-- ============================================== -->
 	<!-- NuGet Package References -->

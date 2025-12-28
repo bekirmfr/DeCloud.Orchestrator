@@ -509,8 +509,8 @@ public class VmService : IVmService
                 node.ReservedResources.StorageGb - storageToFree);
 
             // NEW: Free compute points
-            node.ReservedResources.ReservedComputePoints = Math.Max(0,
-                node.ReservedResources.ReservedComputePoints - pointsToFree);
+            node.ReservedResources.ComputePoints = Math.Max(0,
+                node.ReservedResources.ComputePoints - pointsToFree);
 
             await _dataStore.SaveNodeAsync(node);
 
@@ -519,10 +519,10 @@ public class VmService : IVmService
                 "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
                 "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
                 vmId, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,
-                node.ReservedResources.ReservedComputePoints,
-                node.TotalResources.TotalComputePoints,
-                (double)node.ReservedResources.ReservedComputePoints /
-                Math.Max(1, node.TotalResources.TotalComputePoints) * 100);
+                node.ReservedResources.ComputePoints,
+                node.TotalResources.ComputePoints,
+                (double)node.ReservedResources.ComputePoints /
+                Math.Max(1, node.TotalResources.ComputePoints) * 100);
         }
 
         // Update user quotas (unchanged)
@@ -650,7 +650,7 @@ public class VmService : IVmService
         selectedNode.ReservedResources.CpuCores += vm.Spec.CpuCores;
         selectedNode.ReservedResources.MemoryMb += vm.Spec.MemoryMb;
         selectedNode.ReservedResources.StorageGb += vm.Spec.DiskGb;
-        selectedNode.ReservedResources.ReservedComputePoints += pointCost;  // ← Use calculated value
+        selectedNode.ReservedResources.ComputePoints += pointCost;  // ← Use calculated value
 
         await _dataStore.SaveNodeAsync(selectedNode);
 
@@ -658,10 +658,10 @@ public class VmService : IVmService
             "Reserved resources for VM {VmId} on node {NodeId}: {Cpu}c, {Mem}MB, {Storage}GB, {Points} points ({Tier}). " +
             "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
             vm.Id, selectedNode.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb, pointCost, vm.Spec.QualityTier,
-            selectedNode.ReservedResources.ReservedComputePoints,
-            selectedNode.TotalResources.TotalComputePoints,
-            (double)selectedNode.ReservedResources.ReservedComputePoints /
-            Math.Max(1, selectedNode.TotalResources.TotalComputePoints) * 100);
+            selectedNode.ReservedResources.ComputePoints,
+            selectedNode.TotalResources.ComputePoints,
+            (double)selectedNode.ReservedResources.ComputePoints /
+            Math.Max(1, selectedNode.TotalResources.ComputePoints) * 100);
 
         // ========================================
         // STEP 4: Update VM assignment
@@ -710,7 +710,7 @@ public class VmService : IVmService
                 BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
                 TenantId = vm.OwnerId,
-                TenanatWalletAddress = vm.OwnerWallet,
+                TenantWalletAddress = vm.OwnerWallet,
                 LeaseId = vm.Id,
                 Network = new
                 {
