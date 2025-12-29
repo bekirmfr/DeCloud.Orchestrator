@@ -65,13 +65,19 @@ public class VmSchedulerService : BackgroundService
     {
         _logger.LogInformation("VM Scheduler started");
 
+        return;
+
+        // Scheduling pending vms requires access to plain text passwords,
+        // which we cannot do in this background service for security reasons.
+
+        /*
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 using var scope = _serviceProvider.CreateScope();
                 var vmService = scope.ServiceProvider.GetRequiredService<IVmService>();
-                
+
                 await vmService.SchedulePendingVmsAsync();
             }
             catch (Exception ex)
@@ -81,6 +87,7 @@ public class VmSchedulerService : BackgroundService
 
             await Task.Delay(_scheduleInterval, stoppingToken);
         }
+        */
     }
 }
 

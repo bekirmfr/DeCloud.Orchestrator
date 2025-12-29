@@ -103,7 +103,7 @@ public class SystemController : ControllerBase
     public ActionResult<ApiResponse<PriceCalculation>> CalculatePrice([FromBody] VmSpec spec)
     {
         // Simple pricing model
-        decimal cpuRate = 0.005m * spec.CpuCores;
+        decimal cpuRate = 0.005m * spec.VirtualCpuCores;
         decimal memoryRate = 0.002m * (spec.MemoryMb / 1024m);
         decimal storageRate = 0.0001m * spec.DiskGb;
         decimal gpuRate = spec.RequiresGpu ? 0.10m : 0;

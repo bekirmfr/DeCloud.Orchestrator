@@ -604,9 +604,9 @@ public class UserService : IUserService
 
         var quotas = user.Quotas;
         
-        var cpuOk = quotas.CurrentCpuCores + cpuCores <= quotas.MaxCpuCores;
-        var memOk = quotas.CurrentMemoryMb + memoryMb <= quotas.MaxMemoryMb;
-        var storageOk = quotas.CurrentStorageGb + storageGb <= quotas.MaxStorageGb;
+        var cpuOk = quotas.CurrentVirtualCpuCores + cpuCores <= quotas.MaxCpuCores;
+        var memOk = quotas.CurrentMemoryBytes + memoryMb <= quotas.MaxMemoryMb;
+        var storageOk = quotas.CurrentStorageBytes + storageGb <= quotas.MaxStorageGb;
         var vmOk = quotas.CurrentVms < quotas.MaxVms;
 
         return Task.FromResult(cpuOk && memOk && storageOk && vmOk);
@@ -617,9 +617,9 @@ public class UserService : IUserService
         if (!_dataStore.Users.TryGetValue(userId, out var user))
             return;
 
-        user.Quotas.CurrentCpuCores = Math.Max(0, user.Quotas.CurrentCpuCores + cpuDelta);
-        user.Quotas.CurrentMemoryMb = Math.Max(0, user.Quotas.CurrentMemoryMb + memoryDelta);
-        user.Quotas.CurrentStorageGb = Math.Max(0, user.Quotas.CurrentStorageGb + storageDelta);
+        user.Quotas.CurrentVirtualCpuCores = Math.Max(0, user.Quotas.CurrentVirtualCpuCores + cpuDelta);
+        user.Quotas.CurrentMemoryBytes = Math.Max(0, user.Quotas.CurrentMemoryBytes + memoryDelta);
+        user.Quotas.CurrentStorageBytes = Math.Max(0, user.Quotas.CurrentStorageBytes + storageDelta);
         
         if (cpuDelta > 0) user.Quotas.CurrentVms++;
         else if (cpuDelta < 0) user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);

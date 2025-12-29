@@ -80,15 +80,15 @@ public class VirtualMachine
 
 public class VmSpec
 {
-    public int CpuCores { get; set; } = 1;
+    public int VirtualCpuCores { get; set; } = 1;
     public long MemoryBytes { get; set; } = 1 * 1024L * 1024L;
-    [BsonIgnore]
-    [JsonIgnore]
-    public long MemoryMb => MemoryBytes / (1024L * 1024L);
+    //[BsonIgnore]
+    //[JsonIgnore]
+    //public long MemoryMb => MemoryBytes / (1024L * 1024L);
     public long DiskBytes { get; set; } = 20 * 1024L * 1024L * 1024L;
-    [BsonIgnore]
-    [JsonIgnore]
-    public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
+    //[BsonIgnore]
+    //[JsonIgnore]
+    //public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }
 
@@ -163,16 +163,12 @@ public class VmSpec
     
     // SSH key for access
     public string? SshPublicKey { get; set; }
-    /// <summary>
-    /// Human-readable plaintext password (only set during creation, then cleared)
-    /// </summary>
-    public string? Password { get; set; }
 
     /// <summary>
     /// Wallet-encrypted password (stored permanently)
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
-    public string? EncryptedPassword { get; set; }
+    public string? WalletEncryptedPassword { get; set; }
 
     /// <summary>
     /// Whether the password has been encrypted and stored

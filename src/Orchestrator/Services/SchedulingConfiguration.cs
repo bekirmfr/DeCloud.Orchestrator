@@ -233,8 +233,8 @@ public class NodeResourceAvailability
     public bool CanFit(VmSpec spec, int pointCost)
     {
         return RemainingComputePoints >= pointCost
-            && RemainingMemory >= spec.MemoryMb
-            && RemainingStorage >= spec.DiskGb;
+            && RemainingMemory >= spec.MemoryBytes
+            && RemainingStorage >= spec.DiskBytes;
     }
 
     // Utilization after adding this VM
@@ -248,7 +248,7 @@ public class NodeResourceAvailability
     public double ProjectedMemoryUtilization(VmSpec spec)
     {
         return EffectiveMemoryCapacity > 0
-            ? ((AllocatedMemory + spec.MemoryMb) / EffectiveMemoryCapacity) * 100
+            ? ((AllocatedMemory + spec.MemoryBytes) / EffectiveMemoryCapacity) * 100
             : 100;
     }
 }

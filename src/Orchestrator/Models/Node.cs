@@ -53,7 +53,7 @@ public class Node
     /// </summary>
     public void InitializeComputePoints()
     {
-        TotalResources.ComputePoints = TotalResources.CpuCores * 8;
+        TotalResources.ComputePoints = TotalResources.PhysicalCpuCores * 8;
     }
 }
 
@@ -62,16 +62,15 @@ public class Node
 /// </summary>
 public class NodeResources
 {
+    public int PhysicalCpuCores { get; set; }
     /// <summary>
     /// Compute points (CpuCores × 8)
     /// Each physical core = 8 compute points
     /// Example: 2-core node = 16 total points
     /// </summary>
     public int ComputePoints { get; set; }
-    public int CpuCores { get; set; }
-    public long MemoryMb { get; set; }
-    public long StorageGb { get; set; }
-    public long BandwidthMbps { get; set; }
+    public long MemoryBytes { get; set; }
+    public long StorageBytes { get; set; }
 }
 
 public class GpuInfo
@@ -169,7 +168,7 @@ public class HeartbeatVmInfo
     /// MAC address assigned to VM's network interface
     /// </summary>
     public string? MacAddress { get; set; }
-    public int SshPort { get; set; } = 22;
+    public int? SshPort { get; set; } = 2222;
     // Complete recovery fields
     /// <summary>
     /// VNC port for console access (e.g., "5900")
@@ -188,7 +187,7 @@ public class HeartbeatVmInfo
     /// Wallet-encrypted password for VM access
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
-    public string? EncryptedPassword { get; set; }
+    public string? WalletEncryptedPassword { get; set; }
     public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
 }

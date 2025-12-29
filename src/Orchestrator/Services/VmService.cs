@@ -17,7 +17,7 @@ public interface IVmService
     Task<bool> DeleteVmAsync(string vmId, string? userId = null);
     Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null);
     Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics);
-    Task SchedulePendingVmsAsync();
+    //Task SchedulePendingVmsAsync();
     Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword);
 }
 
@@ -64,7 +64,7 @@ public class VmService : IVmService
                     "VM quota exceeded", "QUOTA_EXCEEDED");
             }
 
-            if (user.Quotas.CurrentCpuCores + request.Spec.CpuCores > user.Quotas.MaxCpuCores)
+            if (user.Quotas.CurrentVirtualCpuCores + request.Spec.VirtualCpuCores > user.Quotas.MaxCpuCores)
             {
                 return new CreateVmResponse(string.Empty, VmStatus.Pending,
                     "CPU quota exceeded", "QUOTA_EXCEEDED");
@@ -97,9 +97,6 @@ public class VmService : IVmService
             }
         };
 
-        // Set password in spec (will be cleared after encryption)
-        vm.Spec.Password = password;
-
         // Save to DataStore with persistence
         await _dataStore.SaveVmAsync(vm);
 
@@ -107,9 +104,9 @@ public class VmService : IVmService
         if (user != null)
         {
             user.Quotas.CurrentVms++;
-            user.Quotas.CurrentCpuCores += request.Spec.CpuCores;
-            user.Quotas.CurrentMemoryMb += request.Spec.MemoryMb;
-            user.Quotas.CurrentStorageGb += request.Spec.DiskGb;
+            user.Quotas.CurrentVirtualCpuCores += request.Spec.VirtualCpuCores;
+            user.Quotas.CurrentMemoryBytes += request.Spec.MemoryBytes;
+            user.Quotas.CurrentStorageBytes += request.Spec.DiskBytes;
             await _dataStore.SaveUserAsync(user);
         }
 
@@ -124,16 +121,16 @@ public class VmService : IVmService
             UserId = userId,
             Payload = new Dictionary<string, object>
             {
-                ["name"] = vm.Name,
-                ["cpuCores"] = vm.Spec.CpuCores,
-                ["memoryMb"] = vm.Spec.MemoryMb,
-                ["diskGb"] = vm.Spec.DiskGb,
-                ["imageId"] = vm.Spec.ImageId ?? ""
+                ["Name"] = vm.Name,
+                ["CpuCores"] = vm.Spec.VirtualCpuCores,
+                ["MemoryBytes"] = vm.Spec.MemoryBytes,
+                ["DiskBytes"] = vm.Spec.DiskBytes,
+                ["ImageId"] = vm.Spec.ImageId
             }
         });
 
         // Immediately try to schedule
-        await TryScheduleVmAsync(vm);
+        await TryScheduleVmAsync(vm, password);
 
         return new CreateVmResponse(
             vm.Id,
@@ -151,8 +148,7 @@ public class VmService : IVmService
         if (vm.OwnerId != userId)
             return false;
 
-        vm.Spec.EncryptedPassword = encryptedPassword;
-        //vm.Spec.Password = null;
+        vm.Spec.WalletEncryptedPassword = encryptedPassword;
         vm.Spec.PasswordSecured = true;
 
         await _dataStore.SaveVmAsync(vm);
@@ -496,18 +492,18 @@ public class VmService : IVmService
         if (!string.IsNullOrEmpty(vm.NodeId) &&
             _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
-            var cpuToFree = vm.Spec.CpuCores;
-            var memToFree = vm.Spec.MemoryMb;
-            var storageToFree = vm.Spec.DiskGb;
+            var cpuToFree = vm.Spec.VirtualCpuCores;
+            var memToFree = vm.Spec.MemoryBytes;
+            var storageToFree = vm.Spec.DiskBytes;
             var pointsToFree = vm.Spec.ComputePointCost;
 
             // Free legacy resources
-            node.ReservedResources.CpuCores = Math.Max(0,
-                node.ReservedResources.CpuCores - cpuToFree);
-            node.ReservedResources.MemoryMb = Math.Max(0,
-                node.ReservedResources.MemoryMb - memToFree);
-            node.ReservedResources.StorageGb = Math.Max(0,
-                node.ReservedResources.StorageGb - storageToFree);
+            node.ReservedResources.PhysicalCpuCores = Math.Max(0,
+                node.ReservedResources.PhysicalCpuCores - cpuToFree);
+            node.ReservedResources.MemoryBytes = Math.Max(0,
+                node.ReservedResources.MemoryBytes - memToFree);
+            node.ReservedResources.StorageBytes = Math.Max(0,
+                node.ReservedResources.StorageBytes - storageToFree);
 
             // NEW: Free compute points
             node.ReservedResources.ComputePoints = Math.Max(0,
@@ -530,19 +526,19 @@ public class VmService : IVmService
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
         {
             user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
-            user.Quotas.CurrentCpuCores = Math.Max(0,
-                user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
-            user.Quotas.CurrentMemoryMb = Math.Max(0,
-                user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
-            user.Quotas.CurrentStorageGb = Math.Max(0,
-                user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+            user.Quotas.CurrentVirtualCpuCores = Math.Max(0,
+                user.Quotas.CurrentVirtualCpuCores - vm.Spec.VirtualCpuCores);
+            user.Quotas.CurrentMemoryBytes = Math.Max(0,
+                user.Quotas.CurrentMemoryBytes - vm.Spec.MemoryBytes);
+            user.Quotas.CurrentStorageBytes = Math.Max(0,
+                user.Quotas.CurrentStorageBytes - vm.Spec.DiskBytes);
 
             await _dataStore.SaveUserAsync(user);
 
             _logger.LogInformation(
                 "Updated quotas for user {UserId}: VMs={VMs}, CPU={CPU}c, MEM={MEM}MB",
-                user.Id, user.Quotas.CurrentVms, user.Quotas.CurrentCpuCores,
-                user.Quotas.CurrentMemoryMb);
+                user.Id, user.Quotas.CurrentVms, user.Quotas.CurrentVirtualCpuCores,
+                user.Quotas.CurrentMemoryBytes);
         }
 
         await _ingressService.OnVmDeletedAsync(vm.Id);
@@ -599,6 +595,10 @@ public class VmService : IVmService
         return true;
     }
 
+    
+    // Scheduling pending vms requires access to plain text passwords, which is a security risk.
+
+    /* 
     public async Task SchedulePendingVmsAsync()
     {
         var pendingVms = _dataStore.VirtualMachines.Values
@@ -610,21 +610,22 @@ public class VmService : IVmService
             await TryScheduleVmAsync(vm);
         }
     }
+    */
 
-    private async Task TryScheduleVmAsync(VirtualMachine vm)
+    private async Task TryScheduleVmAsync(VirtualMachine vm, string password)
     {
         // ========================================
         // STEP 1: Calculate compute point cost FIRST
         // ========================================
         var policy = _schedulingConfig.TierPolicies[vm.Spec.QualityTier];
-        var pointCost = vm.Spec.CpuCores * policy.PointsPerVCpu;
+        var pointCost = vm.Spec.VirtualCpuCores * policy.PointsPerVCpu;
 
         // CRITICAL: Store point cost in VM spec before scheduling
         vm.Spec.ComputePointCost = pointCost;
 
         _logger.LogInformation(
             "VM {VmId} ({Name}): Tier={Tier}, vCPUs={VCpus}, ComputePointCost={Points}",
-            vm.Id, vm.Name, vm.Spec.QualityTier, vm.Spec.CpuCores, pointCost);
+            vm.Id, vm.Name, vm.Spec.QualityTier, vm.Spec.VirtualCpuCores, pointCost);
 
         // ========================================
         // STEP 2: Select node (now with correct point cost)
@@ -648,9 +649,9 @@ public class VmService : IVmService
         // ========================================
         // STEP 3: Reserve resources on node
         // ========================================
-        selectedNode.ReservedResources.CpuCores += vm.Spec.CpuCores;
-        selectedNode.ReservedResources.MemoryMb += vm.Spec.MemoryMb;
-        selectedNode.ReservedResources.StorageGb += vm.Spec.DiskGb;
+        selectedNode.ReservedResources.PhysicalCpuCores += vm.Spec.VirtualCpuCores;
+        selectedNode.ReservedResources.MemoryBytes += vm.Spec.MemoryBytes;
+        selectedNode.ReservedResources.StorageBytes += vm.Spec.DiskBytes;
         selectedNode.ReservedResources.ComputePoints += pointCost;  // ← Use calculated value
 
         await _dataStore.SaveNodeAsync(selectedNode);
@@ -658,7 +659,7 @@ public class VmService : IVmService
         _logger.LogInformation(
             "Reserved resources for VM {VmId} on node {NodeId}: {Cpu}c, {Mem}MB, {Storage}GB, {Points} points ({Tier}). " +
             "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
-            vm.Id, selectedNode.Id, vm.Spec.CpuCores, vm.Spec.MemoryMb, vm.Spec.DiskGb, pointCost, vm.Spec.QualityTier,
+            vm.Id, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes, vm.Spec.DiskBytes, pointCost, vm.Spec.QualityTier,
             selectedNode.ReservedResources.ComputePoints,
             selectedNode.TotalResources.ComputePoints,
             (double)selectedNode.ReservedResources.ComputePoints /
@@ -701,13 +702,12 @@ public class VmService : IVmService
                 Name = vm.Name,
                 OwnerId = vm.OwnerId,
                 OwnerWallet = vm.OwnerWallet,
-                VCpus = vm.Spec.CpuCores,
+                VirtualCpuCores = vm.Spec.VirtualCpuCores,
                 MemoryBytes = vm.Spec.MemoryBytes,
                 DiskBytes = vm.Spec.DiskBytes,
                 QualityTier = (int)vm.Spec.QualityTier,
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
-                BaseImageHash = "",
                 SshPublicKey = sshPublicKey ?? "",
                 LeaseId = vm.Id,
                 Network = new
@@ -718,7 +718,7 @@ public class VmService : IVmService
                     VxlanVni = 0,
                     AllowedPorts = new List<int>()
                 },
-                Password = vm.Spec.Password ?? ""
+                Password = password
             }),
             RequiresAck: true,
             TargetResourceId: vm.Id
@@ -762,7 +762,7 @@ public class VmService : IVmService
         var baseMemoryRate = 0.005m;
         var baseStorageRate = 0.0001m;
 
-        return (spec.CpuCores * baseCpuRate) +
+        return (spec.VirtualCpuCores * baseCpuRate) +
                (spec.MemoryMb / 1024m * baseMemoryRate) +
                (spec.DiskGb * baseStorageRate);
     }

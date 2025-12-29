@@ -286,7 +286,7 @@ public class VmsController : ControllerBase
 
         // Use positional constructor for the record
         return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(
-            new EncryptedPasswordResponse(vm.Spec.EncryptedPassword, vm.Spec.PasswordSecured)));
+            new EncryptedPasswordResponse(vm.Spec.WalletEncryptedPassword, vm.Spec.PasswordSecured)));
     }
 }
 

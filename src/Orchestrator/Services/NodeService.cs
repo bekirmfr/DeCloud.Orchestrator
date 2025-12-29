@@ -114,7 +114,7 @@ public class NodeService : INodeService
         {
             _logger.LogWarning(
                 "No suitable node found for VM - CPU: {Cpu}, MEM: {Mem}MB, DISK: {Disk}GB, Tier: {Tier}",
-                spec.CpuCores, spec.MemoryMb, spec.DiskGb, tier);
+                spec.VirtualCpuCores, spec.MemoryBytes, spec.DiskBytes, tier);
         }
 
         return best?.Node;
@@ -183,16 +183,19 @@ public class NodeService : INodeService
             scored.Availability = availability;
 
             // Calculate point cost for this VM
-            var pointCost = spec.CpuCores * policy.PointsPerVCpu;
+            var pointCost = spec.VirtualCpuCores * policy.PointsPerVCpu;
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
             if (!availability.CanFit(spec, pointCost))
             {
+                var memoryMb = spec.MemoryBytes / (1024 * 1024);
+                var diskGb = spec.DiskBytes / (1024 * 1024 * 1024);
+
                 scored.RejectionReason = $"Insufficient resources after overcommit " +
                     $"(Points: {availability.RemainingComputePoints}/{pointCost}, " +
-                    $"MEM: {availability.RemainingMemory:F0}/{spec.MemoryMb}MB, " +
-                    $"DISK: {availability.RemainingStorage:F0}/{spec.DiskGb}GB)";
+                    $"MEM: {availability.RemainingMemory / (1024 ^ 2):F0}/{memoryMb}MB, " +
+                    $"DISK: {availability.RemainingStorage / (1024 ^ 3):F0}/{diskGb}GB)";
                 scored.TotalScore = 0;
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;
@@ -258,8 +261,8 @@ public class NodeService : INodeService
             return "GPU required but not available";
 
         // Filter 4: Minimum total resources check (physical capacity)
-        if (node.TotalResources.MemoryMb < _schedulingConfig.MinFreeMemoryMb)
-            return $"Node total memory too low ({node.TotalResources.MemoryMb}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
+        if (node.TotalResources.MemoryBytes < _schedulingConfig.MinFreeMemoryMb)
+            return $"Node total memory too low ({node.TotalResources.MemoryBytes}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
 
         // Filter 5: Load average check (if metrics available)
         if (node.LatestMetrics?.LoadAverage > _schedulingConfig.MaxLoadAverage)
@@ -291,14 +294,14 @@ public class NodeService : INodeService
         var allocatedComputePoints = node.ReservedResources.ComputePoints;
 
         // Calculate effective capacity with overcommit ratios
-        var effectiveCpu = node.TotalResources.CpuCores * policy.CpuOvercommitRatio;
-        var effectiveMemory = node.TotalResources.MemoryMb * policy.MemoryOvercommitRatio;
-        var effectiveStorage = node.TotalResources.StorageGb * policy.StorageOvercommitRatio;
+        var effectiveCpu = node.TotalResources.PhysicalCpuCores * policy.CpuOvercommitRatio;
+        var effectiveMemory = node.TotalResources.MemoryBytes * policy.MemoryOvercommitRatio;
+        var effectiveStorage = node.TotalResources.StorageBytes * policy.StorageOvercommitRatio;
 
         // This ensures scheduling decisions are based on reserved resources
-        var allocatedCpu = (double)node.ReservedResources.CpuCores;
-        var allocatedMemory = (double)node.ReservedResources.MemoryMb;
-        var allocatedStorage = (double)node.ReservedResources.StorageGb;
+        var allocatedCpu = (double)node.ReservedResources.PhysicalCpuCores;
+        var allocatedMemory = (double)node.ReservedResources.MemoryBytes;
+        var allocatedStorage = (double)node.ReservedResources.StorageBytes;
 
         return new NodeResourceAvailability
         {
@@ -323,8 +326,8 @@ public class NodeService : INodeService
     private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
     {
         // Calculate how much capacity remains AFTER placing this VM
-        var cpuHeadroom = availability.RemainingCpu - spec.CpuCores;
-        var memoryHeadroom = availability.RemainingMemory - spec.MemoryMb;
+        var cpuHeadroom = availability.RemainingCpu - spec.VirtualCpuCores;
+        var memoryHeadroom = availability.RemainingMemory - spec.MemoryBytes;
 
         // Normalize to 0-1 range (prefer nodes that will have 50%+ capacity remaining)
         var cpuScore = Math.Min(1.0, cpuHeadroom / (availability.EffectiveCpuCapacity * 0.5));
@@ -349,7 +352,7 @@ public class NodeService : INodeService
         if (node.LatestMetrics?.LoadAverage != null)
         {
             // Normalize load average (assume 1.0 per core is normal)
-            var normalizedLoad = node.LatestMetrics.LoadAverage / node.TotalResources.CpuCores;
+            var normalizedLoad = node.LatestMetrics.LoadAverage / node.TotalResources.PhysicalCpuCores;
             loadScore = Math.Max(0, 1.0 - normalizedLoad);
         }
 
@@ -588,16 +591,16 @@ public class NodeService : INodeService
         var nodeReportedFree = heartbeat.AvailableResources;
         var orchestratorTrackedFree = new NodeResources
         {
-            CpuCores = node.TotalResources.CpuCores - node.ReservedResources.CpuCores,
-            MemoryMb = node.TotalResources.MemoryMb - node.ReservedResources.MemoryMb,
-            StorageGb = node.TotalResources.StorageGb - node.ReservedResources.StorageGb
+            PhysicalCpuCores = node.TotalResources.PhysicalCpuCores - node.ReservedResources.PhysicalCpuCores,
+            MemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
+            StorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
         };
 
-        var cpuDiff = Math.Abs(nodeReportedFree.CpuCores - orchestratorTrackedFree.CpuCores);
+        var cpuDiff = Math.Abs(nodeReportedFree.PhysicalCpuCores - orchestratorTrackedFree.PhysicalCpuCores);
         var computePointDiff = Math.Abs(
             (node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints) -
             (nodeReportedFree.ComputePoints));
-        var memDiff = Math.Abs(nodeReportedFree.MemoryMb - orchestratorTrackedFree.MemoryMb);
+        var memDiff = Math.Abs(nodeReportedFree.MemoryBytes - orchestratorTrackedFree.MemoryBytes);
 
         if (cpuDiff > 1 || computePointDiff > 1 || memDiff > 1024)
         {
@@ -607,9 +610,9 @@ public class NodeService : INodeService
                 "Resource tracking drift on node {NodeId}: Node reports {NodeCpu} core(s) / {NodeComputePoints} point(s) / {NodeMem} MB free, " +
                 "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu} core(s) / {ResComputePoints} point(s) / {ResMem} MB)",
                 nodeId,
-                nodeReportedFree.CpuCores, nodeReportedFree.ComputePoints, nodeReportedFree.MemoryMb,
-                orchestratorTrackedFree.CpuCores, orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryMb,
-                node.ReservedResources.CpuCores, node.ReservedResources.MemoryMb);
+                nodeReportedFree.PhysicalCpuCores, nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes,
+                orchestratorTrackedFree.PhysicalCpuCores, orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes,
+                node.ReservedResources.PhysicalCpuCores, node.ReservedResources.MemoryBytes);
 
             // TO-DO: Implement resource reconciliation logic here
             // For now, we just log the discrepancy and update the node based on the ehartbeat
@@ -924,18 +927,20 @@ public class NodeService : INodeService
         if (!string.IsNullOrEmpty(vm.NodeId) &&
             _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
-            var cpuToFree = vm.Spec.CpuCores;
-            var memToFree = vm.Spec.MemoryMb;
-            var storageToFree = vm.Spec.DiskGb;
-            var pointsToFree = vm.Spec.ComputePointCost;  // NEW
+            var cpuToFree = vm.Spec.VirtualCpuCores;
+            var memToFree = vm.Spec.MemoryBytes;
+            var memToFreeMb = memToFree / (1024 * 1024);
+            var storageToFree = vm.Spec.DiskBytes;
+            var storageToFreeGb = storageToFree / (1024 * 1024 * 1024);
+            var pointsToFree = vm.Spec.ComputePointCost;
 
             // Free CPU cores (legacy)
-            node.ReservedResources.CpuCores = Math.Max(0,
-                node.ReservedResources.CpuCores - cpuToFree);
-            node.ReservedResources.MemoryMb = Math.Max(0,
-                node.ReservedResources.MemoryMb - memToFree);
-            node.ReservedResources.StorageGb = Math.Max(0,
-                node.ReservedResources.StorageGb - storageToFree);
+            node.ReservedResources.PhysicalCpuCores = Math.Max(0,
+                node.ReservedResources.PhysicalCpuCores - cpuToFree);
+            node.ReservedResources.MemoryBytes = Math.Max(0,
+                node.ReservedResources.MemoryBytes - memToFree);
+            node.ReservedResources.StorageBytes = Math.Max(0,
+                node.ReservedResources.StorageBytes - storageToFree);
 
             // NEW: Free compute points
             node.ReservedResources.ComputePoints = Math.Max(0,
@@ -945,12 +950,12 @@ public class NodeService : INodeService
 
             _logger.LogInformation(
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +  // UPDATED
-                "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",  // UPDATED
-                vm.Id, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,  // UPDATED
-                node.ReservedResources.CpuCores, node.ReservedResources.ComputePoints,  // UPDATED
-                node.TotalResources.CpuCores - node.ReservedResources.CpuCores,
-                node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);  // UPDATED
+                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
+                "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",
+                vm.Id, node.Id, cpuToFree, memToFreeMb, storageToFreeGb, pointsToFree,
+                node.ReservedResources.PhysicalCpuCores, node.ReservedResources.ComputePoints,
+                node.TotalResources.PhysicalCpuCores - node.ReservedResources.PhysicalCpuCores,
+                node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);
         }
         else
         {
@@ -963,19 +968,19 @@ public class NodeService : INodeService
         if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
         {
             user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
-            user.Quotas.CurrentCpuCores = Math.Max(0,
-                user.Quotas.CurrentCpuCores - vm.Spec.CpuCores);
-            user.Quotas.CurrentMemoryMb = Math.Max(0,
-                user.Quotas.CurrentMemoryMb - vm.Spec.MemoryMb);
-            user.Quotas.CurrentStorageGb = Math.Max(0,
-                user.Quotas.CurrentStorageGb - vm.Spec.DiskGb);
+            user.Quotas.CurrentVirtualCpuCores = Math.Max(0,
+                user.Quotas.CurrentVirtualCpuCores - vm.Spec.VirtualCpuCores);
+            user.Quotas.CurrentMemoryBytes = Math.Max(0,
+                user.Quotas.CurrentMemoryBytes - vm.Spec.MemoryBytes);
+            user.Quotas.CurrentStorageBytes = Math.Max(0,
+                user.Quotas.CurrentStorageBytes - vm.Spec.DiskBytes);
 
             await _dataStore.SaveUserAsync(user);
 
             _logger.LogInformation(
                 "Updated quotas for user {UserId}: VMs={VMs}/{MaxVMs}, CPU={CPU}c, MEM={MEM}MB",
                 user.Id, user.Quotas.CurrentVms, user.Quotas.MaxVms,
-                user.Quotas.CurrentCpuCores, user.Quotas.CurrentMemoryMb);
+                user.Quotas.CurrentVirtualCpuCores, user.Quotas.CurrentMemoryBytes);
         }
 
         await _ingressService.OnVmDeletedAsync(vm.Id);
@@ -990,9 +995,9 @@ public class NodeService : INodeService
             UserId = vm.OwnerId,
             Payload = new Dictionary<string, object>
             {
-                ["FreedCpu"] = vm.Spec.CpuCores,
-                ["FreedMemoryMb"] = vm.Spec.MemoryMb,
-                ["FreedStorageGb"] = vm.Spec.DiskGb
+                ["FreedCpu"] = vm.Spec.VirtualCpuCores,
+                ["FreedMemoryBytes"] = vm.Spec.MemoryBytes,
+                ["FreedStorageBytes"] = vm.Spec.DiskBytes
             }
         });
 
@@ -1103,21 +1108,6 @@ public class NodeService : INodeService
 
                     await _dataStore.SaveVmAsync(vm);
                 }
-
-                // Sync encrypted password if present and different
-                if (!string.IsNullOrEmpty(reported.EncryptedPassword))
-                {
-                    if (vm.Spec.EncryptedPassword != reported.EncryptedPassword)
-                    {
-                        vm.Spec.EncryptedPassword = reported.EncryptedPassword;
-                        vm.Spec.PasswordSecured = true;
-                        await _dataStore.SaveVmAsync(vm);
-
-                        _logger.LogInformation(
-                            "VM {VmId} encrypted password synced from heartbeat",
-                            vmId);
-                    }
-                }
             }
             else if (!string.IsNullOrEmpty(reported.OwnerId))
             {
@@ -1163,19 +1153,19 @@ public class NodeService : INodeService
                 },
                 AccessInfo = new VmAccessInfo
                 {
-                    SshHost = reported.IpAddress ?? "",
-                    SshPort = reported.SshPort,
-                    VncHost = reported.IpAddress ?? "",
+                    SshHost = reported.IpAddress,
+                    SshPort = reported.SshPort ?? 2222,
+                    VncHost = reported.IpAddress,
                     VncPort = reported.VncPort ?? 5900
                 },
                 Spec = new VmSpec
                 {
-                    CpuCores = reported.CpuCores,
+                    VirtualCpuCores = reported.CpuCores,
                     MemoryBytes = reported.MemoryBytes.Value,
                     DiskBytes = reported.DiskBytes.Value,
-                    ImageId = reported.ImageId ?? "unknown",
-                    EncryptedPassword = reported.EncryptedPassword ?? null,
-                    PasswordSecured = !string.IsNullOrEmpty(reported.EncryptedPassword),
+                    ImageId = reported.ImageId ?? "Unknown",
+                    WalletEncryptedPassword = reported.WalletEncryptedPassword ?? null,
+                    PasswordSecured = !string.IsNullOrEmpty(reported.WalletEncryptedPassword),
                     QualityTier = (QualityTier)reported.QualityTier,
                     ComputePointCost = reported.ComputePointCost,
                 },

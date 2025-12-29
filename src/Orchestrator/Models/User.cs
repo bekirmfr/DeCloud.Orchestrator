@@ -61,9 +61,9 @@ public class UserQuotas
     public long MaxStorageGb { get; set; } = 500;
 
     public int CurrentVms { get; set; }
-    public int CurrentCpuCores { get; set; }
-    public long CurrentMemoryMb { get; set; }
-    public long CurrentStorageGb { get; set; }
+    public int CurrentVirtualCpuCores { get; set; }
+    public long CurrentMemoryBytes { get; set; }
+    public long CurrentStorageBytes { get; set; }
 }
 
 public enum UserStatus

@@ -564,7 +564,7 @@ public class DataStore
 
         var actualUsedMemory = activeVms.Sum(v => (long)v.Spec.MemoryBytes);
         var actualUsedStorage = activeVms.Sum(v => (long)v.Spec.DiskBytes);
-        var actualUsedCores = activeVms.Sum(v => v.Spec.CpuCores);
+        var actualUsedCores = activeVms.Sum(v => v.Spec.VirtualCpuCores);
 
         var stats = new SystemStats
         {
@@ -581,9 +581,9 @@ public class DataStore
             // ========================================
             // LEGACY CPU STATISTICS (backward compat)
             // ========================================
-            TotalCpuCores = onlineNodes.Sum(n => n.TotalResources.CpuCores),
+            TotalCpuCores = onlineNodes.Sum(n => n.TotalResources.PhysicalCpuCores),
             UsedCpuCores = actualUsedCores,  // From actual VMs
-            AvailableCpuCores = onlineNodes.Sum(n => n.TotalResources.CpuCores) - actualUsedCores,
+            AvailableCpuCores = onlineNodes.Sum(n => n.TotalResources.PhysicalCpuCores) - actualUsedCores,
 
             // ========================================
             // POINT-BASED CPU STATISTICS (SELF-HEALING)
@@ -595,13 +595,13 @@ public class DataStore
             // ========================================
             // MEMORY & STORAGE STATISTICS (SELF-HEALING)
             // ========================================
-            TotalMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryMb),
+            TotalMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryBytes),
             UsedMemoryMb = actualUsedMemory,  // From actual VMs
-            AvailableMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryMb) - actualUsedMemory,
+            AvailableMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory,
 
-            TotalStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageGb),
+            TotalStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageBytes),
             UsedStorageGb = actualUsedStorage,  // From actual VMs
-            AvailableStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageGb) - actualUsedStorage,
+            AvailableStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage,
         };
 
         // Calculate utilization percentages
