@@ -64,7 +64,7 @@ public class VmService : IVmService
                     "VM quota exceeded", "QUOTA_EXCEEDED");
             }
 
-            if (user.Quotas.CurrentVirtualCpuCores + request.Spec.VirtualCpuCores > user.Quotas.MaxCpuCores)
+            if (user.Quotas.CurrentVirtualCpuCores + request.Spec.VirtualCpuCores > user.Quotas.MaxVirtualCpuCores)
             {
                 return new CreateVmResponse(string.Empty, VmStatus.Pending,
                     "CPU quota exceeded", "QUOTA_EXCEEDED");

@@ -41,7 +41,7 @@ public interface IUserService
     Task<User?> GetUserByApiKeyAsync(string apiKey);
 
     // Quota Management
-    Task<bool> CheckQuotaAsync(string userId, int cpuCores, long memoryMb, long storageGb);
+    Task<bool> CheckQuotaAsync(string userId, int virtualCpuCores, long memoryBytes, long storageBytes);
     Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta);
 
     // Balance Management
@@ -597,16 +597,16 @@ public class UserService : IUserService
     // QUOTA MANAGEMENT
     // =====================================================
 
-    public Task<bool> CheckQuotaAsync(string userId, int cpuCores, long memoryMb, long storageGb)
+    public Task<bool> CheckQuotaAsync(string userId, int virtualCpuCores, long memoryBytes, long storageBytes)
     {
         if (!_dataStore.Users.TryGetValue(userId, out var user))
             return Task.FromResult(false);
 
         var quotas = user.Quotas;
         
-        var cpuOk = quotas.CurrentVirtualCpuCores + cpuCores <= quotas.MaxCpuCores;
-        var memOk = quotas.CurrentMemoryBytes + memoryMb <= quotas.MaxMemoryMb;
-        var storageOk = quotas.CurrentStorageBytes + storageGb <= quotas.MaxStorageGb;
+        var cpuOk = quotas.CurrentVirtualCpuCores + virtualCpuCores <= quotas.MaxVirtualCpuCores;
+        var memOk = quotas.CurrentMemoryBytes + memoryBytes <= quotas.MaxMemoryBytes;
+        var storageOk = quotas.CurrentStorageBytes + storageBytes <= quotas.MaxStorageBytes;
         var vmOk = quotas.CurrentVms < quotas.MaxVms;
 
         return Task.FromResult(cpuOk && memOk && storageOk && vmOk);

@@ -56,9 +56,9 @@ public class ApiKey
 public class UserQuotas
 {
     public int MaxVms { get; set; } = 5;
-    public int MaxCpuCores { get; set; } = 16;
-    public long MaxMemoryMb { get; set; } = 32768;
-    public long MaxStorageGb { get; set; } = 500;
+    public int MaxVirtualCpuCores { get; set; } = 16;
+    public long MaxMemoryBytes { get; set; } = 32768;
+    public long MaxStorageBytes { get; set; } = 500;
 
     public int CurrentVms { get; set; }
     public int CurrentVirtualCpuCores { get; set; }
