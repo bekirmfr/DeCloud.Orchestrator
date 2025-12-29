@@ -73,7 +73,7 @@ public class IngressController : ControllerBase
                 if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
                     continue;
 
-                var vmIds = nodeGroup.Select(vm => vm.Id).ToHashSet();
+                var vmIds = nodeGroup.Select(vm => vm.VmId).ToHashSet();
 
                 try
                 {

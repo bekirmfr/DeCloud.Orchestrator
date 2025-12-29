@@ -9,7 +9,7 @@ namespace Orchestrator.Models;
 /// </summary>
 public class VirtualMachine
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string VmId { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
     
     // Ownership
@@ -169,12 +169,6 @@ public class VmSpec
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
     public string? WalletEncryptedPassword { get; set; }
-
-    /// <summary>
-    /// Whether the password has been encrypted and stored
-    /// </summary>
-    public bool PasswordSecured { get; set; }
-    public bool PasswordShownToUser { get; set; } = false;
 
     // Cloud-init / user data
     public string? UserData { get; set; }

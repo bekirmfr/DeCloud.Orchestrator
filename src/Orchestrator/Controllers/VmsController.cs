@@ -284,9 +284,14 @@ public class VmsController : ControllerBase
         if (vm == null || vm.OwnerId != userId)
             return NotFound();
 
+        if (string.IsNullOrEmpty(vm.Spec.WalletEncryptedPassword))
+        {
+            return Ok(ApiResponse<EncryptedPasswordResponse>.Fail("FETCH_FAILED", "Failed to fetch encrypted password"));
+        }
+
         // Use positional constructor for the record
-        return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(
-            new EncryptedPasswordResponse(vm.Spec.WalletEncryptedPassword, vm.Spec.PasswordSecured)));
+        return BadRequest(ApiResponse<EncryptedPasswordResponse>.Ok(
+            new EncryptedPasswordResponse(vm.Spec.WalletEncryptedPassword, true)));
     }
 }
 

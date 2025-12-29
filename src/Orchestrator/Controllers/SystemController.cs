@@ -104,8 +104,8 @@ public class SystemController : ControllerBase
     {
         // Simple pricing model
         decimal cpuRate = 0.005m * spec.VirtualCpuCores;
-        decimal memoryRate = 0.002m * (spec.MemoryMb / 1024m);
-        decimal storageRate = 0.0001m * spec.DiskGb;
+        decimal memoryRate = 0.002m * (spec.MemoryBytes / (1024m * 1024m * 1024m)); // per GB
+        decimal storageRate = 0.0001m * (spec.DiskBytes / (1024m * 1024m * 1024m)); // per GB
         decimal gpuRate = spec.RequiresGpu ? 0.10m : 0;
 
         var hourlyTotal = cpuRate + memoryRate + storageRate + gpuRate;
@@ -141,8 +141,8 @@ public class SystemController : ControllerBase
                 g.Key.ToUpper().Replace("-", " "),
                 g.Count(),
                 g.Count(n => n.Status == NodeStatus.Online),
-                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.AvailableResources.CpuCores),
-                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.AvailableResources.MemoryMb)
+                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.PhysicalCpuCores - n.ReservedResources.PhysicalCpuCores),
+                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.MemoryBytes - n.ReservedResources.MemoryBytes)
             ))
             .ToList();
 

@@ -7,13 +7,13 @@ namespace DeCloud.Shared.Models;
 public class VmDto
 {
     // Identity (aligned naming)
-    public required string Id { get; set; }
+    public required string VmId { get; set; }
     public required string Name { get; set; }
     public required string OwnerId { get; set; }
     public required string OwnerWallet { get; set; }
     
     // Resources (use smallest unit - bytes)
-    public required int CpuCores { get; set; }
+    public required int VirtualCpuCores { get; set; }
     public required long MemoryBytes { get; set; }
     public required long DiskBytes { get; set; }
     

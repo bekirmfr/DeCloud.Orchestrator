@@ -127,8 +127,8 @@ public class CentralIngressService : ICentralIngressService
         // Replace placeholders
         var subdomain = pattern
             .Replace("{name}", SanitizeForSubdomain(vm.Name))
-            .Replace("{id}", vm.Id)
-            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id)
+            .Replace("{id}", vm.VmId)
+            .Replace("{id8}", vm.VmId.Length >= 8 ? vm.VmId[..8] : vm.VmId)
             .Replace("{owner8}", vm.OwnerWallet.Length >= 8 ? vm.OwnerWallet[2..10] : vm.OwnerWallet);
 
         // Ensure valid subdomain
@@ -136,9 +136,9 @@ public class CentralIngressService : ICentralIngressService
 
         // Handle collisions by appending ID fragment
         var fullSubdomain = $"{subdomain}.{_options.BaseDomain}";
-        if (_routes.Values.Any(r => r.Subdomain == fullSubdomain && r.VmId != vm.Id))
+        if (_routes.Values.Any(r => r.Subdomain == fullSubdomain && r.VmId != vm.VmId))
         {
-            var idSuffix = vm.Id.Length >= 6 ? vm.Id[..6] : vm.Id;
+            var idSuffix = vm.VmId.Length >= 6 ? vm.VmId[..6] : vm.VmId;
             subdomain = $"{subdomain}-{idSuffix}";
         }
 
@@ -150,7 +150,7 @@ public class CentralIngressService : ICentralIngressService
         if (!IsEnabled) return null;
 
         // Check if VM has a registered route
-        if (_routes.TryGetValue(vm.Id, out var route) && route.Status == CentralRouteStatus.Active)
+        if (_routes.TryGetValue(vm.VmId, out var route) && route.Status == CentralRouteStatus.Active)
         {
             return route.PublicUrl;
         }

@@ -69,7 +69,7 @@ public class CentralIngressController : ControllerBase
         }
 
         var response = new VmIngressResponse(
-            VmId: vm.Id,
+            VmId: vm.VmId,
             VmName: vm.Name,
             DefaultUrl: route?.Status == CentralRouteStatus.Active ? route.PublicUrl : _ingressService.GetVmUrl(vm),
             DefaultPort: route?.TargetPort ?? vm.IngressConfig?.DefaultPort ?? 80,
@@ -132,7 +132,7 @@ public class CentralIngressController : ControllerBase
         }
 
         var response = new VmIngressResponse(
-            VmId: vm.Id,
+            VmId: vm.VmId,
             VmName: vm.Name,
             DefaultUrl: route.PublicUrl,
             DefaultPort: route.TargetPort,
@@ -168,7 +168,7 @@ public class CentralIngressController : ControllerBase
         await _ingressService.UnregisterVmAsync(vmId);
 
         var response = new VmIngressResponse(
-            VmId: vm.Id,
+            VmId: vm.VmId,
             VmName: vm.Name,
             DefaultUrl: null,
             DefaultPort: vm.IngressConfig?.DefaultPort ?? 80,
@@ -213,7 +213,7 @@ public class CentralIngressController : ControllerBase
         var route = await _ingressService.GetRouteAsync(vmId);
 
         var response = new VmIngressResponse(
-            VmId: vm.Id,
+            VmId: vm.VmId,
             VmName: vm.Name,
             DefaultUrl: route?.PublicUrl,
             DefaultPort: request.Port,
@@ -287,7 +287,7 @@ public class CentralIngressController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            vmId = vm.Id,
+            vmId = vm.VmId,
             vmName = vm.Name,
             subdomain = subdomain,
             url = $"https://{subdomain}",

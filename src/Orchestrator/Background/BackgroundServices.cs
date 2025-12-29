@@ -234,7 +234,7 @@ public class CleanupService : BackgroundService
 
                     _logger.LogWarning(
                         "Marked VM {VmId} as Error due to command timeout",
-                        vm.Id);
+                        vm.VmId);
                 }
             }
 
@@ -279,7 +279,7 @@ public class CleanupService : BackgroundService
         var cutoff = DateTime.UtcNow - _deletedRetention;
         var toRemove = dataStore.VirtualMachines.Values
             .Where(v => v.Status == Models.VmStatus.Deleted && v.UpdatedAt < cutoff)
-            .Select(v => v.Id)
+            .Select(v => v.VmId)
             .ToList();
 
         foreach (var vmId in toRemove)

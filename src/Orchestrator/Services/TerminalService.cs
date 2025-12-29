@@ -112,8 +112,7 @@ public class TerminalService : ITerminalService
                 Username = "root",
                 TtlSeconds = ttlSeconds,
                 VmIp = vmIp,
-                Port = vm.AccessInfo?.SshPort ?? 22,
-                Password = vm.Spec?.Password
+                Port = vm.AccessInfo?.SshPort ?? 22
             };
 
             var response = await _httpClient.PostAsJsonAsync(setupUrl, setupRequest);

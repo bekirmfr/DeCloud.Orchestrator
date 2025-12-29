@@ -79,7 +79,7 @@ public class VmService : IVmService
 
         var vm = new VirtualMachine
         {
-            Id = Guid.NewGuid().ToString(),
+            VmId = Guid.NewGuid().ToString(),
             Name = request.Name,
             OwnerId = userId,
             OwnerWallet = user?.WalletAddress ?? string.Empty,
@@ -111,13 +111,13 @@ public class VmService : IVmService
         }
 
         _logger.LogInformation("VM queued for scheduling: {VmId} ({Name}) for user {UserId}",
-            vm.Id, vm.Name, userId);
+            vm.VmId, vm.Name, userId);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmCreated,
             ResourceType = "vm",
-            ResourceId = vm.Id,
+            ResourceId = vm.VmId,
             UserId = userId,
             Payload = new Dictionary<string, object>
             {
@@ -133,7 +133,7 @@ public class VmService : IVmService
         await TryScheduleVmAsync(vm, password);
 
         return new CreateVmResponse(
-            vm.Id,
+            vm.VmId,
             vm.Status,
             "VM created and queued for scheduling",
             Error: null,
@@ -149,7 +149,6 @@ public class VmService : IVmService
             return false;
 
         vm.Spec.WalletEncryptedPassword = encryptedPassword;
-        vm.Spec.PasswordSecured = true;
 
         await _dataStore.SaveVmAsync(vm);
 
@@ -206,7 +205,7 @@ public class VmService : IVmService
             var search = queryParams.Search.ToLower();
             query = query.Where(v =>
                 v.Name.ToLower().Contains(search) ||
-                v.Id.ToLower().Contains(search));
+                v.VmId.ToLower().Contains(search));
         }
 
         query = query.Where(v => v.Status != VmStatus.Deleted);
@@ -263,7 +262,7 @@ public class VmService : IVmService
 
                     _logger.LogDebug(
                         "VM {VmId} on node {NodeId}: SSH={SshHost}:{SshPort}, Agent={AgentHost}:{AgentPort}",
-                        v.Id, v.NodeId,
+                        v.VmId, v.NodeId,
                         enrichedNetworkConfig.SshJumpHost, enrichedNetworkConfig.SshJumpPort,
                         enrichedNetworkConfig.NodeAgentHost, enrichedNetworkConfig.NodeAgentPort);
                 }
@@ -271,12 +270,12 @@ public class VmService : IVmService
                 {
                     _logger.LogWarning(
                         "VM {VmId} references non-existent node {NodeId} - connection details unavailable",
-                        v.Id, v.NodeId);
+                        v.VmId, v.NodeId);
                 }
             }
 
             return new VmSummary(
-                Id: v.Id,
+                Id: v.VmId,
                 Name: v.Name,
                 Status: v.Status,
                 PowerState: v.PowerState,
@@ -475,7 +474,7 @@ public class VmService : IVmService
 
         _logger.LogInformation(
             "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
-            vm.Id, vm.OwnerId, vm.NodeId ?? "none");
+            vm.VmId, vm.OwnerId, vm.NodeId ?? "none");
 
         // Mark as Deleted (final state before removal)
         vm.Status = VmStatus.Deleted;
@@ -541,7 +540,7 @@ public class VmService : IVmService
                 user.Quotas.CurrentMemoryBytes);
         }
 
-        await _ingressService.OnVmDeletedAsync(vm.Id);
+        await _ingressService.OnVmDeletedAsync(vm.VmId);
 
         // Emit completion event (unchanged)
         await _eventService.EmitAsync(new OrchestratorEvent
@@ -625,7 +624,7 @@ public class VmService : IVmService
 
         _logger.LogInformation(
             "VM {VmId} ({Name}): Tier={Tier}, vCPUs={VCpus}, ComputePointCost={Points}",
-            vm.Id, vm.Name, vm.Spec.QualityTier, vm.Spec.VirtualCpuCores, pointCost);
+            vm.VmId, vm.Name, vm.Spec.QualityTier, vm.Spec.VirtualCpuCores, pointCost);
 
         // ========================================
         // STEP 2: Select node (now with correct point cost)
@@ -638,7 +637,7 @@ public class VmService : IVmService
         {
             _logger.LogWarning(
                 "No suitable node found for VM {VmId} - Tier: {Tier}, Points: {Points}",
-                vm.Id, vm.Spec.QualityTier, pointCost);
+                vm.VmId, vm.Spec.QualityTier, pointCost);
 
             vm.Status = VmStatus.Pending;
             vm.StatusMessage = "No suitable node available";
@@ -659,7 +658,7 @@ public class VmService : IVmService
         _logger.LogInformation(
             "Reserved resources for VM {VmId} on node {NodeId}: {Cpu}c, {Mem}MB, {Storage}GB, {Points} points ({Tier}). " +
             "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
-            vm.Id, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes, vm.Spec.DiskBytes, pointCost, vm.Spec.QualityTier,
+            vm.VmId, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes, vm.Spec.DiskBytes, pointCost, vm.Spec.QualityTier,
             selectedNode.ReservedResources.ComputePoints,
             selectedNode.TotalResources.ComputePoints,
             (double)selectedNode.ReservedResources.ComputePoints /
@@ -698,7 +697,7 @@ public class VmService : IVmService
             NodeCommandType.CreateVm,
             JsonSerializer.Serialize(new
             {
-                VmId = vm.Id,
+                VmId = vm.VmId,
                 Name = vm.Name,
                 OwnerId = vm.OwnerId,
                 OwnerWallet = vm.OwnerWallet,
@@ -709,7 +708,7 @@ public class VmService : IVmService
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 SshPublicKey = sshPublicKey ?? "",
-                LeaseId = vm.Id,
+                LeaseId = vm.VmId,
                 Network = new
                 {
                     MacAddress = "",
@@ -721,7 +720,7 @@ public class VmService : IVmService
                 Password = password
             }),
             RequiresAck: true,
-            TargetResourceId: vm.Id
+            TargetResourceId: vm.VmId
         );
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);
@@ -729,13 +728,13 @@ public class VmService : IVmService
 
         _logger.LogInformation(
             "VM {VmId} scheduled on node {NodeId} with command containing ComputePointCost={Points}",
-            vm.Id, selectedNode.Id, vm.Spec.ComputePointCost);
+            vm.VmId, selectedNode.Id, vm.Spec.ComputePointCost);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmScheduled,
             ResourceType = "vm",
-            ResourceId = vm.Id,
+            ResourceId = vm.VmId,
             UserId = vm.OwnerId,
             NodeId = selectedNode.Id
         });
@@ -759,12 +758,12 @@ public class VmService : IVmService
     private static decimal CalculateHourlyRate(VmSpec spec)
     {
         var baseCpuRate = 0.01m;
-        var baseMemoryRate = 0.005m;
-        var baseStorageRate = 0.0001m;
+        var baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
+        var baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
 
         return (spec.VirtualCpuCores * baseCpuRate) +
-               (spec.MemoryMb / 1024m * baseMemoryRate) +
-               (spec.DiskGb * baseStorageRate);
+               (spec.MemoryBytes * baseMemoryRate) +
+               (spec.DiskBytes * baseStorageRate);
     }
 
     private static string GeneratePrivateIp()

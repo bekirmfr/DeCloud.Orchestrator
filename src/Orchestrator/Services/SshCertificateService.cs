@@ -70,7 +70,7 @@ public class SshCertificateService : ISshCertificateService
         {
             _logger.LogInformation(
                 "No SSH key registered - deriving from wallet for VM {VmId}",
-                vm.Id);
+                vm.VmId);
 
             keyPair = await _walletSshKeyService.DeriveKeysFromWalletSignatureAsync(
                 user.WalletAddress,
@@ -86,7 +86,7 @@ public class SshCertificateService : ISshCertificateService
             _logger.LogInformation(
                 "Certificate-based authentication configured for VM {VmId} - " +
                 "VM will validate certificate principal 'vm-{VmId}'",
-                vm.Id, vm.Id);
+                vm.VmId, vm.VmId);
         }
         else
         {
@@ -96,7 +96,7 @@ public class SshCertificateService : ISshCertificateService
         }
 
         // Generate certificate ID
-        var certId = $"decloud-{user.Id.Substring(0, 8)}-{vm.Id.Substring(0, 8)}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        var certId = $"decloud-{user.Id.Substring(0, 8)}-{vm.VmId.Substring(0, 8)}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
         // =====================================================
         // Define certificate principals
@@ -109,14 +109,14 @@ public class SshCertificateService : ISshCertificateService
         var principals = new List<string>
         {
             "decloud",                               // Bastion jump host access
-            $"vm-{vm.Id}",                          // VM-specific access (validated by VM)
+            $"vm-{vm.VmId}",                          // VM-specific access (validated by VM)
             $"user-{user.Id}",                       // User identification
             $"wallet-{user.WalletAddress.ToLower()}" // Wallet identification
         };
 
         _logger.LogInformation(
             "Issuing SSH certificate {CertId} for VM {VmId}, principals: {Principals}",
-            certId, vm.Id, string.Join(", ", principals));
+            certId, vm.VmId, string.Join(", ", principals));
 
         // Request certificate signature from node's CA
         var signedCert = await RequestCertificateFromNodeAsync(
@@ -132,7 +132,7 @@ public class SshCertificateService : ISshCertificateService
         {
             Id = certId,
             UserId = user.Id,
-            VmId = vm.Id,
+            VmId = vm.VmId,
             NodeId = vm.NodeId,
             CertificateData = signedCert,
             ValidFrom = DateTime.UtcNow,
