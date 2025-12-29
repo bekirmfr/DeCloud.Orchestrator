@@ -195,8 +195,8 @@ public class VmPricingTier
     public string Name { get; set; } = string.Empty;           // e.g., "small", "medium", "large"
     public int CpuCores { get; set; }
     public long MemoryMb { get; set; }
-    public long DiskGb { get; set; }                           // FIXED: Changed from StorageGb to match DataStore usage
+    public long DiskGb { get; set; }
     public decimal HourlyPriceUsd { get; set; }
-    public decimal HourlyRateCrypto { get; set; }              // FIXED: Changed from HourlyPriceCrypto to match DataStore usage
+    public decimal HourlyRateCrypto { get; set; }
     public string CryptoSymbol { get; set; } = "USDC";
 }

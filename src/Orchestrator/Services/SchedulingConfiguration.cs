@@ -178,21 +178,6 @@ public class NodeResourceAvailability
     // ========================================
 
     /// <summary>
-    /// Total compute points available on this node
-    /// </summary>
-    public int TotalComputePoints { get; set; }
-
-    /// <summary>
-    /// Currently allocated compute points
-    /// </summary>
-    public int AllocatedComputePoints { get; set; }
-
-    /// <summary>
-    /// Remaining compute points for new VMs
-    /// </summary>
-    public int RemainingComputePoints => TotalComputePoints - AllocatedComputePoints;
-
-    /// <summary>
     /// Point cost required for the VM being evaluated
     /// </summary>
     public int RequiredComputePoints { get; set; }
@@ -200,27 +185,27 @@ public class NodeResourceAvailability
     // ========================================
     // LEGACY: EFFECTIVE CAPACITY (kept for backward compat)
     // ========================================
-    public double EffectiveCpuCapacity { get; set; }
-    public double EffectiveMemoryCapacity { get; set; }
-    public double EffectiveStorageCapacity { get; set; }
+    public int TotalComputePoints { get; set; }
+    public long TotalMemoryBytes { get; set; }
+    public long TotalStorageBytes { get; set; }
 
     // Currently allocated (sum of VM specs)
-    public double AllocatedCpu { get; set; }
-    public double AllocatedMemory { get; set; }
-    public double AllocatedStorage { get; set; }
+    public int AllocatedComputePoints { get; set; }
+    public long AllocatedMemoryBytes { get; set; }
+    public long AllocatedStorageBytes { get; set; }
 
     // Remaining capacity after allocation
-    public double RemainingCpu => EffectiveCpuCapacity - AllocatedCpu;
-    public double RemainingMemory => EffectiveMemoryCapacity - AllocatedMemory;
-    public double RemainingStorage => EffectiveStorageCapacity - AllocatedStorage;
+    public int RemainingComputePoints => TotalComputePoints - AllocatedComputePoints;
+    public long RemainingMemoryBytes => TotalMemoryBytes - AllocatedMemoryBytes;
+    public long RemainingStorageBytes => TotalStorageBytes - AllocatedStorageBytes;
 
     // Utilization percentages
-    public double CpuUtilization => TotalComputePoints > 0
+    public double ComputeUtilization => TotalComputePoints > 0
         ? ((double)AllocatedComputePoints / TotalComputePoints) * 100
         : 0;
 
-    public double MemoryUtilization => EffectiveMemoryCapacity > 0
-        ? (AllocatedMemory / EffectiveMemoryCapacity) * 100
+    public double MemoryUtilization => TotalMemoryBytes > 0
+        ? (AllocatedMemoryBytes / TotalMemoryBytes) * 100
         : 0;
 
     // ========================================
@@ -230,11 +215,11 @@ public class NodeResourceAvailability
     /// <summary>
     /// Can this node fit the VM based on point-based allocation?
     /// </summary>
-    public bool CanFit(VmSpec spec, int pointCost)
+    public bool CanFit(VmSpec spec)
     {
-        return RemainingComputePoints >= pointCost
-            && RemainingMemory >= spec.MemoryBytes
-            && RemainingStorage >= spec.DiskBytes;
+        return RemainingComputePoints >= spec.ComputePointCost
+            && RemainingMemoryBytes >= spec.MemoryBytes
+            && RemainingStorageBytes >= spec.DiskBytes;
     }
 
     // Utilization after adding this VM
@@ -247,8 +232,8 @@ public class NodeResourceAvailability
 
     public double ProjectedMemoryUtilization(VmSpec spec)
     {
-        return EffectiveMemoryCapacity > 0
-            ? ((AllocatedMemory + spec.MemoryBytes) / EffectiveMemoryCapacity) * 100
+        return TotalMemoryBytes > 0
+            ? ((AllocatedMemoryBytes + spec.MemoryBytes) / TotalMemoryBytes) * 100
             : 100;
     }
 }

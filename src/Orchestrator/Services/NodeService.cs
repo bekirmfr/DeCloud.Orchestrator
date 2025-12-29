@@ -1,4 +1,5 @@
 ﻿using System.Security.Cryptography;
+using System.Text.Json;
 using DeCloud.Shared;
 using Orchestrator.Data;
 using Orchestrator.Models;
@@ -180,6 +181,7 @@ public class NodeService : INodeService
 
             // Step 2: Calculate resource availability with overcommit
             var availability = CalculateResourceAvailability(node, tier, policy);
+
             scored.Availability = availability;
 
             // Calculate point cost for this VM
@@ -187,15 +189,15 @@ public class NodeService : INodeService
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
-            if (!availability.CanFit(spec, pointCost))
+            if (!availability.CanFit(spec))
             {
                 var memoryMb = spec.MemoryBytes / (1024 * 1024);
                 var diskGb = spec.DiskBytes / (1024 * 1024 * 1024);
 
                 scored.RejectionReason = $"Insufficient resources after overcommit " +
                     $"(Points: {availability.RemainingComputePoints}/{pointCost}, " +
-                    $"MEM: {availability.RemainingMemory / (1024 ^ 2):F0}/{memoryMb}MB, " +
-                    $"DISK: {availability.RemainingStorage / (1024 ^ 3):F0}/{diskGb}GB)";
+                    $"MEM: {availability.RemainingMemoryBytes / (1024 ^ 2):F0}/{memoryMb}MB, " +
+                    $"DISK: {availability.RemainingStorageBytes / (1024 ^ 3):F0}/{diskGb}GB)";
                 scored.TotalScore = 0;
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;
@@ -270,7 +272,7 @@ public class NodeService : INodeService
 
         // Filter 6: Region requirement (if specified)
         if (!string.IsNullOrEmpty(spec.PreferredRegion) &&
-            spec.RequirePreferredRegion &&
+            spec.PreferredRegion != null &&
             node.Region != spec.PreferredRegion)
             return $"Region mismatch (required: {spec.PreferredRegion}, node: {node.Region})";
 
@@ -290,48 +292,43 @@ public class NodeService : INodeService
         // POINT-BASED CPU CALCULATION
         // ========================================
 
-        var totalComputePoints = node.TotalResources.ComputePoints;
-        var allocatedComputePoints = node.ReservedResources.ComputePoints;
-
-        // Calculate effective capacity with overcommit ratios
-        var effectiveCpu = node.TotalResources.PhysicalCpuCores * policy.CpuOvercommitRatio;
-        var effectiveMemory = node.TotalResources.MemoryBytes * policy.MemoryOvercommitRatio;
-        var effectiveStorage = node.TotalResources.StorageBytes * policy.StorageOvercommitRatio;
+        // Calculate effective capacity with overcommit ratioss
+        var totalComputePoints = node.HardwareInventory.Cpu.PhysicalCores * (int) policy.CpuOvercommitRatio;
+        var totalMemoryBytes = (long) (node.HardwareInventory.Memory.AllocatableBytes * policy.MemoryOvercommitRatio);
+        var totalStorageBytes = (long) (node.HardwareInventory.Storage.Sum(s => s.TotalBytes) * policy.StorageOvercommitRatio);
 
         // This ensures scheduling decisions are based on reserved resources
-        var allocatedCpu = (double)node.ReservedResources.PhysicalCpuCores;
-        var allocatedMemory = (double)node.ReservedResources.MemoryBytes;
-        var allocatedStorage = (double)node.ReservedResources.StorageBytes;
+        var allocatedComputePoints = node.ReservedResources.ComputePoints;
+        var allocatedMemoryBytes = node.ReservedResources.MemoryBytes;
+        var allocatedStorageBytes = node.ReservedResources.StorageBytes;
 
         return new NodeResourceAvailability
         {
             NodeId = node.Id,
             Tier = tier,
 
-            // Point-based tracking
             TotalComputePoints = totalComputePoints,
-            AllocatedComputePoints = allocatedComputePoints,
+            TotalMemoryBytes = (long) totalMemoryBytes,
+            TotalStorageBytes = (long) totalStorageBytes,
+
+            // Point-based tracking
             RequiredComputePoints = 0, // Set during fit check
 
-            // Legacy fields
-            EffectiveCpuCapacity = effectiveCpu,
-            EffectiveMemoryCapacity = effectiveMemory,
-            EffectiveStorageCapacity = effectiveStorage,
-            AllocatedCpu = allocatedCpu,
-            AllocatedMemory = allocatedMemory,
-            AllocatedStorage = allocatedStorage
+            AllocatedComputePoints = allocatedComputePoints,
+            AllocatedMemoryBytes = allocatedMemoryBytes,
+            AllocatedStorageBytes = allocatedStorageBytes
         };
     }
 
     private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
     {
         // Calculate how much capacity remains AFTER placing this VM
-        var cpuHeadroom = availability.RemainingCpu - spec.VirtualCpuCores;
-        var memoryHeadroom = availability.RemainingMemory - spec.MemoryBytes;
+        var cpuHeadroom = availability.RemainingComputePoints - spec.VirtualCpuCores;
+        var memoryHeadroom = availability.RemainingMemoryBytes - spec.MemoryBytes;
 
         // Normalize to 0-1 range (prefer nodes that will have 50%+ capacity remaining)
-        var cpuScore = Math.Min(1.0, cpuHeadroom / (availability.EffectiveCpuCapacity * 0.5));
-        var memoryScore = Math.Min(1.0, memoryHeadroom / (availability.EffectiveMemoryCapacity * 0.5));
+        var cpuScore = Math.Min(1.0, cpuHeadroom / (availability.TotalComputePoints * 0.5));
+        var memoryScore = Math.Min(1.0, memoryHeadroom / (availability.TotalMemoryBytes * 0.5));
 
         // Average of CPU and memory scores
         return (cpuScore + memoryScore) / 2.0;
@@ -340,7 +337,7 @@ public class NodeService : INodeService
     private double CalculateLoadScore(Node node, NodeResourceAvailability availability)
     {
         // Use current utilization as primary indicator
-        var cpuUtil = availability.CpuUtilization;
+        var cpuUtil = availability.ComputeUtilization;
         var memoryUtil = availability.MemoryUtilization;
 
         // Convert utilization to score (inverse relationship)
@@ -352,7 +349,7 @@ public class NodeService : INodeService
         if (node.LatestMetrics?.LoadAverage != null)
         {
             // Normalize load average (assume 1.0 per core is normal)
-            var normalizedLoad = node.LatestMetrics.LoadAverage / node.TotalResources.PhysicalCpuCores;
+            var normalizedLoad = node.LatestMetrics.LoadAverage / node.HardwareInventory.Cpu.PhysicalCores;
             loadScore = Math.Max(0, 1.0 - normalizedLoad);
         }
 
@@ -473,21 +470,21 @@ public class NodeService : INodeService
             existingNode.Name = request.Name;
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
-            existingNode.ReservedResources = request.ReservedResources;
+            existingNode.HardwareInventory = request.HardwareInventory;
+            existingNode.TotalResources = new ResourceSnapshot
+            {
+                ComputePoints = request.HardwareInventory.Cpu.PhysicalCores * 8,
+                MemoryBytes = request.HardwareInventory.Memory.AllocatableBytes,
+                StorageBytes = request.HardwareInventory.Storage.Sum(s => s.AvailableBytes),
+            };
+            // Reserved resources will be updated by heartbeat
+            existingNode.ReservedResources = new ResourceSnapshot();
             existingNode.AgentVersion = request.AgentVersion;
             existingNode.SupportedImages = request.SupportedImages;
-            existingNode.SupportsGpu = request.SupportsGpu;
-            existingNode.GpuInfo = request.GpuInfo;
             existingNode.Region = request.Region ?? "default";
             existingNode.Zone = request.Zone ?? "default";
             existingNode.Status = NodeStatus.Online;
             existingNode.LastHeartbeat = DateTime.UtcNow;
-
-            // Re-initialize compute points if not set
-            if (existingNode.TotalResources.ComputePoints == 0)
-            {
-                existingNode.InitializeComputePoints();
-            }
 
             await _dataStore.SaveNodeAsync(existingNode);
 
@@ -521,19 +518,22 @@ public class NodeService : INodeService
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
-            TotalResources = new NodeResources(),
-            ReservedResources = new NodeResources(),
+            HardwareInventory = request.HardwareInventory,
+            TotalResources = new ResourceSnapshot
+            {
+                MemoryBytes = request.HardwareInventory.Memory.TotalBytes,
+                StorageBytes = request.HardwareInventory.Storage.Sum(s => s.TotalBytes),
+                ComputePoints = request.HardwareInventory.Cpu.PhysicalCores * 8
+            },
+            // Reserved resources will be updated by heartbeat
+            ReservedResources = new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
-            SupportsGpu = request.SupportsGpu,
-            GpuInfo = request.GpuInfo,
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
+            RegisteredAt = request.RegisteredAt,
             LastHeartbeat = DateTime.UtcNow
         };
-
-        // Initialize compute points
-        node.InitializeComputePoints();
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -556,7 +556,7 @@ public class NodeService : INodeService
                 ["region"] = node.Region,
                 ["machineId"] = node.MachineId,
                 ["wallet"] = node.WalletAddress,
-                ["resources"] = node.TotalResources
+                ["resources"] = JsonSerializer.Serialize(node.TotalResources)
             }
         });
 
@@ -589,30 +589,31 @@ public class NodeService : INodeService
 
         // Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
-        var orchestratorTrackedFree = new NodeResources
+        var orchestratorTrackedFree = new ResourceSnapshot
         {
-            PhysicalCpuCores = node.TotalResources.PhysicalCpuCores - node.ReservedResources.PhysicalCpuCores,
+            ComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
             MemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
             StorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
         };
 
-        var cpuDiff = Math.Abs(nodeReportedFree.PhysicalCpuCores - orchestratorTrackedFree.PhysicalCpuCores);
         var computePointDiff = Math.Abs(
             (node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints) -
             (nodeReportedFree.ComputePoints));
         var memDiff = Math.Abs(nodeReportedFree.MemoryBytes - orchestratorTrackedFree.MemoryBytes);
 
-        if (cpuDiff > 1 || computePointDiff > 1 || memDiff > 1024)
+        if (computePointDiff > 1 || memDiff > 1024)
         {
             _logger.LogWarning("Resource drift detected on node {NodeId}", nodeId);
 
             _logger.LogDebug(
-                "Resource tracking drift on node {NodeId}: Node reports {NodeCpu} core(s) / {NodeComputePoints} point(s) / {NodeMem} MB free, " +
-                "Orchestrator tracks {OrcCpu}c/{OrcMem}MB free (Reserved: {ResCpu} core(s) / {ResComputePoints} point(s) / {ResMem} MB)",
+                "Resource tracking drift on node {NodeId}: " +
+                "Node reports {NodeComputePoints} point(s) / {NodeMem} MB free, " +
+                "Orchestrator tracks {OrcComputePoints} point(s) / {OrcMem}MB free " + 
+                "(Reserved: {ResComputePoints} point(s) / {ResMem} MB)",
                 nodeId,
-                nodeReportedFree.PhysicalCpuCores, nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes,
-                orchestratorTrackedFree.PhysicalCpuCores, orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes,
-                node.ReservedResources.PhysicalCpuCores, node.ReservedResources.MemoryBytes);
+                nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes,
+                orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes,
+                node.ReservedResources.ComputePoints, node.ReservedResources.MemoryBytes);
 
             // TO-DO: Implement resource reconciliation logic here
             // For now, we just log the discrepancy and update the node based on the ehartbeat
@@ -927,35 +928,28 @@ public class NodeService : INodeService
         if (!string.IsNullOrEmpty(vm.NodeId) &&
             _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
-            var cpuToFree = vm.Spec.VirtualCpuCores;
+            var computePointsToFree = vm.Spec.ComputePointCost;
             var memToFree = vm.Spec.MemoryBytes;
             var memToFreeMb = memToFree / (1024 * 1024);
             var storageToFree = vm.Spec.DiskBytes;
             var storageToFreeGb = storageToFree / (1024 * 1024 * 1024);
-            var pointsToFree = vm.Spec.ComputePointCost;
 
             // Free CPU cores (legacy)
-            node.ReservedResources.PhysicalCpuCores = Math.Max(0,
-                node.ReservedResources.PhysicalCpuCores - cpuToFree);
+            node.ReservedResources.ComputePoints = Math.Max(0,
+                node.ReservedResources.ComputePoints - computePointsToFree);
             node.ReservedResources.MemoryBytes = Math.Max(0,
                 node.ReservedResources.MemoryBytes - memToFree);
             node.ReservedResources.StorageBytes = Math.Max(0,
                 node.ReservedResources.StorageBytes - storageToFree);
 
-            // NEW: Free compute points
-            node.ReservedResources.ComputePoints = Math.Max(0,
-                node.ReservedResources.ComputePoints - pointsToFree);
-
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
-                "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",
-                vm.VmId, node.Id, cpuToFree, memToFreeMb, storageToFreeGb, pointsToFree,
-                node.ReservedResources.PhysicalCpuCores, node.ReservedResources.ComputePoints,
-                node.TotalResources.PhysicalCpuCores - node.ReservedResources.PhysicalCpuCores,
-                node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);
+                "{ComputePoints} point(s), {MemoryMb} MB, {StorageGb} GB. " +
+                "Node now has: Reserved={ResComputePoints} point(s), Available={AvComputePoints}pts",
+                vm.VmId, node.Id, computePointsToFree, memToFreeMb, storageToFreeGb,
+                node.ReservedResources.ComputePoints, node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);
         }
         else
         {

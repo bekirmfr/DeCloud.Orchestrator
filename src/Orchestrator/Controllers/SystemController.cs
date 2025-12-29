@@ -141,7 +141,7 @@ public class SystemController : ControllerBase
                 g.Key.ToUpper().Replace("-", " "),
                 g.Count(),
                 g.Count(n => n.Status == NodeStatus.Online),
-                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.PhysicalCpuCores - n.ReservedResources.PhysicalCpuCores),
+                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
                 g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.MemoryBytes - n.ReservedResources.MemoryBytes)
             ))
             .ToList();

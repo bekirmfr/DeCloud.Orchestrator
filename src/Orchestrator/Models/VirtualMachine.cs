@@ -81,7 +81,7 @@ public class VirtualMachine
 public class VmSpec
 {
     public int VirtualCpuCores { get; set; } = 1;
-    public long MemoryBytes { get; set; } = 1 * 1024L * 1024L;
+    public long MemoryBytes { get; set; } = 2 * 1024L * 1024L;
     //[BsonIgnore]
     //[JsonIgnore]
     //public long MemoryMb => MemoryBytes / (1024L * 1024L);
@@ -128,13 +128,6 @@ public class VmSpec
     /// If null, any zone in preferred region is acceptable
     /// </summary>
     public string? PreferredZone { get; set; }
-
-    /// <summary>
-    /// If true, ONLY schedule on nodes in PreferredRegion (hard requirement)
-    /// If false, PreferredRegion is just a preference (soft requirement)
-    /// Default: false
-    /// </summary>
-    public bool RequirePreferredRegion { get; set; } = false;
 
     /// <summary>
     /// Minimum node reputation score (0.0 to 1.0) required for scheduling

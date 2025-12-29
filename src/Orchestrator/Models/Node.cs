@@ -16,13 +16,13 @@ public class Node
     public string WalletAddress { get; set; } = string.Empty;
 
     // Connection info
-    public string Endpoint { get; set; } = string.Empty;  // How orchestrator reaches the node
     public string PublicIp { get; set; } = string.Empty;
     public int AgentPort { get; set; } = 5050;
 
     // Resources
-    public NodeResources TotalResources { get; set; } = new();
-    public NodeResources ReservedResources { get; set; } = new();
+    public HardwareInventory HardwareInventory { get; set; } = new();
+    public ResourceSnapshot TotalResources { get; set; } = new();
+    public ResourceSnapshot ReservedResources { get; set; } = new();
 
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
@@ -46,39 +46,140 @@ public class Node
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
+}
 
-    /// <summary>
-    /// Initialize compute points from physical CPU cores
-    /// Call this during node registration
-    /// </summary>
-    public void InitializeComputePoints()
-    {
-        TotalResources.ComputePoints = TotalResources.PhysicalCpuCores * 8;
-    }
+/// <summary>
+/// Complete hardware inventory of a node
+/// </summary>
+public class HardwareInventory
+{
+    public string NodeId { get; set; } = string.Empty;
+    public CpuInfo Cpu { get; set; } = new();
+    public MemoryInfo Memory { get; set; } = new();
+    public List<StorageInfo> Storage { get; set; } = new();
+    public bool SupportsGpu { get; set; }
+    public List<GpuInfo> Gpus { get; set; } = new();
+    public NetworkInfo Network { get; set; } = new();
+    public DateTime CollectedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class CpuInfo
+{
+    public string Model { get; set; } = string.Empty;
+    public int PhysicalCores { get; set; }
+    public int LogicalCores { get; set; }
+    public double FrequencyMhz { get; set; }
+    public List<string> Flags { get; set; } = new(); // e.g., "vmx", "svm" for virtualization
+    public bool SupportsVirtualization { get; set; }
+
+    // Current utilization (0-100)
+    public double UsagePercent { get; set; }
+
+    // Available for VMs (considering overcommit ratio)
+    public int AvailableVCpus { get; set; }
+}
+
+public class MemoryInfo
+{
+    public long TotalBytes { get; set; }
+    public long AvailableBytes { get; set; }
+    public long UsedBytes { get; set; }
+
+    // Reserved for host OS (configurable)
+    public long ReservedBytes { get; set; }
+
+    // Available for VM allocation
+    public long AllocatableBytes => Math.Max(0, TotalBytes - ReservedBytes - UsedBytes);
+
+    public double UsagePercent => TotalBytes > 0 ? (double)UsedBytes / TotalBytes * 100 : 0;
+}
+
+public class StorageInfo
+{
+    public string DevicePath { get; set; } = string.Empty;  // e.g., /dev/sda
+    public string MountPoint { get; set; } = string.Empty;  // e.g., /var/lib/decloud
+    public string FileSystem { get; set; } = string.Empty;  // e.g., ext4, xfs
+    public StorageType Type { get; set; }
+    public long TotalBytes { get; set; }
+    public long AvailableBytes { get; set; }
+    public long UsedBytes { get; set; }
+
+    // Measured IOPS (optional, from benchmark)
+    public int? ReadIops { get; set; }
+    public int? WriteIops { get; set; }
+}
+
+public enum StorageType
+{
+    Unknown,
+    HDD,
+    SSD,
+    NVMe
+}
+
+public class GpuInfo
+{
+    public string Vendor { get; set; } = string.Empty;      // NVIDIA, AMD, Intel
+    public string Model { get; set; } = string.Empty;       // e.g., RTX 4090
+    public string PciAddress { get; set; } = string.Empty;  // e.g., 0000:01:00.0
+    public long MemoryBytes { get; set; }
+    public long MemoryUsedBytes { get; set; }
+    public string DriverVersion { get; set; } = string.Empty;
+
+    // VFIO passthrough readiness
+    public bool IsIommuEnabled { get; set; }
+    public string IommuGroup { get; set; } = string.Empty;
+    public bool IsAvailableForPassthrough { get; set; }
+
+    // Current utilization
+    public double GpuUsagePercent { get; set; }
+    public double MemoryUsagePercent { get; set; }
+    public int? TemperatureCelsius { get; set; }
+}
+
+public class NetworkInfo
+{
+    public string PublicIp { get; set; } = string.Empty;
+    public string PrivateIp { get; set; } = string.Empty;
+    public string WireGuardIp { get; set; } = string.Empty;
+    public int? WireGuardPort { get; set; }
+
+    // Bandwidth (measured via iperf3 or similar)
+    public long? BandwidthBitsPerSecond { get; set; }
+
+    // NAT type detection
+    public NatType NatType { get; set; }
+
+    public List<NetworkInterface> Interfaces { get; set; } = new();
+}
+
+public enum NatType
+{
+    Unknown,
+    None,           // Public IP, no NAT
+    FullCone,       // Easy to traverse
+    RestrictedCone,
+    PortRestricted,
+    Symmetric       // Hardest to traverse, may need relay
+}
+
+public class NetworkInterface
+{
+    public string Name { get; set; } = string.Empty;       // e.g., eth0
+    public string MacAddress { get; set; } = string.Empty;
+    public string IpAddress { get; set; } = string.Empty;
+    public long SpeedMbps { get; set; }
+    public bool IsUp { get; set; }
 }
 
 /// <summary>
 /// Node resource allocation with point-based CPU tracking
 /// </summary>
-public class NodeResources
+public class ResourceSnapshot
 {
-    public int PhysicalCpuCores { get; set; }
-    /// <summary>
-    /// Compute points (CpuCores × 8)
-    /// Each physical core = 8 compute points
-    /// Example: 2-core node = 16 total points
-    /// </summary>
     public int ComputePoints { get; set; }
     public long MemoryBytes { get; set; }
     public long StorageBytes { get; set; }
-}
-
-public class GpuInfo
-{
-    public string Model { get; set; } = string.Empty;
-    public int VramMb { get; set; }
-    public int Count { get; set; } = 1;
-    public string Driver { get; set; } = string.Empty;
 }
 
 public class NodeMetrics
@@ -117,6 +218,7 @@ public class NodeRegistrationRequest
     /// Required for node ID generation and validation
     /// </summary>
     public required string MachineId { get; set; }
+    public required string Name { get; set; }
 
     /// <summary>
     /// Wallet address for ownership and billing
@@ -124,16 +226,16 @@ public class NodeRegistrationRequest
     /// </summary>
     public required string WalletAddress { get; set; }
 
-    public required string Name { get; set; }
     public required string PublicIp { get; set; }
     public required int AgentPort { get; set; }
-    public required NodeResources ReservedResources { get; set; }
+    public required HardwareInventory HardwareInventory { get; set; }
     public required string AgentVersion { get; set; }
     public List<string> SupportedImages { get; set; } = new();
-    public bool SupportsGpu { get; set; }
-    public GpuInfo? GpuInfo { get; set; }
+    // Staking info
+    public string StakingTxHash { get; set; } = string.Empty;
     public string? Region { get; set; }
     public string? Zone { get; set; }
+    public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
 }
 
 public record NodeRegistrationResponse(
@@ -148,7 +250,7 @@ public record NodeRegistrationResponse(
 public record NodeHeartbeat(
     string NodeId,
     NodeMetrics Metrics,
-    NodeResources AvailableResources,
+    ResourceSnapshot AvailableResources,
     List<HeartbeatVmInfo>? ActiveVms = null  // detailed VM information
 );
 

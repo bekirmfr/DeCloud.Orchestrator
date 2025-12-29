@@ -984,8 +984,8 @@ function renderVMsTable(vms) {
         const tierBadges = {
             0: '<span class="tier-badge tier-guaranteed">Guaranteed</span>',
             1: '<span class="tier-badge tier-standard">Standard</span>',
-            2: '<span class="tier-badge tier-burstable">Burstable</span>',
-            3: '<span class="tier-badge tier-balanced">Balanced</span>'
+            2: '<span class="tier-badge tier-balanced">Balanced</span>'
+            3: '<span class="tier-badge tier-burstable">Burstable</span>',
         };
 
         const tierBadge = tierBadges[vm.spec.qualityTier] || '';

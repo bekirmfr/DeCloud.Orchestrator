@@ -579,13 +579,6 @@ public class DataStore
             StoppedVms = vms.Count(v => v.Status == VmStatus.Stopped),
 
             // ========================================
-            // LEGACY CPU STATISTICS (backward compat)
-            // ========================================
-            TotalCpuCores = onlineNodes.Sum(n => n.TotalResources.PhysicalCpuCores),
-            UsedCpuCores = actualUsedCores,  // From actual VMs
-            AvailableCpuCores = onlineNodes.Sum(n => n.TotalResources.PhysicalCpuCores) - actualUsedCores,
-
-            // ========================================
             // POINT-BASED CPU STATISTICS (SELF-HEALING)
             // ========================================
             TotalComputePoints = totalComputePoints,

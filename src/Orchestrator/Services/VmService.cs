@@ -85,7 +85,7 @@ public class VmService : IVmService
             OwnerWallet = user?.WalletAddress ?? string.Empty,
             Spec = request.Spec,
             Status = VmStatus.Pending,
-            Labels = request.Labels ?? new(),
+            Labels = request.Labels ?? [],
             BillingInfo = new VmBillingInfo
             {
                 HourlyRateCrypto = hourlyRate,
@@ -496,17 +496,13 @@ public class VmService : IVmService
             var storageToFree = vm.Spec.DiskBytes;
             var pointsToFree = vm.Spec.ComputePointCost;
 
-            // Free legacy resources
-            node.ReservedResources.PhysicalCpuCores = Math.Max(0,
-                node.ReservedResources.PhysicalCpuCores - cpuToFree);
+            // Free resources
+            node.ReservedResources.ComputePoints = Math.Max(0,
+                node.ReservedResources.ComputePoints - pointsToFree);
             node.ReservedResources.MemoryBytes = Math.Max(0,
                 node.ReservedResources.MemoryBytes - memToFree);
             node.ReservedResources.StorageBytes = Math.Max(0,
                 node.ReservedResources.StorageBytes - storageToFree);
-
-            // NEW: Free compute points
-            node.ReservedResources.ComputePoints = Math.Max(0,
-                node.ReservedResources.ComputePoints - pointsToFree);
 
             await _dataStore.SaveNodeAsync(node);
 
@@ -642,16 +638,15 @@ public class VmService : IVmService
             vm.Status = VmStatus.Pending;
             vm.StatusMessage = "No suitable node available";
             await _dataStore.SaveVmAsync(vm);
-            return;
+            throw new InvalidOperationException(vm.StatusMessage);
         }
 
         // ========================================
         // STEP 3: Reserve resources on node
         // ========================================
-        selectedNode.ReservedResources.PhysicalCpuCores += vm.Spec.VirtualCpuCores;
+        selectedNode.ReservedResources.ComputePoints += pointCost;
         selectedNode.ReservedResources.MemoryBytes += vm.Spec.MemoryBytes;
         selectedNode.ReservedResources.StorageBytes += vm.Spec.DiskBytes;
-        selectedNode.ReservedResources.ComputePoints += pointCost;  // ← Use calculated value
 
         await _dataStore.SaveNodeAsync(selectedNode);
 
