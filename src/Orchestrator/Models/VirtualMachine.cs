@@ -95,6 +95,12 @@ public class VmSpec
     // ========================================
     // COMPUTE POINT COST TRACKING
     // ========================================
+    
+    /// <summary>
+    /// Preferred quality tier for scheduling (Guaranteed, Standard, Burstable)
+    /// Default: Standard
+    /// </summary>
+    public QualityTier QualityTier { get; set; } = QualityTier.Standard;
 
     /// <summary>
     /// Compute point cost for this VM based on tier and vCPU count
@@ -110,13 +116,6 @@ public class VmSpec
     // ========================================
     // SCHEDULING PREFERENCES
     // ========================================
-
-    // Scheduling preferences and requirements
-    /// <summary>
-    /// Preferred quality tier for scheduling (Guaranteed, Standard, Burstable)
-    /// Default: Standard
-    /// </summary>
-    public QualityTier QualityTier { get; set; } = QualityTier.Standard;
 
     /// <summary>
     /// Preferred region for deployment (e.g., "us-west", "eu-central")
@@ -161,7 +160,6 @@ public class VmSpec
     // IMAGE & ACCESS
     // ========================================
     public string ImageId { get; set; } = string.Empty;       // e.g., "ubuntu-22.04"
-    public string? ImageUrl { get; set; }                     // Custom image URL
     
     // SSH key for access
     public string? SshPublicKey { get; set; }
@@ -275,8 +273,7 @@ public enum VmPowerState
 {
     Off,
     Running,
-    Paused,
-    Suspended
+    Paused
 }
 
 // DTOs for API

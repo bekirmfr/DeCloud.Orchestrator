@@ -23,7 +23,6 @@ public class Node
     // Resources
     public NodeResources TotalResources { get; set; } = new();
     public NodeResources ReservedResources { get; set; } = new();
-    public NodeResources AvailableResources { get; set; } = new();
 
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
@@ -55,8 +54,6 @@ public class Node
     public void InitializeComputePoints()
     {
         TotalResources.ComputePoints = TotalResources.CpuCores * 8;
-        // ReservedComputePoints starts at 0 for new nodes
-        AvailableResources.ComputePoints = TotalResources.ComputePoints - ReservedResources.ComputePoints;
     }
 }
 
@@ -161,12 +158,11 @@ public record NodeHeartbeat(
 /// </summary>
 public class HeartbeatVmInfo
 {
-    public string Id { get; set; } = string.Empty;
+    public string VmId { get; set; } = string.Empty;
     public string? Name { get; set; }
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
     public string OwnerId { get; set; } = string.Empty;  // Owner ID
     public string OwnerWallet { get; set; } = string.Empty;
-    public string LeaseId { get; set; } = string.Empty;
     public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
     /// <summary>
@@ -180,7 +176,6 @@ public class HeartbeatVmInfo
     /// </summary>
     public int? VncPort { get; set; }
 
-    
     // Resource specifications
     public int CpuCores { get; set; }
     public int QualityTier { get; set; }
@@ -194,7 +189,6 @@ public class HeartbeatVmInfo
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>
     public string? EncryptedPassword { get; set; }
-    public string? SshPublicKey { get; set; }  // or recovery
     public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
 }

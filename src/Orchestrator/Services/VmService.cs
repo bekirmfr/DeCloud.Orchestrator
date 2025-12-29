@@ -686,11 +686,7 @@ public class VmService : IVmService
         // ========================================
         // STEP 6: Get image URL
         // ========================================
-        string? imageUrl = vm.Spec.ImageUrl;
-        if (string.IsNullOrEmpty(imageUrl) && !string.IsNullOrEmpty(vm.Spec.ImageId))
-        {
-            imageUrl = GetImageUrl(vm.Spec.ImageId);
-        }
+        string? imageUrl = GetImageUrl(vm.Spec.ImageId);
 
         // ========================================
         // STEP 7: Create command with ALL required fields
@@ -706,8 +702,8 @@ public class VmService : IVmService
                 OwnerId = vm.OwnerId,
                 OwnerWallet = vm.OwnerWallet,
                 VCpus = vm.Spec.CpuCores,
-                MemoryBytes = vm.Spec.MemoryMb * 1024L * 1024L,
-                DiskBytes = vm.Spec.DiskGb * 1024L * 1024L * 1024L,
+                MemoryBytes = vm.Spec.MemoryBytes,
+                DiskBytes = vm.Spec.DiskBytes,
                 QualityTier = (int)vm.Spec.QualityTier,
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,

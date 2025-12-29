@@ -519,7 +519,6 @@ public class NodeService : INodeService
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             TotalResources = new NodeResources(),
-            AvailableResources = new NodeResources(),
             ReservedResources = new NodeResources(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -942,11 +941,6 @@ public class NodeService : INodeService
             node.ReservedResources.ComputePoints = Math.Max(0,
                 node.ReservedResources.ComputePoints - pointsToFree);
 
-            // Also update available resources
-            node.AvailableResources.CpuCores += cpuToFree;
-            node.AvailableResources.MemoryMb += memToFree;
-            node.AvailableResources.StorageGb += storageToFree;
-
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
@@ -955,8 +949,8 @@ public class NodeService : INodeService
                 "Node now has: Reserved={ResCpu}c/{ResPoints}pts, Available={AvCpu}c/{AvPoints}pts",  // UPDATED
                 vm.Id, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,  // UPDATED
                 node.ReservedResources.CpuCores, node.ReservedResources.ComputePoints,  // UPDATED
-                node.AvailableResources.CpuCores,
-                node.AvailableResources.ComputePoints - node.ReservedResources.ComputePoints);  // UPDATED
+                node.TotalResources.CpuCores - node.ReservedResources.CpuCores,
+                node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);  // UPDATED
         }
         else
         {
@@ -1025,7 +1019,7 @@ public class NodeService : INodeService
 
         foreach (var reported in heartbeat.ActiveVms)
         {
-            var vmId = reported.Id;
+            var vmId = reported.VmId;
 
             if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             {
@@ -1139,7 +1133,7 @@ public class NodeService : INodeService
     /// </summary>
     private async Task RecoverOrphanedVmAsync(string nodeId, HeartbeatVmInfo reported)
     {
-        var vmId = reported.Id;
+        var vmId = reported.VmId;
 
         try
         {
