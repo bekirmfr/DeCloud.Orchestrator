@@ -1003,9 +1003,9 @@ function renderVMsTable(vms) {
                 </div>
             </td>
             <td>${escapeHtml(nodeName)}</td>
-            <td>${vm.spec?.cpuCores || 0} cores</td>
-            <td>${vm.spec?.memoryMb || 0} MB</td>
-            <td>${vm.spec?.diskGb || 0} GB</td>
+            <td>${vm.spec?.virtualCpuCores || 0} cores</td>
+            <td>${vm.spec?.memoryBytes / (1024 * 1024) || 0} MB</td>
+            <td>${vm.spec?.diskBytes / (1024 * 1024 * 1024) || 0} GB</td>
             <td>
                 <span class="status-badge status-${getStatusClass(vm.status)}">
                     ${getStatusText(vm.status)}
@@ -1076,39 +1076,49 @@ function renderVMsTable(vms) {
 function renderDashboardVMs(vms) {
     const container = document.getElementById('recent-vms');
     if (!container) return;
-
+    
     const recentVMs = vms.slice(0, 5);
-
+    
     if (recentVMs.length === 0) {
         container.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">No virtual machines yet</p>';
         return;
     }
-
-    container.innerHTML = recentVMs.map(vm => `
-        <div class="vm-card">
-            <div class="vm-card-header">
-                <div class="vm-name">
-                    <div class="vm-status ${vm.status}"></div>
-                    ${vm.name}
+    
+    container.innerHTML = recentVMs.map(vm => {
+        // Calculate memory in MB
+        const memoryMB = (vm.spec?.memoryBytes / (1024 * 1024)) || 0;
+        
+        // Calculate disk in GB - FIXED: diskBytes is already in bytes
+        const diskGB = (vm.spec?.diskBytes / (1024 * 1024 * 1024)) || 0;
+        
+        return `
+            <div class="vm-card">
+                <div class="vm-card-header">
+                    <div class="vm-name">
+                        <div class="vm-status ${vm.status}"></div>
+                        ${vm.name}
+                    </div>
+                    <span class="status-badge status-${getStatusClass(vm.status)}">
+                        ${getStatusText(vm.status)}
+                    </span>
                 </div>
-                <span class="status-badge status-${vm.status}">${vm.status}</span>
+                <div class="vm-card-specs">
+                    <div class="spec-item">
+                        <span class="spec-label">CPU</span>
+                        <span class="spec-value">${vm.spec?.virtualCpuCores || 0} cores</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">Memory</span>
+                        <span class="spec-value">${memoryMB.toFixed(0)} MB</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-label">Disk</span>
+                        <span class="spec-value">${diskGB.toFixed(2)} GB</span>
+                    </div>
+                </div>
             </div>
-            <div class="vm-card-specs">
-                <div class="spec-item">
-                    <span class="spec-label">CPU</span>
-                    <span class="spec-value">${vm.spec?.cpuCores || 0} cores</span>
-                </div>
-                <div class="spec-item">
-                    <span class="spec-label">Memory</span>
-                    <span class="spec-value">${vm.spec?.memoryMb || 0} MB</span>
-                </div>
-                <div class="spec-item">
-                    <span class="spec-label">Disk</span>
-                    <span class="spec-value">${vm.spec?.diskGb || 0} GB</span>
-                </div>
-            </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 async function loadNodes() {

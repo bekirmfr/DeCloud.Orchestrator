@@ -286,11 +286,11 @@ public class VmsController : ControllerBase
 
         if (string.IsNullOrEmpty(vm.Spec.WalletEncryptedPassword))
         {
-            return Ok(ApiResponse<EncryptedPasswordResponse>.Fail("FETCH_FAILED", "Failed to fetch encrypted password"));
+            return BadRequest(ApiResponse<EncryptedPasswordResponse>.Fail("FETCH_FAILED", "Failed to fetch encrypted password"));
         }
 
         // Use positional constructor for the record
-        return BadRequest(ApiResponse<EncryptedPasswordResponse>.Ok(
+        return Ok(ApiResponse<EncryptedPasswordResponse>.Ok(
             new EncryptedPasswordResponse(vm.Spec.WalletEncryptedPassword, true)));
     }
 }

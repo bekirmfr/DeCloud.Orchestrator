@@ -784,6 +784,170 @@ body {
 .card-body {
     padding: 20px 24px;
 }
+/* =============================================
+   DASHBOARD VM CARDS - Recent Virtual Machines Section
+   ============================================= */
+
+/* VM Card Container */
+.vm-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all var(--transition-normal);
+}
+
+    .vm-card:hover {
+        border-color: var(--border-default);
+        background: var(--bg-hover);
+        transform: translateX(4px);
+    }
+
+    .vm-card:last-child {
+        margin-bottom: 0;
+    }
+
+/* VM Card Header */
+.vm-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+/* VM Name with Status Indicator */
+.vm-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* VM Status Indicator Dot */
+.vm-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+    .vm-status.running,
+    .vm-status.1 {
+        background: var(--accent-primary);
+        box-shadow: 0 0 8px var(--accent-primary);
+        animation: pulse-glow 2s infinite;
+    }
+
+    .vm-status.stopped,
+    .vm-status.2 {
+        background: var(--text-muted);
+        box-shadow: none;
+    }
+
+    .vm-status.pending,
+    .vm-status.0 {
+        background: var(--accent-warning);
+        box-shadow: 0 0 8px var(--accent-warning);
+        animation: pulse-glow 1.5s infinite;
+    }
+
+    .vm-status.error,
+    .vm-status.5 {
+        background: var(--accent-danger);
+        box-shadow: 0 0 8px var(--accent-danger);
+    }
+
+    .vm-status.provisioning,
+    .vm-status.3 {
+        background: var(--accent-secondary);
+        box-shadow: 0 0 8px var(--accent-secondary);
+        animation: pulse-glow 1.5s infinite;
+    }
+
+    .vm-status.deleting,
+    .vm-status.4 {
+        background: var(--accent-warning);
+        box-shadow: 0 0 8px var(--accent-warning);
+        animation: pulse-glow 1s infinite;
+    }
+
+@keyframes pulse-glow {
+    0%, 100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* VM Specs Grid */
+.vm-card-specs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+/* Individual Spec Item */
+.spec-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.spec-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+}
+
+.spec-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+}
+
+/* Empty State */
+#recent-vms p {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 32px 20px;
+    font-size: 14px;
+}
+
+/* Responsive adjustments for VM cards */
+@media (max-width: 768px) {
+    .vm-card-specs {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .vm-card {
+        padding: 14px;
+    }
+
+    .vm-name {
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .vm-card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .status-badge {
+        align-self: flex-start;
+    }
+}
 
 /* VM Table */
 .vm-table {
