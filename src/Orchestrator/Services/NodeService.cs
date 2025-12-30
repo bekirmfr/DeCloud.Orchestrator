@@ -1086,6 +1086,10 @@ public class NodeService : INodeService
                 if (reported.IsIpAssigned &&
                     vm.NetworkConfig.PrivateIp != reported.IpAddress)
                 {
+                    // Update network config with actual libvirt IP
+                    vm.NetworkConfig.PrivateIp = reported.IpAddress;
+                    vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
+
                     vm.AccessInfo ??= new VmAccessInfo();
                     vm.AccessInfo.SshHost = reported.IpAddress;
                     vm.AccessInfo.SshPort = 22;
@@ -1096,9 +1100,6 @@ public class NodeService : INodeService
                         vm.AccessInfo.VncHost = node?.PublicIp;
                         vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
                     }
-
-                    // Update network config with actual libvirt IP
-                    vm.NetworkConfig.PrivateIp = reported.IpAddress;
 
                     await _dataStore.SaveVmAsync(vm);
                 }
