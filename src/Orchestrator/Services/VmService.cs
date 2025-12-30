@@ -234,6 +234,7 @@ public class VmService : IVmService
             // Clone the existing network config to avoid modifying the original
             var enrichedNetworkConfig = new VmNetworkConfig
             {
+                IsIpAssigned = v.NetworkConfig.IsIpAssigned,
                 PrivateIp = v.NetworkConfig.PrivateIp,
                 PublicIp = v.NetworkConfig.PublicIp,
                 Hostname = v.NetworkConfig.Hostname,

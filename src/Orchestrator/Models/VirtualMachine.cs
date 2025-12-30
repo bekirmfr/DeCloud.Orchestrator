@@ -169,6 +169,7 @@ public class VmSpec
 
 public class VmNetworkConfig
 {
+    public bool IsIpAssigned { get; set; }
     public string? PrivateIp { get; set; }
     public string? PublicIp { get; set; }
 

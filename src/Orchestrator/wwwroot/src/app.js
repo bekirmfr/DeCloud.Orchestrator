@@ -65,6 +65,15 @@ const QUALITY_TIERS = {
     }
 };
 
+const VmAction = {
+        Start: 0,
+        Stop: 1,
+        Restart: 2,
+        Pause: 3,
+        Resume: 4,
+        ForceStop: 5
+    }
+
 // ============================================
 // STATE
 // ============================================
@@ -967,7 +976,7 @@ function renderVMsTable(vms) {
         const networkConfig = vm.networkConfig || {};
 
         // VM network details
-        const vmIp = networkConfig.privateIp || 'pending';
+        const vmIp = vm.spec.networkConfig.isIpAssigned ? networkConfig.privateIp : 'pending';
         const hostname = networkConfig.hostname || vm.name;
 
         // Node connection details (for SSH and web terminal)
@@ -1041,6 +1050,7 @@ function renderVMsTable(vms) {
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                     </button>
+
                     <!-- Reveal Password -->
                     <button class="btn-icon" 
                             onclick="window.revealPassword('${vm.id}')" 
@@ -1050,12 +1060,13 @@ function renderVMsTable(vms) {
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
                     </button>
+
                     <!-- Start/Stop -->
-                    ${vm.state === 'Running' 
-                        ? `<button class="btn btn-sm btn-warning" onclick="stopVm('${vm.id}')" title="Stop">
+                    ${vm.status === 3 
+                        ? `<button class="btn btn-sm btn-warning" onclick="stopVM('${vm.id}')" title="Stop">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                            </button>`
-                        : `<button class="btn btn-sm btn-success" onclick="startVm('${vm.id}')" title="Start">
+                        : `<button class="btn btn-sm btn-success" onclick="startVM('${vm.id}')" title="Start">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                            </button>`
                     }
@@ -1288,6 +1299,122 @@ async function createVM() {
     } catch (error) {
         console.error('[Create VM] Error:', error);
         showToast('Failed to create VM', 'error');
+    }
+}
+
+async function startVM(vmId) {
+    
+    if (!vmId) {
+        showToast('Please enter a VM ID', 'error');
+        return;
+    }
+    
+    try {
+        const response = await api(`/api/{vmId}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: VmAction.Start
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`VM "${name}" started successfully!`, 'success');
+        } else {
+            showToast(data.message || 'Failed to start VM', 'error');
+        }
+    } catch (error) {
+        console.error('[Start VM] Error:', error);
+        showToast('Failed to start VM', 'error');
+    }
+}
+
+async function stopVM(vmId) {
+    
+    if (!vmId) {
+        showToast('Please enter a VM ID', 'error');
+        return;
+    }
+    
+    try {
+        const response = await api(`/api/{vmId}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: VmAction.Stop
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`VM "${name}" sopped successfully!`, 'success');
+        } else {
+            showToast(data.message || 'Failed to stop VM', 'error');
+        }
+    } catch (error) {
+        console.error('[Stop VM] Error:', error);
+        showToast('Failed to stop VM', 'error');
+    }
+}
+
+async function restartVM(vmId) {
+    
+    if (!vmId) {
+        showToast('Please enter a VM ID', 'error');
+        return;
+    }
+    
+    try {
+        const response = await api(`/api/{vmId}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: VmAction.Restart
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`VM "${name}" restarted successfully!`, 'success');
+        } else {
+            showToast(data.message || 'Failed to restart VM', 'error');
+        }
+    } catch (error) {
+        console.error('[Restart VM] Error:', error);
+        showToast('Failed to restart VM', 'error');
+    }
+}
+
+async function forceStopVM(vmId) {
+    
+    if (!vmId) {
+        showToast('Please enter a VM ID', 'error');
+        return;
+    }
+    
+    try {
+        const response = await api(`/api/{vmId}/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: VmAction.ForceStop
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast(`VM "${name}" force-stopped successfully!`, 'success');
+        } else {
+            showToast(data.message || 'Failed to force-stop VM', 'error');
+        }
+    } catch (error) {
+        console.error('[Force-stop VM] Error:', error);
+        showToast('Failed to force-stop VM', 'error');
     }
 }
 
@@ -2000,6 +2127,10 @@ window.closeModal = closeModal;
 window.createVM = createVM;
 window.updateTierInfo = updateTierInfo;
 window.updateEstimatedCost = updateEstimatedCost;
+window.startVM = startVM;
+window.restartVM = restartVM;
+window.stopVM = stopVM;
+window.forceStopVM = forceStopVM;
 window.deleteVM = deleteVM;
 window.copyToClipboard = copyToClipboard;
 window.revealPassword = revealPassword;
