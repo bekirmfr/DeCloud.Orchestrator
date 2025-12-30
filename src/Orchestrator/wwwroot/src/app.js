@@ -976,7 +976,7 @@ function renderVMsTable(vms) {
         const networkConfig = vm.networkConfig || {};
 
         // VM network details
-        const vmIp = vm.spec.networkConfig.isIpAssigned ? networkConfig.privateIp : 'pending';
+        const vmIp = networkConfig.isIpAssigned ? networkConfig.privateIp : 'pending';
         const hostname = networkConfig.hostname || vm.name;
 
         // Node connection details (for SSH and web terminal)
