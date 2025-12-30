@@ -1245,8 +1245,8 @@ async function createVM() {
                 name: name,
                 spec: {
                     cpuCores: cpuCores,
-                    memoryMb: memoryMb * (1024^2),
-                    diskGb: diskGb * (1024^3),
+                    memoryBytes: memoryMb * (1024 * 1024),
+                    diskBytes: diskGb * (1024 * 1024 * 1024),
                     imageId: imageId,
                     qualityTier: qualityTier
                 }

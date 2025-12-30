@@ -637,9 +637,10 @@ public class VmService : IVmService
 
             vm.Status = VmStatus.Pending;
             vm.StatusMessage = "No suitable node available";
-            await _dataStore.SaveVmAsync(vm);
             throw new InvalidOperationException(vm.StatusMessage);
         }
+        
+        await _dataStore.SaveVmAsync(vm);
 
         // ========================================
         // STEP 3: Reserve resources on node
