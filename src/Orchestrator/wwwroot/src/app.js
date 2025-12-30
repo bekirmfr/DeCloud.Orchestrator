@@ -1254,7 +1254,7 @@ async function createVM() {
             body: JSON.stringify({
                 name: name,
                 spec: {
-                    cpuCores: cpuCores,
+                    virtualCpuCores: cpuCores,
                     memoryBytes: memoryMb * (1024 * 1024),
                     diskBytes: diskGb * (1024 * 1024 * 1024),
                     imageId: imageId,
