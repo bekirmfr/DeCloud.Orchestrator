@@ -1736,8 +1736,8 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
             <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
                 <div style="color: #10b981; font-weight: 600; margin-bottom: 12px;">⚡ Quick Actions</div>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', '${sshJumpPort}', ${vmIp}, '${vmId}', '${vmName}', '${nodeAgentHost}', '${nodeAgentPort}')" style="padding: 8px 16px; font-size: 0.9rem;">
-                        🖥️ Open Terminal
+                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vmId}', '${vmName}', '${nodeAgentHost}', ${nodeAgentPort})" style="padding: 8px 16px; font-size: 0.9rem;">
+                        🖥️ Ssh Instructions
                     </button>
                     <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
                         🖥️ Open Terminal
