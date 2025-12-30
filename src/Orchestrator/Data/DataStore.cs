@@ -589,13 +589,13 @@ public class DataStore
             // ========================================
             // MEMORY & STORAGE STATISTICS (SELF-HEALING)
             // ========================================
-            TotalMemoryBytes = onlineNodes.Sum(n => n.TotalResources.MemoryBytes) / (1024L * 1024L),
-            UsedMemoryBytes = actualUsedMemory / (1024L * 1024L),  // From actual VMs
-            AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory) / (1024L * 1024L),
+            TotalMemoryBytes = onlineNodes.Sum(n => n.TotalResources.MemoryBytes),
+            UsedMemoryBytes = actualUsedMemory,  // From actual VMs
+            AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory),
 
-            TotalStorageBytes = onlineNodes.Sum(n => n.TotalResources.StorageBytes) / (1024L * 1024L * 1024L),
-            UsedStorageBytes = actualUsedStorage / (1024L * 1024L * 1024L),  // From actual VMs
-            AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage) / (1024L * 1024L * 1024L),
+            TotalStorageBytes = onlineNodes.Sum(n => n.TotalResources.StorageBytes),
+            UsedStorageBytes = actualUsedStorage,  // From actual VMs
+            AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage),
         };
 
         // Calculate utilization percentages
