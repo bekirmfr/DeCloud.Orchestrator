@@ -196,8 +196,8 @@ public class NodeService : INodeService
 
                 scored.RejectionReason = $"Insufficient resources after overcommit " +
                     $"(Points: {availability.RemainingComputePoints}/{pointCost}, " +
-                    $"MEM: {availability.RemainingMemoryBytes / (1024 ^ 2):F0}/{memoryMb}MB, " +
-                    $"DISK: {availability.RemainingStorageBytes / (1024 ^ 3):F0}/{diskGb}GB)";
+                    $"MEM: {availability.RemainingMemoryBytes / (1024 * 1024):F2}/{memoryMb}MB, " +
+                    $"DISK: {availability.RemainingStorageBytes / (1024 * 1024 * 1024):F2}/{diskGb}GB)";
                 scored.TotalScore = 0;
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;

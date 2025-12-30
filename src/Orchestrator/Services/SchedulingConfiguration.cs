@@ -224,14 +224,14 @@ public class NodeResourceAvailability
     public double ProjectedCpuUtilization(VmSpec spec)
     {
         return TotalComputePoints > 0
-            ? (double)((AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
+            ? ((double)(AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
             : 100;
     }
 
     public double ProjectedMemoryUtilization(VmSpec spec)
     {
         return TotalMemoryBytes > 0
-            ? ((AllocatedMemoryBytes + spec.MemoryBytes) / TotalMemoryBytes) * 100
+            ? ((double)(AllocatedMemoryBytes + spec.MemoryBytes) / TotalMemoryBytes) * 100
             : 100;
     }
 }
