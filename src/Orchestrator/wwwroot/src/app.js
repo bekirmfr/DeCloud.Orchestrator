@@ -2137,6 +2137,7 @@ window.revealPassword = revealPassword;
 window.openAddSSHKeyModal = openAddSSHKeyModal;
 window.addSSHKey = addSSHKey;
 window.deleteSSHKey = deleteSSHKey;
+window.showSshInstructions = showSshInstructions;
 window.openTerminal = openTerminal;
 window.openFileBrowser = openFileBrowser;
 window.showConnectInfo = showConnectInfo;
