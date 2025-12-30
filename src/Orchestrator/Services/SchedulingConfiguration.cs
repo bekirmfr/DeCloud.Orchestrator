@@ -182,9 +182,7 @@ public class NodeResourceAvailability
     /// </summary>
     public int RequiredComputePoints { get; set; }
 
-    // ========================================
-    // LEGACY: EFFECTIVE CAPACITY (kept for backward compat)
-    // ========================================
+    // Total capacity
     public int TotalComputePoints { get; set; }
     public long TotalMemoryBytes { get; set; }
     public long TotalStorageBytes { get; set; }
@@ -226,7 +224,7 @@ public class NodeResourceAvailability
     public double ProjectedCpuUtilization(VmSpec spec)
     {
         return TotalComputePoints > 0
-            ? ((double)(AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
+            ? (double)((AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
             : 100;
     }
 

@@ -914,8 +914,8 @@ async function loadDashboardStats() {
             // DISPLAY COMPUTE POINTS (not raw cores)
             // ========================================
             const totalPoints = stats.totalComputePoints || 0;
-            const availablePoints = stats.availableComputePoints || 0;
             const usedPoints = stats.usedComputePoints || 0;
+            const availablePoints = stats.availableComputePoints || 0;
             const utilizationPercent = stats.computePointUtilizationPercent || 0;
 
             // Show "X / Y points (Z% used)"
@@ -926,9 +926,12 @@ async function loadDashboardStats() {
             const cpuElement = document.getElementById('stat-cpu');
             cpuElement.title = `${utilizationPercent.toFixed(1)}% utilized (${usedPoints} points used)`;
 
-            // Memory display (unchanged)
+            // Memory display
             document.getElementById('stat-memory').textContent = 
-                `${((stats.availableMemoryMb || 0) / 1024).toFixed(1)} GB`;
+                `${((stats.availableMemoryGb || 0)).toFixed(1)} GB`;
+            // Storage display
+            document.getElementById('stat-storage').textContent = 
+                `${((stats.availableStorageGb || 0)).toFixed(1)} GB`;
         }
     } catch (error) {
         console.error('[Dashboard] Failed to load stats:', error);
@@ -969,7 +972,7 @@ function renderVMsTable(vms) {
 
         // Node connection details (for SSH and web terminal)
         const sshJumpHost = networkConfig.sshJumpHost || 'pending';
-        const sshJumpPort = networkConfig.sshJumpPort || 22;
+        const sshJumpPort = networkConfig.sshJumpPort || 2222;
         const nodeAgentHost = networkConfig.nodeAgentHost || 'pending';
         const nodeAgentPort = networkConfig.nodeAgentPort || 5100;
 
@@ -1150,8 +1153,9 @@ function renderNodesTable(nodes) {
                 </div>
             </td>
             <td>${node.publicIp || 'N/A'}</td>
-            <td>${node.totalResources?.cpuCores || 0} cores</td>
-            <td>${((node.totalResources?.memoryMb || 0) / 1024).toFixed(1)} GB</td>
+            <td>${node.hardwareInventory.cpu.physicalCores || 0} cores</td>
+            <td>${((node.totalResources?.memoryBytes / (1024^2) || 0) / 1024).toFixed(1)} MB</td>
+            <td>${((node.totalResources?.storageBytes / (1024^3) || 0) / 1024).toFixed(1)} GB</td>
             <td>${node.activeVMs || 0}</td>
             <td>${lastSeen}</td>
             <td>
@@ -1241,8 +1245,8 @@ async function createVM() {
                 name: name,
                 spec: {
                     cpuCores: cpuCores,
-                    memoryMb: memoryMb,
-                    diskGb: diskGb,
+                    memoryMb: memoryMb * (1024^2),
+                    diskGb: diskGb * (1024^3),
                     imageId: imageId,
                     qualityTier: qualityTier
                 }

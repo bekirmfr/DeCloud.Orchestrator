@@ -293,7 +293,7 @@ public class NodeService : INodeService
         // ========================================
 
         // Calculate effective capacity with overcommit ratioss
-        var totalComputePoints = node.HardwareInventory.Cpu.PhysicalCores * (int) policy.CpuOvercommitRatio;
+        var totalComputePoints = (int) (node.HardwareInventory.Cpu.PhysicalCores * policy.CpuOvercommitRatio);
         var totalMemoryBytes = (long) (node.HardwareInventory.Memory.AllocatableBytes * policy.MemoryOvercommitRatio);
         var totalStorageBytes = (long) (node.HardwareInventory.Storage.Sum(s => s.TotalBytes) * policy.StorageOvercommitRatio);
 
@@ -308,8 +308,8 @@ public class NodeService : INodeService
             Tier = tier,
 
             TotalComputePoints = totalComputePoints,
-            TotalMemoryBytes = (long) totalMemoryBytes,
-            TotalStorageBytes = (long) totalStorageBytes,
+            TotalMemoryBytes = totalMemoryBytes,
+            TotalStorageBytes = totalStorageBytes,
 
             // Point-based tracking
             RequiredComputePoints = 0, // Set during fit check

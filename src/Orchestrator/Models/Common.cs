@@ -124,13 +124,7 @@ public class SystemStats
     // CPU RESOURCE STATISTICS
     // ========================================
 
-    // Legacy: Physical core tracking (backward compatibility)
-
-    // Resource statistics
     public long TotalCpuCores { get; set; }
-    public long AvailableCpuCores { get; set; }
-    public long UsedCpuCores { get; set; }
-    public double CpuUtilizationPercent { get; set; }
 
     // Point-based CPU tracking
     public long TotalComputePoints { get; set; }
@@ -141,14 +135,20 @@ public class SystemStats
     // ========================================
     // MEMORY & STORAGE STATISTICS
     // ========================================
-    public long TotalMemoryMb { get; set; }
-    public long AvailableMemoryMb { get; set; }
-    public long UsedMemoryMb { get; set; }
+    public long TotalMemoryBytes { get; set; }
+    public double TotalMemoryGb => TotalMemoryBytes / (1024.0 * 1024.0 * 1024.0);
+    public long AvailableMemoryBytes { get; set; }
+    public double AvailableMemoryGb => AvailableMemoryBytes / (1024.0 * 1024.0 * 1024.0);
+    public long UsedMemoryBytes { get; set; }
+    public double UsedMemoryGb => UsedMemoryBytes / (1024.0 * 1024.0 * 1024.0);
     public double MemoryUtilizationPercent { get; set; }
 
-    public long TotalStorageGb { get; set; }
-    public long AvailableStorageGb { get; set; }
-    public long UsedStorageGb { get; set; }
+    public long TotalStorageBytes { get; set; }
+    public double TotalStorageGb => TotalStorageBytes / (1024.0 * 1024.0 * 1024.0);
+    public long AvailableStorageBytes { get; set; }
+    public double AvailableStorageGb => AvailableStorageBytes / (1024.0 * 1024.0 * 1024.0);
+    public long UsedStorageBytes { get; set; }
+    public double UsedStorageGb => UsedStorageBytes / (1024.0 * 1024.0 * 1024.0);
     public double StorageUtilizationPercent { get; set; }
 }
 

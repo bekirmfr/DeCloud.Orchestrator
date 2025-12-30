@@ -569,6 +569,7 @@ public class DataStore
         var stats = new SystemStats
         {
             TotalNodes = nodes.Count,
+            TotalCpuCores = onlineNodes.Sum(n => n.HardwareInventory.Cpu.PhysicalCores),
             OnlineNodes = onlineNodes.Count,
             OfflineNodes = nodes.Count(n => n.Status == NodeStatus.Offline),
             MaintenanceNodes = nodes.Count(n => n.Status == NodeStatus.Maintenance),
@@ -588,30 +589,26 @@ public class DataStore
             // ========================================
             // MEMORY & STORAGE STATISTICS (SELF-HEALING)
             // ========================================
-            TotalMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryBytes),
-            UsedMemoryMb = actualUsedMemory,  // From actual VMs
-            AvailableMemoryMb = onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory,
+            TotalMemoryBytes = onlineNodes.Sum(n => n.TotalResources.MemoryBytes) / (1024L * 1024L),
+            UsedMemoryBytes = actualUsedMemory / (1024L * 1024L),  // From actual VMs
+            AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory) / (1024L * 1024L),
 
-            TotalStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageBytes),
-            UsedStorageGb = actualUsedStorage,  // From actual VMs
-            AvailableStorageGb = onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage,
+            TotalStorageBytes = onlineNodes.Sum(n => n.TotalResources.StorageBytes) / (1024L * 1024L * 1024L),
+            UsedStorageBytes = actualUsedStorage / (1024L * 1024L * 1024L),  // From actual VMs
+            AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage) / (1024L * 1024L * 1024L),
         };
 
         // Calculate utilization percentages
-        stats.CpuUtilizationPercent = stats.TotalCpuCores > 0
-            ? (double)stats.UsedCpuCores / stats.TotalCpuCores * 100
-            : 0;
-
         stats.ComputePointUtilizationPercent = stats.TotalComputePoints > 0
             ? (double)stats.UsedComputePoints / stats.TotalComputePoints * 100
             : 0;
 
-        stats.MemoryUtilizationPercent = stats.TotalMemoryMb > 0
-            ? (double)stats.UsedMemoryMb / stats.TotalMemoryMb * 100
+        stats.MemoryUtilizationPercent = stats.TotalMemoryBytes > 0
+            ? (double)stats.UsedMemoryBytes / stats.TotalMemoryBytes * 100
             : 0;
 
-        stats.StorageUtilizationPercent = stats.TotalStorageGb > 0
-            ? (double)stats.UsedStorageGb / stats.TotalStorageGb * 100
+        stats.StorageUtilizationPercent = stats.TotalStorageBytes > 0
+            ? (double)stats.UsedStorageBytes / stats.TotalStorageBytes * 100
             : 0;
 
         return stats;
