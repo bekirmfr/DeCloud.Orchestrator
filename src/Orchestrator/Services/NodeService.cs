@@ -1093,7 +1093,7 @@ public class NodeService : INodeService
                     if (reported.VncPort != null)
                     {
                         // VNC accessible through WireGuard at node IP
-                        vm.AccessInfo.VncHost = node?.PublicIp ?? reported.IpAddress;
+                        vm.AccessInfo.VncHost = node?.PublicIp;
                         vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
                     }
 
