@@ -1310,7 +1310,7 @@ async function startVM(vmId) {
     }
     
     try {
-        const response = await api(`/api/{vmId}/action`, {
+        const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1339,7 +1339,7 @@ async function stopVM(vmId) {
     }
     
     try {
-        const response = await api(`/api/{vmId}/action`, {
+        const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
