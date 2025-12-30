@@ -339,13 +339,13 @@ if (mongoDatabase != null)
                 {
                     try
                     {
-                        await ingressService.OnVmStartedAsync(vm.VmId);
+                        await ingressService.OnVmStartedAsync(vm.Id);
                         logger.LogInformation("✓ Registered VM {VmId} ({Name}) with CentralIngress",
-                            vm.VmId, vm.Name);
+                            vm.Id, vm.Name);
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "Failed to register VM {VmId} with CentralIngress", vm.VmId);
+                        logger.LogError(ex, "Failed to register VM {VmId} with CentralIngress", vm.Id);
                     }
                 }
 

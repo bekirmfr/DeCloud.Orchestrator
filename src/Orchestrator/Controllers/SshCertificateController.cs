@@ -223,7 +223,7 @@ public class SshCertificateController : ControllerBase
             Username = "root",
             HasUserSshKey = hasUserKey,
             RequiresWalletSignature = !hasUserKey,
-            SshCommand = GenerateSshCommand(nodeIp, vm.NetworkConfig?.PrivateIp ?? "", vm.VmId, hasUserKey)
+            SshCommand = GenerateSshCommand(nodeIp, vm.NetworkConfig?.PrivateIp ?? "", vm.Id, hasUserKey)
         };
 
         return Ok(ApiResponse<SshConnectionInfo>.Ok(info));

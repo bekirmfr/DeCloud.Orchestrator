@@ -203,7 +203,7 @@ public class DataStore
                 .ToListAsync();
             foreach (var vm in vms)
             {
-                VirtualMachines.TryAdd(vm.VmId, vm);
+                VirtualMachines.TryAdd(vm.Id, vm);
             }
 
             // Load Users
@@ -281,17 +281,17 @@ public class DataStore
     public async Task SaveVmAsync(VirtualMachine vm)
     {
         vm.UpdatedAt = DateTime.UtcNow;
-        VirtualMachines[vm.VmId] = vm;
+        VirtualMachines[vm.Id] = vm;
 
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
             {
                 await VmsCollection!.ReplaceOneAsync(
-                    v => v.VmId == vm.VmId,
+                    v => v.Id == vm.Id,
                     vm,
                     new ReplaceOptions { IsUpsert = true });
-            }, $"persist VM {vm.VmId}");
+            }, $"persist VM {vm.Id}");
         }
     }
 
@@ -310,7 +310,7 @@ public class DataStore
                 await RetryMongoOperationAsync(async () =>
                 {
                     await VmsCollection!.ReplaceOneAsync(
-                        v => v.VmId == vmId,
+                        v => v.Id == vmId,
                         vm,
                         new ReplaceOptions { IsUpsert = true });
                 }, $"mark VM {vmId} as deleted");
@@ -328,7 +328,7 @@ public class DataStore
     /// <returns>A task that represents the asynchronous remove operation.</returns>
     public async Task RemoveVmAsync(string vmId)
     {
-        var filter = Builders<VirtualMachine>.Filter.Eq(v => v.VmId, vmId);
+        var filter = Builders<VirtualMachine>.Filter.Eq(v => v.Id, vmId);
         var result = await VmsCollection!.DeleteOneAsync(filter);
 
         // Remove from in-memory cache
@@ -431,7 +431,7 @@ public class DataStore
             {
                 var vmUpdates = VirtualMachines.Values.Select(vm =>
                     new ReplaceOneModel<VirtualMachine>(
-                        Builders<VirtualMachine>.Filter.Eq(v => v.VmId, vm.VmId),
+                        Builders<VirtualMachine>.Filter.Eq(v => v.Id, vm.Id),
                         vm)
                     {
                         IsUpsert = true

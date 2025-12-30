@@ -693,7 +693,7 @@ public class NodeService : INodeService
                 lookupMethod = "active_command_id";
                 _logger.LogDebug(
                     "Found VM {VmId} via ActiveCommandId for command {CommandId}",
-                    affectedVm.VmId, commandId);
+                    affectedVm.Id, commandId);
             }
         }
 
@@ -712,7 +712,7 @@ public class NodeService : INodeService
                 _logger.LogWarning(
                     "Found VM {VmId} via StatusMessage fallback for command {CommandId}. " +
                     "Command tracking may be degraded - check if ActiveCommandId is being set.",
-                    affectedVm.VmId, commandId);
+                    affectedVm.Id, commandId);
             }
         }
 
@@ -730,7 +730,7 @@ public class NodeService : INodeService
                 _logger.LogWarning(
                     "Found VM {VmId} via Deleting status heuristic for command {CommandId}. " +
                     "This is a last-resort lookup - investigate why primary methods failed.",
-                    affectedVm.VmId, commandId);
+                    affectedVm.Id, commandId);
             }
         }
 
@@ -770,7 +770,7 @@ public class NodeService : INodeService
 
         _logger.LogInformation(
             "Processing command {CommandId} for VM {VmId} (lookup: {Method})",
-            commandId, affectedVm.VmId, lookupMethod);
+            commandId, affectedVm.Id, lookupMethod);
 
         // ====================================================================
         // CLEAR COMMAND TRACKING ON VM
@@ -801,7 +801,7 @@ public class NodeService : INodeService
                 _logger.LogWarning(
                     "VM {VmId} deletion failed - resources remain reserved. " +
                     "Manual intervention may be required.",
-                    affectedVm.VmId);
+                    affectedVm.Id);
             }
             else if (affectedVm.Status == VmStatus.Provisioning)
             {
@@ -823,7 +823,7 @@ public class NodeService : INodeService
             {
                 Type = EventType.VmError,
                 ResourceType = "vm",
-                ResourceId = affectedVm.VmId,
+                ResourceId = affectedVm.Id,
                 NodeId = nodeId,
                 UserId = affectedVm.OwnerId,
                 Payload = new Dictionary<string, object>
@@ -845,7 +845,7 @@ public class NodeService : INodeService
         {
             _logger.LogInformation(
                 "Deletion confirmed for VM {VmId} - completing deletion and freeing resources",
-                affectedVm.VmId);
+                affectedVm.Id);
 
             await CompleteVmDeletionAsync(affectedVm);
         }
@@ -853,7 +853,7 @@ public class NodeService : INodeService
         {
             _logger.LogInformation(
                 "Creation confirmed for VM {VmId} - marking as running",
-                affectedVm.VmId);
+                affectedVm.Id);
 
             affectedVm.Status = VmStatus.Running;
             affectedVm.PowerState = VmPowerState.Running;
@@ -866,18 +866,18 @@ public class NodeService : INodeService
             {
                 Type = EventType.VmStarted,
                 ResourceType = "vm",
-                ResourceId = affectedVm.VmId,
+                ResourceId = affectedVm.Id,
                 NodeId = nodeId,
                 UserId = affectedVm.OwnerId
             });
 
-            await _ingressService.OnVmStartedAsync(affectedVm.VmId);
+            await _ingressService.OnVmStartedAsync(affectedVm.Id);
         }
         else if (affectedVm.Status == VmStatus.Stopping)
         {
             _logger.LogInformation(
                 "Stop confirmed for VM {VmId} - marking as stopped",
-                affectedVm.VmId);
+                affectedVm.Id);
 
             affectedVm.Status = VmStatus.Stopped;
             affectedVm.PowerState = VmPowerState.Off;
@@ -890,12 +890,12 @@ public class NodeService : INodeService
             {
                 Type = EventType.VmStopped,
                 ResourceType = "vm",
-                ResourceId = affectedVm.VmId,
+                ResourceId = affectedVm.Id,
                 NodeId = nodeId,
                 UserId = affectedVm.OwnerId
             });
 
-            await _ingressService.OnVmStoppedAsync(affectedVm.VmId);
+            await _ingressService.OnVmStoppedAsync(affectedVm.Id);
         }
 
         return true;
@@ -909,7 +909,7 @@ public class NodeService : INodeService
     {
         _logger.LogInformation(
             "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
-            vm.VmId, vm.OwnerId, vm.NodeId ?? "none");
+            vm.Id, vm.OwnerId, vm.NodeId ?? "none");
 
         // Step 1: Mark as Deleted
         vm.Status = VmStatus.Deleted;
@@ -948,14 +948,14 @@ public class NodeService : INodeService
                 "Released reserved resources for VM {VmId} on node {NodeId}: " +
                 "{ComputePoints} point(s), {MemoryMb} MB, {StorageGb} GB. " +
                 "Node now has: Reserved={ResComputePoints} point(s), Available={AvComputePoints}pts",
-                vm.VmId, node.Id, computePointsToFree, memToFreeMb, storageToFreeGb,
+                vm.Id, node.Id, computePointsToFree, memToFreeMb, storageToFreeGb,
                 node.ReservedResources.ComputePoints, node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);
         }
         else
         {
             _logger.LogWarning(
                 "Could not find node {NodeId} to release resources for VM {VmId}",
-                vm.NodeId, vm.VmId);
+                vm.NodeId, vm.Id);
         }
 
         // Step 3: Update user quotas
@@ -977,14 +977,14 @@ public class NodeService : INodeService
                 user.Quotas.CurrentVirtualCpuCores, user.Quotas.CurrentMemoryBytes);
         }
 
-        await _ingressService.OnVmDeletedAsync(vm.VmId);
+        await _ingressService.OnVmDeletedAsync(vm.Id);
 
         // Step 4: Emit completion event
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.VmDeleted,
             ResourceType = "vm",
-            ResourceId = vm.VmId,
+            ResourceId = vm.Id,
             NodeId = vm.NodeId,
             UserId = vm.OwnerId,
             Payload = new Dictionary<string, object>
@@ -997,7 +997,7 @@ public class NodeService : INodeService
 
         _logger.LogInformation(
             "VM {VmId} deletion completed successfully - all resources freed",
-            vm.VmId);
+            vm.Id);
     }
 
     /// <summary>
@@ -1011,7 +1011,7 @@ public class NodeService : INodeService
 
         var knownVmIds = _dataStore.VirtualMachines.Values
             .Where(v => v.NodeId == nodeId)
-            .Select(v => v.VmId)
+            .Select(v => v.Id)
             .ToHashSet();
 
         var node = await GetNodeAsync(nodeId);
@@ -1127,7 +1127,7 @@ public class NodeService : INodeService
 
             var recoveredVm = new VirtualMachine
             {
-                VmId = vmId,
+                Id = vmId,
                 Name = reported.Name ?? $"recovered-{vmId[..8]}",
                 OwnerId = reported.OwnerId,
                 OwnerWallet = reported.OwnerWallet,
@@ -1468,7 +1468,7 @@ public class NodeService : INodeService
         foreach (var vm in nodeVms)
         {
             _logger.LogWarning("VM {VmId} on offline node {NodeId} marked as error",
-                vm.VmId, nodeId);
+                vm.Id, nodeId);
 
             vm.Status = VmStatus.Error;
             vm.StatusMessage = "Node went offline";
@@ -1480,7 +1480,7 @@ public class NodeService : INodeService
             {
                 Type = EventType.VmError,
                 ResourceType = "vm",
-                ResourceId = vm.VmId,
+                ResourceId = vm.Id,
                 UserId = vm.OwnerId,
                 NodeId = nodeId,
                 Payload = new Dictionary<string, object>
