@@ -1333,6 +1333,8 @@ body {
     max-width: 520px;
     transform: translateY(20px) scale(0.95);
     transition: all var(--transition-slow);
+    max-height: calc(100vh - 210px);
+    overflow-y: auto;
 }
 
 .modal-overlay.active .modal {

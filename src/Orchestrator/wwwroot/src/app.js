@@ -1819,20 +1819,20 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
 
     // Build SSH config file content
     const sshConfigContent = `
-        # DeCloud SSH Configuration
-        # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
-        Host decloud-bastion
-        HostName ${sshJumpHost}
-        Port ${sshJumpPort}
-        User decloud
-        IdentityFile ~/.ssh/decloud-wallet.pem
-        CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
-
-        Host ${vmIp}
-        User root
-        ProxyJump decloud-bastion
-        IdentityFile ~/.ssh/decloud-wallet.pem
-        CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
+    # DeCloud SSH Configuration
+    # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
+    Host decloud-bastion
+    HostName ${sshJumpHost}
+    Port ${sshJumpPort}
+    User decloud
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
+    
+    Host ${vmIp}
+    User root
+    ProxyJump decloud-bastion
+    IdentityFile ~/.ssh/decloud-wallet.pem
+    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay active';
@@ -1908,37 +1908,6 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
                     <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
                         ⚠️ Don't forget to replace <code>XXXXX</code> with your certificate ID!
                     </p>
-                </div>
-
-                <!-- Connection Details -->
-                <div class="connect-section">
-                    <div class="connect-section-title">📊 Connection Details</div>
-                    <table style="width: 100%; color: #9ca3af; font-size: 0.875rem;">
-                        <tr>
-                            <td style="padding: 6px 0;"><strong>Bastion Host:</strong></td>
-                            <td style="padding: 6px 0;"><code>decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort}</code></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0;"><strong>VM IP Address:</strong></td>
-                            <td style="padding: 6px 0;"><code>root@${escapeHtml(vmIp)}</code></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0;"><strong>VM Hostname:</strong></td>
-                            <td style="padding: 6px 0;"><code>${escapeHtml(vmName.toLowerCase())}</code></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0;"><strong>Authentication:</strong></td>
-                            <td style="padding: 6px 0;"><span style="color: #10b981;">✓ SSH Certificate (wallet-derived)</span></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 6px 0;"><strong>Web Terminal:</strong></td>
-                            <td style="padding: 6px 0;">
-                                <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}', ${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 4px 12px; font-size: 0.85rem;">
-                                    Open Terminal
-                                </button>
-                            </td>
-                        </tr>
-                    </table>
                 </div>
 
                 <!-- Security Info -->
