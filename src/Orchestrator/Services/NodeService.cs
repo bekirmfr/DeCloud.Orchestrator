@@ -1083,8 +1083,7 @@ public class NodeService : INodeService
                 }
 
                 // Update access info if available
-                if (reported.IsIpAssigned &&
-                    vm.NetworkConfig.PrivateIp != reported.IpAddress)
+                if (reported.IsIpAssigned)
                 {
                     // Update network config with actual libvirt IP
                     vm.NetworkConfig.PrivateIp = reported.IpAddress;
