@@ -293,9 +293,17 @@ public class NodeService : INodeService
         // ========================================
 
         // Calculate effective capacity with overcommit ratioss
-        var totalComputePoints = (int) (node.HardwareInventory.Cpu.PhysicalCores * _schedulingConfig.TierPolicies[QualityTier.Burstable].CpuOvercommitRatio);
-        var totalMemoryBytes = (long) (node.HardwareInventory.Memory.AllocatableBytes * _schedulingConfig.TierPolicies[QualityTier.Burstable].MemoryOvercommitRatio);
-        var totalStorageBytes = (long) (node.HardwareInventory.Storage.Sum(s => s.TotalBytes) * _schedulingConfig.TierPolicies[QualityTier.Burstable].StorageOvercommitRatio);
+        var totalComputePoints = (int)(
+            node.HardwareInventory.Cpu.PhysicalCores *
+            _schedulingConfig.TierPolicies[QualityTier.Burstable].CpuOvercommitRatio);
+
+        var totalMemoryBytes = (long)(
+            node.HardwareInventory.Memory.AllocatableBytes *
+            _schedulingConfig.GlobalMemoryOvercommitRatio);
+
+        var totalStorageBytes = (long)(
+            node.HardwareInventory.Storage.Sum(s => s.TotalBytes) *
+            _schedulingConfig.GlobalStorageOvercommitRatio);
 
         // This ensures scheduling decisions are based on reserved resources
         var allocatedComputePoints = node.ReservedResources.ComputePoints;
