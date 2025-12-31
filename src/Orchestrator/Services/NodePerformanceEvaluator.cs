@@ -1,5 +1,5 @@
-﻿using Orchestrator.Models;
-using Microsoft.Extensions.Logging;
+﻿using MongoDB.Bson.Serialization.Attributes;
+using Orchestrator.Models;
 
 namespace Orchestrator.Services;
 
@@ -231,7 +231,10 @@ public class NodePerformanceEvaluation
     public List<QualityTier> EligibleTiers { get; set; } = new();
     public QualityTier? HighestTier { get; set; }
     public PerformanceClass PerformanceClass { get; set; }
-
+    /// <summary>
+    /// Tier capabilities - stored as array in MongoDB to avoid enum key serialization issues
+    /// </summary>
+    [BsonDictionaryOptions(MongoDB.Bson.Serialization.Options.DictionaryRepresentation.ArrayOfArrays)]
     public Dictionary<QualityTier, TierCapability> TierCapabilities { get; set; } = new();
 }
 
