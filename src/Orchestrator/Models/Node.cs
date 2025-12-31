@@ -1,4 +1,6 @@
-﻿namespace Orchestrator.Models;
+﻿using Orchestrator.Services;
+
+namespace Orchestrator.Models;
 
 /// <summary>
 /// Represents a compute node in the decentralized network
@@ -21,6 +23,11 @@ public class Node
 
     // Resources
     public HardwareInventory HardwareInventory { get; set; } = new();
+    /// <summary>
+    /// Performance evaluation and tier eligibility
+    /// Populated by NodePerformanceEvaluator on registration
+    /// </summary>
+    public NodePerformanceEvaluation? PerformanceEvaluation { get; set; }
     public ResourceSnapshot TotalResources { get; set; } = new();
     public ResourceSnapshot ReservedResources { get; set; } = new();
 
@@ -77,6 +84,12 @@ public class CpuInfo
 
     // Available for VMs (considering overcommit ratio)
     public int AvailableVCpus { get; set; }
+    /// <summary>
+    /// CPU benchmark score (measured via sysbench or custom benchmark)
+    /// Used for tier eligibility and capacity calculation
+    /// Default: 1000 (baseline equivalent)
+    /// </summary>
+    public int BenchmarkScore { get; set; } = 1000;
 }
 
 public class MemoryInfo

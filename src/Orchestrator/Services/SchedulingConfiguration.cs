@@ -184,6 +184,90 @@ public class ScoringWeights
 }
 
 /// <summary>
+/// Calculated resource availability for a node considering overcommit and points
+/// </summary>
+public class NodeResourceAvailability
+{
+    public string NodeId { get; set; } = string.Empty;
+    public QualityTier Tier { get; set; }
+
+    // Total capacity
+    public int TotalComputePoints { get; set; }
+    public long TotalMemoryBytes { get; set; }
+    public long TotalStorageBytes { get; set; }
+
+    // Currently allocated (sum of VM specs)
+    public int AllocatedComputePoints { get; set; }
+    public long AllocatedMemoryBytes { get; set; }
+    public long AllocatedStorageBytes { get; set; }
+
+    // Required for current VM being evaluated
+    public int RequiredComputePoints { get; set; }
+
+    // Remaining capacity after allocation
+    public int RemainingComputePoints => TotalComputePoints - AllocatedComputePoints;
+    public long RemainingMemoryBytes => TotalMemoryBytes - AllocatedMemoryBytes;
+    public long RemainingStorageBytes => TotalStorageBytes - AllocatedStorageBytes;
+
+    // Utilization percentages
+    public double ComputeUtilization => TotalComputePoints > 0
+        ? ((double)AllocatedComputePoints / TotalComputePoints) * 100
+        : 0;
+
+    public double MemoryUtilization => TotalMemoryBytes > 0
+        ? ((double)AllocatedMemoryBytes / TotalMemoryBytes) * 100
+        : 0;
+
+    /// <summary>
+    /// Can this node fit the VM based on point-based allocation?
+    /// </summary>
+    public bool CanFit(VmSpec spec)
+    {
+        return RemainingComputePoints >= spec.ComputePointCost
+            && RemainingMemoryBytes >= spec.MemoryBytes
+            && RemainingStorageBytes >= spec.DiskBytes;
+    }
+
+    // Utilization after adding this VM
+    public double ProjectedCpuUtilization(VmSpec spec)
+    {
+        return TotalComputePoints > 0
+            ? ((double)(AllocatedComputePoints + spec.ComputePointCost) / TotalComputePoints) * 100
+            : 100;
+    }
+
+    public double ProjectedMemoryUtilization(VmSpec spec)
+    {
+        return TotalMemoryBytes > 0
+            ? ((double)(AllocatedMemoryBytes + spec.MemoryBytes) / TotalMemoryBytes) * 100
+            : 100;
+    }
+}
+
+/// <summary>
+/// Scored node candidate for scheduling
+/// </summary>
+public class ScoredNode
+{
+    public Node Node { get; set; } = null!;
+    public NodeResourceAvailability Availability { get; set; } = null!;
+    public NodeScores Scores { get; set; } = new();
+    public double TotalScore { get; set; }
+    public string? RejectionReason { get; set; }
+}
+
+/// <summary>
+/// Individual scoring components for a node
+/// </summary>
+public class NodeScores
+{
+    public double CapacityScore { get; set; }
+    public double LoadScore { get; set; }
+    public double ReputationScore { get; set; }
+    public double LocalityScore { get; set; }
+}
+
+/// <summary>
 /// Quality tier for VM scheduling with benchmark-based allocation
 /// </summary>
 public enum QualityTier

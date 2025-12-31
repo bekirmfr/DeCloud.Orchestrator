@@ -126,14 +126,16 @@ public class NodePerformanceEvaluator
         var balancedReq = (double)_config.TierRequirements[QualityTier.Balanced].MinimumBenchmark / baseline;
         var burstableReq = (double)_config.TierRequirements[QualityTier.Burstable].MinimumBenchmark / baseline;
 
-        return multiplier switch
-        {
-            >= var x when x >= guaranteedReq => PerformanceClass.UltraHighEnd,
-            >= var x when x >= standardReq => PerformanceClass.HighEnd,
-            >= var x when x >= balancedReq => PerformanceClass.MidRange,
-            >= var x when x >= burstableReq => PerformanceClass.Budget,
-            _ => PerformanceClass.BelowMinimum
-        };
+        if (multiplier >= guaranteedReq)
+            return PerformanceClass.UltraHighEnd;
+        if (multiplier >= standardReq)
+            return PerformanceClass.HighEnd;
+        if (multiplier >= balancedReq)
+            return PerformanceClass.MidRange;
+        if (multiplier >= burstableReq)
+            return PerformanceClass.Budget;
+
+        return PerformanceClass.BelowMinimum;
     }
 
     private void LogEligibilityReport(NodePerformanceEvaluation evaluation)

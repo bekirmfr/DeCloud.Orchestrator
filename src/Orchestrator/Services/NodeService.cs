@@ -90,42 +90,68 @@ public class NodeService : INodeService
             .ToList();
     }
 
-    public async Task<Node?> SelectBestNodeForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard)
+    public async Task<Node?> SelectBestNodeForVmAsync(VmSpec vmSpec, QualityTier tier)
     {
-        var scoredNodes = await GetScoredNodesForVmAsync(spec, tier);
+        var candidates = await _dataStore.GetNodesByStatusAsync(NodeStatus.Online);
 
-        var best = scoredNodes
-            .Where(sn => sn.RejectionReason == null)
-            .OrderByDescending(sn => sn.TotalScore)
-            .FirstOrDefault();
-
-        if (best != null)
+        if (!candidates.Any())
         {
-            _logger.LogInformation(
-                "Selected node {NodeId} ({NodeName}) for VM - Score: {Score:F2}, " +
-                "CPU: {Cpu}%, MEM: {Mem}%, Tier: {Tier}",
-                best.Node.Id, best.Node.Name, best.TotalScore,
-                best.Availability.ProjectedCpuUtilization(spec),
-                best.Availability.ProjectedMemoryUtilization(spec),
-                tier);
+            _logger.LogWarning("No online nodes available");
+            return null;
         }
-        else
+
+        var scoredNodes = new List<ScoredNode>();
+        var tierRequirements = _schedulingConfig.TierRequirements[tier];
+
+        foreach (var node in candidates)
+        {
+            // CRITICAL: Check tier eligibility first
+            if (node.PerformanceEvaluation == null ||
+                !node.PerformanceEvaluation.EligibleTiers.Contains(tier))
+            {
+                _logger.LogDebug(
+                    "Node {NodeId} rejected: Not eligible for {Tier} tier",
+                    node.Id,
+                    tier);
+                continue;
+            }
+
+            var scored = await ScoreNodeForVmAsync(node, vmSpec, tier, tierRequirements);
+
+            if (scored.RejectionReason == null)
+            {
+                scoredNodes.Add(scored);
+            }
+        }
+
+        if (!scoredNodes.Any())
         {
             _logger.LogWarning(
-                "No suitable node found for VM - CPU: {Cpu}, MEM: {Mem}MB, DISK: {Disk}GB, Tier: {Tier}",
-                spec.VirtualCpuCores, spec.MemoryBytes, spec.DiskBytes, tier);
+                "No eligible nodes found for {Tier} tier",
+                tier);
+            return null;
         }
 
-        return best?.Node;
+        _schedulingConfig.Weights.Validate();
+
+        var bestNode = scoredNodes
+            .OrderByDescending(n => n.TotalScore)
+            .First();
+
+        _logger.LogInformation(
+            "Selected node {NodeId} for {Tier} tier VM (Score: {Score:F2})",
+            bestNode.Node.Id,
+            tier,
+            bestNode.TotalScore);
+
+        return bestNode.Node;
     }
 
     public async Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
     {
-        var policy = _schedulingConfig.TierPolicies[tier];
+        var policy = _schedulingConfig.TierRequirements[tier];
         var allNodes = _dataStore.Nodes.Values.ToList();
         _logger.LogInformation("Scoring {TotalNodesCount} nodes", allNodes.Count);
         var scoredNodes = new List<ScoredNode>();
@@ -141,10 +167,10 @@ public class NodeService : INodeService
                  "Rejection: {RejectionReason}",
                  node.Id,
                  scored.TotalScore,
-                 scored.ComponentScores.CapacityScore,
-                 scored.ComponentScores.LoadScore,
-                 scored.ComponentScores.ReputationScore,
-                 scored.ComponentScores.LocalityScore,
+                 scored.Scores.CapacityScore,
+                 scored.Scores.LoadScore,
+                 scored.Scores.ReputationScore,
+                 scored.Scores.LocalityScore,
                  scored.RejectionReason ?? "None");
 
             scoredNodes.Add(scored);
@@ -163,14 +189,14 @@ public class NodeService : INodeService
         Node node,
         VmSpec spec,
         QualityTier tier,
-        TierPolicy policy)
+        TierRequirements tierRequirements)
     {
         try
         {
             var scored = new ScoredNode { Node = node };
 
             // Step 1: Hard filters (must pass or node is rejected)
-            var rejection = ApplyHardFilters(node, spec, policy);
+            var rejection = ApplyHardFilters(node, spec, tierRequirements);
             if (rejection != null)
             {
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
@@ -180,12 +206,12 @@ public class NodeService : INodeService
             }
 
             // Step 2: Calculate resource availability with overcommit
-            var availability = CalculateResourceAvailability(node, tier, policy);
+            var availability = CalculateResourceAvailability(node, tier, tierRequirements);
 
             scored.Availability = availability;
 
             // Calculate point cost for this VM
-            var pointCost = spec.VirtualCpuCores * policy.PointsPerVCpu;
+            var pointCost = spec.VirtualCpuCores * tierRequirements.PointsPerVCpu;
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
@@ -246,7 +272,7 @@ public class NodeService : INodeService
         
     }
 
-    private string? ApplyHardFilters(Node node, VmSpec spec, TierPolicy policy)
+    private string? ApplyHardFilters(Node node, VmSpec spec, TierRequirements policy)
     {
         // Filter 1: Node must be online
         if (node.Status != NodeStatus.Online)
@@ -283,29 +309,41 @@ public class NodeService : INodeService
     /// This is the source of truth for scheduling decisions
     /// </summary>
     private NodeResourceAvailability CalculateResourceAvailability(
-        Node node,
-        QualityTier tier,
-        TierPolicy policy)
+    Node node,
+    QualityTier tier)
     {
+        // Use NodeCapacityCalculator for capacity
+        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, _logger);
+        var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
 
-        // ========================================
-        // POINT-BASED CPU CALCULATION
-        // ========================================
+        if (!totalCapacity.IsAcceptable)
+        {
+            return new NodeResourceAvailability
+            {
+                NodeId = node.Id,
+                Tier = tier,
+                TotalComputePoints = 0,
+                TotalMemoryBytes = 0,
+                TotalStorageBytes = 0
+            };
+        }
 
-        // Calculate effective capacity with overcommit ratioss
-        var totalComputePoints = (int)(
-            node.HardwareInventory.Cpu.PhysicalCores *
-            _schedulingConfig.TierPolicies[QualityTier.Burstable].CpuOvercommitRatio);
+        // Get tier-specific capacity
+        var tierCapacity = capacityCalculator.CalculateTierCapacity(node, tier);
 
-        var totalMemoryBytes = (long)(
-            node.HardwareInventory.Memory.AllocatableBytes *
-            _schedulingConfig.GlobalMemoryOvercommitRatio);
+        if (!tierCapacity.IsEligible)
+        {
+            return new NodeResourceAvailability
+            {
+                NodeId = node.Id,
+                Tier = tier,
+                TotalComputePoints = 0,
+                TotalMemoryBytes = 0,
+                TotalStorageBytes = 0
+            };
+        }
 
-        var totalStorageBytes = (long)(
-            node.HardwareInventory.Storage.Sum(s => s.TotalBytes) *
-            _schedulingConfig.GlobalStorageOvercommitRatio);
-
-        // This ensures scheduling decisions are based on reserved resources
+        // Use actual reserved resources from node
         var allocatedComputePoints = node.ReservedResources.ComputePoints;
         var allocatedMemoryBytes = node.ReservedResources.MemoryBytes;
         var allocatedStorageBytes = node.ReservedResources.StorageBytes;
@@ -315,16 +353,15 @@ public class NodeService : INodeService
             NodeId = node.Id,
             Tier = tier,
 
-            TotalComputePoints = totalComputePoints,
-            TotalMemoryBytes = totalMemoryBytes,
-            TotalStorageBytes = totalStorageBytes,
-
-            // Point-based tracking
-            RequiredComputePoints = 0, // Set during fit check
+            TotalComputePoints = tierCapacity.TierComputePoints,
+            TotalMemoryBytes = tierCapacity.TierMemoryBytes,
+            TotalStorageBytes = tierCapacity.TierStorageBytes,
 
             AllocatedComputePoints = allocatedComputePoints,
             AllocatedMemoryBytes = allocatedMemoryBytes,
-            AllocatedStorageBytes = allocatedStorageBytes
+            AllocatedStorageBytes = allocatedStorageBytes,
+
+            RequiredComputePoints = 0 // Set during fit check
         };
     }
 
