@@ -54,6 +54,7 @@ public class NodeService : INodeService
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
     private readonly SchedulingConfiguration _schedulingConfig;
 
@@ -62,6 +63,7 @@ public class NodeService : INodeService
         IEventService eventService,
         ICentralIngressService ingressService,
         ILogger<NodeService> logger,
+        ILoggerFactory loggerFactory,
         HttpClient httpClient,
         SchedulingConfiguration? schedulingConfig = null)
     {
@@ -92,7 +94,9 @@ public class NodeService : INodeService
 
     public async Task<Node?> SelectBestNodeForVmAsync(VmSpec vmSpec, QualityTier tier)
     {
-        var candidates = await _dataStore.GetNodesByStatusAsync(NodeStatus.Online);
+        var candidates = _dataStore.Nodes.Values
+            .Where(n => n.Status == NodeStatus.Online)
+            .ToList();
 
         if (!candidates.Any())
         {
@@ -206,12 +210,13 @@ public class NodeService : INodeService
             }
 
             // Step 2: Calculate resource availability with overcommit
-            var availability = CalculateResourceAvailability(node, tier, tierRequirements);
+            var availability = CalculateResourceAvailability(node, tier);
 
             scored.Availability = availability;
 
-            // Calculate point cost for this VM
-            var pointCost = spec.VirtualCpuCores * tierRequirements.PointsPerVCpu;
+            // Calculate point cost for this VMs
+            var pointCost = spec.VirtualCpuCores *
+                (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BurstableBaselineBenchmark);
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
@@ -252,7 +257,7 @@ public class NodeService : INodeService
                 LocalityScore = CalculateLocalityScore(node, spec)
             };
 
-            scored.ComponentScores = scores;
+            scored.Scores = scores;
 
             // Step 6: Calculate weighted total score
             var weights = _schedulingConfig.Weights;
@@ -313,7 +318,8 @@ public class NodeService : INodeService
     QualityTier tier)
     {
         // Use NodeCapacityCalculator for capacity
-        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, _logger);
+        var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
+        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, capacityLogger);
         var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
 
         if (!totalCapacity.IsAcceptable)
