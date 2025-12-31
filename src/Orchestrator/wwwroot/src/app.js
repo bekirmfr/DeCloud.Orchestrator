@@ -1902,7 +1902,7 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
                         Alternative: Direct ProxyJump Command
                     </div>
                     <div class="connect-code">
-                        <pre style="margin: 0; font-size: 0.85rem;">${escapeHtml(proxyJumpCommand)}</pre
+                        <pre style="margin: 0; font-size: 0.85rem;">${escapeHtml(proxyJumpCommand)}</pre>
                         <button class="connect-code-copy" onclick="copyToClipboard(\`${proxyJumpCommand.replace(/`/g, '\\`')}\`)">Copy</button>
                     </div>
                     <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
