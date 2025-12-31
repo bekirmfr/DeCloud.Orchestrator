@@ -523,20 +523,50 @@ public class NodeService : INodeService
             existingNode.PublicIp = request.PublicIp;
             existingNode.AgentPort = request.AgentPort;
             existingNode.HardwareInventory = request.HardwareInventory;
-            existingNode.TotalResources = new ResourceSnapshot
-            {
-                ComputePoints = request.HardwareInventory.Cpu.PhysicalCores * 8,
-                MemoryBytes = request.HardwareInventory.Memory.AllocatableBytes,
-                StorageBytes = request.HardwareInventory.Storage.Sum(s => s.AvailableBytes),
-            };
-            // Reserved resources will be updated by heartbeat
-            existingNode.ReservedResources = new ResourceSnapshot();
             existingNode.AgentVersion = request.AgentVersion;
             existingNode.SupportedImages = request.SupportedImages;
             existingNode.Region = request.Region ?? "default";
             existingNode.Zone = request.Zone ?? "default";
             existingNode.Status = NodeStatus.Online;
             existingNode.LastHeartbeat = DateTime.UtcNow;
+
+            // Re-evaluate performance (hardware may have changed)
+            var reregPerfLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
+            var reregPerfEvaluator = new NodePerformanceEvaluator(_schedulingConfig, reregPerfLogger);
+
+            existingNode.PerformanceEvaluation = reregPerfEvaluator.EvaluateNode(existingNode);
+
+            if (!existingNode.PerformanceEvaluation.IsAcceptable)
+            {
+                _logger.LogWarning(
+                    "Node {NodeId} rejected during re-registration: {Reason}",
+                    nodeId,
+                    existingNode.PerformanceEvaluation.RejectionReason);
+
+                throw new InvalidOperationException(
+                    $"Node performance below minimum requirements: {existingNode.PerformanceEvaluation.RejectionReason}");
+            }
+
+            // Recalculate total capacity
+            var reregCapLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
+            var reregCapCalculator = new NodeCapacityCalculator(_schedulingConfig, reregCapLogger);
+            var reregTotalCapacity = reregCapCalculator.CalculateTotalCapacity(existingNode);
+
+            existingNode.TotalResources = new ResourceSnapshot
+            {
+                ComputePoints = reregTotalCapacity.TotalComputePoints,
+                MemoryBytes = reregTotalCapacity.TotalMemoryBytes,
+                StorageBytes = reregTotalCapacity.TotalStorageBytes
+            };
+
+            // Keep existing reserved resources (don't reset!)
+            // Reserved resources tracks actual VMs and should not be wiped on re-registration
+
+            _logger.LogInformation(
+                "Node {NodeId} re-evaluated: Highest tier={Tier}, Total capacity={Points} points",
+                nodeId,
+                existingNode.PerformanceEvaluation.HighestTier,
+                reregTotalCapacity.TotalComputePoints);
 
             await _dataStore.SaveNodeAsync(existingNode);
 
@@ -571,13 +601,8 @@ public class NodeService : INodeService
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             HardwareInventory = request.HardwareInventory,
-            TotalResources = new ResourceSnapshot
-            {
-                MemoryBytes = request.HardwareInventory.Memory.TotalBytes,
-                StorageBytes = request.HardwareInventory.Storage.Sum(s => s.TotalBytes),
-                ComputePoints = request.HardwareInventory.Cpu.PhysicalCores * 8
-            },
-            // Reserved resources will be updated by heartbeat
+            // TotalResources will be set after performance evaluation
+            TotalResources = new ResourceSnapshot(),
             ReservedResources = new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
@@ -586,6 +611,43 @@ public class NodeService : INodeService
             RegisteredAt = request.RegisteredAt,
             LastHeartbeat = DateTime.UtcNow
         };
+
+        // =====================================================
+        // STEP 6: Performance Evaluation & Capacity Calculation
+        // =====================================================
+        var performanceLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
+        var performanceEvaluator = new NodePerformanceEvaluator(_schedulingConfig, performanceLogger);
+
+        node.PerformanceEvaluation = performanceEvaluator.EvaluateNode(node);
+
+        if (!node.PerformanceEvaluation.IsAcceptable)
+        {
+            _logger.LogWarning(
+                "Node {NodeId} rejected during registration: {Reason}",
+                nodeId,
+                node.PerformanceEvaluation.RejectionReason);
+
+            throw new InvalidOperationException(
+                $"Node performance below minimum requirements: {node.PerformanceEvaluation.RejectionReason}");
+        }
+
+        // Calculate total capacity using NodeCapacityCalculator
+        var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
+        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, capacityLogger);
+        var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
+
+        node.TotalResources = new ResourceSnapshot
+        {
+            ComputePoints = totalCapacity.TotalComputePoints,
+            MemoryBytes = totalCapacity.TotalMemoryBytes,
+            StorageBytes = totalCapacity.TotalStorageBytes
+        };
+
+        _logger.LogInformation(
+            "Node {NodeId} accepted: Highest tier={Tier}, Total capacity={Points} points",
+            nodeId,
+            node.PerformanceEvaluation.HighestTier,
+            totalCapacity.TotalComputePoints);
 
         await _dataStore.SaveNodeAsync(node);
 
