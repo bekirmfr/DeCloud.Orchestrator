@@ -19,7 +19,7 @@ public class SchedulingConfiguration
     /// Maximum performance multiplier cap (prevents excessive advantage)
     /// Example: 5.0x means max 5000 benchmark score counts as 5000, not higher
     /// </summary>
-    public double MaxPerformanceMultiplier { get; set; } = 5.0;
+    public double MaxPerformanceMultiplier { get; set; } = 20.0;
 
     /// <summary>
     /// Tier requirements - PointsPerVCpu calculated automatically from benchmarks

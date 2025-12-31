@@ -41,6 +41,15 @@ public class Node
     public List<string> SupportedImages { get; set; } = new();
     public bool SupportsGpu { get; set; }
     public GpuInfo? GpuInfo { get; set; }
+    /// <summary>
+    /// Relay node configuration (null if node is not a relay)
+    /// </summary>
+    public RelayNodeInfo? RelayInfo { get; set; }
+
+    /// <summary>
+    /// CGNAT node configuration (null if node has public IP)
+    /// </summary>
+    public CgnatNodeInfo? CgnatInfo { get; set; }
 
     // Performance metrics
     public NodeMetrics? LatestMetrics { get; set; }
@@ -309,7 +318,11 @@ public class HeartbeatVmInfo
 
 public record NodeHeartbeatResponse(
     bool Acknowledged,
-    List<NodeCommand>? PendingCommands
+    List<NodeCommand>? PendingCommands,
+    /// <summary>
+    /// Relay configuration if node is behind CGNAT
+    /// </summary>
+    CgnatNodeInfo? CgnatInfo
 );
 
 /// <summary>
@@ -399,3 +412,113 @@ public record CommandRegistration(
     NodeCommandType CommandType,
     DateTime IssuedAt
 );
+
+/// <summary>
+/// Configuration for nodes acting as relays
+/// </summary>
+public class RelayNodeInfo
+{
+    /// <summary>
+    /// Is this node currently operating as a relay?
+    /// </summary>
+    public bool IsActive { get; set; }
+
+    /// <summary>
+    /// VM ID of the relay VM running on this node
+    /// </summary>
+    public string? RelayVmId { get; set; }
+
+    /// <summary>
+    /// WireGuard public endpoint (IP:Port)
+    /// </summary>
+    public string WireGuardEndpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Maximum number of CGNAT nodes this relay can serve
+    /// Based on available bandwidth and CPU
+    /// </summary>
+    public int MaxCapacity { get; set; } = 50;
+
+    /// <summary>
+    /// Current number of CGNAT nodes using this relay
+    /// </summary>
+    public int CurrentLoad { get; set; } = 0;
+
+    /// <summary>
+    /// IDs of CGNAT nodes currently using this relay
+    /// </summary>
+    public List<string> ConnectedNodeIds { get; set; } = new();
+
+    /// <summary>
+    /// Relay service fee (USDC per hour per connected node)
+    /// </summary>
+    public decimal RelayFeePerHour { get; set; } = 0.001m;
+
+    /// <summary>
+    /// Geographic region for this relay
+    /// </summary>
+    public string Region { get; set; } = "default";
+
+    /// <summary>
+    /// Relay health status
+    /// </summary>
+    public RelayStatus Status { get; set; } = RelayStatus.Active;
+
+    /// <summary>
+    /// Last health check timestamp
+    /// </summary>
+    public DateTime LastHealthCheck { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Configuration for nodes behind CGNAT
+/// </summary>
+public class CgnatNodeInfo
+{
+    /// <summary>
+    /// ID of the relay node serving this CGNAT node
+    /// </summary>
+    public string? AssignedRelayNodeId { get; set; }
+
+    /// <summary>
+    /// WireGuard tunnel IP assigned to this node
+    /// </summary>
+    public string TunnelIp { get; set; } = string.Empty;
+
+    /// <summary>
+    /// WireGuard configuration for connecting to relay
+    /// </summary>
+    public string? WireGuardConfig { get; set; }
+
+    /// <summary>
+    /// Public endpoint URL for accessing VMs on this node
+    /// Format: https://relay-{region}-{id}.decloud.io
+    /// </summary>
+    public string PublicEndpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Connection status to relay
+    /// </summary>
+    public TunnelStatus TunnelStatus { get; set; } = TunnelStatus.Disconnected;
+
+    /// <summary>
+    /// Last successful handshake with relay
+    /// </summary>
+    public DateTime? LastHandshake { get; set; }
+}
+
+public enum RelayStatus
+{
+    Active,
+    Degraded,
+    Offline,
+    MaintenanceMode
+}
+
+public enum TunnelStatus
+{
+    Disconnected,
+    Connecting,
+    Connected,
+    Error
+}

@@ -57,6 +57,7 @@ public class NodeService : INodeService
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
     private readonly SchedulingConfiguration _schedulingConfig;
+    private readonly IRelayNodeService _relayNodeService;
 
     public NodeService(
         DataStore dataStore,
@@ -65,7 +66,9 @@ public class NodeService : INodeService
         ILogger<NodeService> logger,
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
-        SchedulingConfiguration? schedulingConfig = null)
+        IRelayNodeService relayNodeService,
+        SchedulingConfiguration? schedulingConfig = null
+        )
     {
         _dataStore = dataStore;
         _eventService = eventService;
@@ -75,6 +78,7 @@ public class NodeService : INodeService
         _httpClient = httpClient;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
         _schedulingConfig.Weights.Validate();
+        _relayNodeService = relayNodeService;
     }
 
     // ============================================================================
@@ -649,6 +653,47 @@ public class NodeService : INodeService
             node.PerformanceEvaluation.HighestTier,
             totalCapacity.TotalComputePoints);
 
+        // =====================================================
+        // STEP 7: Relay Node Deployment & Assignment
+        // =====================================================
+        if (_relayNodeService.IsEligibleForRelay(node) && node.RelayInfo == null)
+        {
+            _logger.LogInformation(
+                "Node {NodeId} is eligible for relay - deploying relay VM",
+                node.Id);
+
+            var relayVmId = await _relayNodeService.DeployRelayVmAsync(node);
+
+            if (relayVmId != null)
+            {
+                _logger.LogInformation(
+                    "Relay VM {VmId} deployed successfully for node {NodeId}",
+                    relayVmId, node.Id);
+            }
+        }
+
+        // Check if node is behind CGNAT and needs relay assignment
+        if (node.HardwareInventory.Network.NatType != NatType.None &&
+            node.CgnatInfo == null)
+        {
+            _logger.LogInformation(
+                "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
+                node.Id, node.HardwareInventory.Network.NatType);
+
+            var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+
+            if (relay != null)
+            {
+                await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "No available relay found for CGNAT node {NodeId}",
+                    node.Id);
+            }
+        }
+
         await _dataStore.SaveNodeAsync(node);
 
         var newToken = GenerateAuthToken();
@@ -693,7 +738,7 @@ public class NodeService : INodeService
     {
         if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
         {
-            return new NodeHeartbeatResponse(false, null);
+            return new NodeHeartbeatResponse(false, null, null);
         }
 
         var wasOffline = node.Status == NodeStatus.Offline;
@@ -752,7 +797,7 @@ public class NodeService : INodeService
         // Get pending commands for this node
         var commands = _dataStore.GetAndClearPendingCommands(nodeId);
 
-        return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null);
+        return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null, node.CgnatInfo);
     }
 
     /// <summary>
