@@ -71,6 +71,7 @@ public class NodeService : INodeService
         _eventService = eventService;
         _ingressService = ingressService;
         _logger = logger;
+        _loggerFactory = loggerFactory;
         _httpClient = httpClient;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
         _schedulingConfig.Weights.Validate();

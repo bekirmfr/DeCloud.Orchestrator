@@ -83,7 +83,7 @@ builder.Services.AddSingleton(sp =>
     return new DataStore(database, logger);
 });
 
-builder.Services.AddSingleton<INodeService, NodeService>();
+builder.Services.AddHttpClient<INodeService, NodeService>();
 builder.Services.AddScoped<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService>(sp =>
