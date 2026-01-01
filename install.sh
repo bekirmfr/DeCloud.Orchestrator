@@ -25,7 +25,7 @@
 
 set -e
 
-VERSION="2.2.0"
+VERSION="2.2.1"
 
 # Colors
 RED='\033[0;31m'
@@ -1030,6 +1030,21 @@ EOF
     fi
     
     log_success "Orchestrator built ($([ "$should_clean" = true ] && echo "clean rebuild" || echo "incremental"))"
+    
+    # Verify build actually produced new DLL
+    local dll_path="$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll"
+    if [ -f "$dll_path" ]; then
+        local dll_age=$(($(date +%s) - $(stat -c %Y "$dll_path")))
+        if [ $dll_age -lt 60 ]; then
+            log_success "✓ Build verified: DLL updated $(date -d @$(stat -c %Y "$dll_path") '+%H:%M:%S')"
+        else
+            log_warn "⚠ Warning: DLL is $(($dll_age / 60)) minutes old - build may not have updated it"
+        fi
+    else
+        log_error "✗ Build failed: DLL not found at $dll_path"
+        exit 1
+    fi
+}
 }
 
 create_configuration() {
@@ -1095,7 +1110,7 @@ Wants=mongod.service
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
-ExecStart=/usr/bin/dotnet run --configuration Release --no-build
+ExecStart=/usr/bin/dotnet $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
 Restart=always
