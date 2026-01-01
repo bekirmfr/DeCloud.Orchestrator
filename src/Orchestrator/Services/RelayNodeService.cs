@@ -47,7 +47,7 @@ public class RelayNodeService: IRelayNodeService
 
     public RelayNodeService(
         DataStore dataStore,
-        VmService vmService,
+        IVmService vmService,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
