@@ -58,6 +58,7 @@ public class NodeService : INodeService
     private readonly HttpClient _httpClient;
     private readonly SchedulingConfiguration _schedulingConfig;
     private readonly IRelayNodeService _relayNodeService;
+    private readonly IServiceProvider _serviceProvider;
 
     public NodeService(
         DataStore dataStore,
@@ -67,6 +68,7 @@ public class NodeService : INodeService
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
         IRelayNodeService relayNodeService,
+        IServiceProvider serviceProvider,
         SchedulingConfiguration? schedulingConfig = null
         )
     {
@@ -79,6 +81,7 @@ public class NodeService : INodeService
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
         _schedulingConfig.Weights.Validate();
         _relayNodeService = relayNodeService;
+        _serviceProvider = serviceProvider;
     }
 
     // ============================================================================
@@ -662,7 +665,8 @@ public class NodeService : INodeService
                 "Node {NodeId} is eligible for relay - deploying relay VM",
                 node.Id);
 
-            var relayVmId = await _relayNodeService.DeployRelayVmAsync(node);
+            var vmService = _serviceProvider.GetRequiredService<IVmService>();
+            var relayVmId = await _relayNodeService.DeployRelayVmAsync(node, vmService);
 
             if (relayVmId != null)
             {

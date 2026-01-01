@@ -18,7 +18,7 @@ public interface IRelayNodeService
     /// Automatically deploy relay VM on eligible node
     /// Called during node registration
     /// </summary>
-    Task<string?> DeployRelayVmAsync(Node node, CancellationToken ct = default);
+    Task<string?> DeployRelayVmAsync(Node node, IVmService vmService, CancellationToken ct = default);
 
     /// <summary>
     /// Find the best relay node for a CGNAT node
@@ -34,10 +34,9 @@ public interface IRelayNodeService
 /// <summary>
 /// Manages relay node infrastructure
 /// </summary>
-public class RelayNodeService: IRelayNodeService
+public class RelayNodeService : IRelayNodeService
 {
     private readonly DataStore _dataStore;
-    private readonly IVmService _vmService;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
@@ -47,11 +46,10 @@ public class RelayNodeService: IRelayNodeService
 
     public RelayNodeService(
         DataStore dataStore,
-        IVmService vmService,
+
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
-        _vmService = vmService;
         _logger = logger;
     }
 
@@ -107,7 +105,7 @@ public class RelayNodeService: IRelayNodeService
     /// Automatically deploy relay VM on eligible node
     /// Called during node registration
     /// </summary>
-    public async Task<string?> DeployRelayVmAsync(Node node, CancellationToken ct = default)
+    public async Task<string?> DeployRelayVmAsync(Node node, IVmService vmService, CancellationToken ct = default)
     {
         if (!IsEligibleForRelay(node))
         {
@@ -130,7 +128,7 @@ public class RelayNodeService: IRelayNodeService
             var maxCapacity = CalculateRelayCapacity(node);
 
             // Create relay VM
-            var relayVm = await _vmService.CreateVmAsync(
+            var relayVm = await vmService.CreateVmAsync(
                 userId: "system", // System-owned VM
                 request: new CreateVmRequest
                 (
