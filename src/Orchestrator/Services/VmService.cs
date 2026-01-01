@@ -618,7 +618,7 @@ public class VmService : IVmService
         // STEP 1: Calculate compute point cost FIRST
         // ========================================
         var tierRequirements = _schedulingConfig.TierRequirements[vm.Spec.QualityTier];
-        var pointCost = vm.Spec.VirtualCpuCores *
+        var pointCost = vm.Spec.VmType == VmType.Relay ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
             (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BurstableBaselineBenchmark);
 
         // CRITICAL: Store point cost in VM spec before scheduling
