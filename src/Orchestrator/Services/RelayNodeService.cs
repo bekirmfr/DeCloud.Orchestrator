@@ -37,7 +37,7 @@ public interface IRelayNodeService
 public class RelayNodeService: IRelayNodeService
 {
     private readonly DataStore _dataStore;
-    private readonly VmService _vmService;
+    private readonly IVmService _vmService;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
