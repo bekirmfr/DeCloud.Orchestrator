@@ -710,7 +710,7 @@ public class VmService : IVmService
 
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
-            NodeCommandType.CreateRelayVm,
+            NodeCommandType.CreateVm,
             JsonSerializer.Serialize(new
             {
                 VmId = vm.Id,
