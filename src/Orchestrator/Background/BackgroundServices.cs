@@ -32,7 +32,7 @@ public class NodeHealthMonitorService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var nodeService = scope.ServiceProvider.GetRequiredService<INodeService>();
                 
-                await ((NodeService)nodeService).CheckNodeHealthAsync();
+                await nodeService.CheckNodeHealthAsync();
             }
             catch (Exception ex)
             {
