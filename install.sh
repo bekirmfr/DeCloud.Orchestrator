@@ -74,8 +74,6 @@ INSTALL_FAIL2BAN=false
 
 # Update mode (detected if orchestrator already running)
 UPDATE_MODE=false
-# Force rebuild - clean all artifacts
-FORCE_REBUILD=false
 
 # ============================================================
 # Argument Parsing
@@ -113,11 +111,6 @@ parse_args() {
                 shift 2
                 ;;
             --caddy-staging)
-            ;;
-            --force-rebuild)
-                FORCE_REBUILD=true
-                log_info "Force rebuild requested - all build artifacts will be cleaned"
-                shift
                 CADDY_STAGING=true
                 shift
                 ;;
@@ -126,7 +119,6 @@ parse_args() {
                 shift
                 ;;
             --skip-fail2ban)
-    --force-rebuild           Force clean rebuild (removes all cached artifacts)
                 INSTALL_FAIL2BAN=false
                 shift
                 ;;
@@ -168,7 +160,6 @@ OPTIONAL - Central Ingress (Caddy):
 OPTIONAL - General:
     --port <port>             API port (default: 5050)
     --skip-fail2ban           Skip fail2ban installation
-    --force-rebuild           Force clean rebuild (removes all cached artifacts)
     --help, -h                Show this help message
 
 EXAMPLES:
@@ -966,45 +957,13 @@ build_orchestrator() {
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
     
-    # Determine if we need to clean (on updates or force rebuild)
-    local should_clean=false
-    if [ "$UPDATE_MODE" = true ] || [ "$FORCE_REBUILD" = true ]; then
-        should_clean=true
-    fi
-    
-    # Clean build artifacts to prevent stale code issues
-    if [ "$should_clean" = true ]; then
-        log_info "Cleaning previous build artifacts..."
-        
-        # Remove all build outputs
-        rm -rf bin/ obj/
-        
-        # Clean frontend build cache
-        if [ -d "wwwroot" ]; then
-            rm -rf wwwroot/dist/
-            rm -rf wwwroot/node_modules/.vite/
-            rm -rf wwwroot/.vite/
-        fi
-        
-        # Clear NuGet package cache for clean builds
-        dotnet nuget locals all --clear > /dev/null 2>&1
-        
-        log_success "Build artifacts cleaned"
-    fi
-    
     # Build backend
     log_info "Restoring .NET packages..."
-    if [ "$should_clean" = true ]; then
-        # Force fresh package download on clean builds
-        dotnet restore --force --verbosity minimal > /dev/null 2>&1 || dotnet restore --force
-    else
-        dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
-    fi
+    dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
     
     log_info "Building .NET project..."
-    # Always use --no-incremental for consistent production builds
-    dotnet build --configuration Release --no-restore --no-incremental --verbosity minimal > /dev/null 2>&1 || \
-        dotnet build --configuration Release --no-restore --no-incremental
+    dotnet build --configuration Release --no-restore --verbosity minimal > /dev/null 2>&1 || \
+        dotnet build --configuration Release --no-restore
     
     # Build frontend
     if [ -d "wwwroot" ] && [ -f "wwwroot/package.json" ]; then
@@ -1018,25 +977,14 @@ VITE_WALLETCONNECT_PROJECT_ID=708cede4d366aa77aead71dbc67d8ae5
 EOF
         fi
         
-        # Use npm ci for reproducible builds when cleaning
-        if [ "$should_clean" = true ]; then
-            npm ci --silent > /dev/null 2>&1 || npm install --silent > /dev/null 2>&1
-        else
-            npm install --silent > /dev/null 2>&1
-        fi
-        
+        npm install --silent > /dev/null 2>&1
         npm run build > /dev/null 2>&1
         
         cd ..
         log_success "Frontend built"
     fi
     
-    # Show build type in success message
-    if [ "$should_clean" = true ]; then
-        log_success "Orchestrator built (clean rebuild - no cached artifacts)"
-    else
-        log_success "Orchestrator built"
-    fi
+    log_success "Orchestrator built"
 }
 
 create_configuration() {
