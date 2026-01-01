@@ -691,7 +691,9 @@ public class VmService : IVmService
         // STEP 5: Get SSH public key
         // ========================================
         string? sshPublicKey = vm.Spec.SshPublicKey;
-        if (string.IsNullOrEmpty(sshPublicKey) && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
+        if (string.IsNullOrEmpty(sshPublicKey) 
+            && !string.IsNullOrEmpty(vm.OwnerId)
+            && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
         {
             if (owner.SshKeys.Any())
             {
