@@ -47,6 +47,8 @@ log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # Paths
 INSTALL_DIR="/opt/decloud"
+# Publish directory
+PUBLISH_DIR="/opt/decloud/publish"
 CONFIG_DIR="/etc/decloud"
 LOG_DIR="/var/log/decloud"
 CADDY_BACKUP_DIR="/etc/decloud/caddy-backups"
@@ -74,8 +76,7 @@ INSTALL_FAIL2BAN=false
 
 # Update mode (detected if orchestrator already running)
 UPDATE_MODE=false
-
-# Force rebuild - clean all artifacts (NEW)
+# Force rebuild - clean all artifacts
 FORCE_REBUILD=false
 
 # ============================================================
@@ -114,6 +115,11 @@ parse_args() {
                 shift 2
                 ;;
             --caddy-staging)
+            ;;
+            --force-rebuild)
+                FORCE_REBUILD=true
+                log_info "Force rebuild requested - all build artifacts will be cleaned"
+                shift
                 CADDY_STAGING=true
                 shift
                 ;;
@@ -122,12 +128,8 @@ parse_args() {
                 shift
                 ;;
             --skip-fail2ban)
+    --force-rebuild           Force clean rebuild (removes all cached artifacts)
                 INSTALL_FAIL2BAN=false
-                shift
-                ;;
-            --force-rebuild)
-                FORCE_REBUILD=true
-                log_info "Force rebuild requested - all build artifacts will be cleaned"
                 shift
                 ;;
             --help|-h)
@@ -153,20 +155,22 @@ USAGE:
 REQUIRED:
     --mongodb <uri>           MongoDB connection string
                               Example: mongodb+srv://user:pass@cluster.mongodb.net/decloud
-    --ingress-domain <dom>   Domain for central ingress (e.g., vms.stackfi.tech)
-                                VMs will get URLs like: app.vms.stackfi.tech
-    --caddy-email <email>    Email for Let's Encrypt certificates
-    --cloudflare-token <tok> Cloudflare API token for DNS-01 challenges
-                                Required for wildcard certificates
 
-OPTIONAL - General:
+OPTIONAL - Central Ingress (Caddy):
+    --ingress-domain <domain> Enable central ingress (e.g., vms.stackfi.tech)
+                              VMs will get URLs like: app.vms.stackfi.tech
+    --caddy-email <email>     Email for Let's Encrypt certificates
+    --cloudflare-token <token> Cloudflare API token for DNS-01 challenge
+                              Required for wildcard certificates
     --dns-provider <provider> DNS provider (default: cloudflare)
                               Options: cloudflare, route53, digitalocean
-    --port <port>             API port (default: 5050)
-    --force-rebuild           Clean all build artifacts before building
     --caddy-staging           Use Let's Encrypt staging (for testing)
     --skip-caddy              Skip Caddy installation
+
+OPTIONAL - General:
+    --port <port>             API port (default: 5050)
     --skip-fail2ban           Skip fail2ban installation
+    --force-rebuild           Force clean rebuild (removes all cached artifacts)
     --help, -h                Show this help message
 
 EXAMPLES:
@@ -964,7 +968,15 @@ build_orchestrator() {
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
     
-    # Determine if we need to clean
+    # Determine if we need to clean (on updates or force rebuild)
+    local should_clean=false
+    if [ "$UPDATE_MODE" = true ] || [ "$FORCE_REBUILD" = true ]; then
+build_orchestrator() {
+    log_step "Building Orchestrator..."
+    
+    cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
+    
+    # Determine if we need to clean (on updates or force rebuild)
     local should_clean=false
     if [ "$UPDATE_MODE" = true ] || [ "$FORCE_REBUILD" = true ]; then
         should_clean=true
@@ -984,23 +996,26 @@ build_orchestrator() {
             rm -rf wwwroot/.vite/
         fi
         
-        # Clear NuGet package cache
+        # Clean previous publish directory
+        rm -rf "$PUBLISH_DIR"
+        
+        # Clear NuGet package cache for clean builds
         dotnet nuget locals all --clear > /dev/null 2>&1
         
         log_success "Build artifacts cleaned"
     fi
     
-    # Build backend with fresh packages
+    # Build backend
     log_info "Restoring .NET packages..."
     if [ "$should_clean" = true ]; then
-        # Force re-download packages on clean build
+        # Force fresh package download on clean builds
         dotnet restore --force --verbosity minimal > /dev/null 2>&1 || dotnet restore --force
     else
         dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
     fi
     
     log_info "Building .NET project..."
-    # Always use --no-incremental for production builds
+    # Always use --no-incremental for consistent production builds
     dotnet build --configuration Release --no-restore --no-incremental --verbosity minimal > /dev/null 2>&1 || \
         dotnet build --configuration Release --no-restore --no-incremental
     
@@ -1016,7 +1031,7 @@ VITE_WALLETCONNECT_PROJECT_ID=708cede4d366aa77aead71dbc67d8ae5
 EOF
         fi
         
-        # Use npm ci for clean installs (faster, more reliable)
+        # Use npm ci for reproducible builds when cleaning
         if [ "$should_clean" = true ]; then
             npm ci --silent > /dev/null 2>&1 || npm install --silent > /dev/null 2>&1
         else
@@ -1029,13 +1044,27 @@ EOF
         log_success "Frontend built"
     fi
     
-    log_success "Orchestrator built ($([ "$should_clean" = true ] && echo "clean rebuild" || echo "incremental"))"
-}
-
-create_configuration() {
-    log_step "Creating configuration..."
+    # Publish to production directory
+    log_info "Publishing to $PUBLISH_DIR..."
+    mkdir -p "$PUBLISH_DIR"
     
-    # Create appsettings.Production.json
+    dotnet publish --configuration Release --output "$PUBLISH_DIR" --no-build --verbosity minimal > /dev/null 2>&1 || \
+        dotnet publish --configuration Release --output "$PUBLISH_DIR" --no-build
+    
+    # Copy appsettings.Production.json to publish directory
+    if [ -f "bin/Release/net8.0/appsettings.Production.json" ]; then
+        cp bin/Release/net8.0/appsettings.Production.json "$PUBLISH_DIR/" 2>/dev/null || true
+    fi
+    
+    log_success "Orchestrator published to $PUBLISH_DIR"
+    
+    # Show build type in success message
+    if [ "$should_clean" = true ]; then
+        log_success "Orchestrator built (clean rebuild - no cached artifacts)"
+    else
+        log_success "Orchestrator built"
+    fi
+}
     cat > "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json" << EOF
 {
   "Logging": {
@@ -1094,8 +1123,8 @@ Wants=mongod.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
-ExecStart=/usr/bin/dotnet run --configuration Release --no-build
+WorkingDirectory=$PUBLISH_DIR
+ExecStart=/usr/bin/dotnet $PUBLISH_DIR/Orchestrator.dll
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
 Restart=always
