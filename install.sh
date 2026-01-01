@@ -75,6 +75,9 @@ INSTALL_FAIL2BAN=false
 # Update mode (detected if orchestrator already running)
 UPDATE_MODE=false
 
+# Force rebuild - clean all artifacts (NEW)
+FORCE_REBUILD=false
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -122,6 +125,11 @@ parse_args() {
                 INSTALL_FAIL2BAN=false
                 shift
                 ;;
+            --force-rebuild)
+                FORCE_REBUILD=true
+                log_info "Force rebuild requested - all build artifacts will be cleaned"
+                shift
+                ;;
             --help|-h)
                 show_help
                 exit 0
@@ -145,20 +153,19 @@ USAGE:
 REQUIRED:
     --mongodb <uri>           MongoDB connection string
                               Example: mongodb+srv://user:pass@cluster.mongodb.net/decloud
-
-OPTIONAL - Central Ingress (Caddy):
-    --ingress-domain <domain> Enable central ingress (e.g., vms.stackfi.tech)
-                              VMs will get URLs like: app.vms.stackfi.tech
-    --caddy-email <email>     Email for Let's Encrypt certificates
-    --cloudflare-token <token> Cloudflare API token for DNS-01 challenge
-                              Required for wildcard certificates
-    --dns-provider <provider> DNS provider (default: cloudflare)
-                              Options: cloudflare, route53, digitalocean
-    --caddy-staging           Use Let's Encrypt staging (for testing)
-    --skip-caddy              Skip Caddy installation
+    --ingress-domain <dom>   Domain for central ingress (e.g., vms.stackfi.tech)
+                                VMs will get URLs like: app.vms.stackfi.tech
+    --caddy-email <email>    Email for Let's Encrypt certificates
+    --cloudflare-token <tok> Cloudflare API token for DNS-01 challenges
+                                Required for wildcard certificates
 
 OPTIONAL - General:
+    --dns-provider <provider> DNS provider (default: cloudflare)
+                              Options: cloudflare, route53, digitalocean
     --port <port>             API port (default: 5050)
+    --force-rebuild           Clean all build artifacts before building
+    --caddy-staging           Use Let's Encrypt staging (for testing)
+    --skip-caddy              Skip Caddy installation
     --skip-fail2ban           Skip fail2ban installation
     --help, -h                Show this help message
 
@@ -957,13 +964,45 @@ build_orchestrator() {
     
     cd "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator"
     
-    # Build backend
+    # Determine if we need to clean
+    local should_clean=false
+    if [ "$UPDATE_MODE" = true ] || [ "$FORCE_REBUILD" = true ]; then
+        should_clean=true
+    fi
+    
+    # Clean build artifacts to prevent stale code issues
+    if [ "$should_clean" = true ]; then
+        log_info "Cleaning previous build artifacts..."
+        
+        # Remove all build outputs
+        rm -rf bin/ obj/
+        
+        # Clean frontend build cache
+        if [ -d "wwwroot" ]; then
+            rm -rf wwwroot/dist/
+            rm -rf wwwroot/node_modules/.vite/
+            rm -rf wwwroot/.vite/
+        fi
+        
+        # Clear NuGet package cache
+        dotnet nuget locals all --clear > /dev/null 2>&1
+        
+        log_success "Build artifacts cleaned"
+    fi
+    
+    # Build backend with fresh packages
     log_info "Restoring .NET packages..."
-    dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
+    if [ "$should_clean" = true ]; then
+        # Force re-download packages on clean build
+        dotnet restore --force --verbosity minimal > /dev/null 2>&1 || dotnet restore --force
+    else
+        dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
+    fi
     
     log_info "Building .NET project..."
-    dotnet build --configuration Release --no-restore --verbosity minimal > /dev/null 2>&1 || \
-        dotnet build --configuration Release --no-restore
+    # Always use --no-incremental for production builds
+    dotnet build --configuration Release --no-restore --no-incremental --verbosity minimal > /dev/null 2>&1 || \
+        dotnet build --configuration Release --no-restore --no-incremental
     
     # Build frontend
     if [ -d "wwwroot" ] && [ -f "wwwroot/package.json" ]; then
@@ -977,14 +1016,20 @@ VITE_WALLETCONNECT_PROJECT_ID=708cede4d366aa77aead71dbc67d8ae5
 EOF
         fi
         
-        npm install --silent > /dev/null 2>&1
+        # Use npm ci for clean installs (faster, more reliable)
+        if [ "$should_clean" = true ]; then
+            npm ci --silent > /dev/null 2>&1 || npm install --silent > /dev/null 2>&1
+        else
+            npm install --silent > /dev/null 2>&1
+        fi
+        
         npm run build > /dev/null 2>&1
         
         cd ..
         log_success "Frontend built"
     fi
     
-    log_success "Orchestrator built"
+    log_success "Orchestrator built ($([ "$should_clean" = true ] && echo "clean rebuild" || echo "incremental"))"
 }
 
 create_configuration() {
