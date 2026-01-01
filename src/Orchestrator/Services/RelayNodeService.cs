@@ -40,9 +40,9 @@ public class RelayNodeService : IRelayNodeService
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
-    private const int MIN_CORES_FOR_RELAY = 16;
-    private const long MIN_RAM_FOR_RELAY = 32L * 1024 * 1024 * 1024; // 32GB
-    private const long MIN_BANDWIDTH_FOR_RELAY = 100L * 1024 * 1024; // 100 Mbps
+    private const int MIN_CORES_FOR_RELAY = 2;
+    private const long MIN_RAM_FOR_RELAY = 4L * 1024 * 1024 * 1024; // 32GB
+    private const long MIN_BANDWIDTH_FOR_RELAY = 50L * 1024 * 1024; // 100 Mbps
 
     public RelayNodeService(
         DataStore dataStore,
