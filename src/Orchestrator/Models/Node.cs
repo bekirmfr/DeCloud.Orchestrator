@@ -385,6 +385,7 @@ public record PendingCommandDto(
 
 public enum NodeCommandType
 {
+    CreateRelayVm,
     CreateVm,
     StopVm,
     StartVm,

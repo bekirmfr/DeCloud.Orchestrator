@@ -720,8 +720,6 @@ public class NodeService : INodeService
             }
         }
 
-        
-
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.NodeRegistered,

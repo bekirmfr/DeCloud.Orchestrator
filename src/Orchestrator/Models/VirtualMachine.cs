@@ -11,13 +11,14 @@ public class VirtualMachine
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
-    
+    public VmType VmType { get; set; } = VmType.General;
+
     // Ownership
-    public string OwnerId { get; set; } = string.Empty;        // User/tenant ID
-    public string OwnerWallet { get; set; } = string.Empty;    // Wallet address
+    public string? OwnerId { get; set; } = string.Empty;        // User/tenant ID
+    public string? OwnerWallet { get; set; } = string.Empty;    // Wallet address
     
     // Placement
-    public string NodeId { get; set; }                        // Which node it's running on
+    public string? NodeId { get; set; }                        // Which node it's running on
     public string? TargetNodeId { get; set; }                  // For migrations
     
     // Specification
@@ -80,6 +81,7 @@ public class VirtualMachine
 
 public class VmSpec
 {
+    public VmType? VmType { get; set; } = Models.VmType.General;
     public int VirtualCpuCores { get; set; } = 1;
     public long MemoryBytes { get; set; } = 2 * 1024L * 1024L;
     //[BsonIgnore]
@@ -260,10 +262,22 @@ public enum VmPowerState
     Paused
 }
 
+public enum VmType
+{
+    General,
+    Compute,
+    Memory,
+    Storage,
+    Gpu,
+    Relay
+}
+
 // DTOs for API
 public record CreateVmRequest(
     string Name,
     VmSpec Spec,
+    VmType VmType=VmType.General,
+    string? NodeId = null,
     Dictionary<string, string>? Labels = null
 );
 

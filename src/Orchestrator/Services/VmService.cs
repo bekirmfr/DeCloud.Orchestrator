@@ -1,5 +1,6 @@
 ﻿using DeCloud.Shared.Models;
 using Orchestrator.Data;
+using Orchestrator.Exceptions;
 using Orchestrator.Models;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -48,6 +49,8 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
+        var isRelayVm = request.Spec.VmType == VmType.Relay;
+
         // Validate user exists
         User? user = null;
         if (_dataStore.Users.TryGetValue(userId, out var existingUser))
@@ -56,7 +59,7 @@ public class VmService : IVmService
         }
 
         // Check quotas
-        if (user != null)
+        if (user != null && !isRelayVm)
         {
             if (user.Quotas.CurrentVms >= user.Quotas.MaxVms)
             {
@@ -72,7 +75,7 @@ public class VmService : IVmService
         }
 
         // Generate memorable password
-        var password = GenerateMemorablePassword();
+        var password = isRelayVm ? null : GenerateMemorablePassword();
 
         // Calculate pricing
         var hourlyRate = CalculateHourlyRate(request.Spec);
@@ -81,8 +84,9 @@ public class VmService : IVmService
         {
             Id = Guid.NewGuid().ToString(),
             Name = request.Name,
-            OwnerId = userId,
-            OwnerWallet = user?.WalletAddress ?? string.Empty,
+            VmType = request.VmType,
+            OwnerId = isRelayVm ? null : userId,
+            OwnerWallet = isRelayVm ? null : user?.WalletAddress,
             Spec = request.Spec,
             Status = VmStatus.Pending,
             Labels = request.Labels ?? [],
@@ -101,7 +105,7 @@ public class VmService : IVmService
         await _dataStore.SaveVmAsync(vm);
 
         // Update user quotas
-        if (user != null)
+        if (!isRelayVm && user != null)
         {
             user.Quotas.CurrentVms++;
             user.Quotas.CurrentVirtualCpuCores += request.Spec.VirtualCpuCores;
@@ -608,7 +612,7 @@ public class VmService : IVmService
     }
     */
 
-    private async Task TryScheduleVmAsync(VirtualMachine vm, string password, string? targetNodeId = null)
+    private async Task TryScheduleVmAsync(VirtualMachine vm, string? password = null, string? targetNodeId = null)
     {
         // ========================================
         // STEP 1: Calculate compute point cost FIRST
@@ -706,11 +710,12 @@ public class VmService : IVmService
 
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
-            NodeCommandType.CreateVm,
+            NodeCommandType.CreateRelayVm,
             JsonSerializer.Serialize(new
             {
                 VmId = vm.Id,
                 Name = vm.Name,
+                VmType = (int) vm.VmType,
                 OwnerId = vm.OwnerId,
                 OwnerWallet = vm.OwnerWallet,
                 VirtualCpuCores = vm.Spec.VirtualCpuCores,
@@ -739,8 +744,7 @@ public class VmService : IVmService
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
-            "VM {VmId} scheduled on node {NodeId} with command containing ComputePointCost={Points}",
-            vm.Id, selectedNode.Id, vm.Spec.ComputePointCost);
+            "Relay VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -769,10 +773,34 @@ public class VmService : IVmService
 
     private static decimal CalculateHourlyRate(VmSpec spec)
     {
-        var baseCpuRate = 0.01m;
-        var baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
-        var baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
+        var baseCpuRate = 0m;
+        var baseMemoryRate = 0m;  // per GB
+        var baseStorageRate = 0m; // per GB
 
+        switch (spec.VmType)
+        {
+            case VmType.General:
+                baseCpuRate = 0.01m;
+                baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
+                baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
+                break;
+            case VmType.Compute:
+                break;
+            case VmType.Memory:
+                break;
+            case VmType.Storage:
+                break;
+            case VmType.Gpu:
+                break;
+            case VmType.Relay:
+                return 0.005m; // Flat rate for relay VMs
+            default:
+                baseCpuRate = 0.01m;
+                baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
+                baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
+                break;
+        }
+        
         return (spec.VirtualCpuCores * baseCpuRate) +
                (spec.MemoryBytes * baseMemoryRate) +
                (spec.DiskBytes * baseStorageRate);

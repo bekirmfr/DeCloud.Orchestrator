@@ -12,12 +12,13 @@ public static class RelayVmSpec
     /// </summary>
     public static VmSpec Standard => new()
     {
+        VmType = VmType.Relay,
         VirtualCpuCores = 1,
         MemoryBytes = 512 * 1024 * 1024, // 512MB
         DiskBytes = 10L * 1024 * 1024 * 1024, // 10GB
         QualityTier = QualityTier.Burstable,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
-        ComputePointCost = 1, // Minimal cost
+        ComputePointCost = 4, // Minimal cost
     };
 
     /// <summary>
@@ -30,7 +31,7 @@ public static class RelayVmSpec
         DiskBytes = 20L * 1024 * 1024 * 1024, // 20GB
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay",
-        ComputePointCost = 2,
+        ComputePointCost = 8,
     };
 
     /// <summary>

@@ -129,18 +129,20 @@ public class RelayNodeService : IRelayNodeService
 
             // Create relay VM
             var relayVm = await vmService.CreateVmAsync(
-                userId: "system", // System-owned VM
+                userId: "system",
                 request: new CreateVmRequest
                 (
                     Name: $"relay-{node.Region}-{node.Id[..8]}",
                     Spec: vmSpec,
+                    VmType: VmType.Relay,
+                    NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
                         { "role", "relay" },
                         { "user", "system" }
                     }
                 ),
-                targetNodeId: node.Id
+                node.Id
             );
 
             // Initialize relay configuration
@@ -179,10 +181,10 @@ public class RelayNodeService : IRelayNodeService
     private int CalculateRelayCapacity(Node node)
     {
         // Base capacity on available CPU cores and RAM
-        var cpuCapacity = node.TotalResources.ComputePoints / 1000 / 4; // 1 CGNAT node per 4 cores
+        var computeCapacity = node.TotalResources.ComputePoints / 8; // 1 CGNAT node per 8 compute points
         var ramCapacity = (int)(node.HardwareInventory.Memory.TotalBytes / (4L * 1024 * 1024 * 1024)); // 1 per 4GB
 
-        var capacity = Math.Min(cpuCapacity, ramCapacity);
+        var capacity = Math.Min(computeCapacity, ramCapacity);
 
         // Cap at reasonable maximum
         capacity = Math.Min(capacity, 100);
@@ -193,7 +195,7 @@ public class RelayNodeService : IRelayNodeService
         _logger.LogDebug(
             "Calculated relay capacity for node {NodeId}: {Capacity} " +
             "(CPU capacity: {CpuCap}, RAM capacity: {RamCap})",
-            node.Id, capacity, cpuCapacity, ramCapacity);
+            node.Id, capacity, computeCapacity, ramCapacity);
 
         return capacity;
     }
