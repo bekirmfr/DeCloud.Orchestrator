@@ -656,6 +656,15 @@ public class NodeService : INodeService
             node.PerformanceEvaluation.HighestTier,
             totalCapacity.TotalComputePoints);
 
+        await _dataStore.SaveNodeAsync(node);
+
+        var newToken = GenerateAuthToken();
+        _dataStore.NodeAuthTokens[node.Id] = HashToken(newToken);
+
+        _logger.LogInformation(
+            "✓ New node registered successfully: {NodeId}",
+            node.Id);
+
         // =====================================================
         // STEP 7: Relay Node Deployment & Assignment
         // =====================================================
@@ -674,6 +683,13 @@ public class NodeService : INodeService
                     "Relay VM {VmId} deployed successfully for node {NodeId}",
                     relayVmId, node.Id);
             }
+            else
+            {
+                _logger.LogWarning(
+                    "Failed to deploy relay VM for eligible node {NodeId}",
+                    node.Id);
+            }
+            await _dataStore.SaveNodeAsync(node);
         }
         else
         {
@@ -704,14 +720,7 @@ public class NodeService : INodeService
             }
         }
 
-        await _dataStore.SaveNodeAsync(node);
-
-        var newToken = GenerateAuthToken();
-        _dataStore.NodeAuthTokens[node.Id] = HashToken(newToken);
-
-        _logger.LogInformation(
-            "✓ New node registered successfully: {NodeId}",
-            node.Id);
+        
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {

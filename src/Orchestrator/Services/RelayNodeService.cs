@@ -139,7 +139,8 @@ public class RelayNodeService : IRelayNodeService
                         { "role", "relay" },
                         { "user", "system" }
                     }
-                )
+                ),
+                targetNodeId: node.Id
             );
 
             // Initialize relay configuration

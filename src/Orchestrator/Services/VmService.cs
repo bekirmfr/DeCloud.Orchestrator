@@ -8,7 +8,7 @@ namespace Orchestrator.Services;
 
 public interface IVmService
 {
-    Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request);
+    Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null);
     Task<VirtualMachine?> GetVmAsync(string vmId);
     Task<List<VirtualMachine>> GetVmsByUserAsync(string userId, VmStatus? statusFilter = null);
     Task<List<VirtualMachine>> GetVmsByNodeAsync(string nodeId);
@@ -46,7 +46,7 @@ public class VmService : IVmService
         _logger = logger;
     }
 
-    public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request)
+    public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
         // Validate user exists
         User? user = null;
@@ -130,7 +130,7 @@ public class VmService : IVmService
         });
 
         // Immediately try to schedule
-        await TryScheduleVmAsync(vm, password);
+        await TryScheduleVmAsync(vm, password, targetNodeId);
 
         return new CreateVmResponse(
             vm.Id,
@@ -608,7 +608,7 @@ public class VmService : IVmService
     }
     */
 
-    private async Task TryScheduleVmAsync(VirtualMachine vm, string password)
+    private async Task TryScheduleVmAsync(VirtualMachine vm, string password, string? targetNodeId = null)
     {
         // ========================================
         // STEP 1: Calculate compute point cost FIRST
@@ -625,11 +625,25 @@ public class VmService : IVmService
             vm.Id, vm.Name, vm.Spec.QualityTier, vm.Spec.VirtualCpuCores, pointCost);
 
         // ========================================
-        // STEP 2: Select node (now with correct point cost)
+        // STEP 2: Select node
         // ========================================
-        var selectedNode = await _nodeService.SelectBestNodeForVmAsync(
-            vm.Spec,
-            vm.Spec.QualityTier);
+
+        Node? selectedNode = null;
+        if (!string.IsNullOrEmpty(targetNodeId))
+        {
+            // Use specified node (for relay VMs)
+            selectedNode = await _nodeService.GetNodeAsync(targetNodeId);
+            _logger.LogInformation(
+                "Using target node {NodeId} for VM {VmId} (relay deployment)",
+                targetNodeId, vm.Id);
+        }
+        else
+        {
+            // Normal scheduling for user VMs
+            selectedNode = await _nodeService.SelectBestNodeForVmAsync(
+                vm.Spec,
+                vm.Spec.QualityTier);
+        }
 
         if (selectedNode == null)
         {
