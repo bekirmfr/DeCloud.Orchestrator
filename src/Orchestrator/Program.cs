@@ -84,9 +84,9 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
-builder.Services.AddHttpClient<NodeService>()
-    .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(30));
-builder.Services.AddSingleton<INodeService>(sp => sp.GetRequiredService<NodeService>());
+builder.Services.AddSingleton<HttpClient>();
+builder.Services.AddSingleton<INodeService, NodeService>();
+
 builder.Services.AddSingleton<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService>(sp =>
