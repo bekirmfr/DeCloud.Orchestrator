@@ -68,7 +68,7 @@ public class RelayNodeService : IRelayNodeService
         }
 
         // Must have sufficient resources
-        if (node.TotalResources.ComputePoints < MIN_CORES_FOR_RELAY * 1000)
+        if (node.TotalResources.ComputePoints < MIN_CORES_FOR_RELAY)
         {
             _logger.LogDebug(
                 "Node {NodeId} not eligible for relay: insufficient CPU",
@@ -86,7 +86,7 @@ public class RelayNodeService : IRelayNodeService
 
         // Check bandwidth if available
         var bandwidth = node.HardwareInventory.Network.BandwidthBitsPerSecond;
-        if (bandwidth.HasValue && bandwidth.Value < MIN_BANDWIDTH_FOR_RELAY * 8)
+        if (bandwidth.HasValue && bandwidth.Value < MIN_BANDWIDTH_FOR_RELAY)
         {
             _logger.LogDebug(
                 "Node {NodeId} not eligible for relay: insufficient bandwidth",

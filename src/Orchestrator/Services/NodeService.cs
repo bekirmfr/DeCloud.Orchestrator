@@ -675,6 +675,12 @@ public class NodeService : INodeService
                     relayVmId, node.Id);
             }
         }
+        else
+        {
+            _logger.LogInformation(
+                "Node {NodeId} is not eligible for relay",
+                node.Id);
+        }
 
         // Check if node is behind CGNAT and needs relay assignment
         if (node.HardwareInventory.Network.NatType != NatType.None &&
