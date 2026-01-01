@@ -1045,7 +1045,6 @@ EOF
         exit 1
     fi
 }
-}
 
 create_configuration() {
     log_step "Creating configuration..."
