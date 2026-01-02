@@ -138,8 +138,7 @@ public class RelayNodeService : IRelayNodeService
                     NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
-                        { "role", "relay" },
-                        { "user", "system" }
+                        { "role", "relay" }
                     }
                 ),
                 node.Id

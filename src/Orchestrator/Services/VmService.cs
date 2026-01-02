@@ -742,6 +742,18 @@ public class VmService : IVmService
             TargetResourceId: vm.Id
         );
 
+        vm.ActiveCommandId = command.CommandId;
+        vm.ActiveCommandType = NodeCommandType.DeleteVm;
+        vm.ActiveCommandIssuedAt = DateTime.UtcNow;
+
+        // Register in command registry (primary lookup mechanism)
+        _dataStore.RegisterCommand(
+            command.CommandId,
+            vm.Id,
+            vm.NodeId,
+            NodeCommandType.DeleteVm
+        );
+
         _dataStore.AddPendingCommand(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
 
