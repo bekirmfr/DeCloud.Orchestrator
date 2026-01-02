@@ -128,8 +128,7 @@ public class CentralIngressService : ICentralIngressService
         var subdomain = pattern
             .Replace("{name}", SanitizeForSubdomain(vm.Name))
             .Replace("{id}", vm.Id)
-            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id)
-            .Replace("{owner8}", vm.OwnerWallet.Length >= 8 ? vm.OwnerWallet[2..10] : vm.OwnerWallet);
+            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id);
 
         // Ensure valid subdomain
         subdomain = SanitizeForSubdomain(subdomain);
