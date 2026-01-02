@@ -269,7 +269,9 @@ public enum VmType
     Memory,
     Storage,
     Gpu,
-    Relay
+    Relay,
+    Dht,
+    Inference
 }
 
 // DTOs for API
