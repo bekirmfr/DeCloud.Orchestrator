@@ -1235,29 +1235,6 @@ public class NodeService : INodeService
                         vmId, oldOwner, reported.OwnerId);
                 }
 
-                // Check if VM owner wallet has changed
-                if (string.IsNullOrWhiteSpace(vm.OwnerWallet) ||
-                    (vm.OwnerWallet != reported.OwnerWallet && !string.IsNullOrEmpty(reported.OwnerWallet)))
-                {
-                    var oldWallet = vm.OwnerWallet;
-                    vm.OwnerWallet = reported.OwnerWallet;
-                    await _dataStore.SaveVmAsync(vm);
-                    _logger.LogWarning(
-                        "VM {VmId} owner wallet changed from {OldWallet} to {NewWallet} based on heartbeat report",
-                        vmId, oldWallet, reported.OwnerWallet);
-                }
-
-                // Update metrics if provided
-                if (reported.CpuUsagePercent.HasValue)
-                {
-                    vm.LatestMetrics = new VmMetrics
-                    {
-                        CpuUsagePercent = reported.CpuUsagePercent.Value,
-                        Timestamp = DateTime.UtcNow
-                    };
-                    await _dataStore.SaveVmAsync(vm);
-                }
-
                 // Update access info if available
                 if (reported.IsIpAssigned)
                 {
@@ -1306,7 +1283,6 @@ public class NodeService : INodeService
                 Id = vmId,
                 Name = reported.Name ?? $"recovered-{vmId[..8]}",
                 OwnerId = reported.OwnerId,
-                OwnerWallet = reported.OwnerWallet,
                 NodeId = nodeId,
                 Status = ParseVmStatus(reported.State),
                 PowerState = ParsePowerState(reported.State),
@@ -1330,11 +1306,10 @@ public class NodeService : INodeService
                 },
                 Spec = new VmSpec
                 {
-                    VirtualCpuCores = reported.CpuCores,
+                    VirtualCpuCores = reported.VirtualCpuCores,
                     MemoryBytes = reported.MemoryBytes.Value,
                     DiskBytes = reported.DiskBytes.Value,
                     ImageId = reported.ImageId ?? "Unknown",
-                    WalletEncryptedPassword = reported.WalletEncryptedPassword ?? null,
                     QualityTier = (QualityTier)reported.QualityTier,
                     ComputePointCost = reported.ComputePointCost,
                 },
@@ -1346,15 +1321,6 @@ public class NodeService : INodeService
                     ["recovery-node"] = nodeId
                 }
             };
-
-            if (reported.CpuUsagePercent.HasValue)
-            {
-                recoveredVm.LatestMetrics = new VmMetrics
-                {
-                    CpuUsagePercent = reported.CpuUsagePercent.Value,
-                    Timestamp = DateTime.UtcNow
-                };
-            }
 
             await _dataStore.SaveVmAsync(recoveredVm);
 

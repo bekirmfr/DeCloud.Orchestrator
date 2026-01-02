@@ -285,7 +285,6 @@ public class HeartbeatVmInfo
     public string? Name { get; set; }
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
     public string OwnerId { get; set; } = string.Empty;  // Owner ID
-    public string OwnerWallet { get; set; } = string.Empty;
     public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
     /// <summary>
@@ -300,18 +299,11 @@ public class HeartbeatVmInfo
     public int? VncPort { get; set; }
 
     // Resource specifications
-    public int CpuCores { get; set; }
+    public int VirtualCpuCores { get; set; }
     public int QualityTier { get; set; }
     public int ComputePointCost { get; set; }
     public long? MemoryBytes { get; set; }
     public long? DiskBytes { get; set; }
-    public double? CpuUsagePercent { get; set; }
-
-    /// <summary>
-    /// Wallet-encrypted password for VM access
-    /// Format: base64(iv):base64(ciphertext):base64(tag)
-    /// </summary>
-    public string? WalletEncryptedPassword { get; set; }
     public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
 }
