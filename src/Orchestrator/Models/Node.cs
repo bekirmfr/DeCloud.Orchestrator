@@ -273,7 +273,8 @@ public record NodeHeartbeat(
     string NodeId,
     NodeMetrics Metrics,
     ResourceSnapshot AvailableResources,
-    List<HeartbeatVmInfo>? ActiveVms = null  // detailed VM information
+    List<HeartbeatVmInfo>? ActiveVms = null,  // detailed VM information
+    CgnatNodeInfo? CgnatInfo = null
 );
 
 /// <summary>
