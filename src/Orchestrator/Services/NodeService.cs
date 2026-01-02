@@ -1223,18 +1223,6 @@ public class NodeService : INodeService
                         vmId, newStatus, newPowerState);
                 }
 
-                // Check if VM ownership has changed
-                if (string.IsNullOrWhiteSpace(vm.OwnerId) ||
-                    (vm.OwnerId != reported.OwnerId && !string.IsNullOrEmpty(reported.OwnerId)))
-                {
-                    var oldOwner = vm.OwnerId;
-                    vm.OwnerId = reported.OwnerId;
-                    await _dataStore.SaveVmAsync(vm);
-                    _logger.LogWarning(
-                        "VM {VmId} ownership changed from {OldOwner} to {NewOwner} based on heartbeat report",
-                        vmId, oldOwner, reported.OwnerId);
-                }
-
                 // Update access info if available
                 if (reported.IsIpAssigned)
                 {
