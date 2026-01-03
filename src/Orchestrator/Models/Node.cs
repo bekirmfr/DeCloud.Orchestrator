@@ -425,6 +425,7 @@ public class RelayNodeInfo
     /// WireGuard public endpoint (IP:Port)
     /// </summary>
     public string WireGuardEndpoint { get; set; } = string.Empty;
+    public string? WireGuardPublicKey { get; set; }
 
     /// <summary>
     /// Maximum number of CGNAT nodes this relay can serve

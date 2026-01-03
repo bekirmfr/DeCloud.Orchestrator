@@ -343,25 +343,150 @@ public class RelayNodeService : IRelayNodeService
     }
 
     private async Task<string> GenerateWireGuardConfigAsync(
-        Node cgnatNode,
-        Node relayNode,
-        string tunnelIp,
-        CancellationToken ct = default)
+    Node cgnatNode,
+    Node relayNode,
+    string tunnelIp,
+    CancellationToken ct = default)
     {
-        // This would call the relay VM's WireGuard API to get the public key
-        // For now, return a template
+        try
+        {
+            // ========================================
+            // STEP 1: Generate private key for CGNAT node
+            // ========================================
+            var privateKey = await GenerateWireGuardPrivateKeyAsync(ct);
 
-        var config = $@"[Interface]
-PrivateKey = <CGNAT_NODE_PRIVATE_KEY>
+            // ========================================
+            // STEP 2: Get relay's public key
+            // ========================================
+            string relayPublicKey;
+
+            if (string.IsNullOrWhiteSpace(relayNode.RelayInfo?.WireGuardPublicKey))
+            {
+                // Relay doesn't have a public key yet
+                // Generate one temporarily (relay VMs should report their key in future)
+                _logger.LogWarning(
+                    "Relay {RelayId} missing WireGuard public key, generating temporary key",
+                    relayNode.Id);
+
+                var tempPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
+                relayPublicKey = await DerivePublicKeyAsync(tempPrivateKey, ct);
+
+                // Store it
+                relayNode.RelayInfo.WireGuardPublicKey = relayPublicKey;
+                await _dataStore.SaveNodeAsync(relayNode);
+            }
+            else
+            {
+                relayPublicKey = relayNode.RelayInfo.WireGuardPublicKey;
+            }
+
+            // ========================================
+            // STEP 3: Build configuration with real keys
+            // ========================================
+            var config = $@"[Interface]
+PrivateKey = {privateKey}
 Address = {tunnelIp}/24
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = <RELAY_PUBLIC_KEY>
+PublicKey = {relayPublicKey}
 Endpoint = {relayNode.RelayInfo!.WireGuardEndpoint}
 AllowedIPs = 10.20.0.0/16
 PersistentKeepalive = 25";
 
-        return config;
+            _logger.LogInformation(
+                "Generated WireGuard config for CGNAT node {CgnatId} → Relay {RelayId}",
+                cgnatNode.Id, relayNode.Id);
+
+            return config;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to generate WireGuard config for CGNAT node {CgnatId}",
+                cgnatNode.Id);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Generate a WireGuard private key using the wg command
+    /// </summary>
+    private async Task<string> GenerateWireGuardPrivateKeyAsync(CancellationToken ct)
+    {
+        try
+        {
+            var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "wg",
+                    Arguments = "genkey",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync(ct);
+            var error = await process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to generate WireGuard private key: {error}");
+            }
+
+            return output.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to execute 'wg genkey'");
+            throw new InvalidOperationException(
+                "WireGuard tools not available. Install: apt install wireguard-tools", ex);
+        }
+    }
+
+    /// <summary>
+    /// Derive public key from private key
+    /// </summary>
+    private async Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct)
+    {
+        try
+        {
+            var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "sh",
+                    Arguments = $"-c \"echo '{privateKey}' | wg pubkey\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync(ct);
+            var error = await process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to derive WireGuard public key: {error}");
+            }
+
+            return output.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to derive public key");
+            throw;
+        }
     }
 }
