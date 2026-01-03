@@ -287,3 +287,14 @@ public class WebSocketProxyMiddleware
         }
     }
 }
+
+/// <summary>
+/// Extension methods for registering the WebSocket proxy middleware
+/// </summary>
+public static class WebSocketProxyExtensions
+{
+    public static IApplicationBuilder UseWebSocketProxy(this IApplicationBuilder app)
+    {
+        return app.UseMiddleware<WebSocketProxyMiddleware>();
+    }
+}
