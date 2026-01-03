@@ -8,6 +8,11 @@ namespace Orchestrator.Middleware;
 /// WebSocket proxy middleware that routes terminal and SFTP connections through the orchestrator.
 /// This solves the TLS issue where browsers can't connect directly to nodes without TLS.
 /// 
+/// CGNAT Support:
+/// - Detects nodes behind NAT/CGNAT
+/// - Routes connections through relay node's WireGuard tunnel
+/// - Uses tunnel IP (10.20.x.x) instead of public IP for CGNAT nodes
+/// 
 /// Endpoints:
 /// - /api/terminal-proxy/{vmId} → ws://node:5100/api/vms/{vmId}/terminal
 /// - /api/sftp-proxy/{vmId}     → ws://node:5100/api/vms/{vmId}/sftp
@@ -93,11 +98,37 @@ public class WebSocketProxyMiddleware
             return;
         }
 
-        // Build upstream WebSocket URL
+        // ========================================
+        // CGNAT RELAY ROUTING LOGIC
+        // ========================================
         var nodePort = node.AgentPort > 0 ? node.AgentPort : 5100;
-        var nodeHost = node.PublicIp;
+        string nodeHost;
+        string routingInfo;
 
-        // Pass through query parameters and ensure ip is set
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+        {
+            // Node is behind CGNAT - route through WireGuard tunnel
+            nodeHost = node.CgnatInfo.TunnelIp;
+            routingInfo = $"CGNAT node via relay tunnel (Relay: {node.CgnatInfo.AssignedRelayNodeId})";
+
+            _logger.LogInformation(
+                "Routing {Endpoint} for VM {VmId} through CGNAT relay: " +
+                "Node {NodeId} → Tunnel IP {TunnelIp}",
+                nodeEndpoint, vmId, node.Id, nodeHost);
+        }
+        else
+        {
+            // Regular node with public IP - direct connection
+            nodeHost = node.PublicIp;
+            routingInfo = "Direct connection to public IP";
+
+            _logger.LogInformation(
+                "Routing {Endpoint} for VM {VmId} directly: " +
+                "Node {NodeId} → Public IP {PublicIp}",
+                nodeEndpoint, vmId, node.Id, nodeHost);
+        }
+
+        // Build upstream WebSocket URL
         var queryParams = context.Request.Query
             .ToDictionary(q => q.Key, q => q.Value.ToString());
 
@@ -109,104 +140,150 @@ public class WebSocketProxyMiddleware
         var queryString = string.Join("&", queryParams.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
         var upstreamUrl = $"ws://{nodeHost}:{nodePort}/api/vms/{vmId}/{nodeEndpoint}?{queryString}";
 
-        _logger.LogInformation("Proxying {Endpoint}: {VmId} → {Upstream}",
-            nodeEndpoint, vmId, upstreamUrl.Split('?')[0] + "?...");
+        _logger.LogInformation(
+            "Proxying {Endpoint}: {VmId} → {Upstream} ({RoutingInfo})",
+            nodeEndpoint, vmId, upstreamUrl.Split('?')[0] + "?...", routingInfo);
 
+        // Proxy the WebSocket connection
+        await ProxyWebSocketAsync(context, upstreamUrl, vmId);
+    }
+
+    private async Task ProxyWebSocketAsync(HttpContext context, string upstreamUrl, string vmId)
+    {
         try
         {
-            // Accept incoming WebSocket
-            using var clientWs = await context.WebSockets.AcceptWebSocketAsync();
+            // Accept client WebSocket connection
+            using var clientWebSocket = await context.WebSockets.AcceptWebSocketAsync();
 
-            // Connect to node
-            using var nodeWs = new ClientWebSocket();
-            nodeWs.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+            // Connect to upstream (node agent)
+            using var upstreamWebSocket = new ClientWebSocket();
 
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            await nodeWs.ConnectAsync(new Uri(upstreamUrl), cts.Token);
+            // Configure connection with longer timeout for CGNAT routes
+            upstreamWebSocket.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+            var connectionTimeout = CancellationTokenSource.CreateLinkedTokenSource(
+                context.RequestAborted,
+                new CancellationTokenSource(TimeSpan.FromSeconds(60)).Token);
 
-            _logger.LogInformation("{Endpoint} proxy connected for VM {VmId}", nodeEndpoint, vmId);
+            try
+            {
+                await upstreamWebSocket.ConnectAsync(new Uri(upstreamUrl), connectionTimeout.Token);
 
-            // Bidirectional proxy
-            var clientToNode = ProxyOneWay(clientWs, nodeWs, "client→node", vmId, nodeEndpoint);
-            var nodeToClient = ProxyOneWay(nodeWs, clientWs, "node→client", vmId, nodeEndpoint);
+                _logger.LogInformation(
+                    "WebSocket connected for VM {VmId}, starting bidirectional relay",
+                    vmId);
 
-            await Task.WhenAny(clientToNode, nodeToClient);
+                // Bidirectional relay
+                var clientToUpstream = RelayAsync(
+                    clientWebSocket,
+                    upstreamWebSocket,
+                    "client→node",
+                    vmId,
+                    context.RequestAborted);
 
-            // Close both connections gracefully
-            await CloseWebSocket(clientWs, "Proxy closing");
-            await CloseWebSocket(nodeWs, "Proxy closing");
+                var upstreamToClient = RelayAsync(
+                    upstreamWebSocket,
+                    clientWebSocket,
+                    "node→client",
+                    vmId,
+                    context.RequestAborted);
 
-            _logger.LogInformation("{Endpoint} proxy closed for VM {VmId}", nodeEndpoint, vmId);
-        }
-        catch (WebSocketException ex)
-        {
-            _logger.LogError(ex, "WebSocket error proxying {Endpoint} for VM {VmId}", nodeEndpoint, vmId);
+                // Wait for either direction to close
+                await Task.WhenAny(clientToUpstream, upstreamToClient);
+
+                // Close both connections gracefully
+                await CloseWebSocketAsync(clientWebSocket, vmId, "client");
+                await CloseWebSocketAsync(upstreamWebSocket, vmId, "upstream");
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    "WebSocket connection timeout for VM {VmId}. " +
+                    "This may indicate CGNAT relay routing issues or node agent unavailability.",
+                    vmId);
+                throw;
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error proxying {Endpoint} for VM {VmId}", nodeEndpoint, vmId);
+            _logger.LogError(ex,
+                "Error proxying terminal for VM {VmId}",
+                vmId);
+            throw;
         }
     }
 
-    private async Task ProxyOneWay(WebSocket source, WebSocket dest, string direction, string vmId, string endpoint)
+    private async Task RelayAsync(
+        WebSocket source,
+        WebSocket destination,
+        string direction,
+        string vmId,
+        CancellationToken cancellationToken)
     {
-        var buffer = new byte[64 * 1024]; // 64KB buffer for file transfers
+        var buffer = new byte[1024 * 4];
 
         try
         {
-            while (source.State == WebSocketState.Open && dest.State == WebSocketState.Open)
+            while (source.State == WebSocketState.Open &&
+                   destination.State == WebSocketState.Open &&
+                   !cancellationToken.IsCancellationRequested)
             {
-                var result = await source.ReceiveAsync(buffer, CancellationToken.None);
+                var result = await source.ReceiveAsync(
+                    new ArraySegment<byte>(buffer),
+                    cancellationToken);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    _logger.LogDebug("{Endpoint} proxy {Direction} close received for {VmId}",
-                        endpoint, direction, vmId);
+                    _logger.LogDebug(
+                        "WebSocket close received from {Direction} for VM {VmId}",
+                        direction, vmId);
                     break;
                 }
 
-                await dest.SendAsync(
+                await destination.SendAsync(
                     new ArraySegment<byte>(buffer, 0, result.Count),
                     result.MessageType,
                     result.EndOfMessage,
-                    CancellationToken.None);
+                    cancellationToken);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug(
+                "WebSocket relay cancelled ({Direction}) for VM {VmId}",
+                direction, vmId);
         }
         catch (WebSocketException ex) when (ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely)
         {
-            _logger.LogDebug("{Endpoint} proxy {Direction} connection closed for {VmId}",
-                endpoint, direction, vmId);
+            _logger.LogDebug(
+                "WebSocket closed prematurely ({Direction}) for VM {VmId}",
+                direction, vmId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "{Endpoint} proxy {Direction} error for {VmId}",
-                endpoint, direction, vmId);
+            _logger.LogError(ex,
+                "Error in WebSocket relay ({Direction}) for VM {VmId}",
+                direction, vmId);
+            throw;
         }
     }
 
-    private async Task CloseWebSocket(WebSocket ws, string reason)
+    private async Task CloseWebSocketAsync(WebSocket webSocket, string vmId, string socketType)
     {
         try
         {
-            if (ws.State == WebSocketState.Open || ws.State == WebSocketState.CloseReceived)
+            if (webSocket.State == WebSocketState.Open)
             {
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, reason, CancellationToken.None);
+                await webSocket.CloseAsync(
+                    WebSocketCloseStatus.NormalClosure,
+                    "Connection closed",
+                    CancellationToken.None);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore close errors
+            _logger.LogDebug(ex,
+                "Error closing {SocketType} WebSocket for VM {VmId} (state: {State})",
+                socketType, vmId, webSocket.State);
         }
-    }
-}
-
-/// <summary>
-/// Extension methods for registering the WebSocket proxy middleware
-/// </summary>
-public static class WebSocketProxyExtensions
-{
-    public static IApplicationBuilder UseWebSocketProxy(this IApplicationBuilder app)
-    {
-        return app.UseMiddleware<WebSocketProxyMiddleware>();
     }
 }
