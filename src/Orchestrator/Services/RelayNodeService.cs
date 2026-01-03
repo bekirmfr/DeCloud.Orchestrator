@@ -37,6 +37,8 @@ public interface IRelayNodeService
 public class RelayNodeService : IRelayNodeService
 {
     private readonly DataStore _dataStore;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IWireGuardManager _wireGuardManager;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
@@ -46,10 +48,13 @@ public class RelayNodeService : IRelayNodeService
 
     public RelayNodeService(
         DataStore dataStore,
-
+        IServiceProvider serviceProvider,
+        IWireGuardManager wireGuardManager,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
+        _serviceProvider = serviceProvider;
+        _wireGuardManager = wireGuardManager;
         _logger = logger;
     }
 
@@ -185,6 +190,53 @@ public class RelayNodeService : IRelayNodeService
                 "✓ Relay VM {VmId} deployed on node {NodeId} " +
                 "(Capacity: {Capacity}, WireGuard public key: {PubKey})",
                 relayVm.VmId, node.Id, maxCapacity, relayPublicKey);
+
+            // =====================================================
+            // NEW: Configure orchestrator WireGuard connectivity
+            // =====================================================
+            try
+            {
+                _logger.LogInformation("Configuring orchestrator WireGuard for relay {RelayId}", node.Id);
+
+                // Wait for relay VM to boot and start WireGuard server (30 seconds)
+                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+
+                // Register orchestrator as peer on relay VM
+                var registered = await _wireGuardManager.RegisterWithRelayAsync(node, "orchestrator", "10.20.0.1", ct);
+
+                if (!registered)
+                {
+                    _logger.LogWarning(
+                        "Failed to register orchestrator with relay {RelayId} - " +
+                        "will retry on next relay health check",
+                        node.Id);
+                }
+
+                // Add relay as peer on orchestrator side
+                var added = await _wireGuardManager.AddRelayPeerAsync(node, ct);
+
+                if (added)
+                {
+                    _logger.LogInformation(
+                        "✓ Orchestrator WireGuard configured for relay {RelayId} - " +
+                        "can now reach CGNAT nodes via tunnel",
+                        node.Id);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Failed to add relay {RelayId} as orchestrator peer - " +
+                        "CGNAT nodes may not be reachable",
+                        node.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Error configuring orchestrator WireGuard for relay {RelayId} - " +
+                    "CGNAT connectivity may be degraded",
+                    node.Id);
+            }
 
             return relayVm.VmId;
         }

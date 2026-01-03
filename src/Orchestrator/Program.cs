@@ -84,6 +84,7 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
+builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
 

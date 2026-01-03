@@ -6,7 +6,7 @@
 # - .NET 8 Runtime
 # - Node.js 20 LTS for frontend build  
 # - MongoDB connection
-# - WireGuard tunnel client for CGNAT node connectivity
+# - WireGuard tunnel interface (peers added dynamically during relay registration)
 # - Caddy central ingress with golden master config persistence
 # - Automatic recovery and backup timers
 # - fail2ban DDoS protection
@@ -14,22 +14,21 @@
 # ARCHITECTURE:
 # The Orchestrator handles all HTTP ingress centrally (ports 80/443).
 # Routes traffic to nodes via WireGuard overlay network.
-# Connects to relay nodes via WireGuard to reach CGNAT nodes.
+# Relay nodes are added as WireGuard peers dynamically when they register.
 #
-# Version: 2.3.0 (WireGuard-enabled)
+# Version: 2.4.0 (Dynamic Peer Management)
 #
 # Usage:
 #   sudo ./install.sh --mongodb "mongodb+srv://..." \
 #       --ingress-domain vms.stackfi.tech \
 #       --caddy-email admin@stackfi.tech \
 #       --cloudflare-token YOUR_CF_TOKEN \
-#       --relay-endpoint 142.234.200.95:51820 \
-#       --relay-pubkey "FLFgGeRc0wJbmA5gsxpbLB21zNL/MG7ZgSU3BvxiUj8="
+#       --enable-wireguard
 #
 
 set -e
 
-VERSION="2.3.0"
+VERSION="2.4.0"
 
 # Colors
 RED='\033[0;31m'
@@ -73,15 +72,12 @@ CADDY_LOG_DIR="/var/log/caddy"
 DNS_PROVIDER="cloudflare"
 CLOUDFLARE_TOKEN=""
 
-# WireGuard (NEW - for CGNAT connectivity)
-INSTALL_WIREGUARD=false
+# WireGuard (Dynamic Peer Management)
+ENABLE_WIREGUARD=false
 WIREGUARD_INTERFACE="wg-relay-client"
-WIREGUARD_PORT=51821  # Client port (different from relay server's 51820)
+WIREGUARD_PORT=51821
 TUNNEL_IP="10.20.0.1"  # Orchestrator's tunnel IP
 TUNNEL_NETWORK="10.20.0.0/16"  # Full tunnel network
-RELAY_ENDPOINT=""  # Format: IP:PORT (e.g., 142.234.200.95:51820)
-RELAY_PUBLIC_KEY=""  # Relay's WireGuard public key
-SKIP_WIREGUARD=false
 
 # fail2ban
 INSTALL_FAIL2BAN=false
@@ -125,24 +121,13 @@ parse_args() {
                 CLOUDFLARE_TOKEN="$2"
                 shift 2
                 ;;
-            --relay-endpoint)
-                RELAY_ENDPOINT="$2"
-                INSTALL_WIREGUARD=true
-                shift 2
-                ;;
-            --relay-pubkey)
-                RELAY_PUBLIC_KEY="$2"
-                INSTALL_WIREGUARD=true
-                shift 2
+            --enable-wireguard)
+                ENABLE_WIREGUARD=true
+                shift
                 ;;
             --tunnel-ip)
                 TUNNEL_IP="$2"
                 shift 2
-                ;;
-            --skip-wireguard)
-                SKIP_WIREGUARD=true
-                INSTALL_WIREGUARD=false
-                shift
                 ;;
             --skip-fail2ban)
                 SKIP_FAIL2BAN=true
@@ -168,7 +153,7 @@ parse_args() {
 show_help() {
     cat << EOF
 DeCloud Orchestrator Installer v${VERSION}
-With WireGuard support for CGNAT node connectivity
+With dynamic WireGuard peer management for CGNAT support
 
 Usage: $0 --mongodb <uri> [options]
 
@@ -182,10 +167,9 @@ Ingress (recommended):
   --caddy-staging            Use Let's Encrypt staging (for testing)
 
 WireGuard (for CGNAT support):
-  --relay-endpoint <ip:port> Relay WireGuard endpoint (e.g., 142.234.200.95:51820)
-  --relay-pubkey <key>       Relay's WireGuard public key
+  --enable-wireguard         Enable WireGuard tunnel interface
+                             Relay peers added dynamically during registration
   --tunnel-ip <ip>           Orchestrator's tunnel IP (default: 10.20.0.1)
-  --skip-wireguard           Skip WireGuard setup (disables CGNAT support)
 
 Other:
   --port <port>              API port (default: 5050)
@@ -197,26 +181,19 @@ Examples:
   # Minimal installation
   $0 --mongodb "mongodb+srv://..."
   
-  # Full production with ingress
-  $0 --mongodb "mongodb+srv://..." \\
-     --ingress-domain vms.stackfi.tech \\
-     --caddy-email admin@stackfi.tech \\
-     --cloudflare-token YOUR_TOKEN
-  
-  # Production with CGNAT support
+  # Full production with ingress and CGNAT support
   $0 --mongodb "mongodb+srv://..." \\
      --ingress-domain vms.stackfi.tech \\
      --caddy-email admin@stackfi.tech \\
      --cloudflare-token YOUR_TOKEN \\
-     --relay-endpoint 142.234.200.95:51820 \\
-     --relay-pubkey "FLFgGeRc0wJbmA5gsxpbLB21zNL/MG7ZgSU3BvxiUj8="
+     --enable-wireguard
 
 Architecture:
-  Without WireGuard: Orchestrator → Direct connection to public nodes only
-  With WireGuard:    Orchestrator → WireGuard tunnel → Relay → CGNAT nodes
-  
-  WireGuard enables connectivity to nodes behind NAT/CGNAT that don't have
-  public IPs or port forwarding capabilities.
+  - WireGuard interface created with no peers initially
+  - Orchestrator generates keypair and stores public key
+  - When relay nodes register, they're added as peers dynamically
+  - When CGNAT nodes register, they get assigned to relays
+  - Bidirectional peer setup: relay adds orchestrator, orchestrator adds relay
 EOF
 }
 
@@ -324,27 +301,8 @@ check_cloudflare_token() {
 }
 
 check_wireguard_params() {
-    if [ "$INSTALL_WIREGUARD" = true ]; then
+    if [ "$ENABLE_WIREGUARD" = true ]; then
         log_step "Validating WireGuard parameters..."
-        
-        if [ -z "$RELAY_ENDPOINT" ]; then
-            log_error "Relay endpoint required for WireGuard"
-            log_info "Use: --relay-endpoint IP:PORT"
-            exit 1
-        fi
-        
-        if [ -z "$RELAY_PUBLIC_KEY" ]; then
-            log_error "Relay public key required for WireGuard"
-            log_info "Use: --relay-pubkey 'PUBLIC_KEY'"
-            exit 1
-        fi
-        
-        # Validate endpoint format (IP:PORT)
-        if [[ ! "$RELAY_ENDPOINT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]]; then
-            log_error "Invalid relay endpoint format: $RELAY_ENDPOINT"
-            log_info "Expected format: IP:PORT (e.g., 142.234.200.95:51820)"
-            exit 1
-        fi
         
         # Validate tunnel IP format
         if [[ ! "$TUNNEL_IP" =~ ^10\.20\.[0-9]+\.[0-9]+$ ]]; then
@@ -354,8 +312,9 @@ check_wireguard_params() {
         fi
         
         log_success "WireGuard parameters validated"
-        log_info "Relay endpoint: $RELAY_ENDPOINT"
         log_info "Tunnel IP: $TUNNEL_IP"
+        log_info "Tunnel network: $TUNNEL_NETWORK"
+        log_info "NOTE: Relay peers will be added dynamically during registration"
     fi
 }
 
@@ -418,30 +377,30 @@ install_dotnet() {
 }
 
 install_wireguard() {
-    if [ "$SKIP_WIREGUARD" = true ]; then
-        log_warn "Skipping WireGuard installation (--skip-wireguard)"
-        log_warn "CGNAT nodes will NOT be reachable"
-        return
-    fi
-    
-    if [ "$INSTALL_WIREGUARD" = false ]; then
-        log_info "WireGuard not configured (no relay parameters provided)"
+    if [ "$ENABLE_WIREGUARD" = false ]; then
+        log_info "WireGuard not enabled (use --enable-wireguard)"
+        log_warn "CGNAT nodes will NOT be reachable without WireGuard"
         return
     fi
     
     log_step "Installing WireGuard..."
+    
+    if command -v wg &> /dev/null; then
+        log_success "WireGuard already installed"
+        return
+    fi
     
     apt-get install -y -qq wireguard wireguard-tools > /dev/null 2>&1
     
     log_success "WireGuard installed"
 }
 
-configure_wireguard_client() {
-    if [ "$SKIP_WIREGUARD" = true ] || [ "$INSTALL_WIREGUARD" = false ]; then
+configure_wireguard_interface() {
+    if [ "$ENABLE_WIREGUARD" = false ]; then
         return
     fi
     
-    log_step "Configuring WireGuard tunnel to relay..."
+    log_step "Configuring WireGuard tunnel interface..."
     
     # Create WireGuard directory
     mkdir -p /etc/wireguard
@@ -455,32 +414,32 @@ configure_wireguard_client() {
         chmod 644 /etc/wireguard/orchestrator-public.key
         
         local pubkey=$(cat /etc/wireguard/orchestrator-public.key)
-        log_success "Orchestrator public key: $pubkey"
-        log_warn "IMPORTANT: Add this key to the relay node!"
+        log_success "Orchestrator public key generated: $pubkey"
+        log_info "This key will be provided to relay nodes during provisioning"
     else
         log_info "Using existing orchestrator keypair"
     fi
     
     local private_key=$(cat /etc/wireguard/orchestrator-private.key)
     
-    # Create WireGuard configuration
+    # Create WireGuard configuration (NO PEERS - added dynamically)
     cat > /etc/wireguard/${WIREGUARD_INTERFACE}.conf << EOF
+# DeCloud Orchestrator WireGuard Tunnel
+# Peers are managed dynamically by OrchestratorWireGuardManager service
+# DO NOT manually add peers - they are added automatically during relay registration
+
 [Interface]
-# Orchestrator WireGuard tunnel to relay
 Address = ${TUNNEL_IP}/24
 PrivateKey = ${private_key}
 ListenPort = ${WIREGUARD_PORT}
 
-# Routing
-PostUp = ip route add ${TUNNEL_NETWORK} dev ${WIREGUARD_INTERFACE}
-PreDown = ip route del ${TUNNEL_NETWORK} dev ${WIREGUARD_INTERFACE}
+# Routing for tunnel network
+PostUp = ip route add ${TUNNEL_NETWORK} dev ${WIREGUARD_INTERFACE} 2>/dev/null || true
+PreDown = ip route del ${TUNNEL_NETWORK} dev ${WIREGUARD_INTERFACE} 2>/dev/null || true
 
-[Peer]
-# Relay node
-PublicKey = ${RELAY_PUBLIC_KEY}
-Endpoint = ${RELAY_ENDPOINT}
-AllowedIPs = ${TUNNEL_NETWORK}
-PersistentKeepalive = 25
+# NOTE: [Peer] sections added dynamically when relay nodes register
+# Managed by: OrchestratorWireGuardManager
+# To view current peers: wg show ${WIREGUARD_INTERFACE}
 EOF
     
     chmod 600 /etc/wireguard/${WIREGUARD_INTERFACE}.conf
@@ -488,33 +447,25 @@ EOF
     log_success "WireGuard configuration created"
     log_info "Interface: ${WIREGUARD_INTERFACE}"
     log_info "Tunnel IP: ${TUNNEL_IP}"
-    log_info "Relay: ${RELAY_ENDPOINT}"
+    log_info "Peers: None (added dynamically during relay registration)"
     
     # Enable and start WireGuard
-    log_info "Starting WireGuard tunnel..."
+    log_info "Starting WireGuard interface..."
     systemctl enable wg-quick@${WIREGUARD_INTERFACE} --quiet 2>/dev/null || true
-    systemctl start wg-quick@${WIREGUARD_INTERFACE} 2>/dev/null || {
-        log_warn "Failed to start WireGuard (relay may not be configured yet)"
-        log_warn "Run: systemctl start wg-quick@${WIREGUARD_INTERFACE}"
-    }
+    systemctl start wg-quick@${WIREGUARD_INTERFACE} 2>/dev/null || true
     
-    # Verify connection
+    # Verify interface is up
     sleep 2
     if systemctl is-active --quiet wg-quick@${WIREGUARD_INTERFACE}; then
-        log_success "WireGuard tunnel started"
+        log_success "WireGuard interface active"
         
-        # Show status
-        local status=$(wg show ${WIREGUARD_INTERFACE} 2>/dev/null || echo "Interface not ready")
-        if [[ "$status" != "Interface not ready" ]]; then
-            log_info "Testing connectivity to relay..."
-            if ping -c 1 -W 2 $(echo $RELAY_ENDPOINT | cut -d: -f1) > /dev/null 2>&1; then
-                log_success "Relay is reachable"
-            else
-                log_warn "Cannot ping relay (may be firewalled)"
-            fi
+        # Show interface details
+        local addr=$(ip addr show ${WIREGUARD_INTERFACE} 2>/dev/null | grep "inet " | awk '{print $2}')
+        if [ -n "$addr" ]; then
+            log_info "Interface address: $addr"
         fi
     else
-        log_warn "WireGuard tunnel not active yet"
+        log_warn "WireGuard interface not active (this is OK, will activate when first peer is added)"
     fi
 }
 
@@ -779,6 +730,9 @@ create_configuration() {
     "Enabled": ${ENABLE_INGRESS},
     "Domain": "${INGRESS_DOMAIN}",
     "CaddyAdminApi": "http://localhost:2019"
+  },
+  "WireGuard": {
+    "Enabled": ${ENABLE_WIREGUARD}
   }
 }
 EOF
@@ -796,10 +750,10 @@ create_systemd_service() {
 Description=DeCloud Orchestrator
 After=network.target mongod.service
 $([ "$INSTALL_CADDY" = true ] && echo "After=caddy.service")
-$([ "$INSTALL_WIREGUARD" = true ] && echo "After=wg-quick@${WIREGUARD_INTERFACE}.service")
+$([ "$ENABLE_WIREGUARD" = true ] && echo "After=wg-quick@${WIREGUARD_INTERFACE}.service")
 Wants=mongod.service
 $([ "$INSTALL_CADDY" = true ] && echo "Requires=caddy.service")
-$([ "$INSTALL_WIREGUARD" = true ] && echo "Wants=wg-quick@${WIREGUARD_INTERFACE}.service")
+$([ "$ENABLE_WIREGUARD" = true ] && echo "Wants=wg-quick@${WIREGUARD_INTERFACE}.service")
 
 [Service]
 Type=simple
@@ -849,7 +803,7 @@ configure_firewall() {
     fi
     
     # WireGuard port
-    if [ "$INSTALL_WIREGUARD" = true ]; then
+    if [ "$ENABLE_WIREGUARD" = true ]; then
         ufw allow ${WIREGUARD_PORT}/udp comment "WireGuard Relay Tunnel" > /dev/null 2>&1
         log_info "Firewall: WireGuard port ${WIREGUARD_PORT}/udp allowed"
     fi
@@ -874,17 +828,12 @@ start_services() {
         sleep 3
     fi
     
-    # Start WireGuard
-    if [ "$INSTALL_WIREGUARD" = true ]; then
-        if ! systemctl is-active --quiet wg-quick@${WIREGUARD_INTERFACE}; then
-            systemctl start wg-quick@${WIREGUARD_INTERFACE} 2>/dev/null || true
-            sleep 2
-        fi
-        
+    # WireGuard should already be running from configure step
+    if [ "$ENABLE_WIREGUARD" = true ]; then
         if systemctl is-active --quiet wg-quick@${WIREGUARD_INTERFACE}; then
-            log_success "WireGuard tunnel active"
+            log_success "WireGuard interface active"
         else
-            log_warn "WireGuard tunnel not active - check: journalctl -u wg-quick@${WIREGUARD_INTERFACE}"
+            log_info "WireGuard interface will activate when first peer is added"
         fi
     fi
     
@@ -927,15 +876,14 @@ print_summary() {
         echo ""
     fi
     
-    if [ "$INSTALL_WIREGUARD" = true ]; then
+    if [ "$ENABLE_WIREGUARD" = true ]; then
         echo "  ─────────────────────────────────────────────────────────────"
-        echo "  WireGuard Tunnel (CGNAT Support):"
+        echo "  WireGuard Tunnel (Dynamic CGNAT Support):"
         echo "  ─────────────────────────────────────────────────────────────"
         echo "    Interface:       ${WIREGUARD_INTERFACE}"
         echo "    Tunnel IP:       ${TUNNEL_IP}"
         echo "    Tunnel Network:  ${TUNNEL_NETWORK}"
-        echo "    Relay Endpoint:  ${RELAY_ENDPOINT}"
-        echo "    Status:          $(systemctl is-active wg-quick@${WIREGUARD_INTERFACE} 2>/dev/null || echo 'inactive')"
+        echo "    Peer Management: Dynamic (automatic during relay registration)"
         echo ""
         
         if [ -f /etc/wireguard/orchestrator-public.key ]; then
@@ -943,10 +891,9 @@ print_summary() {
             echo "    ${CYAN}Orchestrator Public Key:${NC}"
             echo "    ${pubkey}"
             echo ""
-            echo "    ${YELLOW}⚠ IMPORTANT: Add this key to relay node!${NC}"
-            echo "    Run on relay node (${RELAY_ENDPOINT%%:*}):"
-            echo "    sudo wg set wg-relay-server peer ${pubkey} \\"
-            echo "      allowed-ips ${TUNNEL_IP}/32"
+            echo "    ${GREEN}✓ This key will be automatically provided to relay nodes${NC}"
+            echo "    ${GREEN}✓ Relay nodes will add orchestrator as peer during provisioning${NC}"
+            echo "    ${GREEN}✓ Orchestrator will add relays as peers during registration${NC}"
             echo ""
         fi
     fi
@@ -963,9 +910,10 @@ print_summary() {
         echo "    Caddy logs:    sudo journalctl -u caddy -f"
     fi
     
-    if [ "$INSTALL_WIREGUARD" = true ]; then
+    if [ "$ENABLE_WIREGUARD" = true ]; then
         echo "    WireGuard:     sudo wg show ${WIREGUARD_INTERFACE}"
-        echo "    Tunnel status: sudo systemctl status wg-quick@${WIREGUARD_INTERFACE}"
+        echo "    View peers:    sudo wg show ${WIREGUARD_INTERFACE} peers"
+        echo "    Public key:    sudo cat /etc/wireguard/orchestrator-public.key"
     fi
     
     echo ""
@@ -981,10 +929,11 @@ print_summary() {
         echo "       - Wildcard certificates will be auto-provisioned"
     fi
     
-    if [ "$INSTALL_WIREGUARD" = true ]; then
-        echo "    4. Configure relay node (CRITICAL):"
-        echo "       - Add orchestrator as peer on relay"
-        echo "       - See public key above"
+    if [ "$ENABLE_WIREGUARD" = true ]; then
+        echo "    4. Deploy relay nodes:"
+        echo "       - Relay VMs will automatically receive orchestrator's public key"
+        echo "       - Bidirectional peer setup happens during relay registration"
+        echo "       - No manual WireGuard configuration needed!"
     fi
     
     echo ""
@@ -997,7 +946,7 @@ main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║       DeCloud Orchestrator Installer v${VERSION}              ║"
-    echo "║       (Production-Ready + WireGuard CGNAT Support)           ║"
+    echo "║       (Production + Dynamic WireGuard Peer Management)       ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
@@ -1022,8 +971,8 @@ main() {
     install_dotnet
     install_wireguard
     
-    # Configure WireGuard tunnel
-    configure_wireguard_client
+    # Configure WireGuard interface (no peers)
+    configure_wireguard_interface
     
     # Central ingress
     install_caddy
