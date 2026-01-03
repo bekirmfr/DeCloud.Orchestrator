@@ -128,6 +128,7 @@
 		<!-- We just need to exclude development files from publish -->
 
 		<!-- Exclude development files from publish -->
+		<Compile Remove="CloudInit\**" />
 		<Compile Remove="wwwroot\**" />
 		<Content Remove="$(FrontendDir)/node_modules/**" />
 		<Content Remove="$(FrontendDir)/src/**" />
@@ -136,8 +137,11 @@
 		<Content Remove="$(FrontendDir)/*.js" />
 		<Content Remove="$(FrontendDir)/*.ts" />
 		<Content Remove="$(FrontendDir)/.env*" />
+		<Content Remove="CloudInit\**" />
 		<Content Remove="wwwroot\**" />
+		<EmbeddedResource Remove="CloudInit\**" />
 		<EmbeddedResource Remove="wwwroot\**" />
+		<None Remove="CloudInit\**" />
 		<None Remove="wwwroot\**" />
 		<Content Remove="$(FrontendDir)/.gitignore" />
 		<Content Remove="$(FrontendDir)/index.html" />
@@ -145,9 +149,6 @@
 
 		<!-- Note: dist/ files are automatically included by .NET SDK -->
 		<!-- No explicit include needed - avoids NETSDK1022 duplicate error -->
-	</ItemGroup>
-	<ItemGroup>
-	  <Folder Include="CloudInit\" />
 	</ItemGroup>
 
 	<!-- ============================================== -->

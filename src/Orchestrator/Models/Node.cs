@@ -425,6 +425,10 @@ public class RelayNodeInfo
     /// WireGuard public endpoint (IP:Port)
     /// </summary>
     public string WireGuardEndpoint { get; set; } = string.Empty;
+    /// <summary>
+    /// WireGuard public key for this relay
+    /// Generated during relay VM deployment and used by CGNAT nodes
+    /// </summary>
     public string? WireGuardPublicKey { get; set; }
 
     /// <summary>

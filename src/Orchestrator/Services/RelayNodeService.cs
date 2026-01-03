@@ -121,13 +121,31 @@ public class RelayNodeService : IRelayNodeService
 
         try
         {
-            // Create relay VM specification
-            var vmSpec = RelayVmSpec.Standard;
+            // ========================================
+            // STEP 1: Generate WireGuard keypair for relay VM
+            // ========================================
+            _logger.LogInformation(
+                "Generating WireGuard keypair for relay VM on node {NodeId}",
+                node.Id);
 
-            // Determine capacity based on node resources
+            var relayPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
+            var relayPublicKey = await DerivePublicKeyAsync(relayPrivateKey, ct);
+
+            _logger.LogInformation(
+                "Generated WireGuard keys for relay on node {NodeId} (public key: {PubKey})",
+                node.Id, relayPublicKey);
+
+            // ========================================
+            // STEP 2: Create relay VM specification
+            // ========================================
+            var vmSpec = RelayVmSpec.Standard;
             var maxCapacity = CalculateRelayCapacity(node);
 
-            // Create relay VM
+            // ========================================
+            // STEP 3: Create relay VM with WireGuard private key
+            // ========================================
+            // The private key is passed to the VM via labels
+            // The VM deployment process will read this and configure WireGuard
             var relayVm = await vmService.CreateVmAsync(
                 userId: "system",
                 request: new CreateVmRequest
@@ -138,18 +156,22 @@ public class RelayNodeService : IRelayNodeService
                     NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
-                        { "role", "relay" }
+                        { "role", "relay" },
+                        { "wireguard-private-key", relayPrivateKey }  // Pass private key to VM
                     }
                 ),
                 node.Id
             );
 
-            // Initialize relay configuration
+            // ========================================
+            // STEP 4: Initialize relay configuration with public key
+            // ========================================
             node.RelayInfo = new RelayNodeInfo
             {
                 IsActive = true,
                 RelayVmId = relayVm.VmId,
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
+                WireGuardPublicKey = relayPublicKey,  // ✅ Store public key
                 MaxCapacity = maxCapacity,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",
@@ -160,8 +182,9 @@ public class RelayNodeService : IRelayNodeService
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
-                "Relay VM {VmId} deployed on node {NodeId} with capacity {Capacity}",
-                relayVm.VmId, node.Id, maxCapacity);
+                "✓ Relay VM {VmId} deployed on node {NodeId} " +
+                "(Capacity: {Capacity}, WireGuard public key: {PubKey})",
+                relayVm.VmId, node.Id, maxCapacity, relayPublicKey);
 
             return relayVm.VmId;
         }
@@ -300,7 +323,7 @@ public class RelayNodeService : IRelayNodeService
                 AssignedRelayNodeId = relayNode.Id,
                 TunnelIp = tunnelIp,
                 WireGuardConfig = wgConfig,
-                PublicEndpoint = $"https://relay-{relayNode.Region}-{relayNode.Id[..8]}.decloud.io",
+                PublicEndpoint = $"https://relay-{relayNode.Region}-{relayNode.Id[..8]}.vms.stackfi.tech",
                 TunnelStatus = TunnelStatus.Connecting,
                 LastHandshake = null
             };
@@ -343,42 +366,34 @@ public class RelayNodeService : IRelayNodeService
     }
 
     private async Task<string> GenerateWireGuardConfigAsync(
-    Node cgnatNode,
-    Node relayNode,
-    string tunnelIp,
-    CancellationToken ct = default)
+        Node cgnatNode,
+        Node relayNode,
+        string tunnelIp,
+        CancellationToken ct = default)
     {
         try
         {
             // ========================================
-            // STEP 1: Generate private key for CGNAT node
+            // STEP 1: Validate relay has a public key
+            // ========================================
+            if (relayNode.RelayInfo == null)
+            {
+                throw new InvalidOperationException(
+                    $"Relay node {relayNode.Id} has no RelayInfo configured");
+            }
+
+            if (string.IsNullOrWhiteSpace(relayNode.RelayInfo.WireGuardPublicKey))
+            {
+                throw new InvalidOperationException(
+                    $"Relay node {relayNode.Id} is missing WireGuard public key. " +
+                    "This relay may have been created before the WireGuard key generation fix. " +
+                    "Please redeploy the relay VM or manually configure its WireGuard public key.");
+            }
+
+            // ========================================
+            // STEP 2: Generate private key for CGNAT node
             // ========================================
             var privateKey = await GenerateWireGuardPrivateKeyAsync(ct);
-
-            // ========================================
-            // STEP 2: Get relay's public key
-            // ========================================
-            string relayPublicKey;
-
-            if (string.IsNullOrWhiteSpace(relayNode.RelayInfo?.WireGuardPublicKey))
-            {
-                // Relay doesn't have a public key yet
-                // Generate one temporarily (relay VMs should report their key in future)
-                _logger.LogWarning(
-                    "Relay {RelayId} missing WireGuard public key, generating temporary key",
-                    relayNode.Id);
-
-                var tempPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
-                relayPublicKey = await DerivePublicKeyAsync(tempPrivateKey, ct);
-
-                // Store it
-                relayNode.RelayInfo.WireGuardPublicKey = relayPublicKey;
-                await _dataStore.SaveNodeAsync(relayNode);
-            }
-            else
-            {
-                relayPublicKey = relayNode.RelayInfo.WireGuardPublicKey;
-            }
 
             // ========================================
             // STEP 3: Build configuration with real keys
@@ -389,14 +404,15 @@ Address = {tunnelIp}/24
 DNS = 8.8.8.8
 
 [Peer]
-PublicKey = {relayPublicKey}
-Endpoint = {relayNode.RelayInfo!.WireGuardEndpoint}
+PublicKey = {relayNode.RelayInfo.WireGuardPublicKey}
+Endpoint = {relayNode.RelayInfo.WireGuardEndpoint}
 AllowedIPs = 10.20.0.0/16
 PersistentKeepalive = 25";
 
             _logger.LogInformation(
-                "Generated WireGuard config for CGNAT node {CgnatId} → Relay {RelayId}",
-                cgnatNode.Id, relayNode.Id);
+                "Generated WireGuard config for CGNAT node {CgnatId} → Relay {RelayId} " +
+                "(Tunnel IP: {TunnelIp})",
+                cgnatNode.Id, relayNode.Id, tunnelIp);
 
             return config;
         }
@@ -408,6 +424,7 @@ PersistentKeepalive = 25";
             throw;
         }
     }
+
 
     /// <summary>
     /// Generate a WireGuard private key using the wg command
