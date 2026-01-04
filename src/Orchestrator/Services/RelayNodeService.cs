@@ -162,7 +162,10 @@ public class RelayNodeService : IRelayNodeService
                     Labels: new Dictionary<string, string>
                     {
                         { "role", "relay" },
-                        { "wireguard-private-key", relayPrivateKey }  // Pass private key to VM
+                        { "wireguard-private-key", relayPrivateKey },  // Pass private key to VM
+                        { "relay-capacity", maxCapacity.ToString() },
+                        { "relay-region", node.Region ?? "default" },
+                        { "node-public-ip", node.PublicIp }
                     }
                 ),
                 node.Id

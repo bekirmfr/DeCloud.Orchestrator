@@ -2,6 +2,7 @@
 using Orchestrator.Data;
 using Orchestrator.Exceptions;
 using Orchestrator.Models;
+using Org.BouncyCastle.Asn1.Ocsp;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -727,7 +728,6 @@ public class VmService : IVmService
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 SshPublicKey = sshPublicKey ?? "",
-                LeaseId = vm.Id,
                 Network = new
                 {
                     MacAddress = "",
@@ -736,7 +736,8 @@ public class VmService : IVmService
                     VxlanVni = 0,
                     AllowedPorts = new List<int>()
                 },
-                Password = password
+                Password = password,
+                Labels = vm.Labels
             }),
             RequiresAck: true,
             TargetResourceId: vm.Id
