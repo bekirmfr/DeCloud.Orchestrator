@@ -59,6 +59,7 @@ public class NodeService : INodeService
     private readonly SchedulingConfiguration _schedulingConfig;
     private readonly IRelayNodeService _relayNodeService;
     private readonly IServiceProvider _serviceProvider;
+    private readonly IWireGuardManager _wireGuardManager;
 
     public NodeService(
         DataStore dataStore,
@@ -69,6 +70,7 @@ public class NodeService : INodeService
         HttpClient httpClient,
         IRelayNodeService relayNodeService,
         IServiceProvider serviceProvider,
+        IWireGuardManager wireGuardManager,
         SchedulingConfiguration? schedulingConfig = null
         )
     {
@@ -78,10 +80,11 @@ public class NodeService : INodeService
         _logger = logger;
         _loggerFactory = loggerFactory;
         _httpClient = httpClient;
-        _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
-        _schedulingConfig.Weights.Validate();
         _relayNodeService = relayNodeService;
         _serviceProvider = serviceProvider;
+        _wireGuardManager = wireGuardManager;
+        _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
+        _schedulingConfig.Weights.Validate();
     }
 
     // ============================================================================
@@ -515,6 +518,17 @@ public class NodeService : INodeService
         var nodeId = expectedNodeId;
 
         // =====================================================
+        // Get orchestrator WireGuard public key if available
+        // =====================================================
+        string? orchestratorPublicKey = null;
+
+        if (request.HardwareInventory.Network.NatType != NatType.None)
+            orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync();
+            _logger.LogInformation(
+                "Including orchestrator WireGuard public key in registration response for node {NodeId}",
+                nodeId);
+
+        // =====================================================
         // STEP 4: Check if Node Exists (Re-registration)
         // =====================================================
         var existingNode = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == nodeId);
@@ -588,7 +602,8 @@ public class NodeService : INodeService
             return new NodeRegistrationResponse(
                 existingNode.Id,
                 token,
-                TimeSpan.FromSeconds(15));
+                TimeSpan.FromSeconds(15),
+                orchestratorPublicKey);
         }
 
         // =====================================================
@@ -665,6 +680,8 @@ public class NodeService : INodeService
             "✓ New node registered successfully: {NodeId}",
             node.Id);
 
+        
+
         // =====================================================
         // STEP 7: Relay Node Deployment & Assignment
         // =====================================================
@@ -736,7 +753,11 @@ public class NodeService : INodeService
             }
         });
 
-        return new NodeRegistrationResponse(node.Id, newToken, TimeSpan.FromSeconds(15));
+        return new NodeRegistrationResponse(
+            node.Id, 
+            newToken, 
+            TimeSpan.FromSeconds(15),
+            orchestratorPublicKey);
     }
 
     public Task<bool> ValidateNodeTokenAsync(string nodeId, string token)
