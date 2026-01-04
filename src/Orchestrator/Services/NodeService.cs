@@ -522,11 +522,10 @@ public class NodeService : INodeService
         // =====================================================
         string? orchestratorPublicKey = null;
 
-        if (request.HardwareInventory.Network.NatType != NatType.None)
-            orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync();
-            _logger.LogInformation(
-                "Including orchestrator WireGuard public key in registration response for node {NodeId}",
-                nodeId);
+        orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync();
+        _logger.LogInformation(
+            "Including orchestrator WireGuard public key {PublicKey} in registration response for node {NodeId}",
+            orchestratorPublicKey, nodeId);
 
         // =====================================================
         // STEP 4: Check if Node Exists (Re-registration)
@@ -596,8 +595,9 @@ public class NodeService : INodeService
             _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(token);
 
             _logger.LogInformation(
-                "✓ Node re-registered successfully: {NodeId}",
-                existingNode.Id);
+                "✓ Node re-registered successfully: {NodeId} Orchestrator WireGuard Public Key: {OrchestratorPublicKey}",
+                existingNode.Id,
+                orchestratorPublicKey);
 
             return new NodeRegistrationResponse(
                 existingNode.Id,
@@ -679,8 +679,6 @@ public class NodeService : INodeService
         _logger.LogInformation(
             "✓ New node registered successfully: {NodeId}",
             node.Id);
-
-        
 
         // =====================================================
         // STEP 7: Relay Node Deployment & Assignment
