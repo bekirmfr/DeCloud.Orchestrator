@@ -11,7 +11,8 @@ namespace Orchestrator.Services;
 public class RelayHealthMonitor : BackgroundService
 {
     private readonly DataStore _dataStore;
-    private readonly RelayNodeService _relayNodeService;
+    private readonly IRelayNodeService _relayNodeService;
+    private readonly IWireGuardManager _wireGuardManager;
     private readonly HttpClient _httpClient;
     private readonly ILogger<RelayHealthMonitor> _logger;
 
@@ -20,12 +21,14 @@ public class RelayHealthMonitor : BackgroundService
 
     public RelayHealthMonitor(
         DataStore dataStore,
-        RelayNodeService relayNodeService,
+        IRelayNodeService relayNodeService,
+        IWireGuardManager wireGuardManager,
         HttpClient httpClient,
         ILogger<RelayHealthMonitor> logger)
     {
         _dataStore = dataStore;
         _relayNodeService = relayNodeService;
+        _wireGuardManager = wireGuardManager;
         _httpClient = httpClient;
         _logger = logger;
     }
@@ -105,7 +108,27 @@ public class RelayHealthMonitor : BackgroundService
 
                 relay.RelayInfo.Status = RelayStatus.Degraded;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                await _dataStore.SaveNodeAsync(relay);
+
+                // Check if relay peer is configured on orchestrator
+                var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay.Id, ct);
+
+                if (!hasPeer && relay.RelayInfo?.IsActive == true)
+                {
+                    _logger.LogWarning(
+                        "Relay {RelayId} is active but not configured as peer - " +
+                        "attempting to add", relay.Id);
+
+                    var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
+
+                    if (added)
+                    {
+                        _logger.LogInformation(
+                            "✓ Recovered relay {RelayId} via health check",
+                            relay.Id);
+                    }
+
+                    await _dataStore.SaveNodeAsync(relay);
+                }
             }
         }
         catch (OperationCanceledException)

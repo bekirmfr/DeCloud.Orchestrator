@@ -31,6 +31,7 @@ public interface IWireGuardManager
     /// Add orchestrator as peer to relay VM via relay management API
     /// </summary>
     Task<bool> RegisterWithRelayAsync(Node relayNode, string cgnatNodeId, string tunnelIp, CancellationToken ct = default);
+    Task<bool> HasRelayPeerAsync(string id, CancellationToken ct = default);
 }
 
 public class WireGuardManager : IWireGuardManager
@@ -310,5 +311,33 @@ public class WireGuardManager : IWireGuardManager
         var error = await errorTask;
 
         return (process.ExitCode, output, error);
+    }
+
+    public async Task<bool> HasRelayPeerAsync(Node relayNode, CancellationToken ct = default)
+    {
+        if (relayNode.RelayInfo == null ||
+            string.IsNullOrEmpty(relayNode.RelayInfo.WireGuardPublicKey))
+        {
+            return false;
+        }
+
+        try
+        {
+            var (exitCode, output, _) = await ExecuteCommandAsync(
+                "wg",
+                $"show {INTERFACE_NAME} peers",
+                ct);
+
+            if (exitCode == 0)
+            {
+                return output.Contains(relayNode.RelayInfo.WireGuardPublicKey);
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
