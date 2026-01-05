@@ -49,34 +49,35 @@ fi
 log_info "Analyzing WireGuard interface: $INTERFACE"
 echo ""
 
-# Get peer information
+# Get peer information using wg show dump for reliable parsing
 PEERS_TO_REMOVE=()
-PEERS_TO_KEEP=()
 
-while IFS= read -r line; do
-    if [[ $line =~ ^peer:\ (.+)$ ]]; then
-        CURRENT_PEER="${BASH_REMATCH[1]}"
-        HAS_ALLOWED_IPS=false
-        IS_STALE=false
-    elif [[ $line =~ allowed\ ips:\ \(none\) ]]; then
-        # Peer has no allowed IPs - mark for removal
-        HAS_ALLOWED_IPS=false
-        PEERS_TO_REMOVE+=("$CURRENT_PEER|no_allowed_ips")
-    elif [[ $line =~ allowed\ ips:\ (.+)$ ]]; then
-        HAS_ALLOWED_IPS=true
-    elif [[ $line =~ latest\ handshake:\ ([0-9]+)\ days ]]; then
-        DAYS="${BASH_REMATCH[1]}"
-        if [ "$DAYS" -ge 2 ]; then
-            IS_STALE=true
-            if [ "$HAS_ALLOWED_IPS" = false ]; then
-                # Already marked for removal
-                :
-            else
-                PEERS_TO_REMOVE+=("$CURRENT_PEER|stale_${DAYS}days")
-            fi
+# Parse wg show dump output (tab-separated format)
+# Format: public_key preshared_key endpoint allowed_ips latest_handshake rx tx persistent_keepalive
+while IFS=$'\t' read -r pubkey psk endpoint allowed_ips handshake rx tx keepalive; do
+    # Skip the interface line (first line)
+    if [[ "$pubkey" == "$INTERFACE" ]] || [[ -z "$pubkey" ]]; then
+        continue
+    fi
+    
+    # Check if peer has no allowed IPs
+    if [[ -z "$allowed_ips" ]] || [[ "$allowed_ips" == "(none)" ]]; then
+        PEERS_TO_REMOVE+=("$pubkey|no_allowed_ips")
+        continue
+    fi
+    
+    # Check if peer is stale (handshake timestamp is in seconds since epoch)
+    if [[ -n "$handshake" ]] && [[ "$handshake" != "0" ]]; then
+        CURRENT_TIME=$(date +%s)
+        TIME_DIFF=$((CURRENT_TIME - handshake))
+        HOURS_DIFF=$((TIME_DIFF / 3600))
+        
+        if [ "$HOURS_DIFF" -ge "$STALE_THRESHOLD_HOURS" ]; then
+            DAYS=$((HOURS_DIFF / 24))
+            PEERS_TO_REMOVE+=("$pubkey|stale_${DAYS}days")
         fi
     fi
-done < <(wg show "$INTERFACE")
+done < <(wg show "$INTERFACE" dump 2>/dev/null | tail -n +2)
 
 # Display analysis
 log_info "Found ${#PEERS_TO_REMOVE[@]} peers to remove"
