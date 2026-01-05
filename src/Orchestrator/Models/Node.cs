@@ -435,6 +435,12 @@ public class RelayNodeInfo
     /// Generated during relay VM deployment and used by CGNAT nodes
     /// </summary>
     public string? WireGuardPublicKey { get; set; }
+    /// <summary>
+    /// Gets or sets the WireGuard private key used for secure VPN authentication.
+    /// </summary>
+    /// <remarks>The private key must be a valid WireGuard key in base64 format. This value should be kept
+    /// confidential to maintain the security of the VPN connection.</remarks>
+    public string? WireGuardPrivateKey { get; set; }
 
     /// <summary>
     /// Maximum number of CGNAT nodes this relay can serve

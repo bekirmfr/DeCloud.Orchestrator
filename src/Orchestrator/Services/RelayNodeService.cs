@@ -180,6 +180,7 @@ public class RelayNodeService : IRelayNodeService
                 RelayVmId = relayVm.VmId,
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
                 WireGuardPublicKey = relayPublicKey,  // ✅ Store public key
+                WireGuardPrivateKey = relayPrivateKey,
                 MaxCapacity = maxCapacity,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",

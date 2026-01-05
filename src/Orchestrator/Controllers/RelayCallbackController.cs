@@ -1,7 +1,10 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Orchestrator.Services;
-using Orchestrator.Data;
 using Microsoft.Extensions.Logging;
+using Orchestrator.Data;
+using Orchestrator.Models;
+using Orchestrator.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Orchestrator.Controllers;
 
@@ -9,22 +12,19 @@ namespace Orchestrator.Controllers;
 [Route("api/relay")]
 public class RelayCallbackController : ControllerBase
 {
-    private readonly IRelayNodeService _relayService;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly INodeService _nodeService;
     private readonly DataStore _dataStore;
     private readonly ILogger<RelayCallbackController> _logger;
 
     public RelayCallbackController(
-        IRelayNodeService relayService,
         IWireGuardManager wireGuardManager,
         INodeService nodeService,
         DataStore dataStore,
         ILogger<RelayCallbackController> logger)
     {
-        _relayService = relayService;
         _wireGuardManager = wireGuardManager;
-        _nodeService = nodeService;
+        this._nodeService = nodeService;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -38,8 +38,11 @@ public class RelayCallbackController : ControllerBase
             "Received relay registration callback from {NodeId}/{RelayVmId}",
             notification.NodeId, notification.RelayVmId);
 
-        // Verify relay VM exists
+        // =====================================================
+        // STEP 1: Verify relay VM exists
+        // =====================================================
         var node = await _nodeService.GetNodeAsync(notification.NodeId);
+
         if (node?.RelayInfo?.RelayVmId != notification.RelayVmId)
         {
             _logger.LogWarning(
@@ -48,21 +51,48 @@ public class RelayCallbackController : ControllerBase
             return BadRequest("Invalid relay VM");
         }
 
-        // Verify callback token (security)
-        var expectedToken = ComputeRelayToken(notification.NodeId, notification.RelayVmId);
-        if (string.IsNullOrEmpty(token) || token != expectedToken)
+        // =====================================================
+        // STEP 2: Verify callback token using WireGuard private key
+        // =====================================================
+        if (string.IsNullOrEmpty(node.RelayInfo.WireGuardPrivateKey))
         {
-            _logger.LogWarning(
-                "Invalid relay callback token from {NodeId}/{RelayVmId}",
-                notification.NodeId, notification.RelayVmId);
-            return Unauthorized();
+            _logger.LogError(
+                "Cannot verify relay callback: WireGuard private key not found for {NodeId}",
+                notification.NodeId);
+            return StatusCode(500, "Relay private key not available");
         }
 
-        // Add relay as WireGuard peer on orchestrator
-        _logger.LogInformation(
-            "Adding relay {NodeId} as WireGuard peer (callback-triggered)",
-            node.Id);
+        var expectedToken = ComputeCallbackToken(
+            notification.NodeId,
+            notification.RelayVmId,
+            node.RelayInfo.WireGuardPrivateKey);
 
+        if (string.IsNullOrEmpty(token))
+        {
+            _logger.LogWarning(
+                "Relay callback rejected: Missing X-Relay-Token header from {NodeId}",
+                notification.NodeId);
+            return Unauthorized("Missing authentication token");
+        }
+
+        // Constant-time comparison to prevent timing attacks
+        if (!CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(token),
+            Encoding.UTF8.GetBytes(expectedToken)))
+        {
+            _logger.LogWarning(
+                "Relay callback rejected: Invalid token from {NodeId}/{RelayVmId}",
+                notification.NodeId, notification.RelayVmId);
+            return Unauthorized("Invalid authentication token");
+        }
+
+        _logger.LogInformation(
+            "✓ Relay callback authenticated successfully for {NodeId} using WireGuard private key",
+            notification.NodeId);
+
+        // =====================================================
+        // STEP 3: Add relay as WireGuard peer on orchestrator
+        // =====================================================
         var success = await _wireGuardManager.AddRelayPeerAsync(node);
 
         if (success)
@@ -73,14 +103,18 @@ public class RelayCallbackController : ControllerBase
                 node.Id);
 
             // Update relay status
-            if (node.RelayInfo != null)
-            {
-                node.RelayInfo.IsActive = true;
-                node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                await _dataStore.SaveNodeAsync(node);
-            }
+            node.RelayInfo.IsActive = true;
+            node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+            node.RelayInfo.Status = RelayStatus.Active;
+            await _dataStore.SaveNodeAsync(node);
 
-            return Ok(new { success = true, message = "Relay registered successfully" });
+            return Ok(new
+            {
+                success = true,
+                message = "Relay registered successfully",
+                relay_id = node.Id,
+                orchestrator_peer_added = true
+            });
         }
 
         _logger.LogError(
@@ -90,16 +124,21 @@ public class RelayCallbackController : ControllerBase
         return StatusCode(500, "Failed to add relay peer");
     }
 
-    private string ComputeRelayToken(string nodeId, string vmId)
+    /// <summary>
+    /// Compute HMAC-SHA256 callback token using relay's WireGuard private key
+    /// </summary>
+    private string ComputeCallbackToken(string nodeId, string vmId, string wireGuardPrivateKey)
     {
-        // HMAC-SHA256 token for security
+        // Message: nodeId:vmId
         var message = $"{nodeId}:{vmId}";
-        var secret = Environment.GetEnvironmentVariable("RELAY_CALLBACK_SECRET")
-                  ?? "default-secret-change-in-production";
 
-        using var hmac = new System.Security.Cryptography.HMACSHA256(
-            System.Text.Encoding.UTF8.GetBytes(secret));
-        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(message));
+        // Secret: relay's WireGuard private key (unique per relay)
+        var secret = wireGuardPrivateKey.Trim();
+
+        // HMAC-SHA256
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
+
         return Convert.ToBase64String(hash);
     }
 }

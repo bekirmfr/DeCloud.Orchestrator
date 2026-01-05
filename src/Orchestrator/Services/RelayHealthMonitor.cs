@@ -110,7 +110,7 @@ public class RelayHealthMonitor : BackgroundService
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
 
                 // Check if relay peer is configured on orchestrator
-                var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay.Id, ct);
+                var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
 
                 if (!hasPeer && relay.RelayInfo?.IsActive == true)
                 {
