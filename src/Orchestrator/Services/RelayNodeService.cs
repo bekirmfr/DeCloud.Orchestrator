@@ -342,6 +342,16 @@ public class RelayNodeService : IRelayNodeService
                 LastHandshake = null
             };
 
+            // Register CGNAT node with relay VM's WireGuard server
+            var registered = await RegisterCgnatNodeWithRelayAsync(cgnatNode, relayNode, tunnelIp, ct);
+            if (!registered)
+            {
+                _logger.LogWarning(
+                    "Failed to register CGNAT node {NodeId} with relay VM - " +
+                    "node will receive config but relay may not accept connection",
+                    cgnatNode.Id);
+            }
+
             // Update relay load
             relayNode.RelayInfo.CurrentLoad++;
             relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
@@ -518,6 +528,94 @@ PersistentKeepalive = 25";
         {
             _logger.LogError(ex, "Failed to derive public key");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Register CGNAT node with relay VM's WireGuard server
+    /// Calls the relay VM's API to add the node as a peer
+    /// </summary>
+    private async Task<bool> RegisterCgnatNodeWithRelayAsync(
+        Node cgnatNode,
+        Node relayNode,
+        string tunnelIp,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Get CGNAT node's WireGuard public key from config
+            var wgConfig = cgnatNode.CgnatInfo?.WireGuardConfig;
+            if (string.IsNullOrEmpty(wgConfig))
+            {
+                _logger.LogError(
+                    "Cannot register CGNAT node {NodeId}: No WireGuard config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            // Extract public key from config
+            var publicKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                wgConfig,
+                @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
+
+            if (!publicKeyMatch.Success)
+            {
+                _logger.LogError(
+                    "Cannot extract WireGuard key from CGNAT node {NodeId} config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            // Generate public key from private key
+            var privateKey = publicKeyMatch.Groups[1].Value.Trim();
+            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+
+            // Call relay VM's API to add peer
+            var relayApiUrl = $"http://{relayNode.PublicIp}:8080/api/relay/add-peer";
+
+            var payload = new
+            {
+                public_key = publicKey,
+                tunnel_ip = tunnelIp,
+                allowed_ips = $"{tunnelIp}/32",
+                persistent_keepalive = 25,
+                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+            };
+
+            _logger.LogInformation(
+                "Registering CGNAT node {NodeId} with relay {RelayId} at {ApiUrl}",
+                cgnatNode.Id, relayNode.Id, relayApiUrl);
+
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var response = await httpClient.PostAsync(relayApiUrl, content, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation(
+                    "✓ CGNAT node {NodeId} registered with relay {RelayId}",
+                    cgnatNode.Id, relayNode.Id);
+                return true;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Failed to register CGNAT node {NodeId} with relay {RelayId}: {Error}",
+                    cgnatNode.Id, relayNode.Id, error);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error registering CGNAT node {NodeId} with relay {RelayId}",
+                cgnatNode.Id, relayNode.Id);
+            return false;
         }
     }
 }
