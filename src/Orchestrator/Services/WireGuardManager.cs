@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Minimal WireGuard management for orchestrator connectivity to relay network.

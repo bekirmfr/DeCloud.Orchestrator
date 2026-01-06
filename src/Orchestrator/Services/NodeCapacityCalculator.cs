@@ -1,6 +1,6 @@
 ﻿using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Calculates node capacity with tier-specific overcommit ratios

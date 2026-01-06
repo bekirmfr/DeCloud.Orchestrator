@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
-using Orchestrator.Services;
+using Orchestrator.Background;
 
 namespace Orchestrator.Controllers;
 
@@ -10,15 +10,18 @@ namespace Orchestrator.Controllers;
 public class NodesController : ControllerBase
 {
     private readonly INodeService _nodeService;
+    private readonly INodeAuthService _nodeAuthService;
     private readonly IVmService _vmService;
     private readonly ILogger<NodesController> _logger;
 
     public NodesController(
         INodeService nodeService,
+        INodeAuthService nodeAuthService,
         IVmService vmService,
         ILogger<NodesController> logger)
     {
         _nodeService = nodeService;
+        _nodeAuthService = nodeAuthService;
         _vmService = vmService;
         _logger = logger;
     }
@@ -54,7 +57,7 @@ public class NodesController : ControllerBase
     {
         // Validate node token
         if (string.IsNullOrEmpty(nodeToken) || 
-            !await _nodeService.ValidateNodeTokenAsync(nodeId, nodeToken))
+            !await _nodeAuthService.ValidateTokenAsync(nodeId, nodeToken))
         {
             return Unauthorized(ApiResponse<NodeHeartbeatResponse>.Fail("UNAUTHORIZED", "Invalid node token"));
         }
@@ -82,7 +85,7 @@ public class NodesController : ControllerBase
     {
         // Validate node token
         if (string.IsNullOrEmpty(nodeToken) ||
-            !await _nodeService.ValidateNodeTokenAsync(nodeId, nodeToken))
+            !await _nodeAuthService.ValidateTokenAsync(nodeId, nodeToken))
         {
             return Unauthorized(ApiResponse<bool>.Fail("UNAUTHORIZED", "Invalid node token"));
         }

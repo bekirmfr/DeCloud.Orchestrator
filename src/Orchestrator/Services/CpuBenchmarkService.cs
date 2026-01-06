@@ -1,7 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Text.RegularExpressions;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// CPU benchmarking service for measuring node performance

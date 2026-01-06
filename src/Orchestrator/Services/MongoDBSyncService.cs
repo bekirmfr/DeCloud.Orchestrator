@@ -1,6 +1,6 @@
-﻿using Orchestrator.Data;
+﻿using Orchestrator.Persistence;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Background service that periodically syncs in-memory state to MongoDB.

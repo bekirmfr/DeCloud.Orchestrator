@@ -8,10 +8,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using Nethereum.Signer;
 using Nethereum.Util;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// User management service interface

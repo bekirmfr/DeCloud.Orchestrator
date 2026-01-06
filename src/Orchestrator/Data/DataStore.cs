@@ -2,7 +2,7 @@
 using MongoDB.Driver;
 using Orchestrator.Models;
 
-namespace Orchestrator.Data;
+namespace Orchestrator.Persistence;
 
 /// <summary>
 /// Hybrid data store for the orchestrator.
@@ -46,6 +46,8 @@ public class DataStore
     // MongoDB Collections (null if not configured)
     private IMongoCollection<Node>? NodesCollection =>
         _database?.GetCollection<Node>("nodes");
+    private IMongoCollection<NodeAuthToken>? NodeAuthTokensCollection =>
+        _database?.GetCollection<NodeAuthToken>("nodeAuthTokens");
     private IMongoCollection<VirtualMachine>? VmsCollection =>
         _database?.GetCollection<VirtualMachine>("vms");
     private IMongoCollection<User>? UsersCollection =>
@@ -196,6 +198,20 @@ public class DataStore
             {
                 Nodes.TryAdd(node.Id, node);
             }
+
+            // Load Node Auth Tokens into memory cache
+            var authTokens = await NodeAuthTokensCollection!
+                .Find(t => t.IsValid)
+                .ToListAsync();
+
+            foreach (var authToken in authTokens)
+            {
+                NodeAuthTokens.TryAdd(authToken.NodeId, authToken.TokenHash);
+            }
+
+            _logger.LogInformation(
+                "✓ Loaded {Count} valid node auth tokens from MongoDB",
+                authTokens.Count);
 
             // Load VMs (exclude deleted)
             var vms = await VmsCollection!

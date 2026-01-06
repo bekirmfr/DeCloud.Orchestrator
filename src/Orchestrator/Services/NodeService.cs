@@ -1,15 +1,14 @@
 ﻿using System.Security.Cryptography;
 using System.Text.Json;
 using DeCloud.Shared;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 public interface INodeService
 {
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request);
-    Task<bool> ValidateNodeTokenAsync(string nodeId, string token);
     Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat);
     /// <summary>
     /// Process command acknowledgment from node
@@ -53,6 +52,7 @@ public class NodeService : INodeService
     private readonly DataStore _dataStore;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
+    private readonly INodeAuthService _authService;
     private readonly ILogger<NodeService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
@@ -65,6 +65,7 @@ public class NodeService : INodeService
         DataStore dataStore,
         IEventService eventService,
         ICentralIngressService ingressService,
+        INodeAuthService authService,
         ILogger<NodeService> logger,
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
@@ -77,6 +78,7 @@ public class NodeService : INodeService
         _dataStore = dataStore;
         _eventService = eventService;
         _ingressService = ingressService;
+        _authService = authService;
         _logger = logger;
         _loggerFactory = loggerFactory;
         _httpClient = httpClient;
@@ -590,9 +592,20 @@ public class NodeService : INodeService
 
             await _dataStore.SaveNodeAsync(existingNode);
 
-            // Generate new auth token
-            var token = GenerateAuthToken();
-            _dataStore.NodeAuthTokens[existingNode.Id] = HashToken(token);
+            // Check auth token exists and is valid
+            string? token = null;
+            var authToken = await _authService.GetTokenInfoAsync(nodeId);
+            if (authToken != null && authToken.IsValid)
+            {
+                token = _dataStore.NodeAuthTokens[nodeId];
+            }
+            else
+            {
+                await _authService.RevokeTokenAsync(nodeId);
+                token = await _authService.CreateTokenAsync(
+                    existingNode.Id,
+                    createdFromIp: request.PublicIp);
+            }
 
             _logger.LogInformation(
                 "✓ Node re-registered successfully: {NodeId} Orchestrator WireGuard Public Key: {OrchestratorPublicKey}",
@@ -673,8 +686,9 @@ public class NodeService : INodeService
 
         await _dataStore.SaveNodeAsync(node);
 
-        var newToken = GenerateAuthToken();
-        _dataStore.NodeAuthTokens[node.Id] = HashToken(newToken);
+        var newToken = await _authService.CreateTokenAsync(
+            node.Id,
+            createdFromIp: request.PublicIp);
 
         _logger.LogInformation(
             "✓ New node registered successfully: {NodeId}",
@@ -756,15 +770,6 @@ public class NodeService : INodeService
             newToken, 
             TimeSpan.FromSeconds(15),
             orchestratorPublicKey);
-    }
-
-    public Task<bool> ValidateNodeTokenAsync(string nodeId, string token)
-    {
-        if (!_dataStore.NodeAuthTokens.TryGetValue(nodeId, out var storedHash))
-            return Task.FromResult(false);
-
-        var tokenHash = HashToken(token);
-        return Task.FromResult(storedHash == tokenHash);
     }
 
     /// <summary>
@@ -1639,28 +1644,5 @@ public class NodeService : INodeService
                 }
             });
         }
-    }
-
-    // ============================================================================
-    // Utilities
-    // ============================================================================
-
-    private static string GenerateAuthToken()
-    {
-        var bytes = new byte[32];
-        RandomNumberGenerator.Fill(bytes);
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static string HashToken(string token)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(token);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash);
-    }
-
-    private static string SafeSubstring(string s, int maxLength)
-    {
-        return s.Length > maxLength ? s[..maxLength] : s;
     }
 }

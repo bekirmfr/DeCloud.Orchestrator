@@ -2,7 +2,7 @@ using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
-using Orchestrator.Services;
+using Orchestrator.Background;
 
 namespace Orchestrator.Infrastructure;
 

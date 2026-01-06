@@ -1,7 +1,7 @@
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 public interface IEventService
 {

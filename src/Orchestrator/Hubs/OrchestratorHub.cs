@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
-using Orchestrator.Services;
+using Orchestrator.Background;
 
 namespace Orchestrator.Hubs;
 

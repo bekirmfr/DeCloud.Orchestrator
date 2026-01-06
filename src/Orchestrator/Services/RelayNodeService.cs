@@ -1,8 +1,8 @@
-﻿using Orchestrator.Data;
+﻿using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Microsoft.Extensions.Logging;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Manages relay node infrastructure

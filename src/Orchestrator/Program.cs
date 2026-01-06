@@ -4,12 +4,12 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Orchestrator.Background;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
-using Orchestrator.Services;
+using Orchestrator.Background;
 using Serilog;
 using System.Text;
 using System.Text.Json;
@@ -119,6 +119,14 @@ builder.Services.AddHttpClient("SubdomainProxy")
         UseCookies = false
     });
 
+builder.Services.AddScoped<INodeAuthService>(sp =>
+{
+    var dataStore = sp.GetRequiredService<DataStore>();
+    var database = sp.GetService<IMongoDatabase>();
+    var logger = sp.GetRequiredService<ILogger<NodeAuthService>>();
+    return new NodeAuthService(dataStore, database, logger);
+});
+
 // =====================================================
 // Background Services
 // =====================================================
@@ -127,6 +135,7 @@ builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();
 builder.Services.AddHostedService<BillingService>();
 builder.Services.AddHostedService<CleanupService>();
+builder.Services.AddHostedService<TokenCleanupService>();
 
 // Add MongoDB sync service if MongoDB is configured
 if (mongoDatabase != null)

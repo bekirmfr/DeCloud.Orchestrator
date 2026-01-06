@@ -1,6 +1,6 @@
 ﻿using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Unified scheduling configuration based on performance benchmarks

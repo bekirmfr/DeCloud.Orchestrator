@@ -1,11 +1,11 @@
 ﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Service for managing central ingress routes with automatic subdomain assignment.

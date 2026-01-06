@@ -1,9 +1,9 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 /// <summary>
 /// Service for managing terminal sessions with ephemeral key injection.

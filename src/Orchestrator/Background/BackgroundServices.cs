@@ -1,6 +1,5 @@
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
-using Orchestrator.Services;
 
 namespace Orchestrator.Background;
 
@@ -117,7 +116,7 @@ public class BillingService : BackgroundService
             try
             {
                 using var scope = _serviceProvider.CreateScope();
-                var dataStore = scope.ServiceProvider.GetRequiredService<Data.DataStore>();
+                var dataStore = scope.ServiceProvider.GetRequiredService<Persistence.DataStore>();
                 
                 await ProcessBillingAsync(dataStore);
             }
@@ -130,7 +129,7 @@ public class BillingService : BackgroundService
         }
     }
 
-    private Task ProcessBillingAsync(Data.DataStore dataStore)
+    private Task ProcessBillingAsync(Persistence.DataStore dataStore)
     {
         var now = DateTime.UtcNow;
         
@@ -187,7 +186,7 @@ public class CleanupService : BackgroundService
             try
             {
                 using var scope = _serviceProvider.CreateScope();
-                var dataStore = scope.ServiceProvider.GetRequiredService<Data.DataStore>();
+                var dataStore = scope.ServiceProvider.GetRequiredService<Persistence.DataStore>();
                 
                 await CleanupDeletedVmsAsync(dataStore);
                 await TrimEventHistoryAsync(dataStore);
@@ -274,7 +273,7 @@ public class CleanupService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private Task CleanupDeletedVmsAsync(Data.DataStore dataStore)
+    private Task CleanupDeletedVmsAsync(Persistence.DataStore dataStore)
     {
         var cutoff = DateTime.UtcNow - _deletedRetention;
         var toRemove = dataStore.VirtualMachines.Values
@@ -293,7 +292,7 @@ public class CleanupService : BackgroundService
         return Task.CompletedTask;
     }
 
-    private Task TrimEventHistoryAsync(Data.DataStore dataStore)
+    private Task TrimEventHistoryAsync(Persistence.DataStore dataStore)
     {
         // Event history is already bounded in DataStore, but we can do additional cleanup here
         return Task.CompletedTask;

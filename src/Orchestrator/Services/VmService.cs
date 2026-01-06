@@ -1,12 +1,12 @@
 ﻿using DeCloud.Shared.Models;
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Exceptions;
 using Orchestrator.Models;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Background;
 
 public interface IVmService
 {
