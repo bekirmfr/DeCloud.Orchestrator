@@ -482,8 +482,7 @@ public class NodeService : INodeService
         if (!VerifyWalletSignature(request.WalletAddress, request.Message, request.Signature))
         {
             _logger.LogError("Node registration rejected: Invalid wallet signature");
-            throw new UnauthorizedAccessException(
-                "Invalid wallet signature. Please ensure you're using the correct wallet.");
+            throw new UnauthorizedAccessException("Invalid wallet signature. Please ensure you're using the correct wallet.");
         }
 
         // =====================================================
@@ -498,12 +497,12 @@ public class NodeService : INodeService
         // =====================================================
         // STEP 3: Generate and Validate Node ID
         // =====================================================
-        string expectedNodeId;
+        string nodeId;
         try
         {
-            expectedNodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
+            nodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
             // Verify message contains node ID (prevent signature reuse)
-            if (!request.Message.Contains(expectedNodeId))
+            if (!request.Message.Contains(nodeId))
             {
                 _logger.LogError("Node registration rejected: Message doesn't contain node ID");
                 throw new ArgumentException("Signature message must contain the node ID for security.");
@@ -511,31 +510,13 @@ public class NodeService : INodeService
 
             _logger.LogInformation(
                 "✓ Wallet signature verified for node {NodeId}",
-                expectedNodeId);
+                nodeId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to generate node ID");
             throw new ArgumentException("Invalid machine ID or wallet address", ex);
         }
-
-        // If node provides a claimed ID, validate it matches
-        if (!string.IsNullOrEmpty(request.NodeId))
-        {
-            if (!request.NodeId.Equals(expectedNodeId, StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogWarning(
-                    "Node ID mismatch: claimed={ClaimedId}, expected={ExpectedId} (Machine={MachineId}, Wallet={Wallet})",
-                    request.NodeId, expectedNodeId, request.MachineId, request.WalletAddress);
-
-                throw new ArgumentException(
-                    "Node ID validation failed. The provided node ID does not match " +
-                    "the deterministic ID for this machine + wallet combination.");
-            }
-        }
-
-        // Use the deterministic node ID (calculated or validated)
-        var nodeId = expectedNodeId;
 
         // =====================================================
         // Get orchestrator WireGuard public key if available

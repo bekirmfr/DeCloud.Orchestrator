@@ -232,13 +232,6 @@ public enum NodeStatus
 public class NodeRegistrationRequest
 {
     /// <summary>
-    /// Deterministic node ID (generated from MachineId + WalletAddress)
-    /// Optional: if not provided, orchestrator will calculate it
-    /// If provided, must match calculated value for validation
-    /// </summary>
-    public string? NodeId { get; set; }
-
-    /// <summary>
     /// Machine fingerprint (from /etc/machine-id or fallback)
     /// Required for node ID generation and validation
     /// </summary>
