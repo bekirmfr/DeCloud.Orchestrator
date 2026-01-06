@@ -201,7 +201,7 @@ public class DataStore
 
             // Load Node Auth Tokens into memory cache
             var authTokens = await NodeAuthTokensCollection!
-                .Find(t => t.IsValid)
+                .Find(t => !t.IsRevoked && t.ExpiresAt > DateTime.UtcNow)
                 .ToListAsync();
 
             foreach (var authToken in authTokens)
