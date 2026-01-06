@@ -523,6 +523,12 @@ public class NodeService : INodeService
             orchestratorPublicKey, nodeId);
 
         // =====================================================
+        // Generate and save API key
+        // =====================================================
+        var apiKey = GenerateApiKey();
+        var apiKeyHash = GenerateHash(apiKey);
+
+        // =====================================================
         // STEP 4: Check if Node Exists (Re-registration)
         // =====================================================
         var existingNode = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == nodeId);
@@ -582,6 +588,10 @@ public class NodeService : INodeService
                 nodeId,
                 existingNode.PerformanceEvaluation.HighestTier,
                 reregTotalCapacity.TotalComputePoints);
+
+            existingNode.ApiKeyHash = apiKeyHash;
+            existingNode.ApiKeyCreatedAt = DateTime.UtcNow;
+            existingNode.ApiKeyLastUsedAt = null;
 
             await _dataStore.SaveNodeAsync(existingNode);
 
@@ -665,9 +675,6 @@ public class NodeService : INodeService
         // =====================================================
         // Generate and save API key
         // =====================================================
-        var apiKey = GenerateApiKey();
-        var apiKeyHash = GenerateHash(apiKey);
-
         node.ApiKeyHash = apiKeyHash;
         node.ApiKeyCreatedAt = DateTime.UtcNow;
         node.ApiKeyLastUsedAt = null;
