@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeCloud Node Authorization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .logo p {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .status {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status-label {
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .status-value {
+            color: #333;
+            font-weight: 600;
+            word-break: break-all;
+            text-align: right;
+            max-width: 60%;
+        }
+        
+        .message-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #333;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        .button {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 10px 0;
+        }
+        
+        .button-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .button-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .button-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .button-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+        
+        .button-secondary:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .signature-result {
+            background: #e8f5e9;
+            border: 2px solid #4caf50;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .signature-result h3 {
+            color: #2e7d32;
+            margin-bottom: 10px;
+        }
+        
+        .signature-text {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        
+        .warning h4 {
+            color: #856404;
+            margin-bottom: 5px;
+        }
+        
+        .warning p {
+            color: #856404;
+            font-size: 14px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            color: #c62828;
+        }
+        
+        .success {
+            text-align: center;
+            color: #4caf50;
+            font-size: 48px;
+            margin: 20px 0;
+        }
+        
+        .instructions {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        
+        .instructions h4 {
+            color: #1565c0;
+            margin-bottom: 10px;
+        }
+        
+        .instructions ol {
+            margin-left: 20px;
+            color: #1565c0;
+        }
+        
+        .instructions li {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>🔐 DeCloud</h1>
+            <p>Node Authorization</p>
+        </div>
+        
+        <div id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p style="text-align: center; color: #666;">Loading...</p>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="content">
+            <div class="status">
+                <div class="status-item">
+                    <span class="status-label">Node ID:</span>
+                    <span class="status-value" id="nodeId">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Expected Wallet:</span>
+                    <span class="status-value" id="expectedWallet">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Hardware:</span>
+                    <span class="status-value" id="hardware">-</span>
+                </div>
+            </div>
+            
+            <div class="warning">
+                <h4>⚠️ Important</h4>
+                <p>This signature proves you own the wallet. NO FUNDS will be transferred.</p>
+            </div>
+            
+            <button id="connectButton" class="button button-primary">
+                Connect Wallet & Sign
+            </button>
+            
+            <div id="walletConnected" style="display: none;">
+                <div class="status">
+                    <div class="status-item">
+                        <span class="status-label">Connected Wallet:</span>
+                        <span class="status-value" id="connectedWallet">-</span>
+                    </div>
+                </div>
+                
+                <button id="signButton" class="button button-primary">
+                    Sign Message
+                </button>
+            </div>
+            
+            <div id="messagePreview" style="display: none;">
+                <h3 style="color: #333; margin: 20px 0 10px;">Message to Sign:</h3>
+                <div class="message-box" id="messageText"></div>
+            </div>
+            
+            <div id="signatureResult" style="display: none;">
+                <div class="success">✅</div>
+                <div class="signature-result">
+                    <h3>Signature Generated Successfully!</h3>
+                    <p style="margin: 10px 0;">Copy this signature and paste it into your terminal:</p>
+                    <div class="signature-text" id="signatureText"></div>
+                    <button class="button button-secondary" onclick="copySignature()">
+                        Copy to Clipboard
+                    </button>
+                </div>
+                
+                <div class="instructions">
+                    <h4>Next Steps:</h4>
+                    <ol>
+                        <li>Copy the signature above</li>
+                        <li>Go back to your terminal</li>
+                        <li>Paste it where it says "Signature (0x...):"</li>
+                        <li>Press Enter</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- WalletConnect Web3Modal -->
+    <script type="module">
+        import { createWeb3Modal, defaultConfig } from 'https://cdn.jsdelivr.net/npm/@web3modal/ethers@latest/+esm'
+        import { BrowserProvider } from 'https://cdn.jsdelivr.net/npm/ethers@latest/+esm'
+
+        // Configuration
+        // SECURITY: Load from environment or use default
+        const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '708cede4d366aa77aead71dbc67d8ae5';
+        const projectId = WALLETCONNECT_PROJECT_ID;
+        
+        const metadata = {
+            name: 'DeCloud Node Authorization',
+            description: 'Authorize your DeCloud node with wallet signature',
+            url: window.location.origin,
+            icons: ['https://decloud.io/icon.png']
+        }
+
+        const ethersConfig = defaultConfig({
+            metadata,
+            enableEIP6963: true,
+            enableInjected: true,
+            enableCoinbase: true,
+            defaultChainId: 1
+        })
+
+        // Create modal
+        const modal = createWeb3Modal({
+            ethersConfig,
+            chains: [{
+                chainId: 1,
+                name: 'Ethereum',
+                currency: 'ETH',
+                explorerUrl: 'https://etherscan.io',
+                rpcUrl: 'https://cloudflare-eth.com'
+            }],
+            projectId,
+            enableAnalytics: false
+        })
+
+        // Parse URL parameters
+        const params = new URLSearchParams(window.location.search)
+        const messageB64 = params.get('message')
+        const nodeId = params.get('nodeId')
+        const wallet = params.get('wallet')
+        const hardware = params.get('hardware')
+        
+        let message = ''
+        
+        if (messageB64) {
+            try {
+                message = atob(messageB64)
+            } catch (e) {
+                document.getElementById('error').textContent = 'Invalid message parameter'
+                document.getElementById('error').style.display = 'block'
+            }
+        }
+        
+        // Display info
+        document.getElementById('nodeId').textContent = nodeId || 'Unknown'
+        document.getElementById('expectedWallet').textContent = wallet || 'Any'
+        document.getElementById('hardware').textContent = hardware || 'Unknown'
+        document.getElementById('messageText').textContent = message
+        
+        if (message) {
+            document.getElementById('messagePreview').style.display = 'block'
+        }
+
+        let provider = null
+        let signer = null
+        let connectedAddress = null
+
+        // Connect button
+        document.getElementById('connectButton').addEventListener('click', async () => {
+            try {
+                document.getElementById('loading').style.display = 'block'
+                document.getElementById('error').style.display = 'none'
+                
+                await modal.open()
+                
+                // Wait for wallet connection
+                const checkConnection = setInterval(async () => {
+                    const walletProvider = modal.getWalletProvider()
+                    if (walletProvider) {
+                        clearInterval(checkConnection)
+                        
+                        provider = new BrowserProvider(walletProvider)
+                        signer = await provider.getSigner()
+                        connectedAddress = await signer.getAddress()
+                        
+                        document.getElementById('connectedWallet').textContent = connectedAddress
+                        document.getElementById('walletConnected').style.display = 'block'
+                        document.getElementById('connectButton').style.display = 'none'
+                        document.getElementById('loading').style.display = 'none'
+                        
+                        // Check if wallet matches expected
+                        if (wallet && wallet.toLowerCase() !== connectedAddress.toLowerCase()) {
+                            document.getElementById('error').innerHTML = 
+                                `<strong>Warning:</strong> Connected wallet (${connectedAddress}) does not match expected wallet (${wallet})`
+                            document.getElementById('error').style.display = 'block'
+                        }
+                    }
+                }, 500)
+                
+            } catch (error) {
+                console.error('Connection error:', error)
+                document.getElementById('error').textContent = 'Failed to connect wallet: ' + error.message
+                document.getElementById('error').style.display = 'block'
+                document.getElementById('loading').style.display = 'none'
+            }
+        })
+
+        // Sign button
+        document.getElementById('signButton').addEventListener('click', async () => {
+            try {
+                document.getElementById('loading').style.display = 'block'
+                document.getElementById('error').style.display = 'none'
+                
+                if (!signer) {
+                    throw new Error('Wallet not connected')
+                }
+                
+                if (!message) {
+                    throw new Error('No message to sign')
+                }
+                
+                // Sign the message
+                const signature = await signer.signMessage(message)
+                
+                // Display result
+                document.getElementById('signatureText').textContent = signature
+                document.getElementById('signatureResult').style.display = 'block'
+                document.getElementById('walletConnected').style.display = 'none'
+                document.getElementById('loading').style.display = 'none'
+                
+                // Store in localStorage for reference
+                localStorage.setItem('lastSignature', signature)
+                localStorage.setItem('lastSignatureTime', new Date().toISOString())
+                
+            } catch (error) {
+                console.error('Signing error:', error)
+                document.getElementById('error').textContent = 'Failed to sign message: ' + error.message
+                document.getElementById('error').style.display = 'block'
+                document.getElementById('loading').style.display = 'none'
+            }
+        })
+
+        // Copy function
+        window.copySignature = function() {
+            const signature = document.getElementById('signatureText').textContent
+            navigator.clipboard.writeText(signature).then(() => {
+                const btn = event.target
+                const originalText = btn.textContent
+                btn.textContent = '✅ Copied!'
+                setTimeout(() => {
+                    btn.textContent = originalText
+                }, 2000)
+            }).catch(err => {
+                alert('Failed to copy: ' + err)
+            })
+        }
+    </script>
+</body>
+</html>
