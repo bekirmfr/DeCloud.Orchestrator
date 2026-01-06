@@ -262,7 +262,6 @@ public class NodeRegistrationRequest
 
 public record NodeRegistrationResponse(
     string NodeId,
-    string AuthToken,
     TimeSpan HeartbeatInterval,
     /// <summary>
     /// Orchestrator's WireGuard public key for relay configuration

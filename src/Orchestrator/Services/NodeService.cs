@@ -592,21 +592,6 @@ public class NodeService : INodeService
 
             await _dataStore.SaveNodeAsync(existingNode);
 
-            // Check auth token exists and is valid
-            string? token = null;
-            var authToken = await _authService.GetTokenInfoAsync(nodeId);
-            if (authToken != null && authToken.IsValid)
-            {
-                token = _dataStore.NodeAuthTokens[nodeId];
-            }
-            else
-            {
-                await _authService.RevokeTokenAsync(nodeId);
-                token = await _authService.CreateTokenAsync(
-                    existingNode.Id,
-                    createdFromIp: request.PublicIp);
-            }
-
             _logger.LogInformation(
                 "✓ Node re-registered successfully: {NodeId} Orchestrator WireGuard Public Key: {OrchestratorPublicKey}",
                 existingNode.Id,
@@ -614,7 +599,6 @@ public class NodeService : INodeService
 
             return new NodeRegistrationResponse(
                 existingNode.Id,
-                token,
                 TimeSpan.FromSeconds(15),
                 orchestratorPublicKey);
         }
@@ -685,10 +669,6 @@ public class NodeService : INodeService
             totalCapacity.TotalComputePoints);
 
         await _dataStore.SaveNodeAsync(node);
-
-        var newToken = await _authService.CreateTokenAsync(
-            node.Id,
-            createdFromIp: request.PublicIp);
 
         _logger.LogInformation(
             "✓ New node registered successfully: {NodeId}",
@@ -766,8 +746,7 @@ public class NodeService : INodeService
         });
 
         return new NodeRegistrationResponse(
-            node.Id, 
-            newToken, 
+            node.Id,
             TimeSpan.FromSeconds(15),
             orchestratorPublicKey);
     }
