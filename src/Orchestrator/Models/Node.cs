@@ -16,6 +16,9 @@ public class Node
     /// </summary>
     public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
+    public string? ApiKeyHash { get; set; }
+    public DateTime? ApiKeyCreatedAt { get; set; }
+    public DateTime? ApiKeyLastUsedAt { get; set; }
 
     // Connection info
     public string PublicIp { get; set; } = string.Empty;
@@ -267,7 +270,8 @@ public record NodeRegistrationResponse(
     /// Orchestrator's WireGuard public key for relay configuration
     /// Null if WireGuard is not enabled on orchestrator
     /// </summary>
-    string? OrchestratorWireGuardPublicKey = null
+    string? OrchestratorWireGuardPublicKey = null,
+    string ApiKey
 );
 
 /// <summary>

@@ -1,8 +1,9 @@
-﻿using System.Security.Cryptography;
-using System.Text.Json;
-using DeCloud.Shared;
-using Orchestrator.Persistence;
+﻿using DeCloud.Shared;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Orchestrator.Background;
 
@@ -597,7 +598,8 @@ public class NodeService : INodeService
             return new NodeRegistrationResponse(
                 existingNode.Id,
                 TimeSpan.FromSeconds(15),
-                orchestratorPublicKey);
+                orchestratorPublicKey,
+                string.Empty);
         }
 
         // =====================================================
@@ -664,6 +666,12 @@ public class NodeService : INodeService
             nodeId,
             node.PerformanceEvaluation.HighestTier,
             totalCapacity.TotalComputePoints);
+
+        var apiKey = GenerateApiKey();
+        var apiKeyHash = GenerateHash(apiKey);
+
+        node.ApiKeyHash = apiKeyHash;
+        node.ApiKeyCreatedAt = DateTime.UtcNow;
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -745,7 +753,8 @@ public class NodeService : INodeService
         return new NodeRegistrationResponse(
             node.Id,
             TimeSpan.FromSeconds(15),
-            orchestratorPublicKey);
+            orchestratorPublicKey,
+            apiKey);
     }
 
     /// <summary>
@@ -1620,5 +1629,23 @@ public class NodeService : INodeService
                 }
             });
         }
+    }
+
+    private string GenerateApiKey()
+    {
+        var apiKeyBytes = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(apiKeyBytes);
+        var apiKey = $"dck_{Convert.ToBase64String(apiKeyBytes)
+            .Replace("+", "")
+            .Replace("/", "")
+            .Replace("=", "")}";
+        return apiKey;
+    }
+
+    private string GenerateHash(string data)
+    {
+        return Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(data)));
     }
 }

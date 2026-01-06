@@ -4,13 +4,11 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Orchestrator.Background;
-using Orchestrator.Background;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.Auth;
 using Serilog;
 using System.Text;
 using System.Text.Json;
@@ -108,7 +106,6 @@ builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSecti
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
 builder.Services.AddSingleton<SchedulingConfiguration>();
-builder.Services.AddScoped<INodeSignatureValidator, NodeSignatureValidator>();
 
 builder.Services.AddHttpClient("SubdomainProxy")
     .ConfigureHttpClient(client =>

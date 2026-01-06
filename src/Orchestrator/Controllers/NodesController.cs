@@ -2,8 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Background;
 using Orchestrator.Models;
-using Orchestrator.Services;
-using Orchestrator.Services.Auth;
+using Orchestrator.Persistence;
 
 namespace Orchestrator.Controllers;
 
@@ -12,19 +11,19 @@ namespace Orchestrator.Controllers;
 public class NodesController : ControllerBase
 {
     private readonly INodeService _nodeService;
+    private readonly DataStore _dataStore;
     private readonly IVmService _vmService;
-    private readonly INodeSignatureValidator _signatureValidator;
     private readonly ILogger<NodesController> _logger;
 
     public NodesController(
         INodeService nodeService,
+
         IVmService vmService,
-        INodeSignatureValidator signatureValidator,
         ILogger<NodesController> logger)
     {
         _nodeService = nodeService;
+
         _vmService = vmService;
-        _signatureValidator = signatureValidator;
         _logger = logger;
     }
 
@@ -57,27 +56,41 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpPost("{nodeId}/heartbeat")]
     public async Task<ActionResult<ApiResponse<NodeHeartbeatResponse>>> Heartbeat(
-        string nodeId,
-        [FromBody] NodeHeartbeat heartbeat,
-        [FromHeader(Name = "X-Node-Signature")] string? signature,
-        [FromHeader(Name = "X-Node-Timestamp")] long? timestamp)
+    string nodeId,
+    [FromBody] NodeHeartbeat heartbeat,
+    [FromHeader(Name = "Authorization")] string? authorization)
     {
         // =====================================================
-        // Validate Wallet Signature (Stateless Authentication!)
+        // Validate API Key
         // =====================================================
-        var requestPath = $"/api/nodes/{nodeId}/heartbeat";
 
-        if (!await _signatureValidator.ValidateNodeSignatureAsync(
-            nodeId, signature, timestamp, requestPath))
+        if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith("Bearer "))
         {
             return Unauthorized(ApiResponse<NodeHeartbeatResponse>.Fail(
-                "INVALID_SIGNATURE",
-                "Invalid wallet signature or expired timestamp"));
+                "MISSING_API_KEY", "API key required in Authorization header"));
         }
 
-        // =====================================================
-        // Process Heartbeat
-        // =====================================================
+        var apiKey = authorization.Substring(7); // Remove "Bearer "
+
+        // Hash the API key
+        var keyHash = Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(apiKey)));
+
+        // Get node
+        var node = await _nodeService.GetNodeAsync(nodeId);
+
+        if (node == null || node.ApiKeyHash != keyHash)
+        {
+            return Unauthorized(ApiResponse<NodeHeartbeatResponse>.Fail(
+                "INVALID_API_KEY", "Invalid API key"));
+        }
+
+        // Update last used
+        node.ApiKeyLastUsedAt = DateTime.UtcNow;
+        await _dataStore.SaveNodeAsync(node);
+
+        // Process heartbeat
         var response = await _nodeService.ProcessHeartbeatAsync(nodeId, heartbeat);
 
         if (!response.Acknowledged)
