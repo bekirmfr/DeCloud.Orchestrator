@@ -33,9 +33,6 @@ public class DataStore
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
 
-    // Node auth tokens (nodeId -> token hash)
-    public ConcurrentDictionary<string, string> NodeAuthTokens { get; } = new();
-
     // User sessions (refresh token hash -> user id)
     public ConcurrentDictionary<string, string> UserSessions { get; } = new();
 
