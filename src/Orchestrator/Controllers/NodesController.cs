@@ -112,21 +112,36 @@ public class NodesController : ControllerBase
         string nodeId,
         string commandId,
         [FromBody] CommandAcknowledgment ack,
-        [FromHeader(Name = "X-Node-Signature")] string? signature,
-        [FromHeader(Name = "X-Node-Timestamp")] long? timestamp)
+        [FromHeader(Name = "Authorization")] string? authorization)
     {
         // =====================================================
-        // Validate Wallet Signature (Stateless Authentication!)
+        // Validate API Key (same as heartbeat)
         // =====================================================
-        var requestPath = $"/api/nodes/{nodeId}/commands/{commandId}/acknowledge";
-
-        if (!await _signatureValidator.ValidateNodeSignatureAsync(
-            nodeId, signature, timestamp, requestPath))
+        if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith("Bearer "))
         {
             return Unauthorized(ApiResponse<bool>.Fail(
-                "INVALID_SIGNATURE",
-                "Invalid wallet signature"));
+                "MISSING_API_KEY", "API key required in Authorization header"));
         }
+
+        var apiKey = authorization.Substring(7); // Remove "Bearer "
+
+        // Hash the API key
+        var keyHash = Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(apiKey)));
+
+        // Get node
+        var node = await _nodeService.GetNodeAsync(nodeId);
+
+        if (node == null || node.ApiKeyHash != keyHash)
+        {
+            return Unauthorized(ApiResponse<bool>.Fail(
+                "INVALID_API_KEY", "Invalid API key"));
+        }
+
+        // Update last used
+        node.ApiKeyLastUsedAt = DateTime.UtcNow;
+        await _dataStore.SaveNodeAsync(node);
 
         // =====================================================
         // Process Command Acknowledgment
