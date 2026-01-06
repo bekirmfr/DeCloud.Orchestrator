@@ -55,6 +55,7 @@ public class NodesController : ControllerBase
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
     [HttpPost("{nodeId}/heartbeat")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<NodeHeartbeatResponse>>> Heartbeat(
     string nodeId,
     [FromBody] NodeHeartbeat heartbeat,
