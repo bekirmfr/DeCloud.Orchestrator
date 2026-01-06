@@ -54,42 +54,20 @@ public class NodesController : ControllerBase
     /// Node heartbeat - sent periodically by node agents.
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
-    [AllowAnonymous]
     [HttpPost("{nodeId}/heartbeat")]
     public async Task<ActionResult<ApiResponse<NodeHeartbeatResponse>>> Heartbeat(
     string nodeId,
-    [FromBody] NodeHeartbeat heartbeat,
-    [FromHeader(Name = "Authorization")] string? authorization)
+    [FromBody] NodeHeartbeat heartbeat)
     {
-        // =====================================================
-        // Validate API Key
-        // =====================================================
+        // Get node_id from JWT claims (already validated by middleware!)
+        var claimNodeId = User.FindFirst("node_id")?.Value;
 
-        if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith("Bearer "))
+        if (claimNodeId != nodeId)
         {
             return Unauthorized(ApiResponse<NodeHeartbeatResponse>.Fail(
-                "MISSING_API_KEY", "API key required in Authorization header"));
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
         }
-
-        var apiKey = authorization.Substring(7); // Remove "Bearer "
-
-        // Hash the API key
-        var keyHash = Convert.ToBase64String(
-            System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(apiKey)));
-
-        // Get node
-        var node = await _nodeService.GetNodeAsync(nodeId);
-
-        if (node == null || node.ApiKeyHash != keyHash)
-        {
-            return Unauthorized(ApiResponse<NodeHeartbeatResponse>.Fail(
-                "INVALID_API_KEY", "Invalid API key"));
-        }
-
-        // Update last used
-        node.ApiKeyLastUsedAt = DateTime.UtcNow;
-        await _dataStore.SaveNodeAsync(node);
 
         // Process heartbeat
         var response = await _nodeService.ProcessHeartbeatAsync(nodeId, heartbeat);
@@ -108,7 +86,6 @@ public class NodesController : ControllerBase
     /// Node acknowledges command completion.
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
-    [AllowAnonymous]
     [HttpPost("{nodeId}/commands/{commandId}/acknowledge")]
     public async Task<ActionResult<ApiResponse<bool>>> AcknowledgeCommand(
         string nodeId,

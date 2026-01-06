@@ -1,8 +1,10 @@
 ﻿using DeCloud.Shared;
-using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using System.Security.Cryptography;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 
 namespace Orchestrator.Background;
@@ -60,6 +62,7 @@ public class NodeService : INodeService
     private readonly IRelayNodeService _relayNodeService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
+    private readonly IConfiguration _configuration;
 
     public NodeService(
         DataStore dataStore,
@@ -71,6 +74,7 @@ public class NodeService : INodeService
         IRelayNodeService relayNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
+        IConfiguration configuration,
         SchedulingConfiguration? schedulingConfig = null
         )
     {
@@ -83,6 +87,7 @@ public class NodeService : INodeService
         _relayNodeService = relayNodeService;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
+        _configuration = configuration;
         _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
         _schedulingConfig.Weights.Validate();
     }
@@ -523,10 +528,12 @@ public class NodeService : INodeService
             orchestratorPublicKey, nodeId);
 
         // =====================================================
-        // Generate and save API key
+        // Generate JWT token for node authentication
         // =====================================================
-        var apiKey = GenerateApiKey();
+        var apiKey = GenerateNodeJwtToken(nodeId, request.WalletAddress, request.MachineId);
         var apiKeyHash = GenerateHash(apiKey);
+
+        _logger.LogInformation("Generated JWT token for node {NodeId}", nodeId);
 
         // =====================================================
         // STEP 4: Check if Node Exists (Re-registration)
@@ -1656,15 +1663,42 @@ public class NodeService : INodeService
         }
     }
 
-    private string GenerateApiKey()
+    private string GenerateNodeJwtToken(string nodeId, string walletAddress, string machineId)
     {
-        var apiKeyBytes = new byte[32];
-        System.Security.Cryptography.RandomNumberGenerator.Fill(apiKeyBytes);
-        var apiKey = $"dck_{Convert.ToBase64String(apiKeyBytes)
-            .Replace("+", "")
-            .Replace("/", "")
-            .Replace("=", "")}";
-        return apiKey;
+        // Get JWT configuration (same as user JWT)
+        var jwtKey = _configuration["Jwt:Key"]
+            ?? "default-dev-key-change-in-production-min-32-chars!";
+        var jwtIssuer = _configuration["Jwt:Issuer"] ?? "orchestrator";
+        var jwtAudience = _configuration["Jwt:Audience"] ?? "orchestrator-client";
+
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        // Create claims for the node
+        var claims = new[]
+        {
+        new Claim(ClaimTypes.NameIdentifier, nodeId),
+        new Claim("node_id", nodeId),
+        new Claim("wallet", walletAddress),
+        new Claim("machine_id", machineId),
+        new Claim(ClaimTypes.Role, "node"),
+        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        new Claim(JwtRegisteredClaimNames.Iat,
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+            ClaimValueTypes.Integer64)
+    };
+
+        // Create long-lived token for nodes (1 year expiration)
+        // Nodes don't need frequent token refresh like users
+        var token = new JwtSecurityToken(
+            issuer: jwtIssuer,
+            audience: jwtAudience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddYears(1), // Long-lived for nodes
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     private string GenerateHash(string data)
