@@ -91,13 +91,6 @@ public class NodeAuthService : INodeAuthService
                     nodeIdIndex,
                     new CreateIndexOptions { Unique = true, Name = "idx_nodeId" }));
 
-            // Index on expiresAt for cleanup queries
-            var expiresAtIndex = Builders<NodeAuthToken>.IndexKeys.Ascending(t => t.ExpiresAt);
-            await _tokensCollection.Indexes.CreateOneAsync(
-                new CreateIndexModel<NodeAuthToken>(
-                    expiresAtIndex,
-                    new CreateIndexOptions { Name = "idx_expiresAt" }));
-
             // TTL index to automatically delete expired tokens
             var ttlIndex = Builders<NodeAuthToken>.IndexKeys.Ascending(t => t.ExpiresAt);
             await _tokensCollection.Indexes.CreateOneAsync(
