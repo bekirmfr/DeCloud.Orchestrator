@@ -260,6 +260,16 @@ public class NodeRegistrationRequest
     public string StakingTxHash { get; set; } = string.Empty;
     public string? Region { get; set; }
     public string? Zone { get; set; }
+
+    /// <summary>
+    /// Wallet signature proving ownership
+    /// </summary>
+    public required string Signature { get; set; }
+
+    /// <summary>
+    /// Message that was signed (includes node ID, wallet, timestamp)
+    /// </summary>
+    public required string Message { get; set; }
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -271,7 +281,7 @@ public record NodeRegistrationResponse(
     /// Null if WireGuard is not enabled on orchestrator
     /// </summary>
     string? OrchestratorWireGuardPublicKey = null,
-    string ApiKey
+    string? ApiKey = null
 );
 
 /// <summary>

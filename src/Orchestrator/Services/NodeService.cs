@@ -477,6 +477,16 @@ public class NodeService : INodeService
         }
 
         // =====================================================
+        // NEW: STEP 1.5: Verify Wallet Signature
+        // =====================================================
+        if (!VerifyWalletSignature(request.WalletAddress, request.Message, request.Signature))
+        {
+            _logger.LogError("Node registration rejected: Invalid wallet signature");
+            throw new UnauthorizedAccessException(
+                "Invalid wallet signature. Please ensure you're using the correct wallet.");
+        }
+
+        // =====================================================
         // STEP 2: Validate Machine ID
         // =====================================================
         if (string.IsNullOrWhiteSpace(request.MachineId))
@@ -492,6 +502,16 @@ public class NodeService : INodeService
         try
         {
             expectedNodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
+            // Verify message contains node ID (prevent signature reuse)
+            if (!request.Message.Contains(expectedNodeId))
+            {
+                _logger.LogError("Node registration rejected: Message doesn't contain node ID");
+                throw new ArgumentException("Signature message must contain the node ID for security.");
+            }
+
+            _logger.LogInformation(
+                "✓ Wallet signature verified for node {NodeId}",
+                expectedNodeId);
         }
         catch (Exception ex)
         {
@@ -667,11 +687,15 @@ public class NodeService : INodeService
             node.PerformanceEvaluation.HighestTier,
             totalCapacity.TotalComputePoints);
 
+        // =====================================================
+        // Generate and save API key
+        // =====================================================
         var apiKey = GenerateApiKey();
         var apiKeyHash = GenerateHash(apiKey);
 
         node.ApiKeyHash = apiKeyHash;
         node.ApiKeyCreatedAt = DateTime.UtcNow;
+        node.ApiKeyLastUsedAt = null;
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -755,6 +779,25 @@ public class NodeService : INodeService
             TimeSpan.FromSeconds(15),
             orchestratorPublicKey,
             apiKey);
+    }
+
+    private bool VerifyWalletSignature(string walletAddress, string message, string signature)
+    {
+        try
+        {
+            var signer = new Nethereum.Signer.EthereumMessageSigner();
+            var recoveredAddress = signer.EncodeUTF8AndEcRecover(message, signature);
+
+            return string.Equals(
+                recoveredAddress,
+                walletAddress,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error verifying wallet signature");
+            return false;
+        }
     }
 
     /// <summary>
