@@ -52,7 +52,6 @@ public class NodeService : INodeService
     private readonly DataStore _dataStore;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
-    private readonly INodeAuthService _authService;
     private readonly ILogger<NodeService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
@@ -65,7 +64,6 @@ public class NodeService : INodeService
         DataStore dataStore,
         IEventService eventService,
         ICentralIngressService ingressService,
-        INodeAuthService authService,
         ILogger<NodeService> logger,
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
@@ -78,7 +76,6 @@ public class NodeService : INodeService
         _dataStore = dataStore;
         _eventService = eventService;
         _ingressService = ingressService;
-        _authService = authService;
         _logger = logger;
         _loggerFactory = loggerFactory;
         _httpClient = httpClient;

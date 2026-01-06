@@ -43,8 +43,6 @@ public class DataStore
     // MongoDB Collections (null if not configured)
     private IMongoCollection<Node>? NodesCollection =>
         _database?.GetCollection<Node>("nodes");
-    private IMongoCollection<NodeAuthToken>? NodeAuthTokensCollection =>
-        _database?.GetCollection<NodeAuthToken>("nodeAuthTokens");
     private IMongoCollection<VirtualMachine>? VmsCollection =>
         _database?.GetCollection<VirtualMachine>("vms");
     private IMongoCollection<User>? UsersCollection =>
@@ -196,20 +194,6 @@ public class DataStore
                 Nodes.TryAdd(node.Id, node);
             }
 
-            // Load Node Auth Tokens into memory cache
-            var authTokens = await NodeAuthTokensCollection!
-                .Find(t => !t.IsRevoked && t.ExpiresAt > DateTime.UtcNow)
-                .ToListAsync();
-
-            foreach (var authToken in authTokens)
-            {
-                NodeAuthTokens.TryAdd(authToken.NodeId, authToken.TokenHash);
-            }
-
-            _logger.LogInformation(
-                "✓ Loaded {Count} valid node auth tokens from MongoDB",
-                authTokens.Count);
-
             // Load VMs (exclude deleted)
             var vms = await VmsCollection!
                 .Find(vm => vm.Status != VmStatus.Deleted)
@@ -277,7 +261,6 @@ public class DataStore
     public async Task DeleteNodeAsync(string nodeId)
     {
         Nodes.TryRemove(nodeId, out _);
-        NodeAuthTokens.TryRemove(nodeId, out _);
 
         if (_useMongoDB)
         {
