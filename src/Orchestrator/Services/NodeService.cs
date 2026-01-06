@@ -604,7 +604,7 @@ public class NodeService : INodeService
                 existingNode.Id,
                 TimeSpan.FromSeconds(15),
                 orchestratorPublicKey,
-                string.Empty);
+                apiKey);
         }
 
         // =====================================================
