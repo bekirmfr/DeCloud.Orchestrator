@@ -501,15 +501,9 @@ public class NodeService : INodeService
         try
         {
             nodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
-            // Verify message contains node ID (prevent signature reuse)
-            if (!request.Message.Contains(nodeId))
-            {
-                _logger.LogError("Node registration rejected: Message doesn't contain node ID");
-                throw new ArgumentException("Signature message must contain the node ID for security.");
-            }
 
             _logger.LogInformation(
-                "✓ Wallet signature verified for node {NodeId}",
+                "✓ Wallet signature generated for node {NodeId}",
                 nodeId);
         }
         catch (Exception ex)
