@@ -109,6 +109,7 @@ public class NodesController : ControllerBase
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
     [HttpPost("{nodeId}/commands/{commandId}/acknowledge")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<bool>>> AcknowledgeCommand(
         string nodeId,
         string commandId,
