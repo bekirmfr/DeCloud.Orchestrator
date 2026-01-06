@@ -16,6 +16,7 @@ public class OrchestratorHub : Hub
     private readonly DataStore _dataStore;
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
+    private readonly INodeAuthService _nodeAuthService;
     private readonly ILogger<OrchestratorHub> _logger;
 
     // Track terminal sessions: connectionId -> (vmId, nodeConnectionId)
@@ -25,11 +26,13 @@ public class OrchestratorHub : Hub
         DataStore dataStore,
         IVmService vmService,
         INodeService nodeService,
+        INodeAuthService nodeAuthService,
         ILogger<OrchestratorHub> logger)
     {
         _dataStore = dataStore;
         _vmService = vmService;
         _nodeService = nodeService;
+        _nodeAuthService = nodeAuthService;
         _logger = logger;
     }
 
@@ -98,7 +101,7 @@ public class OrchestratorHub : Hub
     public async Task RegisterAsNode(string nodeId, string authToken)
     {
         // Validate token
-        if (!await _nodeService.ValidateNodeTokenAsync(nodeId, authToken))
+        if (!await _nodeAuthService.ValidateTokenAsync(nodeId, authToken))
         {
             _logger.LogWarning("Invalid node auth token for {NodeId}", nodeId);
             await Clients.Caller.SendAsync("Error", new { Message = "Invalid authentication" });
