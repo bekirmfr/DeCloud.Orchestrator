@@ -54,8 +54,8 @@ public class NodesController : ControllerBase
     /// Node heartbeat - sent periodically by node agents.
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
-    [HttpPost("{nodeId}/heartbeat")]
     [AllowAnonymous]
+    [HttpPost("{nodeId}/heartbeat")]
     public async Task<ActionResult<ApiResponse<NodeHeartbeatResponse>>> Heartbeat(
     string nodeId,
     [FromBody] NodeHeartbeat heartbeat,
@@ -108,8 +108,8 @@ public class NodesController : ControllerBase
     /// Node acknowledges command completion.
     /// Authenticated via wallet signature (stateless!)
     /// </summary>
-    [HttpPost("{nodeId}/commands/{commandId}/acknowledge")]
     [AllowAnonymous]
+    [HttpPost("{nodeId}/commands/{commandId}/acknowledge")]
     public async Task<ActionResult<ApiResponse<bool>>> AcknowledgeCommand(
         string nodeId,
         string commandId,
