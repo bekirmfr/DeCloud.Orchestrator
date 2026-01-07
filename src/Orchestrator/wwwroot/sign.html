@@ -4,11 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeCloud Node Authorization</title>
-
-    <!-- Security Headers -->
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="referrer" content="strict-origin-when-cross-origin">
-
     <style>
         * {
             margin: 0;
@@ -23,7 +18,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 16px;
+            padding: 20px;
         }
 
         .container {
@@ -32,31 +27,18 @@
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             max-width: 600px;
             width: 100%;
-            padding: 32px;
-            position: relative;
-        }
-
-        /* Mobile optimization */
-        @media (max-width: 640px) {
-            body {
-                padding: 12px;
-            }
-
-            .container {
-                padding: 24px 16px;
-                border-radius: 16px;
-            }
+            padding: 40px;
         }
 
         .logo {
             text-align: center;
-            margin-bottom: 24px;
+            margin-bottom: 30px;
         }
 
             .logo h1 {
                 color: #667eea;
-                font-size: 28px;
-                margin-bottom: 8px;
+                font-size: 32px;
+                margin-bottom: 10px;
             }
 
             .logo p {
@@ -64,17 +46,11 @@
                 font-size: 14px;
             }
 
-        @media (max-width: 640px) {
-            .logo h1 {
-                font-size: 24px;
-            }
-        }
-
         .status {
             background: #f8f9fa;
             border-radius: 10px;
-            padding: 16px;
-            margin-bottom: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
         }
 
         .status-item {
@@ -82,7 +58,6 @@
             justify-content: space-between;
             padding: 10px 0;
             border-bottom: 1px solid #e0e0e0;
-            gap: 16px;
         }
 
             .status-item:last-child {
@@ -92,36 +67,21 @@
         .status-label {
             color: #666;
             font-weight: 500;
-            font-size: 14px;
-            flex-shrink: 0;
         }
 
         .status-value {
             color: #333;
             font-weight: 600;
-            font-size: 14px;
             word-break: break-all;
             text-align: right;
-        }
-
-        @media (max-width: 640px) {
-            .status-item {
-                flex-direction: column;
-                gap: 4px;
-                padding: 8px 0;
-            }
-
-            .status-value {
-                text-align: left;
-                font-size: 13px;
-            }
+            max-width: 60%;
         }
 
         .message-box {
             background: #f8f9fa;
             border-radius: 10px;
-            padding: 16px;
-            margin: 16px 0;
+            padding: 20px;
+            margin: 20px 0;
             font-family: 'Courier New', monospace;
             font-size: 12px;
             color: #333;
@@ -129,14 +89,6 @@
             overflow-y: auto;
             white-space: pre-wrap;
             word-break: break-word;
-        }
-
-        @media (max-width: 640px) {
-            .message-box {
-                font-size: 11px;
-                padding: 12px;
-                max-height: 150px;
-            }
         }
 
         .button {
@@ -149,17 +101,6 @@
             cursor: pointer;
             transition: all 0.3s;
             margin: 10px 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        @media (max-width: 640px) {
-            .button {
-                padding: 14px;
-                font-size: 15px;
-            }
         }
 
         .button-primary {
@@ -167,7 +108,7 @@
             color: white;
         }
 
-            .button-primary:hover:not(:disabled) {
+            .button-primary:hover {
                 transform: translateY(-2px);
                 box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
             }
@@ -184,7 +125,7 @@
             border: 2px solid #667eea;
         }
 
-            .button-secondary:hover:not(:disabled) {
+            .button-secondary:hover {
                 background: #667eea;
                 color: white;
             }
@@ -200,75 +141,44 @@
             .signature-result h3 {
                 color: #2e7d32;
                 margin-bottom: 10px;
-                font-size: 18px;
             }
-
-        @media (max-width: 640px) {
-            .signature-result {
-                padding: 16px;
-            }
-
-                .signature-result h3 {
-                    font-size: 16px;
-                }
-        }
 
         .signature-text {
             background: white;
-            padding: 12px;
+            padding: 15px;
             border-radius: 5px;
             font-family: 'Courier New', monospace;
-            font-size: 11px;
+            font-size: 12px;
             word-break: break-all;
             margin: 10px 0;
-            max-height: 150px;
-            overflow-y: auto;
-        }
-
-        .warning, .error, .info {
-            padding: 15px;
-            margin: 16px 0;
-            border-radius: 8px;
-            font-size: 14px;
         }
 
         .warning {
             background: #fff3cd;
             border-left: 4px solid #ffc107;
-            color: #856404;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
         }
 
-        .error {
-            background: #ffebee;
-            border-left: 4px solid #f44336;
-            color: #c62828;
-        }
-
-        .info {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            color: #1565c0;
-        }
-
-        @media (max-width: 640px) {
-            .warning, .error, .info {
-                padding: 12px;
-                font-size: 13px;
+            .warning h4 {
+                color: #856404;
+                margin-bottom: 5px;
             }
-        }
 
-        .warning h4, .error h4, .info h4 {
-            margin-bottom: 5px;
-            font-weight: 600;
-        }
+            .warning p {
+                color: #856404;
+                font-size: 14px;
+            }
 
         .spinner {
             border: 3px solid #f3f3f3;
             border-top: 3px solid #667eea;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
+            width: 40px;
+            height: 40px;
             animation: spin 1s linear infinite;
+            margin: 20px auto;
         }
 
         @keyframes spin {
@@ -281,7 +191,16 @@
             }
         }
 
-        .success-icon {
+        .error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            color: #c62828;
+        }
+
+        .success {
             text-align: center;
             color: #4caf50;
             font-size: 48px;
@@ -292,8 +211,8 @@
             background: #e3f2fd;
             border-left: 4px solid #2196f3;
             padding: 15px;
-            margin: 16px 0;
-            border-radius: 8px;
+            margin: 20px 0;
+            border-radius: 5px;
         }
 
             .instructions h4 {
@@ -308,166 +227,160 @@
 
             .instructions li {
                 margin: 5px 0;
-                font-size: 14px;
             }
 
-        @media (max-width: 640px) {
-            .instructions {
-                padding: 12px;
-            }
-
-                .instructions li {
-                    font-size: 13px;
-                }
+        .connect-wallet-section {
+            margin: 20px 0;
         }
 
-        .hidden {
-            display: none !important;
-        }
-
-        .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.95);
+        .connect-wallet-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            border-radius: 20px;
-            z-index: 1000;
+            gap: 10px;
         }
 
-            .loading-overlay .spinner {
-                width: 40px;
-                height: 40px;
-                border-width: 4px;
-                margin-bottom: 16px;
+            .connect-wallet-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 20px rgba(16, 185, 129, 0.4);
             }
 
-        .loading-text {
-            color: #667eea;
+            .connect-wallet-btn svg {
+                width: 20px;
+                height: 20px;
+            }
+
+        .wallet-info {
+            background: #f0fdf4;
+            border: 2px solid #10b981;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .wallet-info-label {
+            color: #065f46;
+            font-size: 12px;
             font-weight: 600;
-            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .wallet-info-value {
+            color: #059669;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            word-break: break-all;
+        }
+
+        /* AppKit Modal Override */
+        w3m-modal {
+            z-index: 10000;
         }
 
         @media (max-width: 640px) {
-            .loading-overlay {
-                border-radius: 16px;
+            .container {
+                padding: 20px;
             }
 
-            .loading-text {
-                font-size: 14px;
+            .logo h1 {
+                font-size: 24px;
             }
-        }
 
-        /* AppKit Modal Override for Mobile */
-        @media (max-width: 640px) {
-            wcm-modal {
-                font-size: 14px !important;
+            .status-item {
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .status-value {
+                text-align: left;
+                max-width: 100%;
             }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Loading Overlay -->
-        <div id="loading-overlay" class="loading-overlay hidden">
-            <div class="spinner"></div>
-            <div class="loading-text" id="loading-text">Initializing...</div>
+        <div class="logo">
+            <h1>🔐 DeCloud Node Authorization</h1>
+            <p>Secure Wallet Authentication</p>
         </div>
 
-        <!-- Logo -->
-        <div class="logo">
-            <h1>🔐 Node Authorization</h1>
-            <p>Sign with your wallet to authorize this compute node</p>
+        <div id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p style="text-align: center; color: #666; margin-top: 10px;">Processing...</p>
         </div>
+
+        <div id="error" class="error" style="display: none;"></div>
 
         <!-- Node Information -->
         <div class="status">
             <div class="status-item">
                 <span class="status-label">Node ID:</span>
-                <span class="status-value" id="nodeId">Loading...</span>
+                <span class="status-value" id="nodeId">-</span>
             </div>
             <div class="status-item">
                 <span class="status-label">Expected Wallet:</span>
-                <span class="status-value" id="expectedWallet">Any</span>
+                <span class="status-value" id="expectedWallet">-</span>
             </div>
             <div class="status-item">
                 <span class="status-label">Hardware:</span>
-                <span class="status-value" id="hardware">Unknown</span>
+                <span class="status-value" id="hardware">-</span>
             </div>
         </div>
 
-        <!-- Error Display -->
-        <div id="error" class="error hidden"></div>
-
-        <!-- Info Display -->
-        <div id="info" class="info hidden"></div>
+        <!-- Message to Sign -->
+        <div class="warning">
+            <h4>⚠️ Message to Sign</h4>
+            <p>Verify this message before signing:</p>
+        </div>
+        <div class="message-box" id="messageText"></div>
 
         <!-- Wallet Connection Section -->
-        <div id="walletConnection">
-            <div class="info">
-                <h4>📱 Mobile & Desktop Support</h4>
-                <p>This page works on both mobile and desktop browsers. Connect with MetaMask, Trust Wallet, Coinbase Wallet, Rainbow, or any WalletConnect-compatible wallet.</p>
-            </div>
-
-            <button id="connectButton" class="button button-primary">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div id="walletSelection" class="connect-wallet-section">
+            <button id="connect-wallet-btn" class="connect-wallet-btn" onclick="connectWallet()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
                     <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
                     <circle cx="18" cy="15" r="1" />
                 </svg>
                 Connect Wallet
             </button>
-
-            <p style="text-align: center; color: #666; font-size: 13px; margin-top: 8px;">
-                Choose from 300+ wallets
+            <p style="text-align: center; color: #666; font-size: 12px; margin-top: 10px;">
+                Supports MetaMask, WalletConnect, Coinbase, and 350+ wallets
             </p>
         </div>
 
-        <!-- Connected Wallet Section -->
-        <div id="connectedSection" class="hidden">
-            <div class="status">
-                <div class="status-item">
-                    <span class="status-label">Connected Wallet:</span>
-                    <span class="status-value" id="connectedWallet">-</span>
-                </div>
+        <!-- Connected Wallet Info -->
+        <div id="walletConnected" style="display: none;">
+            <div class="wallet-info">
+                <div class="wallet-info-label">Connected Wallet</div>
+                <div class="wallet-info-value" id="connectedWallet">-</div>
             </div>
 
-            <div id="walletMismatch" class="warning hidden">
-                <h4>⚠️ Wallet Mismatch</h4>
-                <p>The connected wallet doesn't match the expected wallet. Please connect with the correct wallet or proceed if you're sure this is correct.</p>
-            </div>
-
-            <h4 style="margin: 16px 0 8px; color: #333;">Message to Sign:</h4>
-            <div class="message-box" id="messageText">Loading...</div>
-
-            <button id="signButton" class="button button-primary">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                    <path d="M2 17l10 5 10-5" />
-                    <path d="M2 12l10 5 10-5" />
-                </svg>
+            <button id="signButton" class="button button-primary" onclick="signMessage()">
                 Sign Message
-            </button>
-
-            <button id="disconnectButton" class="button button-secondary">
-                Disconnect & Try Another Wallet
             </button>
         </div>
 
-        <!-- Signature Result Section -->
-        <div id="signatureResult" class="hidden">
-            <div class="success-icon">✅</div>
+        <!-- Signature Result -->
+        <div id="signatureResult" style="display: none;">
+            <div class="success">✅</div>
             <div class="signature-result">
                 <h3>Signature Generated Successfully!</h3>
                 <p style="margin: 10px 0;">Copy this signature and paste it into your terminal:</p>
                 <div class="signature-text" id="signatureText"></div>
-                <button id="copyButton" class="button button-secondary">
-                    📋 Copy to Clipboard
+                <button class="button button-secondary" onclick="copySignature()">
+                    Copy to Clipboard
                 </button>
             </div>
 
@@ -477,54 +390,21 @@
                     <li>Copy the signature above</li>
                     <li>Go back to your terminal</li>
                     <li>Paste it where it says "Signature (0x...):"</li>
-                    <li>Press Enter to complete authentication</li>
+                    <li>Press Enter</li>
                 </ol>
             </div>
         </div>
     </div>
 
-    <!-- Import map for ES modules -->
-    <script type="importmap">
-        {
-            "imports": {
-                "@reown/appkit": "https://esm.sh/@reown/appkit@1.6.3",
-                "@reown/appkit-adapter-ethers": "https://esm.sh/@reown/appkit-adapter-ethers@1.6.3",
-                "@reown/appkit/networks": "https://esm.sh/@reown/appkit@1.6.3/networks",
-                "ethers": "https://esm.sh/ethers@6.13.4"
-            }
-        }
-    </script>
-
-    <!-- Main Script -->
+    <!-- AppKit SDK via CDN -->
     <script type="module">
-        import { createAppKit } from '@reown/appkit';
-        import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-        import { mainnet, polygon, arbitrum, sepolia } from '@reown/appkit/networks';
-        import { BrowserProvider } from 'ethers';
+        import { createAppKit } from 'https://esm.sh/@reown/appkit@1.6.2';
+        import { EthersAdapter } from 'https://esm.sh/@reown/appkit-adapter-ethers@1.6.2';
+        import { mainnet, polygon, arbitrum } from 'https://esm.sh/@reown/appkit@1.6.2/networks';
+        import { BrowserProvider } from 'https://esm.sh/ethers@6.13.0';
 
-        // ============================================
-        // CONFIGURATION
-        // ============================================
-
-        // SECURITY: WalletConnect Project ID
+        // Configuration
         const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
-
-        const metadata = {
-            name: 'DeCloud Node Authorization',
-            description: 'Authorize your compute node with wallet signature',
-            url: window.location.origin,
-            icons: [`${window.location.origin}/favicon.ico`]
-        };
-
-        // ============================================
-        // STATE
-        // ============================================
-
-        let appKitModal = null;
-        let ethersProvider = null;
-        let ethersSigner = null;
-        let connectedAddress = null;
-        let appKitUnsubscribers = [];
 
         // Parse URL parameters
         const params = new URLSearchParams(window.location.search);
@@ -534,57 +414,43 @@
         const hardware = params.get('hardware');
 
         let message = '';
-
-        // ============================================
-        // INITIALIZATION
-        // ============================================
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Parse message
-            if (messageB64) {
-                try {
-                    message = atob(messageB64);
-                } catch (e) {
-                    showError('Invalid message parameter in URL');
-                    return;
-                }
+        if (messageB64) {
+            try {
+                message = atob(messageB64);
+            } catch (e) {
+                showError('Invalid message parameter');
             }
+        }
 
-            // Display info
-            document.getElementById('nodeId').textContent = nodeId || 'Unknown';
-            document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
-            document.getElementById('hardware').textContent = hardware || 'Unknown';
-            document.getElementById('messageText').textContent = message;
+        // Display info
+        document.getElementById('nodeId').textContent = nodeId || 'Unknown';
+        document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
+        document.getElementById('hardware').textContent = hardware || 'Unknown';
+        document.getElementById('messageText').textContent = message;
 
-            // Setup event listeners
-            document.getElementById('connectButton').addEventListener('click', connectWallet);
-            document.getElementById('signButton').addEventListener('click', signMessage);
-            document.getElementById('copyButton').addEventListener('click', copySignature);
-            document.getElementById('disconnectButton').addEventListener('click', disconnectWallet);
+        // State
+        let appKitModal = null;
+        let ethersProvider = null;
+        let ethersSigner = null;
+        let connectedAddress = null;
 
-            // Initialize AppKit
-            await initializeAppKit();
-        });
-
-        // ============================================
-        // APPKIT INITIALIZATION
-        // ============================================
-
+        // Initialize AppKit
         async function initializeAppKit() {
-            if (appKitModal) {
-                return appKitModal;
-            }
+            if (appKitModal) return appKitModal;
 
             try {
                 console.log('[AppKit] Initializing...');
-                showLoading('Initializing wallet connection...');
 
-                // Create AppKit instance
                 appKitModal = createAppKit({
                     adapters: [new EthersAdapter()],
-                    networks: [polygon, mainnet, arbitrum, sepolia],
+                    networks: [polygon, mainnet, arbitrum],
                     projectId: WALLETCONNECT_PROJECT_ID,
-                    metadata: metadata,
+                    metadata: {
+                        name: 'DeCloud Node Authorization',
+                        description: 'Sign message to authorize your DeCloud node',
+                        url: window.location.origin,
+                        icons: []
+                    },
                     features: {
                         analytics: false,
                         email: false,
@@ -592,55 +458,36 @@
                         swaps: false,
                         onramp: false
                     },
-                    themeMode: 'dark',
+                    themeMode: 'light',
                     themeVariables: {
                         '--w3m-accent': '#667eea',
-                        '--w3m-border-radius-master': '10px'
+                        '--w3m-border-radius-master': '8px'
                     }
                 });
 
-                // Setup event listeners
-                setupAppKitListeners();
-
-                hideLoading();
                 console.log('[AppKit] Initialized successfully');
-
+                setupAppKitListeners();
                 return appKitModal;
 
             } catch (error) {
                 console.error('[AppKit] Initialization error:', error);
-                hideLoading();
-                showError('Failed to initialize wallet connection. Please refresh and try again.');
-                throw error;
+                throw new Error('Failed to initialize wallet connection');
             }
         }
 
-        // ============================================
-        // APPKIT EVENT LISTENERS
-        // ============================================
-
+        // Setup event listeners
         function setupAppKitListeners() {
             if (!appKitModal) return;
 
-            // Clean up previous listeners
-            if (appKitUnsubscribers.length > 0) {
-                appKitUnsubscribers.forEach(unsub => unsub());
-                appKitUnsubscribers = [];
-            }
-
             // Subscribe to account changes
-            const unsubscribeAccount = appKitModal.subscribeAccount(async (account) => {
+            appKitModal.subscribeAccount(async (account) => {
                 console.log('[AppKit] Account state:', account);
 
                 if (account.isConnected && account.address) {
-                    // User connected
                     if (connectedAddress !== account.address) {
                         connectedAddress = account.address;
 
                         try {
-                            showLoading('Setting up wallet provider...');
-
-                            // Get provider and signer
                             const walletProvider = appKitModal.getWalletProvider();
                             if (!walletProvider) {
                                 throw new Error('Wallet provider not available');
@@ -649,167 +496,45 @@
                             ethersProvider = new BrowserProvider(walletProvider);
                             ethersSigner = await ethersProvider.getSigner();
 
-                            console.log('[AppKit] Provider and signer ready');
-                            hideLoading();
-
-                            // Show connected state
-                            showConnected(account.address);
+                            console.log('[AppKit] Signer ready for:', account.address);
+                            showWalletConnected(account.address);
 
                         } catch (error) {
                             console.error('[AppKit] Provider error:', error);
-                            hideLoading();
                             showError('Failed to setup wallet provider: ' + error.message);
                         }
                     }
                 } else if (!account.isConnected && connectedAddress) {
-                    // User disconnected
-                    console.log('[AppKit] User disconnected');
-                    handleDisconnection();
+                    console.log('[AppKit] Wallet disconnected');
+                    connectedAddress = null;
+                    location.reload();
                 }
             });
-
-            // Subscribe to network changes
-            const unsubscribeNetwork = appKitModal.subscribeNetwork((network) => {
-                console.log('[AppKit] Network changed:', network);
-            });
-
-            // Store unsubscribe functions
-            appKitUnsubscribers = [unsubscribeAccount, unsubscribeNetwork];
         }
 
-        // ============================================
-        // WALLET CONNECTION
-        // ============================================
-
-        async function connectWallet() {
-            const btn = document.getElementById('connectButton');
-
+        // Connect wallet
+        window.connectWallet = async function () {
             try {
-                btn.disabled = true;
-                btn.innerHTML = '<div class="spinner"></div> Loading...';
+                showLoading(true);
                 hideError();
-                hideInfo();
 
-                // Initialize AppKit if not already done
                 if (!appKitModal) {
                     await initializeAppKit();
                 }
 
-                // Open AppKit modal
-                console.log('[Connection] Opening AppKit modal...');
-                await appKitModal.open();
-
-                // Reset button after modal opens
-                setTimeout(() => {
-                    const currentAddress = appKitModal.getAddress();
-                    if (!currentAddress) {
-                        btn.disabled = false;
-                        btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" /><path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" /><circle cx="18" cy="15" r="1" /></svg> Connect Wallet';
-                    }
-                }, 1000);
+                // Open modal
+                appKitModal.open();
+                showLoading(false);
 
             } catch (error) {
-                console.error('[Connection] Error:', error);
+                console.error('Connection error:', error);
                 showError('Failed to connect wallet: ' + error.message);
-                btn.disabled = false;
-                btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" /><path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" /><circle cx="18" cy="15" r="1" /></svg> Connect Wallet';
+                showLoading(false);
             }
-        }
+        };
 
-        async function disconnectWallet() {
-            try {
-                if (appKitModal) {
-                    await appKitModal.disconnect();
-                }
-                handleDisconnection();
-            } catch (error) {
-                console.error('[Disconnect] Error:', error);
-                // Force manual disconnection
-                handleDisconnection();
-            }
-        }
-
-        function handleDisconnection() {
-            connectedAddress = null;
-            ethersProvider = null;
-            ethersSigner = null;
-
-            // Reset UI
-            document.getElementById('walletConnection').classList.remove('hidden');
-            document.getElementById('connectedSection').classList.add('hidden');
-            document.getElementById('signatureResult').classList.add('hidden');
-            document.getElementById('walletMismatch').classList.add('hidden');
-            hideError();
-            hideInfo();
-        }
-
-        // ============================================
-        // UI STATE MANAGEMENT
-        // ============================================
-
-        function showConnected(address) {
-            // Close AppKit modal
-            if (appKitModal) {
-                appKitModal.close();
-            }
-
-            // Update UI
-            document.getElementById('connectedWallet').textContent = address;
-            document.getElementById('walletConnection').classList.add('hidden');
-            document.getElementById('connectedSection').classList.remove('hidden');
-
-            // Check wallet mismatch
-            if (expectedWallet && expectedWallet.toLowerCase() !== 'any' && expectedWallet.toLowerCase() !== address.toLowerCase()) {
-                document.getElementById('walletMismatch').classList.remove('hidden');
-            } else {
-                document.getElementById('walletMismatch').classList.add('hidden');
-            }
-
-            hideError();
-            showInfo('Wallet connected successfully! Now sign the message to authorize your node.');
-        }
-
-        function showLoading(text) {
-            const overlay = document.getElementById('loading-overlay');
-            const loadingText = document.getElementById('loading-text');
-            loadingText.textContent = text;
-            overlay.classList.remove('hidden');
-        }
-
-        function hideLoading() {
-            document.getElementById('loading-overlay').classList.add('hidden');
-        }
-
-        function showError(msg) {
-            const errorEl = document.getElementById('error');
-            errorEl.textContent = msg;
-            errorEl.classList.remove('hidden');
-            hideInfo();
-        }
-
-        function hideError() {
-            document.getElementById('error').classList.add('hidden');
-        }
-
-        function showInfo(msg) {
-            const infoEl = document.getElementById('info');
-            infoEl.textContent = msg;
-            infoEl.classList.remove('hidden');
-            hideError();
-        }
-
-        function hideInfo() {
-            document.getElementById('info').classList.add('hidden');
-        }
-
-        // ============================================
-        // MESSAGE SIGNING
-        // ============================================
-
-        async function signMessage() {
-            const btn = document.getElementById('signButton');
-            const originalHtml = btn.innerHTML;
-
+        // Sign message
+        window.signMessage = async function () {
             try {
                 if (!ethersSigner) {
                     throw new Error('Wallet not connected');
@@ -819,89 +544,124 @@
                     throw new Error('No message to sign');
                 }
 
-                btn.disabled = true;
-                btn.innerHTML = '<div class="spinner"></div> Signing...';
-                showLoading('Please sign the message in your wallet...');
+                showLoading(true);
                 hideError();
-                hideInfo();
 
-                // SECURITY: Sign the message with wallet
+                // Sign the message
                 const signature = await ethersSigner.signMessage(message);
-
-                // SECURITY: Validate signature format
-                if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
-                    throw new Error('Invalid signature format received');
-                }
-
-                hideLoading();
+                console.log('[Sign] Signature generated:', signature);
 
                 // Display result
                 document.getElementById('signatureText').textContent = signature;
-                document.getElementById('connectedSection').classList.add('hidden');
-                document.getElementById('signatureResult').classList.remove('hidden');
+                document.getElementById('signatureResult').style.display = 'block';
+                document.getElementById('walletConnected').style.display = 'none';
+                showLoading(false);
 
                 // Store for reference
-                localStorage.setItem('lastSignature', signature);
-                localStorage.setItem('lastSignatureTime', new Date().toISOString());
-                localStorage.setItem('lastSignatureWallet', connectedAddress);
-
-                console.log('[Sign] Signature generated successfully');
+                try {
+                    localStorage.setItem('lastSignature', signature);
+                    localStorage.setItem('lastSignatureTime', new Date().toISOString());
+                } catch (e) {
+                    // Ignore localStorage errors (e.g., in private browsing)
+                }
 
             } catch (error) {
-                console.error('[Sign] Error:', error);
-                hideLoading();
+                console.error('Signing error:', error);
 
                 // User rejected
-                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-                    showError('Signature request was rejected. Please try again.');
+                if (error.code === 'ACTION_REJECTED' || error.message.includes('rejected')) {
+                    showError('Signature rejected. Please try again.');
                 } else {
                     showError('Failed to sign message: ' + error.message);
                 }
 
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
+                showLoading(false);
+            }
+        };
+
+        // Copy signature
+        window.copySignature = function () {
+            const signature = document.getElementById('signatureText').textContent;
+
+            // Try modern API first
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(signature).then(() => {
+                    updateButtonText('✅ Copied!');
+                }).catch(() => {
+                    fallbackCopy(signature);
+                });
+            } else {
+                fallbackCopy(signature);
+            }
+        };
+
+        // Fallback copy for non-HTTPS
+        function fallbackCopy(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-999999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            try {
+                document.execCommand('copy');
+                updateButtonText('✅ Copied!');
+            } catch (err) {
+                showError('Failed to copy. Please copy manually.');
+            }
+
+            document.body.removeChild(textarea);
+        }
+
+        function updateButtonText(text) {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = text;
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+
+        // Helper functions
+        function showWalletConnected(address) {
+            document.getElementById('connectedWallet').textContent = address;
+            document.getElementById('walletSelection').style.display = 'none';
+            document.getElementById('walletConnected').style.display = 'block';
+
+            // Check if wallet matches expected
+            if (expectedWallet && expectedWallet.toLowerCase() !== address.toLowerCase()) {
+                showError(
+                    `⚠️ Warning: Connected wallet (${address}) does not match expected wallet (${expectedWallet})`,
+                    false
+                );
             }
         }
 
-        // ============================================
-        // CLIPBOARD
-        // ============================================
-
-        function copySignature() {
-            const signature = document.getElementById('signatureText').textContent;
-            const btn = document.getElementById('copyButton');
-            const originalText = btn.textContent;
-
-            navigator.clipboard.writeText(signature).then(() => {
-                btn.textContent = '✅ Copied!';
-                btn.style.background = '#4caf50';
-                btn.style.color = 'white';
-                btn.style.borderColor = '#4caf50';
-
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                    btn.style.background = '';
-                    btn.style.color = '';
-                    btn.style.borderColor = '';
-                }, 2000);
-            }).catch(err => {
-                console.error('[Clipboard] Error:', err);
-                showError('Failed to copy signature: ' + err.message);
-            });
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
         }
 
-        // ============================================
-        // ERROR HANDLING
-        // ============================================
+        function showError(msg, hideLoading = true) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+            if (hideLoading) showLoading(false);
+        }
 
-        window.addEventListener('error', (event) => {
-            console.error('[Global Error]', event.error);
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        // Initialize on load
+        window.addEventListener('load', async () => {
+            // Pre-initialize AppKit for faster connection
+            try {
+                await initializeAppKit();
+            } catch (e) {
+                console.error('Failed to pre-initialize AppKit:', e);
+            }
         });
-
-        window.addEventListener('unhandledrejection', (event) => {
-            console.error('[Unhandled Promise Rejection]', event.reason);
-        });
-
     </script>
 </body>
 </html>
