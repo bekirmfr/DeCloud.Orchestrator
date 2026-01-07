@@ -1,6 +1,6 @@
 ﻿import { defineConfig } from 'vite';
 import path from 'path';
-import { copyFileSync, existsSync, mkdirSync } from 'fs';
+import { resolve } from 'path';
 
 export default defineConfig({
     // Base public path
@@ -14,8 +14,16 @@ export default defineConfig({
         // Generate sourcemaps for production debugging
         sourcemap: true,
 
-        // Optimize chunk splitting
+        // CRITICAL: Multi-page app configuration
+        // This tells Vite to process both index.html AND sign.html as entry points
         rollupOptions: {
+            input: {
+                main: resolve(__dirname, 'index.html'),
+                sign: resolve(__dirname, 'sign.html'),
+                // Add other HTML files here if needed
+                terminal: resolve(__dirname, 'terminal.html'),
+                fileBrowser: resolve(__dirname, 'file-browser.html'),
+            },
             output: {
                 manualChunks: {
                     // Vendor chunk for dependencies
@@ -91,75 +99,12 @@ export default defineConfig({
     define: {
         // Can be overridden by environment variables
         __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '2.0.0')
-    },
+    }
 
-    // Build hooks to copy additional files
-    plugins: [
-        {
-            name: 'copy-terminal-html',
-            closeBundle() {
-                // Copy terminal.html to dist after build completes
-                const sourceFile = path.resolve(__dirname, 'terminal.html');
-                const destFile = path.resolve(__dirname, 'dist', 'terminal.html');
-
-                if (existsSync(sourceFile)) {
-                    // Ensure dist directory exists
-                    const distDir = path.resolve(__dirname, 'dist');
-                    if (!existsSync(distDir)) {
-                        mkdirSync(distDir, { recursive: true });
-                    }
-
-                    // Copy the file
-                    copyFileSync(sourceFile, destFile);
-                    console.log('✓ Copied terminal.html to dist/');
-                } else {
-                    console.warn('⚠ terminal.html not found in wwwroot/');
-                }
-            }
-        },
-        {
-            name: 'copy-file-browser-html',
-            closeBundle() {
-                // Copy file-browser.html to dist after build completes
-                const sourceFile = path.resolve(__dirname, 'file-browser.html');
-                const destFile = path.resolve(__dirname, 'dist', 'file-browser.html');
-
-                if (existsSync(sourceFile)) {
-                    // Ensure dist directory exists
-                    const distDir = path.resolve(__dirname, 'dist');
-                    if (!existsSync(distDir)) {
-                        mkdirSync(distDir, { recursive: true });
-                    }
-
-                    // Copy the file
-                    copyFileSync(sourceFile, destFile);
-                    console.log('✓ Copied file-browser.html to dist/');
-                } else {
-                    console.warn('⚠ file-browser.html not found in wwwroot/');
-                }
-            }
-        },
-        {
-            name: 'copy-sign-html',
-            closeBundle() {
-                // Copy file-browser.html to dist after build completes
-                const sourceFile = path.resolve(__dirname, 'sign.html');
-                const destFile = path.resolve(__dirname, 'dist', 'sign.html');
-
-                if (existsSync(sourceFile)) {
-                    // Ensure dist directory exists
-                    const distDir = path.resolve(__dirname, 'dist');
-                    if (!existsSync(distDir)) {
-                        mkdirSync(distDir, { recursive: true });
-                    }
-
-                    // Copy the file
-                    copyFileSync(sourceFile, destFile);
-                    console.log('✓ Copied sign.html to dist/');
-                } else {
-                    console.warn('⚠ sign.html not found in wwwroot/');
-                }
-            }
-        }
-    ]
+    // NOTE: We removed the copy plugins because Vite will now handle
+    // these files automatically through the multi-page input configuration.
+    // Vite will:
+    // 1. Process sign.html and bundle sign.js
+    // 2. Process index.html and bundle app.js
+    // 3. Output both to dist/ with correct asset references
 });
