@@ -89,6 +89,7 @@
             overflow-y: auto;
             white-space: pre-wrap;
             word-break: break-word;
+            min-height: 60px;
         }
 
         .button {
@@ -257,19 +258,35 @@
                 transform: translateX(4px);
             }
 
+            .wallet-button.featured {
+                border-color: #3b82f6;
+                background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            }
+
+                .wallet-button.featured:hover {
+                    border-color: #2563eb;
+                    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+                }
+
             .wallet-button .wallet-icon {
                 width: 32px;
                 height: 32px;
                 flex-shrink: 0;
+                display: block;
+                object-fit: contain;
             }
 
             .wallet-button .wallet-info {
                 flex: 1;
+                min-width: 0;
             }
 
             .wallet-button .wallet-name {
                 display: block;
                 font-weight: 600;
+                font-size: 16px;
+                color: #1f2937;
+                line-height: 1.3;
             }
 
             .wallet-button .wallet-desc {
@@ -277,6 +294,12 @@
                 font-size: 12px;
                 color: #6b7280;
                 font-weight: 400;
+                margin-top: 2px;
+                line-height: 1.2;
+            }
+
+            .wallet-button.featured .wallet-desc {
+                color: #2563eb;
             }
 
         .connected-wallet-info {
@@ -301,6 +324,41 @@
             word-break: break-all;
         }
 
+        .no-wallet-detected {
+            text-align: center;
+            padding: 30px 20px;
+            color: #666;
+        }
+
+            .no-wallet-detected p {
+                margin-bottom: 15px;
+                font-size: 16px;
+            }
+
+            .no-wallet-detected .install-links {
+                margin-top: 20px;
+                display: flex;
+                gap: 10px;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .no-wallet-detected .install-link {
+                padding: 12px 24px;
+                background: #667eea;
+                color: white;
+                text-decoration: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                transition: all 0.3s;
+            }
+
+                .no-wallet-detected .install-link:hover {
+                    background: #5568d3;
+                    transform: translateY(-2px);
+                }
+
         @media (max-width: 640px) {
             .container {
                 padding: 20px;
@@ -319,6 +377,16 @@
                 text-align: left;
                 max-width: 100%;
             }
+
+            .wallet-button {
+                gap: 10px;
+                padding: 14px;
+            }
+
+                .wallet-button .wallet-icon {
+                    width: 28px;
+                    height: 28px;
+                }
         }
     </style>
 </head>
@@ -398,9 +466,15 @@
         </div>
     </div>
 
-    <!-- Ethers.js from jsdelivr CDN (proven to work) -->
+    <!-- Load WalletConnect Universal Provider -->
+    <script src="https://unpkg.com/@walletconnect/universal-provider@2.17.2/dist/index.umd.js"></script>
+
+    <!-- Ethers.js from jsdelivr CDN -->
     <script type="module">
         import { BrowserProvider } from 'https://cdn.jsdelivr.net/npm/ethers@6.7.0/dist/ethers.min.js';
+
+        // Configuration
+        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
 
         // Parse URL parameters
         const params = new URLSearchParams(window.location.search);
@@ -414,7 +488,8 @@
             try {
                 message = atob(messageB64);
             } catch (e) {
-                showError('Invalid message parameter');
+                console.error('Failed to decode message:', e);
+                message = '[Failed to decode message]';
             }
         }
 
@@ -422,12 +497,13 @@
         document.getElementById('nodeId').textContent = nodeId || 'Unknown';
         document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
         document.getElementById('hardware').textContent = hardware || 'Unknown';
-        document.getElementById('messageText').textContent = message;
+        document.getElementById('messageText').textContent = message || '[No message provided]';
 
         // State
         let provider = null;
         let signer = null;
         let connectedAddress = null;
+        let wcProvider = null;
 
         // Detect available wallets and render options
         function renderWalletOptions() {
@@ -437,6 +513,16 @@
 
             const wallets = [];
 
+            // WalletConnect - ALWAYS show this first (featured)
+            wallets.push({
+                id: 'walletconnect',
+                name: 'WalletConnect',
+                desc: 'Scan QR with mobile wallet (350+ supported)',
+                icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M7.5 11c3.8-3.7 10-3.7 13.8 0l.5.4a.5.5 0 0 1 0 .7l-1.6 1.6a.2.2 0 0 1-.4 0l-.6-.6c-2.7-2.6-7-2.6-9.6 0l-.7.6a.2.2 0 0 1-.4 0l-1.5-1.6a.5.5 0 0 1 0-.7l.5-.4zm17 3.3l1.4 1.4a.5.5 0 0 1 0 .7l-6.3 6.2a.5.5 0 0 1-.7 0l-4.5-4.4a.1.1 0 0 0-.2 0l-4.4 4.4a.5.5 0 0 1-.7 0l-6.3-6.2a.5.5 0 0 1 0-.7l1.4-1.4a.5.5 0 0 1 .7 0l4.5 4.4a.1.1 0 0 0 .2 0l4.4-4.4a.5.5 0 0 1 .7 0l4.5 4.4a.1.1 0 0 0 .2 0l4.4-4.4a.5.5 0 0 1 .7 0z" fill="%233B99FC"/%3E%3C/svg%3E',
+                action: connectWalletConnect,
+                featured: true
+            });
+
             // MetaMask
             if (hasEthereum && window.ethereum.isMetaMask) {
                 wallets.push({
@@ -444,7 +530,8 @@
                     name: 'MetaMask',
                     desc: 'Browser extension',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M29.5 10.2l-12-8.5-12 8.5L7 14.3l5-1.8 5.5 4 5.5-4 5 1.8z" fill="%23E2761B"/%3E%3Cpath d="M5.5 10.2l2.5 4.1-2.5 1.5v6l7-1 .5-7.5-5.5-3.1z" fill="%23E4761B"/%3E%3Cpath d="M26.5 10.2l-2.5 4.1 2.5 1.5v6l-7-1-.5-7.5 5.5-3.1z" fill="%23E4761B"/%3E%3C/svg%3E',
-                    action: connectMetaMask
+                    action: connectMetaMask,
+                    featured: false
                 });
             } else if (isMobile) {
                 wallets.push({
@@ -452,7 +539,8 @@
                     name: 'MetaMask',
                     desc: 'Open in MetaMask app',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M29.5 10.2l-12-8.5-12 8.5L7 14.3l5-1.8 5.5 4 5.5-4 5 1.8z" fill="%23E2761B"/%3E%3C/svg%3E',
-                    action: () => openMobileWallet('metamask')
+                    action: () => openMobileWallet('metamask'),
+                    featured: false
                 });
             }
 
@@ -463,7 +551,8 @@
                     name: 'Coinbase Wallet',
                     desc: 'Browser extension',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="16" fill="%230052FF"/%3E%3Crect x="10" y="10" width="12" height="12" rx="2" fill="white"/%3E%3C/svg%3E',
-                    action: connectCoinbase
+                    action: connectCoinbase,
+                    featured: false
                 });
             } else if (isMobile) {
                 wallets.push({
@@ -471,7 +560,8 @@
                     name: 'Coinbase Wallet',
                     desc: 'Open in Coinbase app',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="16" fill="%230052FF"/%3E%3Crect x="10" y="10" width="12" height="12" rx="2" fill="white"/%3E%3C/svg%3E',
-                    action: () => openMobileWallet('coinbase')
+                    action: () => openMobileWallet('coinbase'),
+                    featured: false
                 });
             }
 
@@ -482,7 +572,8 @@
                     name: 'Browser Wallet',
                     desc: 'Connect detected wallet',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="8" fill="%2310b981"/%3E%3Cpath d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" stroke="white" stroke-width="2" fill="none"/%3E%3C/svg%3E',
-                    action: connectBrowserWallet
+                    action: connectBrowserWallet,
+                    featured: false
                 });
             }
 
@@ -493,7 +584,8 @@
                     name: 'Trust Wallet',
                     desc: 'Open in Trust Wallet app',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Ccircle cx="16" cy="16" r="16" fill="%233375BB"/%3E%3Cpath d="M16 8l-6 4v6c0 3.5 2.5 6.5 6 7 3.5-.5 6-3.5 6-7v-6l-6-4z" fill="white"/%3E%3C/svg%3E',
-                    action: () => openMobileWallet('trust')
+                    action: () => openMobileWallet('trust'),
+                    featured: false
                 });
 
                 wallets.push({
@@ -501,28 +593,15 @@
                     name: 'Rainbow',
                     desc: 'Open in Rainbow app',
                     icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cdefs%3E%3ClinearGradient id="r" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0%25" stop-color="%23FF4D4D"/%3E%3Cstop offset="50%25" stop-color="%23FFD700"/%3E%3Cstop offset="100%25" stop-color="%234D79FF"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width="32" height="32" rx="8" fill="url(%23r)"/%3E%3C/svg%3E',
-                    action: () => openMobileWallet('rainbow')
+                    action: () => openMobileWallet('rainbow'),
+                    featured: false
                 });
-            }
-
-            // No wallets detected
-            if (wallets.length === 0) {
-                container.innerHTML = `
-                        <div style="text-align: center; padding: 20px; color: #666;">
-                            <p style="margin-bottom: 15px;">No wallets detected!</p>
-                            <p style="font-size: 14px;">Please install a wallet to continue:</p>
-                            <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
-                                <a href="https://metamask.io/download/" target="_blank" style="padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 8px; font-size: 14px;">Get MetaMask</a>
-                            </div>
-                        </div>
-                    `;
-                return;
             }
 
             // Render wallet buttons
             container.innerHTML = wallets.map(wallet => `
-                    <button class="wallet-button" onclick="window.walletActions['${wallet.id}']()">
-                        <img class="wallet-icon" src="${wallet.icon}" alt="${wallet.name}">
+                    <button class="wallet-button ${wallet.featured ? 'featured' : ''}" onclick="window.walletActions['${wallet.id}']()">
+                        <img class="wallet-icon" src="${wallet.icon}">
                         <div class="wallet-info">
                             <span class="wallet-name">${wallet.name}</span>
                             <span class="wallet-desc">${wallet.desc}</span>
@@ -535,6 +614,91 @@
             wallets.forEach(wallet => {
                 window.walletActions[wallet.id] = wallet.action;
             });
+        }
+
+        // Connect WalletConnect
+        async function connectWalletConnect() {
+            try {
+                showLoading(true);
+                hideError();
+
+                console.log('[WalletConnect] Initializing...');
+
+                // Initialize WalletConnect Universal Provider
+                wcProvider = await window.WalletConnectUniversalProvider.default.init({
+                    projectId: WALLETCONNECT_PROJECT_ID,
+                    metadata: {
+                        name: 'DeCloud Node Authorization',
+                        description: 'Sign message to authorize your DeCloud node',
+                        url: window.location.origin,
+                        icons: []
+                    },
+                    showQrModal: true,
+                    qrModalOptions: {
+                        themeMode: 'light',
+                        themeVariables: {
+                            '--wcm-z-index': '10000'
+                        }
+                    }
+                });
+
+                console.log('[WalletConnect] Provider initialized');
+
+                // Connect to Ethereum chains
+                await wcProvider.connect({
+                    namespaces: {
+                        eip155: {
+                            methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData'],
+                            chains: ['eip155:1', 'eip155:137', 'eip155:42161'], // Ethereum, Polygon, Arbitrum
+                            events: ['chainChanged', 'accountsChanged'],
+                            rpcMap: {
+                                1: 'https://eth.llamarpc.com',
+                                137: 'https://polygon.llamarpc.com',
+                                42161: 'https://arbitrum.llamarpc.com'
+                            }
+                        }
+                    }
+                });
+
+                console.log('[WalletConnect] Connected');
+
+                // Get accounts
+                const accounts = await wcProvider.request({
+                    method: 'eth_accounts'
+                });
+
+                if (!accounts || accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                // Setup ethers provider
+                provider = new BrowserProvider(wcProvider);
+                signer = await provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                console.log('[WalletConnect] Address:', connectedAddress);
+
+                showWalletConnected(connectedAddress);
+
+                // Listen for disconnect
+                wcProvider.on('disconnect', () => {
+                    console.log('[WalletConnect] Disconnected');
+                    location.reload();
+                });
+
+            } catch (error) {
+                console.error('WalletConnect error:', error);
+
+                if (error.message && error.message.includes('User rejected')) {
+                    showError('Connection cancelled by user');
+                } else if (error.message && error.message.includes('Modal closed')) {
+                    showError('QR modal closed - please try again');
+                } else {
+                    showError('Failed to connect via WalletConnect: ' + error.message);
+                }
+
+                showLoading(false);
+            }
         }
 
         // Connect MetaMask
