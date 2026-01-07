@@ -1,5 +1,4 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
@@ -139,11 +138,10 @@ if (mongoDatabase != null)
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // Make JSON deserialization case-insensitive
-        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-
-        // Use camelCase for consistency
+        // Use camelCase for all JSON properties
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true; // Accept any casing
+        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
