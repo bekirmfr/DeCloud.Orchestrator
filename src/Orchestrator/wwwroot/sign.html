@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeCloud Node Authorization</title>
+
+    <!-- Security Headers -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+
     <style>
         * {
             margin: 0;
@@ -229,44 +234,6 @@
                 margin: 5px 0;
             }
 
-        .wallet-options {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 10px;
-            margin: 20px 0;
-        }
-
-        .wallet-button {
-            display: flex;
-            align-items: center;
-            padding: 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-            .wallet-button:hover {
-                border-color: #667eea;
-                transform: translateX(5px);
-            }
-
-        .wallet-icon {
-            font-size: 24px;
-            margin-right: 15px;
-        }
-
-        .wallet-info h4 {
-            color: #333;
-            margin-bottom: 3px;
-        }
-
-        .wallet-info p {
-            color: #666;
-            font-size: 12px;
-        }
-
         .info-box {
             background: #e3f2fd;
             padding: 15px;
@@ -279,6 +246,44 @@
                 font-size: 14px;
                 line-height: 1.6;
             }
+
+        /* Loading progress bar */
+        .loading-progress {
+            width: 100%;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .loading-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 640px) {
+            .container {
+                padding: 24px;
+            }
+
+            .logo h1 {
+                font-size: 24px;
+            }
+
+            .status-item {
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .status-value {
+                text-align: left;
+                max-width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -290,7 +295,10 @@
 
         <div id="loading" style="display: none;">
             <div class="spinner"></div>
-            <p style="text-align: center; color: #666;">Waiting for signature...</p>
+            <p style="text-align: center; color: #666;">Initializing wallet connection...</p>
+            <div class="loading-progress">
+                <div class="loading-progress-bar" id="loading-progress"></div>
+            </div>
         </div>
 
         <div id="error" class="error" style="display: none;"></div>
@@ -322,36 +330,15 @@
             </div>
 
             <div id="walletSelection">
-                <h3 style="color: #333; margin: 20px 0 10px;">Choose Your Wallet:</h3>
-
-                <div class="wallet-options">
-                    <div class="wallet-button" onclick="connectMetaMask()">
-                        <div class="wallet-icon">🦊</div>
-                        <div class="wallet-info">
-                            <h4>MetaMask</h4>
-                            <p>Browser extension or mobile app</p>
-                        </div>
-                    </div>
-
-                    <div class="wallet-button" onclick="connectWalletConnect()">
-                        <div class="wallet-icon">📱</div>
-                        <div class="wallet-info">
-                            <h4>Mobile Wallet (WalletConnect)</h4>
-                            <p>Trust, Rainbow, Coinbase, and 200+ more</p>
-                        </div>
-                    </div>
-
-                    <div class="wallet-button" onclick="connectCoinbase()">
-                        <div class="wallet-icon">💼</div>
-                        <div class="wallet-info">
-                            <h4>Coinbase Wallet</h4>
-                            <p>Coinbase browser extension or app</p>
-                        </div>
-                    </div>
-                </div>
+                <button id="connectButton" class="button button-primary" onclick="connectWallet()">
+                    Connect Wallet & Sign
+                </button>
 
                 <div class="info-box">
-                    <p><strong>Don't have a wallet?</strong> Download MetaMask from <a href="https://metamask.io" target="_blank">metamask.io</a></p>
+                    <p>
+                        <strong>📱 Mobile Users:</strong> This button will automatically open your wallet app with a deep link.<br>
+                        <strong>💻 Desktop Users:</strong> You'll see a QR code to scan with your mobile wallet or can connect browser extensions.
+                    </p>
                 </div>
             </div>
 
@@ -392,222 +379,355 @@
         </div>
     </div>
 
-    <!-- Simple Web3 with ethers.js -->
+    <!-- Reown AppKit (WalletConnect) Integration -->
     <script type="module">
-        import { BrowserProvider } from 'https://cdn.jsdelivr.net/npm/ethers@6.7.0/dist/ethers.min.js'
+        import { createAppKit } from 'https://cdn.jsdelivr.net/npm/@reown/appkit@1.6.2/+esm';
+        import { EthersAdapter } from 'https://cdn.jsdelivr.net/npm/@reown/appkit-adapter-ethers@1.6.2/+esm';
+        import { mainnet, polygon, arbitrum, sepolia } from 'https://cdn.jsdelivr.net/npm/@reown/appkit@1.6.2/networks/+esm';
+        import { BrowserProvider } from 'https://cdn.jsdelivr.net/npm/ethers@6.13.0/dist/ethers.min.js';
+
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+
+        // SECURITY: Use environment variable or default
+        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
+
+        const metadata = {
+            name: 'DeCloud Node Authorization',
+            description: 'Authorize your compute node with wallet signature',
+            url: window.location.origin,
+            icons: [`${window.location.origin}/favicon.ico`]
+        };
+
+        // ============================================
+        // STATE
+        // ============================================
+
+        let appKitModal = null;
+        let ethersProvider = null;
+        let ethersSigner = null;
+        let connectedAddress = null;
+        let appKitUnsubscribers = [];
 
         // Parse URL parameters
-        const params = new URLSearchParams(window.location.search)
-        const messageB64 = params.get('message')
-        const nodeId = params.get('nodeId')
-        const expectedWallet = params.get('wallet')
-        const hardware = params.get('hardware')
+        const params = new URLSearchParams(window.location.search);
+        const messageB64 = params.get('message');
+        const nodeId = params.get('nodeId');
+        const expectedWallet = params.get('wallet');
+        const hardware = params.get('hardware');
 
-        let message = ''
+        let message = '';
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
 
         if (messageB64) {
             try {
-                message = atob(messageB64)
+                message = atob(messageB64);
             } catch (e) {
-                document.getElementById('error').textContent = 'Invalid message parameter'
-                document.getElementById('error').style.display = 'block'
+                showError('Invalid message parameter');
             }
         }
 
         // Display info
-        document.getElementById('nodeId').textContent = nodeId || 'Unknown'
-        document.getElementById('expectedWallet').textContent = expectedWallet || 'Any'
-        document.getElementById('hardware').textContent = hardware || 'Unknown'
-        document.getElementById('messageText').textContent = message
+        document.getElementById('nodeId').textContent = nodeId || 'Unknown';
+        document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
+        document.getElementById('hardware').textContent = hardware || 'Unknown';
+        document.getElementById('messageText').textContent = message;
 
-        let provider = null
-        let signer = null
-        let connectedAddress = null
+        // ============================================
+        // APPKIT INITIALIZATION
+        // ============================================
 
-        // Connect to MetaMask
-        window.connectMetaMask = async function () {
+        async function initializeAppKit() {
+            if (appKitModal) {
+                return appKitModal;
+            }
+
             try {
-                if (typeof window.ethereum === 'undefined') {
-                    showError('MetaMask is not installed. Please install MetaMask extension or use mobile app.')
-                    return
-                }
+                console.log('[AppKit] Initializing...');
+                updateLoadingProgress(50);
 
-                showLoading(true)
-                hideError()
+                // Create AppKit instance with unified configuration
+                appKitModal = createAppKit({
+                    adapters: [new EthersAdapter()],
+                    networks: [polygon, mainnet, arbitrum, sepolia],
+                    projectId: WALLETCONNECT_PROJECT_ID,
+                    metadata: metadata,
+                    features: {
+                        analytics: false,
+                        email: false,
+                        socials: [],
+                        swaps: false,
+                        onramp: false
+                    },
+                    themeMode: 'light',
+                    themeVariables: {
+                        '--w3m-accent': '#667eea',
+                        '--w3m-border-radius-master': '8px'
+                    }
+                });
 
-                // Request account access
-                const accounts = await window.ethereum.request({
-                    method: 'eth_requestAccounts'
-                })
+                updateLoadingProgress(100);
+                console.log('[AppKit] Initialized successfully');
 
-                if (accounts.length === 0) {
-                    throw new Error('No accounts found')
-                }
+                // Set up event listeners
+                setupAppKitListeners();
 
-                provider = new BrowserProvider(window.ethereum)
-                signer = await provider.getSigner()
-                connectedAddress = await signer.getAddress()
-
-                showWalletConnected(connectedAddress)
+                return appKitModal;
 
             } catch (error) {
-                console.error('MetaMask connection error:', error)
-                showError('Failed to connect MetaMask: ' + error.message)
-                showLoading(false)
+                console.error('[AppKit] Initialization error:', error);
+                updateLoadingProgress(0);
+                throw new Error('Failed to initialize wallet connection. Please refresh and try again.');
             }
         }
 
-        // Connect via WalletConnect (simplified version)
-        window.connectWalletConnect = async function () {
-            // For now, redirect to WalletConnect deep link
-            // Or you can implement full WalletConnect v2 if needed
-            alert('WalletConnect Support: Coming soon! For now, please use MetaMask mobile app or browser extension.')
+        // ============================================
+        // APPKIT EVENT LISTENERS
+        // ============================================
 
-            // Alternative: You could open WalletConnect Cloud modal here
-            // window.open('https://walletconnect.com/registry', '_blank')
+        function setupAppKitListeners() {
+            if (!appKitModal) return;
+
+            // Clean up previous listeners
+            if (appKitUnsubscribers.length > 0) {
+                appKitUnsubscribers.forEach(unsub => unsub());
+                appKitUnsubscribers = [];
+            }
+
+            // Subscribe to account changes
+            const unsubscribeAccount = appKitModal.subscribeAccount(async (account) => {
+                console.log('[AppKit] Account state:', account);
+
+                if (account.isConnected && account.address) {
+                    // User just connected
+                    if (connectedAddress !== account.address) {
+                        connectedAddress = account.address;
+
+                        try {
+                            // Get provider and signer
+                            const walletProvider = appKitModal.getWalletProvider();
+                            if (!walletProvider) {
+                                throw new Error('Wallet provider not available');
+                            }
+
+                            ethersProvider = new BrowserProvider(walletProvider);
+                            ethersSigner = await ethersProvider.getSigner();
+
+                            console.log('[AppKit] Provider and signer ready');
+                            showWalletConnected(account.address);
+
+                            // Check if wallet matches expected
+                            if (expectedWallet && expectedWallet.toLowerCase() !== account.address.toLowerCase()) {
+                                showError(`Warning: Connected wallet (${account.address}) does not match expected wallet (${expectedWallet})`, false);
+                            }
+
+                        } catch (error) {
+                            console.error('[AppKit] Provider error:', error);
+                            showError('Failed to setup wallet provider: ' + error.message);
+                        }
+                    }
+                } else if (!account.isConnected && connectedAddress) {
+                    // User disconnected
+                    console.log('[AppKit] User disconnected');
+                    location.reload();
+                }
+            });
+
+            // Subscribe to network changes
+            const unsubscribeNetwork = appKitModal.subscribeNetwork((network) => {
+                console.log('[AppKit] Network changed:', network);
+            });
+
+            // Store unsubscribe functions
+            appKitUnsubscribers = [unsubscribeAccount, unsubscribeNetwork];
         }
 
-        // Connect to Coinbase Wallet
-        window.connectCoinbase = async function () {
+        // ============================================
+        // WALLET CONNECTION
+        // ============================================
+
+        window.connectWallet = async function () {
             try {
-                if (typeof window.ethereum === 'undefined' || !window.ethereum.isCoinbaseWallet) {
-                    showError('Coinbase Wallet is not installed. Please install from wallet.coinbase.com')
-                    return
-                }
+                showLoading(true);
+                hideError();
 
-                showLoading(true)
-                hideError()
+                // Initialize AppKit if not already done
+                await initializeAppKit();
 
-                const accounts = await window.ethereum.request({
-                    method: 'eth_requestAccounts'
-                })
+                // Open the connection modal
+                console.log('[AppKit] Opening connection modal...');
+                await appKitModal.open();
 
-                if (accounts.length === 0) {
-                    throw new Error('No accounts found')
-                }
-
-                provider = new BrowserProvider(window.ethereum)
-                signer = await provider.getSigner()
-                connectedAddress = await signer.getAddress()
-
-                showWalletConnected(connectedAddress)
+                showLoading(false);
 
             } catch (error) {
-                console.error('Coinbase Wallet connection error:', error)
-                showError('Failed to connect Coinbase Wallet: ' + error.message)
-                showLoading(false)
+                console.error('[Connect] Error:', error);
+                showError('Failed to connect wallet: ' + error.message);
+                showLoading(false);
             }
-        }
+        };
 
-        // Sign message
+        // ============================================
+        // SIGNING
+        // ============================================
+
         window.signMessage = async function () {
             try {
-                if (!signer) {
-                    throw new Error('Wallet not connected')
+                if (!ethersSigner) {
+                    throw new Error('Wallet not connected');
                 }
 
                 if (!message) {
-                    throw new Error('No message to sign')
+                    throw new Error('No message to sign');
                 }
 
-                showLoading(true)
-                hideError()
+                showLoading(true);
+                hideError();
+
+                console.log('[Sign] Requesting signature...');
 
                 // Sign the message
-                const signature = await signer.signMessage(message)
+                const signature = await ethersSigner.signMessage(message);
+
+                console.log('[Sign] Signature received:', signature);
+
+                // SECURITY: Validate signature format
+                if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
+                    throw new Error('Invalid signature format');
+                }
 
                 // Display result
-                document.getElementById('signatureText').textContent = signature
-                document.getElementById('signatureResult').style.display = 'block'
-                document.getElementById('walletConnected').style.display = 'none'
-                showLoading(false)
+                document.getElementById('signatureText').textContent = signature;
+                document.getElementById('signatureResult').style.display = 'block';
+                document.getElementById('walletConnected').style.display = 'none';
+                showLoading(false);
 
                 // Store in localStorage for reference
-                localStorage.setItem('lastSignature', signature)
-                localStorage.setItem('lastSignatureTime', new Date().toISOString())
+                localStorage.setItem('lastSignature', signature);
+                localStorage.setItem('lastSignatureTime', new Date().toISOString());
 
             } catch (error) {
-                console.error('Signing error:', error)
-                showError('Failed to sign message: ' + error.message)
-                showLoading(false)
+                console.error('[Sign] Error:', error);
+                showError('Failed to sign message: ' + error.message);
+                showLoading(false);
             }
-        }
+        };
 
-        // Copy signature to clipboard
+        // ============================================
+        // CLIPBOARD
+        // ============================================
+
         window.copySignature = function () {
-            const signature = document.getElementById('signatureText').textContent
-            navigator.clipboard.writeText(signature).then(() => {
-                const btn = event.target
-                const originalText = btn.textContent
-                btn.textContent = '✅ Copied!'
-                setTimeout(() => {
-                    btn.textContent = originalText
-                }, 2000)
-            }).catch(err => {
-                alert('Failed to copy: ' + err)
-            })
+            const signature = document.getElementById('signatureText').textContent;
+
+            // Try modern clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(signature).then(() => {
+                    updateCopyButton('✅ Copied!');
+                }).catch(err => {
+                    fallbackCopy(signature);
+                });
+            } else {
+                fallbackCopy(signature);
+            }
+        };
+
+        function fallbackCopy(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-999999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    updateCopyButton('✅ Copied!');
+                } else {
+                    alert('Failed to copy. Please copy manually.');
+                }
+            } catch (err) {
+                alert('Failed to copy. Please copy manually.');
+            }
+
+            document.body.removeChild(textarea);
         }
 
-        // Helper functions
-        function showWalletConnected(address) {
-            document.getElementById('connectedWallet').textContent = address
-            document.getElementById('walletSelection').style.display = 'none'
-            document.getElementById('walletConnected').style.display = 'block'
-            showLoading(false)
+        function updateCopyButton(text) {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = text;
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
 
-            // Check if wallet matches expected
-            if (expectedWallet && expectedWallet.toLowerCase() !== address.toLowerCase()) {
-                showError(`Warning: Connected wallet (${address}) does not match expected wallet (${expectedWallet})`, false)
-            }
+        // ============================================
+        // UI HELPERS
+        // ============================================
+
+        function showWalletConnected(address) {
+            document.getElementById('connectedWallet').textContent = address;
+            document.getElementById('walletSelection').style.display = 'none';
+            document.getElementById('walletConnected').style.display = 'block';
+            showLoading(false);
         }
 
         function showLoading(show) {
-            document.getElementById('loading').style.display = show ? 'block' : 'none'
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            if (!show) {
+                updateLoadingProgress(0);
+            }
+        }
+
+        function updateLoadingProgress(percent) {
+            const bar = document.getElementById('loading-progress');
+            if (bar) {
+                bar.style.width = percent + '%';
+            }
         }
 
         function showError(msg, hideLoading = true) {
-            document.getElementById('error').textContent = msg
-            document.getElementById('error').style.display = 'block'
-            if (hideLoading) showLoading(false)
+            document.getElementById('error').textContent = msg;
+            document.getElementById('error').style.display = 'block';
+            if (hideLoading) showLoading(false);
         }
 
         function hideError() {
-            document.getElementById('error').style.display = 'none'
+            document.getElementById('error').style.display = 'none';
         }
 
-        // Auto-connect if MetaMask is already connected
+        // ============================================
+        // AUTO-CONNECT CHECK
+        // ============================================
+
         window.addEventListener('load', async () => {
-            if (typeof window.ethereum !== 'undefined') {
-                try {
-                    const accounts = await window.ethereum.request({
-                        method: 'eth_accounts'
-                    })
+            try {
+                // Initialize AppKit
+                await initializeAppKit();
 
-                    if (accounts.length > 0) {
-                        // Already connected, auto-setup
-                        provider = new BrowserProvider(window.ethereum)
-                        signer = await provider.getSigner()
-                        connectedAddress = await signer.getAddress()
-                        showWalletConnected(connectedAddress)
+                // Check if already connected
+                const state = appKitModal.getState();
+                if (state?.selectedNetworkId && state?.address) {
+                    console.log('[AppKit] Auto-connecting to existing session...');
+
+                    const walletProvider = appKitModal.getWalletProvider();
+                    if (walletProvider) {
+                        ethersProvider = new BrowserProvider(walletProvider);
+                        ethersSigner = await ethersProvider.getSigner();
+                        connectedAddress = await ethersSigner.getAddress();
+                        showWalletConnected(connectedAddress);
                     }
-                } catch (e) {
-                    // Ignore errors on auto-connect
                 }
+            } catch (e) {
+                console.log('[AppKit] No existing connection to restore');
             }
-        })
-
-        // Listen for account changes
-        if (typeof window.ethereum !== 'undefined') {
-            window.ethereum.on('accountsChanged', (accounts) => {
-                if (accounts.length === 0) {
-                    // Disconnected
-                    location.reload()
-                } else {
-                    // Account changed
-                    location.reload()
-                }
-            })
-        }
+        });
     </script>
 </body>
 </html>
