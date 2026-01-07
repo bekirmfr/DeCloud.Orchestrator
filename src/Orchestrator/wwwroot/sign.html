@@ -229,38 +229,57 @@
                 margin: 5px 0;
             }
 
-        .connect-wallet-section {
+        .wallet-options {
+            display: grid;
+            gap: 12px;
             margin: 20px 0;
         }
 
-        .connect-wallet-btn {
-            width: 100%;
-            padding: 16px;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
+        .wallet-button {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 10px;
+            gap: 12px;
+            padding: 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+            text-align: left;
         }
 
-            .connect-wallet-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 10px 20px rgba(16, 185, 129, 0.4);
+            .wallet-button:hover {
+                border-color: #667eea;
+                background: #f9fafb;
+                transform: translateX(4px);
             }
 
-            .connect-wallet-btn svg {
-                width: 20px;
-                height: 20px;
+            .wallet-button .wallet-icon {
+                width: 32px;
+                height: 32px;
+                flex-shrink: 0;
             }
 
-        .wallet-info {
+            .wallet-button .wallet-info {
+                flex: 1;
+            }
+
+            .wallet-button .wallet-name {
+                display: block;
+                font-weight: 600;
+            }
+
+            .wallet-button .wallet-desc {
+                display: block;
+                font-size: 12px;
+                color: #6b7280;
+                font-weight: 400;
+            }
+
+        .connected-wallet-info {
             background: #f0fdf4;
             border: 2px solid #10b981;
             border-radius: 10px;
@@ -268,23 +287,18 @@
             margin: 20px 0;
         }
 
-        .wallet-info-label {
+        .connected-wallet-label {
             color: #065f46;
             font-size: 12px;
             font-weight: 600;
             margin-bottom: 5px;
         }
 
-        .wallet-info-value {
+        .connected-wallet-value {
             color: #059669;
             font-family: 'Courier New', monospace;
             font-size: 14px;
             word-break: break-all;
-        }
-
-        /* AppKit Modal Override */
-        w3m-modal {
-            z-index: 10000;
         }
 
         @media (max-width: 640px) {
@@ -345,26 +359,14 @@
         </div>
         <div class="message-box" id="messageText"></div>
 
-        <!-- Wallet Connection Section -->
-        <div id="walletSelection" class="connect-wallet-section">
-            <button id="connect-wallet-btn" class="connect-wallet-btn" onclick="connectWallet()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-                    <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
-                    <circle cx="18" cy="15" r="1" />
-                </svg>
-                Connect Wallet
-            </button>
-            <p style="text-align: center; color: #666; font-size: 12px; margin-top: 10px;">
-                Supports MetaMask, WalletConnect, Coinbase, and 350+ wallets
-            </p>
-        </div>
+        <!-- Wallet Selection -->
+        <div id="walletSelection" class="wallet-options"></div>
 
         <!-- Connected Wallet Info -->
         <div id="walletConnected" style="display: none;">
-            <div class="wallet-info">
-                <div class="wallet-info-label">Connected Wallet</div>
-                <div class="wallet-info-value" id="connectedWallet">-</div>
+            <div class="connected-wallet-info">
+                <div class="connected-wallet-label">Connected Wallet</div>
+                <div class="connected-wallet-value" id="connectedWallet">-</div>
             </div>
 
             <button id="signButton" class="button button-primary" onclick="signMessage()">
@@ -396,15 +398,9 @@
         </div>
     </div>
 
-    <!-- AppKit SDK via CDN -->
+    <!-- Ethers.js from jsdelivr CDN (proven to work) -->
     <script type="module">
-        import { createAppKit } from 'https://esm.sh/@reown/appkit@1.6.2';
-        import { EthersAdapter } from 'https://esm.sh/@reown/appkit-adapter-ethers@1.6.2';
-        import { mainnet, polygon, arbitrum } from 'https://esm.sh/@reown/appkit@1.6.2/networks';
-        import { BrowserProvider } from 'https://esm.sh/ethers@6.13.0';
-
-        // Configuration
-        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
+        import { BrowserProvider } from 'https://cdn.jsdelivr.net/npm/ethers@6.7.0/dist/ethers.min.js';
 
         // Parse URL parameters
         const params = new URLSearchParams(window.location.search);
@@ -429,114 +425,225 @@
         document.getElementById('messageText').textContent = message;
 
         // State
-        let appKitModal = null;
-        let ethersProvider = null;
-        let ethersSigner = null;
+        let provider = null;
+        let signer = null;
         let connectedAddress = null;
 
-        // Initialize AppKit
-        async function initializeAppKit() {
-            if (appKitModal) return appKitModal;
+        // Detect available wallets and render options
+        function renderWalletOptions() {
+            const container = document.getElementById('walletSelection');
+            const isMobile = /mobile/i.test(navigator.userAgent);
+            const hasEthereum = typeof window.ethereum !== 'undefined';
 
-            try {
-                console.log('[AppKit] Initializing...');
+            const wallets = [];
 
-                appKitModal = createAppKit({
-                    adapters: [new EthersAdapter()],
-                    networks: [polygon, mainnet, arbitrum],
-                    projectId: WALLETCONNECT_PROJECT_ID,
-                    metadata: {
-                        name: 'DeCloud Node Authorization',
-                        description: 'Sign message to authorize your DeCloud node',
-                        url: window.location.origin,
-                        icons: []
-                    },
-                    features: {
-                        analytics: false,
-                        email: false,
-                        socials: [],
-                        swaps: false,
-                        onramp: false
-                    },
-                    themeMode: 'light',
-                    themeVariables: {
-                        '--w3m-accent': '#667eea',
-                        '--w3m-border-radius-master': '8px'
-                    }
+            // MetaMask
+            if (hasEthereum && window.ethereum.isMetaMask) {
+                wallets.push({
+                    id: 'metamask',
+                    name: 'MetaMask',
+                    desc: 'Browser extension',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M29.5 10.2l-12-8.5-12 8.5L7 14.3l5-1.8 5.5 4 5.5-4 5 1.8z" fill="%23E2761B"/%3E%3Cpath d="M5.5 10.2l2.5 4.1-2.5 1.5v6l7-1 .5-7.5-5.5-3.1z" fill="%23E4761B"/%3E%3Cpath d="M26.5 10.2l-2.5 4.1 2.5 1.5v6l-7-1-.5-7.5 5.5-3.1z" fill="%23E4761B"/%3E%3C/svg%3E',
+                    action: connectMetaMask
+                });
+            } else if (isMobile) {
+                wallets.push({
+                    id: 'metamask',
+                    name: 'MetaMask',
+                    desc: 'Open in MetaMask app',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M29.5 10.2l-12-8.5-12 8.5L7 14.3l5-1.8 5.5 4 5.5-4 5 1.8z" fill="%23E2761B"/%3E%3C/svg%3E',
+                    action: () => openMobileWallet('metamask')
+                });
+            }
+
+            // Coinbase Wallet
+            if (hasEthereum && window.ethereum.isCoinbaseWallet) {
+                wallets.push({
+                    id: 'coinbase',
+                    name: 'Coinbase Wallet',
+                    desc: 'Browser extension',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="16" fill="%230052FF"/%3E%3Crect x="10" y="10" width="12" height="12" rx="2" fill="white"/%3E%3C/svg%3E',
+                    action: connectCoinbase
+                });
+            } else if (isMobile) {
+                wallets.push({
+                    id: 'coinbase',
+                    name: 'Coinbase Wallet',
+                    desc: 'Open in Coinbase app',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="16" fill="%230052FF"/%3E%3Crect x="10" y="10" width="12" height="12" rx="2" fill="white"/%3E%3C/svg%3E',
+                    action: () => openMobileWallet('coinbase')
+                });
+            }
+
+            // Generic wallet (if ethereum available but not identified)
+            if (hasEthereum && !window.ethereum.isMetaMask && !window.ethereum.isCoinbaseWallet) {
+                wallets.push({
+                    id: 'browser',
+                    name: 'Browser Wallet',
+                    desc: 'Connect detected wallet',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Crect width="32" height="32" rx="8" fill="%2310b981"/%3E%3Cpath d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" stroke="white" stroke-width="2" fill="none"/%3E%3C/svg%3E',
+                    action: connectBrowserWallet
+                });
+            }
+
+            // Mobile-specific wallets
+            if (isMobile) {
+                wallets.push({
+                    id: 'trust',
+                    name: 'Trust Wallet',
+                    desc: 'Open in Trust Wallet app',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Ccircle cx="16" cy="16" r="16" fill="%233375BB"/%3E%3Cpath d="M16 8l-6 4v6c0 3.5 2.5 6.5 6 7 3.5-.5 6-3.5 6-7v-6l-6-4z" fill="white"/%3E%3C/svg%3E',
+                    action: () => openMobileWallet('trust')
                 });
 
-                console.log('[AppKit] Initialized successfully');
-                setupAppKitListeners();
-                return appKitModal;
-
-            } catch (error) {
-                console.error('[AppKit] Initialization error:', error);
-                throw new Error('Failed to initialize wallet connection');
+                wallets.push({
+                    id: 'rainbow',
+                    name: 'Rainbow',
+                    desc: 'Open in Rainbow app',
+                    icon: 'data:image/svg+xml,%3Csvg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"%3E%3Cdefs%3E%3ClinearGradient id="r" x1="0" y1="0" x2="1" y2="1"%3E%3Cstop offset="0%25" stop-color="%23FF4D4D"/%3E%3Cstop offset="50%25" stop-color="%23FFD700"/%3E%3Cstop offset="100%25" stop-color="%234D79FF"/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width="32" height="32" rx="8" fill="url(%23r)"/%3E%3C/svg%3E',
+                    action: () => openMobileWallet('rainbow')
+                });
             }
-        }
 
-        // Setup event listeners
-        function setupAppKitListeners() {
-            if (!appKitModal) return;
+            // No wallets detected
+            if (wallets.length === 0) {
+                container.innerHTML = `
+                        <div style="text-align: center; padding: 20px; color: #666;">
+                            <p style="margin-bottom: 15px;">No wallets detected!</p>
+                            <p style="font-size: 14px;">Please install a wallet to continue:</p>
+                            <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+                                <a href="https://metamask.io/download/" target="_blank" style="padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 8px; font-size: 14px;">Get MetaMask</a>
+                            </div>
+                        </div>
+                    `;
+                return;
+            }
 
-            // Subscribe to account changes
-            appKitModal.subscribeAccount(async (account) => {
-                console.log('[AppKit] Account state:', account);
+            // Render wallet buttons
+            container.innerHTML = wallets.map(wallet => `
+                    <button class="wallet-button" onclick="window.walletActions['${wallet.id}']()">
+                        <img class="wallet-icon" src="${wallet.icon}" alt="${wallet.name}">
+                        <div class="wallet-info">
+                            <span class="wallet-name">${wallet.name}</span>
+                            <span class="wallet-desc">${wallet.desc}</span>
+                        </div>
+                    </button>
+                `).join('');
 
-                if (account.isConnected && account.address) {
-                    if (connectedAddress !== account.address) {
-                        connectedAddress = account.address;
-
-                        try {
-                            const walletProvider = appKitModal.getWalletProvider();
-                            if (!walletProvider) {
-                                throw new Error('Wallet provider not available');
-                            }
-
-                            ethersProvider = new BrowserProvider(walletProvider);
-                            ethersSigner = await ethersProvider.getSigner();
-
-                            console.log('[AppKit] Signer ready for:', account.address);
-                            showWalletConnected(account.address);
-
-                        } catch (error) {
-                            console.error('[AppKit] Provider error:', error);
-                            showError('Failed to setup wallet provider: ' + error.message);
-                        }
-                    }
-                } else if (!account.isConnected && connectedAddress) {
-                    console.log('[AppKit] Wallet disconnected');
-                    connectedAddress = null;
-                    location.reload();
-                }
+            // Store actions
+            window.walletActions = {};
+            wallets.forEach(wallet => {
+                window.walletActions[wallet.id] = wallet.action;
             });
         }
 
-        // Connect wallet
-        window.connectWallet = async function () {
+        // Connect MetaMask
+        async function connectMetaMask() {
             try {
                 showLoading(true);
                 hideError();
 
-                if (!appKitModal) {
-                    await initializeAppKit();
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
                 }
 
-                // Open modal
-                appKitModal.open();
-                showLoading(false);
+                provider = new BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
 
             } catch (error) {
-                console.error('Connection error:', error);
-                showError('Failed to connect wallet: ' + error.message);
+                console.error('MetaMask error:', error);
+                if (error.code === 4001) {
+                    showError('Connection rejected by user');
+                } else {
+                    showError('Failed to connect: ' + error.message);
+                }
                 showLoading(false);
             }
-        };
+        }
+
+        // Connect Coinbase
+        async function connectCoinbase() {
+            try {
+                showLoading(true);
+                hideError();
+
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                provider = new BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+            } catch (error) {
+                console.error('Coinbase error:', error);
+                showError('Failed to connect: ' + error.message);
+                showLoading(false);
+            }
+        }
+
+        // Connect generic browser wallet
+        async function connectBrowserWallet() {
+            try {
+                showLoading(true);
+                hideError();
+
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                provider = new BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+            } catch (error) {
+                console.error('Browser wallet error:', error);
+                showError('Failed to connect: ' + error.message);
+                showLoading(false);
+            }
+        }
+
+        // Open mobile wallet via deep link
+        function openMobileWallet(walletType) {
+            const currentUrl = window.location.href;
+            const encodedUrl = encodeURIComponent(currentUrl);
+
+            const deepLinks = {
+                metamask: `https://metamask.app.link/dapp/${currentUrl.replace(/^https?:\/\//, '')}`,
+                coinbase: `https://go.cb-w.com/dapp?cb_url=${encodedUrl}`,
+                trust: `https://link.trustwallet.com/open_url?coin_id=60&url=${encodedUrl}`,
+                rainbow: `https://rnbwapp.com/wc?uri=${encodedUrl}`
+            };
+
+            const deepLink = deepLinks[walletType];
+            if (deepLink) {
+                window.location.href = deepLink;
+            }
+        }
 
         // Sign message
         window.signMessage = async function () {
             try {
-                if (!ethersSigner) {
+                if (!signer) {
                     throw new Error('Wallet not connected');
                 }
 
@@ -547,32 +654,26 @@
                 showLoading(true);
                 hideError();
 
-                // Sign the message
-                const signature = await ethersSigner.signMessage(message);
-                console.log('[Sign] Signature generated:', signature);
+                const signature = await signer.signMessage(message);
+                console.log('[Sign] Signature:', signature);
 
-                // Display result
                 document.getElementById('signatureText').textContent = signature;
                 document.getElementById('signatureResult').style.display = 'block';
                 document.getElementById('walletConnected').style.display = 'none';
                 showLoading(false);
 
-                // Store for reference
                 try {
                     localStorage.setItem('lastSignature', signature);
                     localStorage.setItem('lastSignatureTime', new Date().toISOString());
-                } catch (e) {
-                    // Ignore localStorage errors (e.g., in private browsing)
-                }
+                } catch (e) { }
 
             } catch (error) {
                 console.error('Signing error:', error);
 
-                // User rejected
-                if (error.code === 'ACTION_REJECTED' || error.message.includes('rejected')) {
-                    showError('Signature rejected. Please try again.');
+                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+                    showError('Signature rejected by user');
                 } else {
-                    showError('Failed to sign message: ' + error.message);
+                    showError('Failed to sign: ' + error.message);
                 }
 
                 showLoading(false);
@@ -583,7 +684,6 @@
         window.copySignature = function () {
             const signature = document.getElementById('signatureText').textContent;
 
-            // Try modern API first
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(signature).then(() => {
                     updateButtonText('✅ Copied!');
@@ -595,7 +695,6 @@
             }
         };
 
-        // Fallback copy for non-HTTPS
         function fallbackCopy(text) {
             const textarea = document.createElement('textarea');
             textarea.value = text;
@@ -608,7 +707,7 @@
                 document.execCommand('copy');
                 updateButtonText('✅ Copied!');
             } catch (err) {
-                showError('Failed to copy. Please copy manually.');
+                showError('Failed to copy. Please select and copy manually.');
             }
 
             document.body.removeChild(textarea);
@@ -629,10 +728,9 @@
             document.getElementById('walletSelection').style.display = 'none';
             document.getElementById('walletConnected').style.display = 'block';
 
-            // Check if wallet matches expected
             if (expectedWallet && expectedWallet.toLowerCase() !== address.toLowerCase()) {
                 showError(
-                    `⚠️ Warning: Connected wallet (${address}) does not match expected wallet (${expectedWallet})`,
+                    `⚠️ Warning: Connected wallet (${address}) doesn't match expected (${expectedWallet})`,
                     false
                 );
             }
@@ -653,15 +751,38 @@
             document.getElementById('error').style.display = 'none';
         }
 
-        // Initialize on load
+        // Initialize
         window.addEventListener('load', async () => {
-            // Pre-initialize AppKit for faster connection
-            try {
-                await initializeAppKit();
-            } catch (e) {
-                console.error('Failed to pre-initialize AppKit:', e);
+            // Render wallet options
+            renderWalletOptions();
+
+            // Auto-connect if already connected
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    const accounts = await window.ethereum.request({
+                        method: 'eth_accounts'
+                    });
+
+                    if (accounts.length > 0) {
+                        provider = new BrowserProvider(window.ethereum);
+                        signer = await provider.getSigner();
+                        connectedAddress = await signer.getAddress();
+                        showWalletConnected(connectedAddress);
+                    }
+                } catch (e) { }
             }
         });
+
+        // Listen for account changes
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                location.reload();
+            });
+
+            window.ethereum.on('chainChanged', () => {
+                location.reload();
+            });
+        }
     </script>
 </body>
 </html>
