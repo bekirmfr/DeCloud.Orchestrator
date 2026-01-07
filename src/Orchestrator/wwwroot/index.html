@@ -3,496 +3,700 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DeCloud - Decentralized Cloud Platform</title>
+    <title>DeCloud Node Authorization</title>
 
-    <!-- Security Headers -->
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
 
-    <!-- Styles -->
-    <link rel="stylesheet" href="/styles.css">
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+            .logo h1 {
+                color: #667eea;
+                font-size: 32px;
+                margin-bottom: 10px;
+            }
+
+            .logo p {
+                color: #666;
+                font-size: 14px;
+            }
+
+        .status {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+            .status-item:last-child {
+                border-bottom: none;
+            }
+
+        .status-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .status-value {
+            color: #333;
+            font-weight: 600;
+            word-break: break-all;
+            text-align: right;
+            max-width: 60%;
+        }
+
+        .message-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #333;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .button {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 10px 0;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+            .button-primary:hover:not(:disabled) {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+            }
+
+            .button-primary:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+                transform: none;
+            }
+
+        .button-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+            .button-secondary:hover {
+                background: #667eea;
+                color: white;
+            }
+
+        .signature-result {
+            background: #e8f5e9;
+            border: 2px solid #4caf50;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+            .signature-result h3 {
+                color: #2e7d32;
+                margin-bottom: 10px;
+            }
+
+        .signature-text {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+            .warning h4 {
+                color: #856404;
+                margin-bottom: 5px;
+            }
+
+            .warning p {
+                color: #856404;
+                font-size: 14px;
+            }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            color: #c62828;
+        }
+
+        .success {
+            text-align: center;
+            color: #4caf50;
+            font-size: 48px;
+            margin: 20px 0;
+        }
+
+        .instructions {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+            .instructions h4 {
+                color: #1565c0;
+                margin-bottom: 10px;
+            }
+
+            .instructions ol {
+                margin-left: 20px;
+                color: #1565c0;
+            }
+
+            .instructions li {
+                margin: 5px 0;
+            }
+
+        .info-box {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+            .info-box p {
+                color: #1565c0;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+
+        .wallet-options {
+            display: grid;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .wallet-button {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+            .wallet-button:hover {
+                border-color: #667eea;
+                transform: translateX(5px);
+            }
+
+        .wallet-icon {
+            font-size: 32px;
+            margin-right: 15px;
+        }
+
+        .wallet-info h4 {
+            color: #333;
+            margin-bottom: 3px;
+        }
+
+        .wallet-info p {
+            color: #666;
+            font-size: 12px;
+        }
+
+        #walletconnect-container {
+            margin: 20px 0;
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 640px) {
+            .container {
+                padding: 24px;
+            }
+
+            .logo h1 {
+                font-size: 24px;
+            }
+
+            .status-item {
+                flex-direction: column;
+                gap: 5px;
+            }
+
+            .status-value {
+                text-align: left;
+                max-width: 100%;
+            }
+        }
+    </style>
 </head>
 <body>
-    <!-- Background Effects -->
-    <div class="bg-grid"></div>
-    <div class="bg-glow bg-glow-1"></div>
-    <div class="bg-glow bg-glow-2"></div>
-
-    <!-- SDK Loading Progress Bar -->
-    <div class="sdk-loading-bar" id="sdk-loading-bar">
-        <div class="sdk-loading-bar-progress" id="sdk-loading-progress"></div>
-    </div>
-
-    <!-- Toast Container -->
-    <div class="toast-container" id="toast-container"></div>
-
-    <!-- LOGIN OVERLAY -->
-    <div class="login-overlay" id="login-overlay">
-        <div class="login-card">
-            <div class="login-logo">
-                <div class="login-logo-icon">DC</div>
-                <span class="login-logo-text">DeCloud</span>
-            </div>
-
-            <h1 class="login-title">Welcome to DeCloud</h1>
-            <p class="login-subtitle">Connect your wallet to access decentralized cloud computing</p>
-
-            <button class="connect-wallet-btn" id="connect-wallet-btn" onclick="connectWallet()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-                    <path d="M16 12h4a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
-                    <circle cx="18" cy="15" r="1" />
-                </svg>
-                Connect Wallet
-            </button>
-
-            <div class="login-status" id="login-status"></div>
-
-            <div class="login-footer">
-                <p>By connecting, you agree to our <a href="#" onclick="return false;">Terms of Service</a></p>
-                <p style="margin-top: 8px;">Need help? <a href="#" onclick="return false;">Documentation</a></p>
-            </div>
+    <div class="container">
+        <div class="logo">
+            <h1>🔐 DeCloud</h1>
+            <p>Node Authorization</p>
         </div>
-    </div>
 
-    <!-- MAIN APPLICATION -->
-    <div class="app-container" id="app-container" style="display: none;">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="logo">
-                <div class="logo-icon">DC</div>
-                <span class="logo-text">DeCloud</span>
-            </div>
-
-            <nav class="nav-section">
-                <div class="nav-label">Overview</div>
-                <a class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="9" rx="1" />
-                        <rect x="14" y="3" width="7" height="5" rx="1" />
-                        <rect x="14" y="12" width="7" height="9" rx="1" />
-                        <rect x="3" y="16" width="7" height="5" rx="1" />
-                    </svg>
-                    Dashboard
-                </a>
-
-                <div class="nav-label" style="margin-top: 24px;">Resources</div>
-                <a class="nav-item" data-page="virtual-machines" onclick="showPage('virtual-machines')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="2" y="3" width="20" height="14" rx="2" />
-                        <path d="M8 21h8M12 17v4" />
-                    </svg>
-                    Virtual Machines
-                </a>
-                <a class="nav-item" data-page="nodes" onclick="showPage('nodes')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="4" y="4" width="6" height="6" rx="1" />
-                        <rect x="14" y="4" width="6" height="6" rx="1" />
-                        <rect x="4" y="14" width="6" height="6" rx="1" />
-                        <rect x="14" y="14" width="6" height="6" rx="1" />
-                    </svg>
-                    Nodes
-                </a>
-
-                <div class="nav-label" style="margin-top: 24px;">Settings</div>
-                <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-                    </svg>
-                    SSH Keys
-                </a>
-                <a class="nav-item" data-page="settings" onclick="showPage('settings')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3" />
-                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                    </svg>
-                    Settings
-                </a>
-            </nav>
-
-            <div class="sidebar-footer">
-                <div class="wallet-badge" id="wallet-badge">
-                    <div class="wallet-dot"></div>
-                    <span id="wallet-display">Not connected</span>
-                    <button class="disconnect-btn" id="disconnect-btn" onclick="disconnect()" style="display: none;">×</button>
-                </div>
-            </div>
-        </aside>
-
-        <!-- Main Content -->
-        <main class="main-content">
-            <!-- Dashboard Page -->
-            <div id="page-dashboard" class="page active">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Dashboard</h1>
-                        <p class="page-subtitle">Overview of your decentralized cloud resources</p>
-                    </div>
-                    <div class="header-actions">
-                        <button class="btn btn-secondary" onclick="refreshData()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M23 4v6h-6M1 20v-6h6" />
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                            </svg>
-                            Refresh
-                        </button>
-                        <button class="btn btn-primary" onclick="openCreateVMModal()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            Create VM
-                        </button>
-                    </div>
-                </header>
-
-                <!-- Stats Grid -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon nodes">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="4" y="4" width="6" height="6" rx="1" />
-                                <rect x="14" y="4" width="6" height="6" rx="1" />
-                                <rect x="4" y="14" width="6" height="6" rx="1" />
-                                <rect x="14" y="14" width="6" height="6" rx="1" />
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="stat-nodes">0</div>
-                        <div class="stat-label">Active Nodes</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon vms">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="2" y="3" width="20" height="14" rx="2" />
-                                <path d="M8 21h8M12 17v4" />
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="stat-vms">0</div>
-                        <div class="stat-label">Virtual Machines</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon cpu">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="4" y="4" width="16" height="16" rx="2" />
-                                <rect x="9" y="9" width="6" height="6" />
-                                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="stat-cpu">0 cores</div>
-                        <div class="stat-label">CPU Available</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon memory">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="stat-memory">0 GB</div>
-                        <div class="stat-label">Memory Available</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon storage">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="stat-storage">0 GB</div>
-                        <div class="stat-label">Storage Available</div>
-                    </div>
-                </div>
-
-                <!-- Recent VMs -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">Recent Virtual Machines</h3>
-                        <button class="btn btn-secondary" onclick="showPage('virtual-machines')">View All</button>
-                    </div>
-                    <div class="card-body">
-                        <div id="recent-vms">
-                            <p style="text-align: center; color: #6b7280; padding: 20px;">Loading...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Virtual Machines Page -->
-            <div id="page-virtual-machines" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Virtual Machines</h1>
-                        <p class="page-subtitle">Manage your cloud instances</p>
-                    </div>
-                    <div class="header-actions">
-                        <button class="btn btn-primary" onclick="openCreateVMModal()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            Create VM
-                        </button>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Node</th>
-                                    <th>CPU</th>
-                                    <th>Memory</th>
-                                    <th>Disk</th>
-                                    <th>Status</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="vms-table-body">
-                                <tr>
-                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
-                                        Loading virtual machines...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Nodes Page -->
-            <div id="page-nodes" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Nodes</h1>
-                        <p class="page-subtitle">Network infrastructure providers</p>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>IP Address</th>
-                                    <th>CPU</th>
-                                    <th>Memory</th>
-                                    <th>Storage</th>
-                                    <th>Active VMs</th>
-                                    <th>Last Seen</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="nodes-table-body">
-                                <tr>
-                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
-                                        Loading nodes...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SSH Keys Page -->
-            <div id="page-ssh-keys" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">SSH Keys</h1>
-                        <p class="page-subtitle">Manage your SSH keys for VM access</p>
-                    </div>
-                    <div class="header-actions">
-                        <button class="btn btn-primary" onclick="openAddSSHKeyModal()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            Add SSH Key
-                        </button>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Fingerprint</th>
-                                    <th>Added</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="ssh-keys-table-body">
-                                <tr>
-                                    <td colspan="4" style="text-align: center; padding: 40px; color: #6b7280;">
-                                        Loading SSH keys...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Settings Page -->
-            <div id="page-settings" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Settings</h1>
-                        <p class="page-subtitle">Configure your DeCloud dashboard</p>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <div class="form-group">
-                            <label class="form-label">Orchestrator URL</label>
-                            <input type="text" class="form-input" id="settings-orchestrator-url" placeholder="http://localhost:5050">
-                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
-                                The backend server URL for DeCloud services
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Connected Wallet</label>
-                            <input type="text" class="form-input" id="settings-wallet" placeholder="Connect wallet to see address" disabled>
-                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
-                                Your Ethereum wallet address used for authentication
-                            </p>
-                        </div>
-                        <div style="display: flex; gap: 12px; margin-top: 24px;">
-                            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
-                            <button class="btn btn-secondary" onclick="disconnect()">Disconnect Wallet</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <!-- Create VM Modal -->
-    <div class="modal-overlay" id="create-vm-modal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 class="modal-title">Create Virtual Machine</h2>
-                <button class="modal-close" onclick="closeModal('create-vm-modal')">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">VM Name</label>
-                    <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">
-                </div>
-                <!-- Quality Tier Section (NEW) -->
-                <div class="form-group">
-                    <label for="quality-tier" class="form-label">
-                        Quality Tier
-                        <span class="quality-tier-help" id="tier-help-text">Standard</span>
-                    </label>
-                    <select id="quality-tier" class="form-control" onchange="updateTierInfo()">
-                        <option value="0">Dedicated (Premium)</option>
-                        <option value="1" selected>Standard</option>
-                        <option value="2">Balanced (Cost-Optimized)</option>
-                        <option value="3">Burstable (Lowest Cost)</option>
-                    </select>
-                    <div class="tier-info" id="tier-info">updateTierInfo
-                        <div class="tier-description">
-                            Balanced performance and cost, 2:1 CPU overcommit
-                        </div>
-                        <div class="tier-pricing">
-                            <span class="tier-points">4 points per vCPU</span>
-                            <span class="tier-multiplier">Base price (1.0x)</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">CPU Cores</label>
-                        <input type="number" class="form-input" id="vm-cpu" value="2" min="1" max="16">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Memory (MB)</label>
-                        <input type="number" class="form-input" id="vm-memory" value="2048" min="512" step="512">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Disk (GB)</label>
-                        <input type="number" class="form-input" id="vm-disk" value="20" min="10">
-                    </div>
-                </div>
-                <div class="cost-estimate" id="cost-estimate">
-                    <div class="cost-row">
-                        <span>Compute Points:</span>
-                        <strong id="compute-points">8 points</strong>
-                    </div>
-                    <div class="cost-row">
-                        <span>Estimated Cost:</span>
-                        <strong id="estimated-cost">$0.02/hour</strong>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Operating System</label>
-                    <select class="form-input" id="vm-image">
-                        <option value="ubuntu-24.04">Ubuntu 24.04 LTS</option>
-                        <option value="ubuntu-22.04">Ubuntu 22.04 LTS</option>
-                        <option value="debian-12">Debian 12</option>
-                        <option value="debian-11">Debian 11</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="createVM()">Create VM</button>
-            </div>
+        <div id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p style="text-align: center; color: #666;">Waiting for wallet...</p>
         </div>
-    </div>
 
-    <!-- Add SSH Key Modal -->
-    <div class="modal-overlay" id="add-ssh-key-modal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 class="modal-title">Add SSH Key</h2>
-                <button class="modal-close" onclick="closeModal('add-ssh-key-modal')">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Key Name</label>
-                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
-                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
-                        A friendly name to identify this key
-                    </p>
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="content">
+            <div class="status">
+                <div class="status-item">
+                    <span class="status-label">Node ID:</span>
+                    <span class="status-value" id="nodeId">-</span>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Public Key</label>
-                    <textarea class="form-input" id="ssh-key-public" rows="5" placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
-                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
-                        Paste your SSH public key (usually from ~/.ssh/id_rsa.pub)
+                <div class="status-item">
+                    <span class="status-label">Expected Wallet:</span>
+                    <span class="status-value" id="expectedWallet">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Hardware:</span>
+                    <span class="status-value" id="hardware">-</span>
+                </div>
+            </div>
+
+            <div class="warning">
+                <h4>⚠️ Important</h4>
+                <p>This signature proves you own the wallet. NO FUNDS will be transferred.</p>
+            </div>
+
+            <div id="messagePreview">
+                <h3 style="color: #333; margin: 20px 0 10px;">Message to Sign:</h3>
+                <div class="message-box" id="messageText"></div>
+            </div>
+
+            <div id="walletSelection">
+                <h3 style="color: #333; margin: 20px 0 10px;">Choose Your Wallet:</h3>
+
+                <div class="wallet-options">
+                    <div class="wallet-button" id="metamask-btn">
+                        <div class="wallet-icon">🦊</div>
+                        <div class="wallet-info">
+                            <h4>MetaMask</h4>
+                            <p>Browser extension or mobile app</p>
+                        </div>
+                    </div>
+
+                    <div class="wallet-button" id="walletconnect-btn">
+                        <div class="wallet-icon">📱</div>
+                        <div class="wallet-info">
+                            <h4>Mobile Wallet (WalletConnect)</h4>
+                            <p>Trust, Rainbow, Coinbase, and 300+ more</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="walletconnect-container"></div>
+
+                <div class="info-box">
+                    <p>
+                        <strong>📱 Mobile Users:</strong> Use WalletConnect to sign with your mobile wallet.<br>
+                        <strong>💻 Desktop Users:</strong> Use MetaMask extension or WalletConnect QR code.
                     </p>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="addSSHKey()">Add Key</button>
+
+            <div id="walletConnected" style="display: none;">
+                <div class="status">
+                    <div class="status-item">
+                        <span class="status-label">Connected Wallet:</span>
+                        <span class="status-value" id="connectedWallet">-</span>
+                    </div>
+                </div>
+
+                <button id="signButton" class="button button-primary">
+                    Sign Message
+                </button>
+            </div>
+
+            <div id="signatureResult" style="display: none;">
+                <div class="success">✅</div>
+                <div class="signature-result">
+                    <h3>Signature Generated Successfully!</h3>
+                    <p style="margin: 10px 0;">Copy this signature and paste it into your terminal:</p>
+                    <div class="signature-text" id="signatureText"></div>
+                    <button id="copyButton" class="button button-secondary">
+                        Copy to Clipboard
+                    </button>
+                </div>
+
+                <div class="instructions">
+                    <h4>Next Steps:</h4>
+                    <ol>
+                        <li>Copy the signature above</li>
+                        <li>Go back to your terminal</li>
+                        <li>Paste it where it says "Signature (0x...):"</li>
+                        <li>Press Enter</li>
+                    </ol>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Main Application Script - Vite will handle this -->
-    <script type="module" src="/src/app.js"></script>
-    <script type="module" src="/src/ssh-wallet.js"></script>
+    <!-- Load ethers.js and WalletConnect libraries -->
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.umd.min.js"></script>
+    <script src="https://unpkg.com/@walletconnect/web3-provider@1.8.0/dist/umd/index.min.js"></script>
+
+    <script>
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
+        const RPC_URLS = {
+            1: 'https://eth.llamarpc.com',
+            137: 'https://polygon-rpc.com',
+            42161: 'https://arb1.arbitrum.io/rpc'
+        };
+
+        // ============================================
+        // STATE
+        // ============================================
+        let provider = null;
+        let signer = null;
+        let connectedAddress = null;
+        let walletConnectProvider = null;
+
+        // Parse URL parameters
+        const params = new URLSearchParams(window.location.search);
+        const messageB64 = params.get('message');
+        const nodeId = params.get('nodeId');
+        const expectedWallet = params.get('wallet');
+        const hardware = params.get('hardware');
+
+        let message = '';
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        if (messageB64) {
+            try {
+                message = atob(messageB64);
+            } catch (e) {
+                showError('Invalid message parameter');
+            }
+        }
+
+        // Display info
+        document.getElementById('nodeId').textContent = nodeId || 'Unknown';
+        document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
+        document.getElementById('hardware').textContent = hardware ? decodeURIComponent(hardware) : 'Unknown';
+        document.getElementById('messageText').textContent = message;
+
+        // ============================================
+        // METAMASK CONNECTION
+        // ============================================
+        document.getElementById('metamask-btn').addEventListener('click', async () => {
+            try {
+                if (typeof window.ethereum === 'undefined') {
+                    showError('MetaMask is not installed. Please install MetaMask extension or use WalletConnect for mobile wallets.');
+                    return;
+                }
+
+                showLoading(true);
+                hideError();
+
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+            } catch (error) {
+                console.error('MetaMask connection error:', error);
+                showError('Failed to connect MetaMask: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // WALLETCONNECT CONNECTION
+        // ============================================
+        document.getElementById('walletconnect-btn').addEventListener('click', async () => {
+            try {
+                showLoading(true);
+                hideError();
+
+                // Create WalletConnect Provider
+                walletConnectProvider = new WalletConnectProvider.default({
+                    rpc: RPC_URLS,
+                    chainId: 137, // Polygon
+                    qrcode: true,
+                    qrcodeModalOptions: {
+                        mobileLinks: [
+                            'metamask',
+                            'trust',
+                            'rainbow',
+                            'argent',
+                            'imtoken',
+                            'pillar',
+                        ],
+                    }
+                });
+
+                // Enable session (triggers QR Code modal)
+                await walletConnectProvider.enable();
+
+                // Create ethers provider
+                provider = new ethers.providers.Web3Provider(walletConnectProvider);
+                signer = provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+                // Subscribe to events
+                walletConnectProvider.on('disconnect', (code, reason) => {
+                    console.log('WalletConnect disconnected', code, reason);
+                    location.reload();
+                });
+
+            } catch (error) {
+                console.error('WalletConnect connection error:', error);
+                showError('Failed to connect via WalletConnect: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // SIGNING
+        // ============================================
+        document.getElementById('signButton').addEventListener('click', async () => {
+            try {
+                if (!signer) {
+                    throw new Error('Wallet not connected');
+                }
+
+                if (!message) {
+                    throw new Error('No message to sign');
+                }
+
+                showLoading(true);
+                hideError();
+
+                console.log('Requesting signature...');
+
+                // Sign the message
+                const signature = await signer.signMessage(message);
+
+                console.log('Signature received:', signature);
+
+                // Validate signature format
+                if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
+                    throw new Error('Invalid signature format');
+                }
+
+                document.getElementById('signatureText').textContent = signature;
+                document.getElementById('signatureResult').style.display = 'block';
+                document.getElementById('walletConnected').style.display = 'none';
+                showLoading(false);
+
+                localStorage.setItem('lastSignature', signature);
+                localStorage.setItem('lastSignatureTime', new Date().toISOString());
+
+            } catch (error) {
+                console.error('Signing error:', error);
+                showError('Failed to sign message: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // CLIPBOARD
+        // ============================================
+        document.getElementById('copyButton').addEventListener('click', () => {
+            const signature = document.getElementById('signatureText').textContent;
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(signature).then(() => {
+                    updateCopyButton('✅ Copied!');
+                }).catch(err => {
+                    fallbackCopy(signature);
+                });
+            } else {
+                fallbackCopy(signature);
+            }
+        });
+
+        function fallbackCopy(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-999999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    updateCopyButton('✅ Copied!');
+                } else {
+                    alert('Failed to copy. Please copy manually.');
+                }
+            } catch (err) {
+                alert('Failed to copy. Please copy manually.');
+            }
+
+            document.body.removeChild(textarea);
+        }
+
+        function updateCopyButton(text) {
+            const btn = document.getElementById('copyButton');
+            const originalText = btn.textContent;
+            btn.textContent = text;
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+
+        // ============================================
+        // UI HELPERS
+        // ============================================
+        function showWalletConnected(address) {
+            document.getElementById('connectedWallet').textContent = address;
+            document.getElementById('walletSelection').style.display = 'none';
+            document.getElementById('walletConnected').style.display = 'block';
+            showLoading(false);
+
+            // Check if wallet matches expected
+            if (expectedWallet && expectedWallet.toLowerCase() !== address.toLowerCase()) {
+                showError(`⚠️ Warning: Connected wallet (${address}) does not match expected wallet (${expectedWallet})`, false);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(msg, hideLoading = true) {
+            document.getElementById('error').textContent = msg;
+            document.getElementById('error').style.display = 'block';
+            if (hideLoading) showLoading(false);
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        // ============================================
+        // AUTO-CONNECT CHECK
+        // ============================================
+        window.addEventListener('load', async () => {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    const accounts = await window.ethereum.request({
+                        method: 'eth_accounts'
+                    });
+
+                    if (accounts.length > 0) {
+                        provider = new ethers.providers.Web3Provider(window.ethereum);
+                        signer = provider.getSigner();
+                        connectedAddress = await signer.getAddress();
+                        showWalletConnected(connectedAddress);
+                    }
+                } catch (e) {
+                    // Ignore errors on auto-connect
+                }
+            }
+        });
+
+        // Listen for account changes
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    location.reload();
+                } else {
+                    location.reload();
+                }
+            });
+        }
+    </script>
 </body>
 </html>
