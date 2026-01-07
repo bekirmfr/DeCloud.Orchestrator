@@ -109,7 +109,7 @@
             color: white;
         }
 
-            .button-primary:hover {
+            .button-primary:hover:not(:disabled) {
                 transform: translateY(-2px);
                 box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
             }
@@ -243,6 +243,48 @@
                 line-height: 1.6;
             }
 
+        .wallet-options {
+            display: grid;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .wallet-button {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+            .wallet-button:hover {
+                border-color: #667eea;
+                transform: translateX(5px);
+            }
+
+        .wallet-icon {
+            font-size: 32px;
+            margin-right: 15px;
+        }
+
+        .wallet-info h4 {
+            color: #333;
+            margin-bottom: 3px;
+        }
+
+        .wallet-info p {
+            color: #666;
+            font-size: 12px;
+        }
+
+        #walletconnect-container {
+            margin: 20px 0;
+        }
+
+        /* Mobile responsive */
         @media (max-width: 640px) {
             .container {
                 padding: 24px;
@@ -273,7 +315,7 @@
 
         <div id="loading" style="display: none;">
             <div class="spinner"></div>
-            <p style="text-align: center; color: #666;">Connecting wallet...</p>
+            <p style="text-align: center; color: #666;">Waiting for wallet...</p>
         </div>
 
         <div id="error" class="error" style="display: none;"></div>
@@ -305,14 +347,32 @@
             </div>
 
             <div id="walletSelection">
-                <button id="connectButton" class="button button-primary">
-                    Connect Wallet & Sign
-                </button>
+                <h3 style="color: #333; margin: 20px 0 10px;">Choose Your Wallet:</h3>
+
+                <div class="wallet-options">
+                    <div class="wallet-button" id="metamask-btn">
+                        <div class="wallet-icon">🦊</div>
+                        <div class="wallet-info">
+                            <h4>MetaMask</h4>
+                            <p>Browser extension or mobile app</p>
+                        </div>
+                    </div>
+
+                    <div class="wallet-button" id="walletconnect-btn">
+                        <div class="wallet-icon">📱</div>
+                        <div class="wallet-info">
+                            <h4>Mobile Wallet (WalletConnect)</h4>
+                            <p>Trust, Rainbow, Coinbase, and 300+ more</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="walletconnect-container"></div>
 
                 <div class="info-box">
                     <p>
-                        <strong>📱 Mobile Users:</strong> This button will automatically open your wallet app.<br>
-                        <strong>💻 Desktop Users:</strong> You'll see a QR code to scan with your mobile wallet.
+                        <strong>📱 Mobile Users:</strong> Use WalletConnect to sign with your mobile wallet.<br>
+                        <strong>💻 Desktop Users:</strong> Use MetaMask extension or WalletConnect QR code.
                     </p>
                 </div>
             </div>
@@ -336,7 +396,7 @@
                     <h3>Signature Generated Successfully!</h3>
                     <p style="margin: 10px 0;">Copy this signature and paste it into your terminal:</p>
                     <div class="signature-text" id="signatureText"></div>
-                    <button class="button button-secondary" id="copyButton">
+                    <button id="copyButton" class="button button-secondary">
                         Copy to Clipboard
                     </button>
                 </div>
@@ -354,7 +414,289 @@
         </div>
     </div>
 
-    <!-- This will be built by Vite and use your existing packages -->
-    <script type="module" src="/src/sign.js"></script>
+    <!-- Load ethers.js and WalletConnect libraries -->
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.umd.min.js"></script>
+    <script src="https://unpkg.com/@walletconnect/web3-provider@1.8.0/dist/umd/index.min.js"></script>
+
+    <script>
+        // ============================================
+        // CONFIGURATION
+        // ============================================
+        const WALLETCONNECT_PROJECT_ID = '708cede4d366aa77aead71dbc67d8ae5';
+        const RPC_URLS = {
+            1: 'https://eth.llamarpc.com',
+            137: 'https://polygon-rpc.com',
+            42161: 'https://arb1.arbitrum.io/rpc'
+        };
+
+        // ============================================
+        // STATE
+        // ============================================
+        let provider = null;
+        let signer = null;
+        let connectedAddress = null;
+        let walletConnectProvider = null;
+
+        // Parse URL parameters
+        const params = new URLSearchParams(window.location.search);
+        const messageB64 = params.get('message');
+        const nodeId = params.get('nodeId');
+        const expectedWallet = params.get('wallet');
+        const hardware = params.get('hardware');
+
+        let message = '';
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        if (messageB64) {
+            try {
+                message = atob(messageB64);
+            } catch (e) {
+                showError('Invalid message parameter');
+            }
+        }
+
+        // Display info
+        document.getElementById('nodeId').textContent = nodeId || 'Unknown';
+        document.getElementById('expectedWallet').textContent = expectedWallet || 'Any';
+        document.getElementById('hardware').textContent = hardware ? decodeURIComponent(hardware) : 'Unknown';
+        document.getElementById('messageText').textContent = message;
+
+        // ============================================
+        // METAMASK CONNECTION
+        // ============================================
+        document.getElementById('metamask-btn').addEventListener('click', async () => {
+            try {
+                if (typeof window.ethereum === 'undefined') {
+                    showError('MetaMask is not installed. Please install MetaMask extension or use WalletConnect for mobile wallets.');
+                    return;
+                }
+
+                showLoading(true);
+                hideError();
+
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (accounts.length === 0) {
+                    throw new Error('No accounts found');
+                }
+
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+            } catch (error) {
+                console.error('MetaMask connection error:', error);
+                showError('Failed to connect MetaMask: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // WALLETCONNECT CONNECTION
+        // ============================================
+        document.getElementById('walletconnect-btn').addEventListener('click', async () => {
+            try {
+                showLoading(true);
+                hideError();
+
+                // Create WalletConnect Provider
+                walletConnectProvider = new WalletConnectProvider.default({
+                    rpc: RPC_URLS,
+                    chainId: 137, // Polygon
+                    qrcode: true,
+                    qrcodeModalOptions: {
+                        mobileLinks: [
+                            'metamask',
+                            'trust',
+                            'rainbow',
+                            'argent',
+                            'imtoken',
+                            'pillar',
+                        ],
+                    }
+                });
+
+                // Enable session (triggers QR Code modal)
+                await walletConnectProvider.enable();
+
+                // Create ethers provider
+                provider = new ethers.providers.Web3Provider(walletConnectProvider);
+                signer = provider.getSigner();
+                connectedAddress = await signer.getAddress();
+
+                showWalletConnected(connectedAddress);
+
+                // Subscribe to events
+                walletConnectProvider.on('disconnect', (code, reason) => {
+                    console.log('WalletConnect disconnected', code, reason);
+                    location.reload();
+                });
+
+            } catch (error) {
+                console.error('WalletConnect connection error:', error);
+                showError('Failed to connect via WalletConnect: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // SIGNING
+        // ============================================
+        document.getElementById('signButton').addEventListener('click', async () => {
+            try {
+                if (!signer) {
+                    throw new Error('Wallet not connected');
+                }
+
+                if (!message) {
+                    throw new Error('No message to sign');
+                }
+
+                showLoading(true);
+                hideError();
+
+                console.log('Requesting signature...');
+
+                // Sign the message
+                const signature = await signer.signMessage(message);
+
+                console.log('Signature received:', signature);
+
+                // Validate signature format
+                if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
+                    throw new Error('Invalid signature format');
+                }
+
+                document.getElementById('signatureText').textContent = signature;
+                document.getElementById('signatureResult').style.display = 'block';
+                document.getElementById('walletConnected').style.display = 'none';
+                showLoading(false);
+
+                localStorage.setItem('lastSignature', signature);
+                localStorage.setItem('lastSignatureTime', new Date().toISOString());
+
+            } catch (error) {
+                console.error('Signing error:', error);
+                showError('Failed to sign message: ' + error.message);
+                showLoading(false);
+            }
+        });
+
+        // ============================================
+        // CLIPBOARD
+        // ============================================
+        document.getElementById('copyButton').addEventListener('click', () => {
+            const signature = document.getElementById('signatureText').textContent;
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(signature).then(() => {
+                    updateCopyButton('✅ Copied!');
+                }).catch(err => {
+                    fallbackCopy(signature);
+                });
+            } else {
+                fallbackCopy(signature);
+            }
+        });
+
+        function fallbackCopy(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-999999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    updateCopyButton('✅ Copied!');
+                } else {
+                    alert('Failed to copy. Please copy manually.');
+                }
+            } catch (err) {
+                alert('Failed to copy. Please copy manually.');
+            }
+
+            document.body.removeChild(textarea);
+        }
+
+        function updateCopyButton(text) {
+            const btn = document.getElementById('copyButton');
+            const originalText = btn.textContent;
+            btn.textContent = text;
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+
+        // ============================================
+        // UI HELPERS
+        // ============================================
+        function showWalletConnected(address) {
+            document.getElementById('connectedWallet').textContent = address;
+            document.getElementById('walletSelection').style.display = 'none';
+            document.getElementById('walletConnected').style.display = 'block';
+            showLoading(false);
+
+            // Check if wallet matches expected
+            if (expectedWallet && expectedWallet.toLowerCase() !== address.toLowerCase()) {
+                showError(`⚠️ Warning: Connected wallet (${address}) does not match expected wallet (${expectedWallet})`, false);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(msg, hideLoading = true) {
+            document.getElementById('error').textContent = msg;
+            document.getElementById('error').style.display = 'block';
+            if (hideLoading) showLoading(false);
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        // ============================================
+        // AUTO-CONNECT CHECK
+        // ============================================
+        window.addEventListener('load', async () => {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    const accounts = await window.ethereum.request({
+                        method: 'eth_accounts'
+                    });
+
+                    if (accounts.length > 0) {
+                        provider = new ethers.providers.Web3Provider(window.ethereum);
+                        signer = provider.getSigner();
+                        connectedAddress = await signer.getAddress();
+                        showWalletConnected(connectedAddress);
+                    }
+                } catch (e) {
+                    // Ignore errors on auto-connect
+                }
+            }
+        });
+
+        // Listen for account changes
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    location.reload();
+                } else {
+                    location.reload();
+                }
+            });
+        }
+    </script>
 </body>
 </html>
