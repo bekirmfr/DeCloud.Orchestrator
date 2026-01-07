@@ -11,6 +11,7 @@ using Orchestrator.Persistence;
 using Serilog;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -117,6 +118,14 @@ builder.Services.AddHttpClient("SubdomainProxy")
         UseCookies = false
     });
 
+// Configure JSON serialization for all HttpClient JSON extension methods
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+});
+
 // =====================================================
 // Background Services
 // =====================================================
@@ -141,7 +150,7 @@ builder.Services.AddControllers()
         // Use camelCase for all JSON properties
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true; // Accept any casing
-        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
