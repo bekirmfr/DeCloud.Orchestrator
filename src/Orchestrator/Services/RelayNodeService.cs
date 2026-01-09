@@ -422,10 +422,29 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
             // STEP 3: Build configuration with real keys
             // ========================================
+            // Determine VM network interface (default to virbr0 for libvirt)
+            const string vmNetworkInterface = "virbr0";
+
             var config = $@"[Interface]
 PrivateKey = {privateKey}
 Address = {tunnelIp}/24
 DNS = 8.8.8.8
+
+# Enable IP forwarding for routing traffic between tunnel and VMs
+PostUp = sysctl -w net.ipv4.ip_forward=1
+PostUp = sysctl -w net.ipv4.conf.all.forwarding=1
+
+# Allow forwarding from WireGuard tunnel to VM network
+PostUp = iptables -A FORWARD -i %i -o {vmNetworkInterface} -j ACCEPT
+PostUp = iptables -A FORWARD -i {vmNetworkInterface} -o %i -j ACCEPT
+
+# NAT for traffic between tunnel and VM network
+PostUp = iptables -t nat -A POSTROUTING -o {vmNetworkInterface} -j MASQUERADE
+
+# Cleanup rules on shutdown (with error suppression)
+PreDown = iptables -D FORWARD -i %i -o {vmNetworkInterface} -j ACCEPT 2>/dev/null || true
+PreDown = iptables -D FORWARD -i {vmNetworkInterface} -o %i -j ACCEPT 2>/dev/null || true
+PreDown = iptables -t nat -D POSTROUTING -o {vmNetworkInterface} -j MASQUERADE 2>/dev/null || true
 
 [Peer]
 PublicKey = {relayNode.RelayInfo.WireGuardPublicKey}
@@ -435,8 +454,8 @@ PersistentKeepalive = 25";
 
             _logger.LogInformation(
                 "Generated WireGuard config for CGNAT node {CgnatId} → Relay {RelayId} " +
-                "(Tunnel IP: {TunnelIp})",
-                cgnatNode.Id, relayNode.Id, tunnelIp);
+                "(Tunnel IP: {TunnelIp}, VM Network: {VmNetwork}, Routing: ENABLED)",
+                cgnatNode.Id, relayNode.Id, tunnelIp, vmNetworkInterface);
 
             return config;
         }
