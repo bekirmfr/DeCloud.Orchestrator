@@ -17,12 +17,12 @@ public class NodesController : ControllerBase
 
     public NodesController(
         INodeService nodeService,
-
+        DataStore dataStore,
         IVmService vmService,
         ILogger<NodesController> logger)
     {
         _nodeService = nodeService;
-
+        _dataStore = dataStore;
         _vmService = vmService;
         _logger = logger;
     }
