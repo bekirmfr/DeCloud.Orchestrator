@@ -158,25 +158,25 @@ public class RelayController : ControllerBase
             foreach (var vm in vms)
             {
                 routes.Add(new VmRouteInfo
-                {
-                    VmId = vm.Id,
-                    VmName = vm.Name,
-                    Subdomain = vm.IngressConfig.DefaultSubdomain,
-                    TargetPort = vm.IngressConfig.DefaultPort,
-                    CgnatNodeTunnelIp = cgnatNode.CgnatInfo.TunnelIp,
-                    VmPrivateIp = vm.NetworkConfig?.PrivateIp,
-                    NodeAgentPort = cgnatNode.AgentPort
-                });
+                (
+                    VmId: vm.Id,
+                    VmName: vm.Name,
+                    Subdomain: vm.IngressConfig.DefaultSubdomain,
+                    TargetPort:vm.IngressConfig.DefaultPort,
+                    CgnatNodeTunnelIp: cgnatNode.CgnatInfo.TunnelIp,
+                    VmPrivateIp: vm.NetworkConfig?.PrivateIp,
+                    NodeAgentPort: cgnatNode.AgentPort
+                ));
             }
         }
 
         return Ok(ApiResponse<RelayRoutingMapResponse>.Ok(new RelayRoutingMapResponse
-        {
-            RelayId = relayId,
-            TotalRoutes = routes.Count,
-            LastUpdated = DateTime.UtcNow,
-            Routes = routes
-        }));
+        (
+            RelayId: relayId,
+            TotalRoutes: routes.Count,
+            LastUpdated: DateTime.UtcNow,
+            Routes: routes
+        )));
     }
 
     public record RelayRoutingMapResponse(
