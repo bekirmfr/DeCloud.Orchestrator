@@ -55,7 +55,7 @@ public class CentralIngressOptions
     /// Placeholders: {name}, {id}, {id8}, {owner8}
     /// Default: "{name}" → myapp.vms.decloud.io
     /// </summary>
-    public string SubdomainPattern { get; set; } = "{name}";
+    public string SubdomainPattern { get; set; } = "{name}-{id4}";
 
     /// <summary>
     /// Whether to auto-register VMs when they start

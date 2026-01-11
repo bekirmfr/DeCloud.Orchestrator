@@ -1,7 +1,6 @@
-﻿using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Orchestrator.Persistence;
+﻿using Microsoft.Extensions.Options;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
@@ -128,7 +127,8 @@ public class CentralIngressService : ICentralIngressService
         var subdomain = pattern
             .Replace("{name}", SanitizeForSubdomain(vm.Name))
             .Replace("{id}", vm.Id)
-            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id);
+            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id)
+            .Replace("{id4}", vm.Id.Length >= 4 ? vm.Id[..4] : vm.Id);
 
         // Ensure valid subdomain
         subdomain = SanitizeForSubdomain(subdomain);
@@ -206,6 +206,9 @@ public class CentralIngressService : ICentralIngressService
 
         // Create or update route
         var subdomain = GenerateSubdomain(vm);
+
+        string nodeHost = node.CgnatInfo?.TunnelIp ?? node.PublicIp;
+
         var route = new CentralIngressRoute
         {
             VmId = vmId,
@@ -213,7 +216,7 @@ public class CentralIngressService : ICentralIngressService
             Subdomain = subdomain,
             OwnerWallet = vm.OwnerWallet,
             NodeId = vm.NodeId,
-            NodePublicIp = node.PublicIp,
+            NodePublicIp = nodeHost,
             VmPrivateIp = vmPrivateIp,
             TargetPort = targetPort ?? _options.DefaultTargetPort,
             Status = CentralRouteStatus.Active,
