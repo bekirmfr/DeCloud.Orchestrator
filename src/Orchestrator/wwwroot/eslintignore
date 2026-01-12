@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+wwwroot/dist/
+*.min.js
+*.bundle.js
+
+# Generated files
+*.map
+
+# IDE
+.vs/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db

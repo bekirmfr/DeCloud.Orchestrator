@@ -8,6 +8,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{8A9C7F6D-1234-4BCD-9ABC-DEF012345678}"
 	ProjectSection(SolutionItems) = preProject
 		src\Orchestrator\wwwroot\.env.example = src\Orchestrator\wwwroot\.env.example
+		src\Orchestrator\wwwroot\eslint.config.js = src\Orchestrator\wwwroot\eslint.config.js
+		src\Orchestrator\wwwroot\eslintignore = src\Orchestrator\wwwroot\eslintignore
 		src\Orchestrator\wwwroot\file-browser.html = src\Orchestrator\wwwroot\file-browser.html
 		src\Orchestrator\wwwroot\index.html = src\Orchestrator\wwwroot\index.html
 		src\Orchestrator\wwwroot\package.json = src\Orchestrator\wwwroot\package.json
