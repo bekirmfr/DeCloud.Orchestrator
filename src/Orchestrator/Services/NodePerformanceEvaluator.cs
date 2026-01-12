@@ -9,14 +9,11 @@ namespace Orchestrator.Background;
 /// </summary>
 public class NodePerformanceEvaluator
 {
-    private readonly SchedulingConfiguration _config;
     private readonly ILogger<NodePerformanceEvaluator> _logger;
 
     public NodePerformanceEvaluator(
-        SchedulingConfiguration config,
         ILogger<NodePerformanceEvaluator> logger)
     {
-        _config = config;
         _logger = logger;
     }
 
@@ -27,12 +24,12 @@ public class NodePerformanceEvaluator
     {
         var benchmarkScore = node.HardwareInventory.Cpu.BenchmarkScore;
         var cpuModel = node.HardwareInventory.Cpu.Model;
-        var burstableBaseline = _config.BaselineBenchmark;
+        var burstableBaseline = SchedulingConfiguration.BaselineBenchmark;
 
         // Apply performance cap if configured
         var cappedScore = Math.Min(
             benchmarkScore,
-            (int)(burstableBaseline * _config.MaxPerformanceMultiplier));
+            (int)(burstableBaseline * SchedulingConfiguration.MaxPerformanceMultiplier));
 
         // Single source of truth: points per core
         var pointsPerCore = (double)cappedScore / burstableBaseline;
@@ -52,10 +49,10 @@ public class NodePerformanceEvaluator
         };
 
         // Check eligibility for each tier (from highest to lowest)
-        foreach (var (tier, requirements) in _config.TierRequirements
+        foreach (var (tier, requirements) in SchedulingConfiguration.TierRequirements
             .OrderByDescending(kvp => kvp.Value.MinimumBenchmark))
         {
-            var requiredPointsPerVCpu = requirements.GetPointsPerVCpu(burstableBaseline);
+            var requiredPointsPerVCpu = requirements.GetPointsPerVCpu();
 
             // Simple comparison: can this node provide enough points?
             var isEligible = pointsPerCore >= requiredPointsPerVCpu;
@@ -101,8 +98,8 @@ public class NodePerformanceEvaluator
 
         if (!evaluation.IsAcceptable)
         {
-            var burstableRequirement = _config.TierRequirements[QualityTier.Burstable]
-                .GetPointsPerVCpu(burstableBaseline);
+            var burstableRequirement = SchedulingConfiguration.TierRequirements[QualityTier.Burstable]
+                .GetPointsPerVCpu();
             evaluation.RejectionReason =
                 $"Performance {pointsPerCore:F2} points/core below minimum " +
                 $"Burstable requirement {burstableRequirement:F2}";
@@ -121,10 +118,10 @@ public class NodePerformanceEvaluator
     private PerformanceClass ClassifyPerformance(double pointsPerCore, int baseline)
     {
         var multiplier = pointsPerCore;
-        var guaranteedReq = (double)_config.TierRequirements[QualityTier.Guaranteed].MinimumBenchmark / baseline;
-        var standardReq = (double)_config.TierRequirements[QualityTier.Standard].MinimumBenchmark / baseline;
-        var balancedReq = (double)_config.TierRequirements[QualityTier.Balanced].MinimumBenchmark / baseline;
-        var burstableReq = (double)_config.TierRequirements[QualityTier.Burstable].MinimumBenchmark / baseline;
+        var guaranteedReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Guaranteed].MinimumBenchmark / baseline;
+        var standardReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Standard].MinimumBenchmark / baseline;
+        var balancedReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Balanced].MinimumBenchmark / baseline;
+        var burstableReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Burstable].MinimumBenchmark / baseline;
 
         if (multiplier >= guaranteedReq)
             return PerformanceClass.UltraHighEnd;

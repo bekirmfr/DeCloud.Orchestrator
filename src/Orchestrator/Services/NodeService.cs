@@ -58,7 +58,6 @@ public class NodeService : INodeService
     private readonly ILogger<NodeService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
-    private readonly SchedulingConfiguration _schedulingConfig;
     private readonly IRelayNodeService _relayNodeService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
@@ -74,9 +73,7 @@ public class NodeService : INodeService
         IRelayNodeService relayNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
-        IConfiguration configuration,
-        SchedulingConfiguration? schedulingConfig = null
-        )
+        IConfiguration configuration)
     {
         _dataStore = dataStore;
         _eventService = eventService;
@@ -88,8 +85,7 @@ public class NodeService : INodeService
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _configuration = configuration;
-        _schedulingConfig = schedulingConfig ?? new SchedulingConfiguration();
-        _schedulingConfig.Weights.Validate();
+        SchedulingConfiguration.Weights.Validate();
     }
 
     // ============================================================================
@@ -121,7 +117,7 @@ public class NodeService : INodeService
         }
 
         var scoredNodes = new List<ScoredNode>();
-        var tierRequirements = _schedulingConfig.TierRequirements[tier];
+        var tierRequirements = SchedulingConfiguration.TierRequirements[tier];
 
         foreach (var node in candidates)
         {
@@ -152,7 +148,7 @@ public class NodeService : INodeService
             return null;
         }
 
-        _schedulingConfig.Weights.Validate();
+        SchedulingConfiguration.Weights.Validate();
 
         var bestNode = scoredNodes
             .OrderByDescending(n => n.TotalScore)
@@ -171,7 +167,7 @@ public class NodeService : INodeService
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
     {
-        var policy = _schedulingConfig.TierRequirements[tier];
+        var policy = SchedulingConfiguration.TierRequirements[tier];
         var allNodes = _dataStore.Nodes.Values.ToList();
         _logger.LogInformation("Scoring {TotalNodesCount} nodes", allNodes.Count);
         var scoredNodes = new List<ScoredNode>();
@@ -232,7 +228,7 @@ public class NodeService : INodeService
 
             // Calculate point cost for this VMs
             var pointCost = spec.VirtualCpuCores *
-                (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BaselineBenchmark);
+                (int)tierRequirements.GetPointsPerVCpu();
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
@@ -254,11 +250,11 @@ public class NodeService : INodeService
             var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
             var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
 
-            if (projectedCpuUtil > _schedulingConfig.MaxUtilizationPercent ||
-                projectedMemUtil > _schedulingConfig.MaxUtilizationPercent)
+            if (projectedCpuUtil > SchedulingConfiguration.MaxUtilizationPercent ||
+                projectedMemUtil > SchedulingConfiguration.MaxUtilizationPercent)
             {
                 scored.RejectionReason = $"Would exceed max utilization " +
-                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {_schedulingConfig.MaxUtilizationPercent}%)";
+                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {SchedulingConfiguration.MaxUtilizationPercent}%)";
                 scored.TotalScore = 0;
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;
@@ -276,7 +272,7 @@ public class NodeService : INodeService
             scored.Scores = scores;
 
             // Step 6: Calculate weighted total score
-            var weights = _schedulingConfig.Weights;
+            var weights = SchedulingConfiguration.Weights;
             scored.TotalScore =
                 (scores.CapacityScore * weights.Capacity) +
                 (scores.LoadScore * weights.Load) +
@@ -310,12 +306,12 @@ public class NodeService : INodeService
             return "GPU required but not available";
 
         // Filter 4: Minimum total resources check (physical capacity)
-        if (node.TotalResources.MemoryBytes < _schedulingConfig.MinFreeMemoryMb)
-            return $"Node total memory too low ({node.TotalResources.MemoryBytes}MB < {_schedulingConfig.MinFreeMemoryMb}MB)";
+        if (node.TotalResources.MemoryBytes < SchedulingConfiguration.MinFreeMemoryMb)
+            return $"Node total memory too low ({node.TotalResources.MemoryBytes}MB < {SchedulingConfiguration.MinFreeMemoryMb}MB)";
 
         // Filter 5: Load average check (if metrics available)
-        if (node.LatestMetrics?.LoadAverage > _schedulingConfig.MaxLoadAverage)
-            return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {_schedulingConfig.MaxLoadAverage})";
+        if (node.LatestMetrics?.LoadAverage > SchedulingConfiguration.MaxLoadAverage)
+            return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {SchedulingConfiguration  .MaxLoadAverage})";
 
         // Filter 6: Region requirement (if specified)
         if (!string.IsNullOrEmpty(spec.PreferredRegion) &&
@@ -335,7 +331,7 @@ public class NodeService : INodeService
     {
         // Use NodeCapacityCalculator for capacity
         var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, capacityLogger);
+        var capacityCalculator = new NodeCapacityCalculator(capacityLogger);
         var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
 
         if (!totalCapacity.IsAcceptable)
@@ -560,7 +556,7 @@ public class NodeService : INodeService
 
             // Re-evaluate performance (hardware may have changed)
             var reregPerfLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-            var reregPerfEvaluator = new NodePerformanceEvaluator(_schedulingConfig, reregPerfLogger);
+            var reregPerfEvaluator = new NodePerformanceEvaluator(reregPerfLogger);
 
             existingNode.PerformanceEvaluation = reregPerfEvaluator.EvaluateNode(existingNode);
 
@@ -577,7 +573,7 @@ public class NodeService : INodeService
 
             // Recalculate total capacity
             var reregCapLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-            var reregCapCalculator = new NodeCapacityCalculator(_schedulingConfig, reregCapLogger);
+            var reregCapCalculator = new NodeCapacityCalculator(reregCapLogger);
             var reregTotalCapacity = reregCapCalculator.CalculateTotalCapacity(existingNode);
 
             existingNode.TotalResources = new ResourceSnapshot
@@ -646,7 +642,7 @@ public class NodeService : INodeService
         // STEP 6: Performance Evaluation & Capacity Calculation
         // =====================================================
         var performanceLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-        var performanceEvaluator = new NodePerformanceEvaluator(_schedulingConfig, performanceLogger);
+        var performanceEvaluator = new NodePerformanceEvaluator(performanceLogger);
 
         node.PerformanceEvaluation = performanceEvaluator.EvaluateNode(node);
 
@@ -663,7 +659,7 @@ public class NodeService : INodeService
 
         // Calculate total capacity using NodeCapacityCalculator
         var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(_schedulingConfig, capacityLogger);
+        var capacityCalculator = new NodeCapacityCalculator(capacityLogger);
         var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
 
         node.TotalResources = new ResourceSnapshot

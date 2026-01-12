@@ -105,7 +105,6 @@ builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
-builder.Services.AddSingleton<SchedulingConfiguration>();
 
 builder.Services.AddHttpClient("SubdomainProxy")
     .ConfigureHttpClient(client =>

@@ -29,7 +29,6 @@ public class VmService : IVmService
     private readonly INodeService _nodeService;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
-    private readonly SchedulingConfiguration _schedulingConfig;
     private readonly ILogger<VmService> _logger;
 
     public VmService(
@@ -37,14 +36,12 @@ public class VmService : IVmService
         INodeService nodeService,
         IEventService eventService,
         ICentralIngressService ingressService,
-        SchedulingConfiguration schedulingConfig,
         ILogger<VmService> logger)
     {
         _dataStore = dataStore;
         _nodeService = nodeService;
         _eventService = eventService;
         _ingressService = ingressService;
-        _schedulingConfig = schedulingConfig;
         _logger = logger;
     }
 
@@ -618,9 +615,9 @@ public class VmService : IVmService
         // ========================================
         // STEP 1: Calculate compute point cost FIRST
         // ========================================
-        var tierRequirements = _schedulingConfig.TierRequirements[vm.Spec.QualityTier];
+        var tierRequirements = SchedulingConfiguration.TierRequirements[vm.Spec.QualityTier];
         var pointCost = vm.Spec.VmType == VmType.Relay ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
-            (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BaselineBenchmark);
+            (int)tierRequirements.GetPointsPerVCpu();
 
         // CRITICAL: Store point cost in VM spec before scheduling
         vm.Spec.ComputePointCost = pointCost;
