@@ -8,14 +8,11 @@ namespace Orchestrator.Background;
 /// </summary>
 public class NodeCapacityCalculator
 {
-    private readonly SchedulingConfiguration _config;
     private readonly ILogger<NodeCapacityCalculator> _logger;
 
     public NodeCapacityCalculator(
-        SchedulingConfiguration config,
         ILogger<NodeCapacityCalculator> logger)
     {
-        _config = config;
         _logger = logger;
     }
 
@@ -44,7 +41,7 @@ public class NodeCapacityCalculator
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
 
         // Get Burstable tier (maximum overcommit)
-        var burstableTier = _config.TierRequirements[QualityTier.Burstable];
+        var burstableTier = SchedulingConfiguration.TierRequirements[QualityTier.Burstable];
 
         // ========================================
         // CPU CAPACITY (using Burstable overcommit)
@@ -123,7 +120,7 @@ public class NodeCapacityCalculator
             };
         }
 
-        var tierRequirements = _config.TierRequirements[tier];
+        var tierRequirements = SchedulingConfiguration.TierRequirements[tier];
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
@@ -167,8 +164,8 @@ public class NodeCapacityCalculator
             CpuOvercommitRatio = tierRequirements.CpuOvercommitRatio,
             StorageOvercommitRatio = tierRequirements.StorageOvercommitRatio,
 
-            PointsPerVCpu = tierRequirements.GetPointsPerVCpu(_config.BurstableBaselineBenchmark),
-            MaxVCpus = (int)(tierComputePoints / tierRequirements.GetPointsPerVCpu(_config.BurstableBaselineBenchmark)),
+            PointsPerVCpu = tierRequirements.GetPointsPerVCpu(),
+            MaxVCpus = (int)(tierComputePoints / tierRequirements.GetPointsPerVCpu()),
             PriceMultiplier = tierRequirements.PriceMultiplier
         };
     }

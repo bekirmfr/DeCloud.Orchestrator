@@ -232,7 +232,7 @@ public class NodeService : INodeService
 
             // Calculate point cost for this VMs
             var pointCost = spec.VirtualCpuCores *
-                (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BurstableBaselineBenchmark);
+                (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BaselineBenchmark);
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation

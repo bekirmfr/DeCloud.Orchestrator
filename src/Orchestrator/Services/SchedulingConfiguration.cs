@@ -6,52 +6,52 @@ namespace Orchestrator.Background;
 /// Unified scheduling configuration based on performance benchmarks
 /// All tier requirements calculated relative to BurstableBaselineBenchmark
 /// </summary>
-public class SchedulingConfiguration
+public static class SchedulingConfiguration
 {
     /// <summary>
     /// Foundation of entire point system - evolves with technology
     /// Current: 1000 (Intel i3-10100 baseline)
     /// Future: Will increase as hardware improves (2000, 5000, 50000, etc.)
     /// </summary>
-    public int BurstableBaselineBenchmark { get; set; } = 1000;
-
+    public static int BaselineBenchmark => TierRequirements[QualityTier.Burstable].MinimumBenchmark;
+    public static double BaselineOvercommitRatio => TierRequirements[QualityTier.Burstable].CpuOvercommitRatio;
     /// <summary>
     /// Maximum performance multiplier cap (prevents excessive advantage)
     /// Example: 5.0x means max 5000 benchmark score counts as 5000, not higher
     /// </summary>
-    public double MaxPerformanceMultiplier { get; set; } = 20.0;
+    public static double MaxPerformanceMultiplier { get; set; } = 20.0;
 
     /// <summary>
     /// Tier requirements - PointsPerVCpu calculated automatically from benchmarks
     /// Formula: PointsPerVCpu = TierMinimumBenchmark / BurstableBaselineBenchmark
     /// </summary>
-    public Dictionary<QualityTier, TierRequirements> TierRequirements { get; set; } = new()
+    public static Dictionary<QualityTier, TierRequirements> TierRequirements { get; set; } = new()
     {
         [QualityTier.Burstable] = new TierRequirements
         {
             MinimumBenchmark = 1000,        // Entry-level (Intel i3-10100)
-            CpuOvercommitRatio = 8.0,       // 8:1 aggressive overcommit
+            CpuOvercommitRatio = 4.0,       // 4:1 aggressive overcommit
             StorageOvercommitRatio = 2.5,   // High storage overcommit
-            PriceMultiplier = 0.3m,
-            Description = "Best-effort performance, entry-level hardware, 8:1 CPU overcommit",
+            PriceMultiplier = 0.5m,
+            Description = "Best-effort performance, entry-level hardware, 4:1 CPU overcommit",
             TargetUseCase = "Development, testing, light workloads"
         },
         [QualityTier.Balanced] = new TierRequirements
         {
             MinimumBenchmark = 1500,        // Mid-range (Intel i5-12400)
-            CpuOvercommitRatio = 4.0,       // 4:1 overcommit
+            CpuOvercommitRatio = 2.7,       // 2.7:1 overcommit
             StorageOvercommitRatio = 2.0,   // Moderate storage overcommit
-            PriceMultiplier = 0.6m,
-            Description = "Balanced performance for production workloads, 4:1 CPU overcommit",
+            PriceMultiplier = 0.7m,
+            Description = "Balanced performance for production workloads, 2.7:1 CPU overcommit",
             TargetUseCase = "Web servers, databases, AI inference"
         },
         [QualityTier.Standard] = new TierRequirements
         {
             MinimumBenchmark = 2500,        // High-end (AMD Ryzen 5 7600X)
-            CpuOvercommitRatio = 2.0,       // 2:1 overcommit
+            CpuOvercommitRatio = 1.6,       // 1.6:1 overcommit
             StorageOvercommitRatio = 1.5,   // Conservative storage overcommit
             PriceMultiplier = 1.0m,
-            Description = "High performance for demanding applications, 2:1 CPU overcommit",
+            Description = "High performance for demanding applications, 1.6:1 CPU overcommit",
             TargetUseCase = "High-traffic apps, real-time processing, model training"
         },
         [QualityTier.Guaranteed] = new TierRequirements
@@ -59,7 +59,7 @@ public class SchedulingConfiguration
             MinimumBenchmark = 4000,        // Enthusiast/Server (AMD Ryzen 9 7950X)
             CpuOvercommitRatio = 1.0,       // No overcommit - dedicated cores
             StorageOvercommitRatio = 1.0,   // No storage overcommit
-            PriceMultiplier = 2.5m,
+            PriceMultiplier = 1.8m,
             Description = "Dedicated high-performance resources, guaranteed 1:1 CPU performance",
             TargetUseCase = "Mission-critical apps, large models, financial trading"
         }
@@ -68,32 +68,32 @@ public class SchedulingConfiguration
     /// <summary>
     /// Safety buffer - Don't schedule if node would exceed this utilization
     /// </summary>
-    public double MaxUtilizationPercent { get; set; } = 90.0;
+    public static double MaxUtilizationPercent { get; set; } = 90.0;
 
     /// <summary>
     /// Minimum free memory to keep on node (in MB)
     /// </summary>
-    public long MinFreeMemoryMb { get; set; } = 512;
+    public static long MinFreeMemoryMb { get; set; } = 512;
 
     /// <summary>
     /// Maximum CPU load average before avoiding node
     /// </summary>
-    public double MaxLoadAverage { get; set; } = 8.0;
+    public static double MaxLoadAverage { get; set; } = 8.0;
 
     /// <summary>
     /// Prefer nodes in same region
     /// </summary>
-    public bool PreferLocalRegion { get; set; } = true;
+    public static bool PreferLocalRegion { get; set; } = true;
 
     /// <summary>
     /// Scoring weights for node selection
     /// </summary>
-    public ScoringWeights Weights { get; set; } = new();
+    public static ScoringWeights Weights { get; set; } = new();
 
     /// <summary>
     /// Last baseline update timestamp
     /// </summary>
-    public DateTime BaselineLastUpdated { get; set; } = new DateTime(2025, 1, 1);
+    public static DateTime BaselineLastUpdated { get; set; } = new DateTime(2025, 1, 1);
 }
 
 /// <summary>
@@ -138,12 +138,12 @@ public class TierRequirements
     /// Formula: MinimumBenchmark / BurstableBaseline
     /// Example: Standard tier (2500) / Burstable baseline (1000) = 2.5 points/vCPU
     /// </summary>
-    public double GetPointsPerVCpu(int burstableBaseline)
+    public double GetPointsPerVCpu()
     {
-        if (burstableBaseline <= 0)
-            throw new ArgumentException("Burstable baseline must be positive", nameof(burstableBaseline));
+        if (SchedulingConfiguration.BaselineBenchmark <= 0)
+            throw new ArgumentException("Burstable baseline must be positive", nameof(SchedulingConfiguration.BaselineBenchmark));
 
-        return (double)MinimumBenchmark / burstableBaseline;
+        return ((double)MinimumBenchmark / SchedulingConfiguration.BaselineBenchmark) * (SchedulingConfiguration.BaselineOvercommitRatio / CpuOvercommitRatio);
     }
 }
 

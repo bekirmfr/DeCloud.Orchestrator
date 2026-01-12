@@ -620,7 +620,7 @@ public class VmService : IVmService
         // ========================================
         var tierRequirements = _schedulingConfig.TierRequirements[vm.Spec.QualityTier];
         var pointCost = vm.Spec.VmType == VmType.Relay ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
-            (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BurstableBaselineBenchmark);
+            (int)tierRequirements.GetPointsPerVCpu(_schedulingConfig.BaselineBenchmark);
 
         // CRITICAL: Store point cost in VM spec before scheduling
         vm.Spec.ComputePointCost = pointCost;

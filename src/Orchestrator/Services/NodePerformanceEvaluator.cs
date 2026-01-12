@@ -27,7 +27,7 @@ public class NodePerformanceEvaluator
     {
         var benchmarkScore = node.HardwareInventory.Cpu.BenchmarkScore;
         var cpuModel = node.HardwareInventory.Cpu.Model;
-        var burstableBaseline = _config.BurstableBaselineBenchmark;
+        var burstableBaseline = _config.BaselineBenchmark;
 
         // Apply performance cap if configured
         var cappedScore = Math.Min(
