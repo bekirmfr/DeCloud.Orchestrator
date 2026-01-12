@@ -55,6 +55,11 @@ LOG_DIR="/var/log/decloud"
 CADDY_BACKUP_DIR="/etc/decloud/caddy-backups"
 REPO_URL="https://github.com/bekirmfr/DeCloud.Orchestrator.git"
 
+# Logging
+INSTALL_LOG="$LOG_DIR/install.log"
+ENABLE_LOGGING=true  # Can be overridden by --no-log
+
+
 # Ports
 API_PORT=5050
 
@@ -95,6 +100,10 @@ FORCE_REBUILD=false
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
+	    --no-log)
+                ENABLE_LOGGING=false
+                shift
+                ;;
             --port)
                 API_PORT="$2"
                 shift 2
@@ -148,6 +157,33 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+# ============================================================
+# Initialize Logging
+# ============================================================
+init_logging() {
+    if [ "$ENABLE_LOGGING" = false ]; then
+        return 0
+    fi
+    
+    # Create log directory
+    mkdir -p "$LOG_DIR"
+    touch "$INSTALL_LOG"
+    chmod 644 "$INSTALL_LOG"
+    
+    # Redirect all output to both terminal and log file
+    exec 1> >(tee -a "$INSTALL_LOG")
+    exec 2>&1
+    
+    echo "==================================================================="
+    echo "DeCloud Node Agent Installation"
+    echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "Version: $VERSION"
+    echo "Command: $0 $@"
+    echo "Log: $INSTALL_LOG"
+    echo "==================================================================="
+    echo ""
 }
 
 show_help() {
@@ -380,19 +416,85 @@ install_wireguard() {
     if [ "$ENABLE_WIREGUARD" = false ]; then
         log_info "WireGuard not enabled (use --enable-wireguard)"
         log_warn "CGNAT nodes will NOT be reachable without WireGuard"
-        return
+        return 0
     fi
     
     log_step "Installing WireGuard..."
     
+    # Check if already installed
     if command -v wg &> /dev/null; then
-        log_success "WireGuard already installed"
-        return
+        local wg_version=$(wg --version 2>&1 | head -n1)
+        log_success "WireGuard already installed: $wg_version"
+        return 0
     fi
     
-    apt-get install -y -qq wireguard wireguard-tools > /dev/null 2>&1
+    # Determine OS version for optimization
+    local os_version=$(lsb_release -rs)
+    local os_version_major=$(echo "$os_version" | cut -d'.' -f1)
     
-    log_success "WireGuard installed"
+    log_info "Detected Ubuntu $os_version"
+    
+    # Update package cache (CRITICAL - prevents 404 errors)
+    log_info "Updating package cache..."
+    if apt-get update -qq 2>&1 | tee -a "$INSTALL_LOG" | grep -qi "err:"; then
+        log_warn "Package cache update had warnings (check $INSTALL_LOG)"
+    else
+        log_info "Package cache updated successfully"
+    fi
+    
+    # Ubuntu 24.04+ has WireGuard built into kernel - only need userspace tools
+    if [ "$os_version_major" -ge 24 ]; then
+        log_info "Ubuntu 24.04+ detected - installing userspace tools only"
+        
+        if ! apt-get install -y wireguard-tools 2>&1 | tee -a "$INSTALL_LOG" > /dev/null; then
+            log_error "Failed to install WireGuard tools"
+            log_error "Check installation log at: $INSTALL_LOG"
+            log_error "Try manually: sudo apt-get install -y wireguard-tools"
+            return 1
+        fi
+    else
+        # Ubuntu < 24.04 needs kernel headers and DKMS
+        log_info "Ubuntu $os_version - installing full WireGuard package with DKMS"
+        
+        # Install kernel headers first (needed for DKMS)
+        local kernel_version=$(uname -r)
+        log_info "Installing kernel headers for $kernel_version..."
+        
+        if apt-get install -y linux-headers-${kernel_version} 2>&1 | tee -a "$INSTALL_LOG" > /dev/null; then
+            log_info "Kernel headers installed"
+        else
+            log_warn "Kernel headers installation had issues (might still work with in-tree module)"
+        fi
+        
+        # Install WireGuard
+        if ! apt-get install -y wireguard wireguard-tools 2>&1 | tee -a "$INSTALL_LOG" > /dev/null; then
+            log_error "Failed to install WireGuard"
+            log_error "Check installation log at: $INSTALL_LOG"
+            log_error "Try manually: sudo apt-get install -y wireguard wireguard-tools"
+            return 1
+        fi
+    fi
+    
+    # Verify installation
+    if ! command -v wg &> /dev/null; then
+        log_error "WireGuard command not found after installation"
+        log_error "Installation may have failed silently"
+        return 1
+    fi
+    
+    # Check kernel module (informational only)
+    if modinfo wireguard &> /dev/null 2>&1; then
+        log_info "WireGuard kernel module available"
+    elif [ "$os_version_major" -ge 24 ]; then
+        log_info "WireGuard module built into kernel (Ubuntu 24.04+)"
+    else
+        log_warn "WireGuard kernel module not detected (might still work)"
+    fi
+    
+    local wg_version=$(wg --version 2>&1 | head -n1)
+    log_success "WireGuard installed: $wg_version"
+    
+    return 0
 }
 
 configure_wireguard_interface() {
@@ -952,6 +1054,9 @@ main() {
     
     parse_args "$@"
     
+    # Initialize logging
+    init_logging
+
     # Checks
     check_root
     check_os
