@@ -8,6 +8,7 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
 using Serilog;
 using System.Text;
 using System.Text.Json;
@@ -81,12 +82,12 @@ builder.Services.AddSingleton(sp =>
     var logger = sp.GetRequiredService<ILogger<DataStore>>();
     return new DataStore(database, logger);
 });
-
+builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
-
+builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddSingleton<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService>(sp =>
@@ -378,6 +379,27 @@ if (mongoDatabase != null)
                 logger.LogWarning("Development environment - continuing with empty state");
             }
         }
+    }
+}
+
+// ==================== Seed Default Configuration ====================
+using (var scope = app.Services.CreateScope())
+{
+    var configService = scope.ServiceProvider.GetRequiredService<ISchedulingConfigService>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        // This will create default config if it doesn't exist
+        var config = await configService.GetConfigAsync();
+        logger.LogInformation(
+            "Scheduling configuration loaded: v{Version}, Baseline: {Baseline}",
+            config.Version, config.BaselineBenchmark);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to load scheduling configuration on startup");
+        // Don't fail startup, service will retry on first request
     }
 }
 

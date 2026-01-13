@@ -2,6 +2,7 @@
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -11,7 +12,7 @@ namespace Orchestrator.Background;
 
 public interface INodeService
 {
-    Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request);
+    Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
     Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat);
     /// <summary>
     /// Process command acknowledgment from node
@@ -53,6 +54,7 @@ public interface INodeService
 public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
+    private readonly ISchedulingConfigService _configService;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
@@ -65,6 +67,7 @@ public class NodeService : INodeService
 
     public NodeService(
         DataStore dataStore,
+        ISchedulingConfigService configService,
         IEventService eventService,
         ICentralIngressService ingressService,
         ILogger<NodeService> logger,
@@ -76,6 +79,7 @@ public class NodeService : INodeService
         IConfiguration configuration)
     {
         _dataStore = dataStore;
+        _configService = configService;
         _eventService = eventService;
         _ingressService = ingressService;
         _logger = logger;
@@ -85,7 +89,6 @@ public class NodeService : INodeService
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _configuration = configuration;
-        SchedulingConfiguration.Weights.Validate();
     }
 
     // ============================================================================
@@ -117,7 +120,6 @@ public class NodeService : INodeService
         }
 
         var scoredNodes = new List<ScoredNode>();
-        var tierRequirements = SchedulingConfiguration.TierRequirements[tier];
 
         foreach (var node in candidates)
         {
@@ -132,7 +134,7 @@ public class NodeService : INodeService
                 continue;
             }
 
-            var scored = await ScoreNodeForVmAsync(node, vmSpec, tier, tierRequirements);
+            var scored = await ScoreNodeForVmAsync(node, vmSpec, tier);
 
             if (scored.RejectionReason == null)
             {
@@ -140,15 +142,13 @@ public class NodeService : INodeService
             }
         }
 
-        if (!scoredNodes.Any())
+        if (scoredNodes.Count == 0)
         {
             _logger.LogWarning(
                 "No eligible nodes found for {Tier} tier",
                 tier);
             return null;
         }
-
-        SchedulingConfiguration.Weights.Validate();
 
         var bestNode = scoredNodes
             .OrderByDescending(n => n.TotalScore)
@@ -167,14 +167,13 @@ public class NodeService : INodeService
         VmSpec spec,
         QualityTier tier = QualityTier.Standard)
     {
-        var policy = SchedulingConfiguration.TierRequirements[tier];
         var allNodes = _dataStore.Nodes.Values.ToList();
         _logger.LogInformation("Scoring {TotalNodesCount} nodes", allNodes.Count);
         var scoredNodes = new List<ScoredNode>();
 
         foreach (var node in allNodes)
         {
-            var scored = await ScoreNodeForVmAsync(node, spec, tier, policy);
+            var scored = await ScoreNodeForVmAsync(node, spec, tier);
             _logger.LogInformation("Scoring result:");
             // Add scroring logs
              _logger.LogInformation("Node {NodeId} - Total Score: {TotalScore:F2}, " +
@@ -200,19 +199,22 @@ public class NodeService : INodeService
     // ============================================================================
     // SMART SCHEDULING - Scoring & Filtering
     // ============================================================================
-
     private async Task<ScoredNode> ScoreNodeForVmAsync(
         Node node,
         VmSpec spec,
         QualityTier tier,
-        TierRequirements tierRequirements)
+        CancellationToken ct = default)
     {
         try
         {
             var scored = new ScoredNode { Node = node };
 
+            // Load current configuration
+            var config = await _configService.GetConfigAsync(ct);
+            var tierConfig = config.Tiers[tier];
+
             // Step 1: Hard filters (must pass or node is rejected)
-            var rejection = ApplyHardFilters(node, spec, tierRequirements);
+            var rejection = await ApplyHardFiltersAsync(node, spec, tierConfig, config, ct);
             if (rejection != null)
             {
                 _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
@@ -222,13 +224,15 @@ public class NodeService : INodeService
             }
 
             // Step 2: Calculate resource availability with overcommit
-            var availability = CalculateResourceAvailability(node, tier);
+            var availability = await CalculateResourceAvailabilityAsync(node, tier, ct);
 
             scored.Availability = availability;
 
-            // Calculate point cost for this VMs
+            // Calculate point cost for this VM using config
+            var baselineOvercommit = config.Tiers[QualityTier.Burstable].CpuOvercommitRatio;
             var pointCost = spec.VirtualCpuCores *
-                (int)tierRequirements.GetPointsPerVCpu();
+                (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, baselineOvercommit);
+
             availability.RequiredComputePoints = pointCost;
 
             // Step 3: Check if VM fits after overcommit calculation
@@ -242,145 +246,142 @@ public class NodeService : INodeService
                     $"MEM: {availability.RemainingMemoryBytes / (1024 * 1024):F2}/{memoryMb}MB, " +
                     $"DISK: {availability.RemainingStorageBytes / (1024 * 1024 * 1024):F2}/{diskGb}GB)";
                 scored.TotalScore = 0;
-                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;
             }
 
-            // Step 4: Check utilization safety threshold
+            // Step 4: Check utilization safety threshold (from config)
             var projectedCpuUtil = availability.ProjectedCpuUtilization(spec);
             var projectedMemUtil = availability.ProjectedMemoryUtilization(spec);
 
-            if (projectedCpuUtil > SchedulingConfiguration.MaxUtilizationPercent ||
-                projectedMemUtil > SchedulingConfiguration.MaxUtilizationPercent)
+            if (projectedCpuUtil > config.Limits.MaxUtilizationPercent ||
+                projectedMemUtil > config.Limits.MaxUtilizationPercent)
             {
                 scored.RejectionReason = $"Would exceed max utilization " +
-                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}% > {SchedulingConfiguration.MaxUtilizationPercent}%)";
+                    $"(CPU: {projectedCpuUtil:F1}%, MEM: {projectedMemUtil:F1}%, " +
+                    $"Limit: {config.Limits.MaxUtilizationPercent}%)";
                 scored.TotalScore = 0;
-                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, scored.RejectionReason);
                 return scored;
             }
 
-            // Step 5: Calculate component scores
-            var scores = new NodeScores
-            {
-                CapacityScore = CalculateCapacityScore(availability, spec),
-                LoadScore = CalculateLoadScore(node, availability),
-                ReputationScore = CalculateReputationScore(node),
-                LocalityScore = CalculateLocalityScore(node, spec)
-            };
+            // Step 5: Calculate weighted score using config weights
+            scored.Scores = CalculateNodeScores(node, availability, spec, config.Weights);
+            scored.TotalScore = CalculateTotalScore(scored.Scores, config.Weights);
 
-            scored.Scores = scores;
-
-            // Step 6: Calculate weighted total score
-            var weights = SchedulingConfiguration.Weights;
-            scored.TotalScore =
-                (scores.CapacityScore * weights.Capacity) +
-                (scores.LoadScore * weights.Load) +
-                (scores.ReputationScore * weights.Reputation) +
-                (scores.LocalityScore * weights.Locality);
-
-            return await Task.FromResult(scored);
+            return scored;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to score node {NodeId}", node.Id);
-            throw;
+            _logger.LogError(ex, "Error scoring node {NodeId}", node.Id);
+            return new ScoredNode
+            {
+                Node = node,
+                RejectionReason = $"Scoring error: {ex.Message}",
+                TotalScore = 0
+            };
         }
-        
-    }
-
-    private string? ApplyHardFilters(Node node, VmSpec spec, TierRequirements policy)
-    {
-        // Filter 1: Node must be online
-        if (node.Status != NodeStatus.Online)
-            return $"Node offline (status: {node.Status})";
-
-        // Filter 2: Must support required image
-        if (!string.IsNullOrEmpty(spec.ImageId) &&
-            node.SupportedImages != null &&
-            !node.SupportedImages.Contains(spec.ImageId))
-            return $"Image {spec.ImageId} not supported";
-
-        // Filter 3: GPU requirement
-        if (spec.RequiresGpu && !node.SupportsGpu)
-            return "GPU required but not available";
-
-        // Filter 4: Minimum total resources check (physical capacity)
-        if (node.TotalResources.MemoryBytes < SchedulingConfiguration.MinFreeMemoryMb)
-            return $"Node total memory too low ({node.TotalResources.MemoryBytes}MB < {SchedulingConfiguration.MinFreeMemoryMb}MB)";
-
-        // Filter 5: Load average check (if metrics available)
-        if (node.LatestMetrics?.LoadAverage > SchedulingConfiguration.MaxLoadAverage)
-            return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {SchedulingConfiguration  .MaxLoadAverage})";
-
-        // Filter 6: Region requirement (if specified)
-        if (!string.IsNullOrEmpty(spec.PreferredRegion) &&
-            spec.PreferredRegion != null &&
-            node.Region != spec.PreferredRegion)
-            return $"Region mismatch (required: {spec.PreferredRegion}, node: {node.Region})";
-
-        return null; // Passed all filters
     }
 
     /// <summary>
-    /// This is the source of truth for scheduling decisions
+    /// Updated hard filters to use dynamic configuration
     /// </summary>
-    private NodeResourceAvailability CalculateResourceAvailability(
-    Node node,
-    QualityTier tier)
+    private async Task<string?> ApplyHardFiltersAsync(
+        Node node,
+        VmSpec spec,
+        TierConfiguration tierConfig,
+        SchedulingConfig config,
+        CancellationToken ct = default)
     {
-        // Use NodeCapacityCalculator for capacity
+        // Check if node is online
+        if (node.Status != NodeStatus.Online)
+            return $"Node not active (status: {node.Status})";
+
+        // Check tier eligibility
+        var evaluation = node.PerformanceEvaluation;
+        if (evaluation == null || !evaluation.EligibleTiers.Contains(spec.QualityTier))
+            return $"Node not eligible for tier {spec.QualityTier}";
+
+        // Check load average (from config)
+        if (node.LatestMetrics?.LoadAverage > config.Limits.MaxLoadAverage)
+            return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {config.Limits.MaxLoadAverage})";
+
+        // Check minimum free memory (from config)
+        var freeMemoryMb = (node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes) / (1024 * 1024);
+        if (freeMemoryMb < config.Limits.MinFreeMemoryMb)
+            return $"Insufficient free memory ({freeMemoryMb}MB < {config.Limits.MinFreeMemoryMb}MB)";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Calculate node scores using configured weights
+    /// </summary>
+    private NodeScores CalculateNodeScores(
+        Node node,
+        NodeResourceAvailability availability,
+        VmSpec spec,
+        ScoringWeightsConfig weights)
+    {
+        // Capacity score: Higher is better (0.0 - 1.0)
+        var capacityScore = availability.RemainingComputePoints > 0
+            ? (double)availability.RemainingComputePoints / availability.TotalComputePoints
+            : 0.0;
+
+        // Load score: Lower load is better (0.0 - 1.0)
+        var loadScore = node.LatestMetrics?.LoadAverage != null
+            ? Math.Max(0, 1.0 - (node.LatestMetrics.LoadAverage / 16.0))
+            : 0.5;
+
+        // Reputation score: Based on uptime and completion rate (0.0 - 1.0)
+        var reputationScore = (node.UptimePercentage / 100.0) * 0.7 +
+            (node.SuccessfulVmCompletions / Math.Max(1.0, node.TotalVmsHosted)) * 0.3;
+
+        // Locality score: Prefer nodes in same region (0.0 - 1.0)
+        var localityScore = 0.5; // TODO: Implement geo-based scoring
+
+        return new NodeScores
+        {
+            CapacityScore = capacityScore,
+            LoadScore = loadScore,
+            ReputationScore = reputationScore,
+            LocalityScore = localityScore
+        };
+    }
+
+    /// <summary>
+    /// Updated resource availability calculation to use dynamic configuration
+    /// </summary>
+    private async Task<NodeResourceAvailability> CalculateResourceAvailabilityAsync(
+        Node node,
+        QualityTier tier,
+        CancellationToken ct = default)
+    {
         var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(capacityLogger);
-        var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
+        var capacityCalculator = new NodeCapacityCalculator(capacityLogger, _configService);
 
-        if (!totalCapacity.IsAcceptable)
-        {
-            return new NodeResourceAvailability
-            {
-                NodeId = node.Id,
-                Tier = tier,
-                TotalComputePoints = 0,
-                TotalMemoryBytes = 0,
-                TotalStorageBytes = 0
-            };
-        }
-
-        // Get tier-specific capacity
-        var tierCapacity = capacityCalculator.CalculateTierCapacity(node, tier);
-
-        if (!tierCapacity.IsEligible)
-        {
-            return new NodeResourceAvailability
-            {
-                NodeId = node.Id,
-                Tier = tier,
-                TotalComputePoints = 0,
-                TotalMemoryBytes = 0,
-                TotalStorageBytes = 0
-            };
-        }
-
-        // Use actual reserved resources from node
-        var allocatedComputePoints = node.ReservedResources.ComputePoints;
-        var allocatedMemoryBytes = node.ReservedResources.MemoryBytes;
-        var allocatedStorageBytes = node.ReservedResources.StorageBytes;
+        var tierCapacity = await capacityCalculator.CalculateTierCapacityAsync(node, tier, ct);
 
         return new NodeResourceAvailability
         {
             NodeId = node.Id,
             Tier = tier,
-
             TotalComputePoints = tierCapacity.TierComputePoints,
             TotalMemoryBytes = tierCapacity.TierMemoryBytes,
             TotalStorageBytes = tierCapacity.TierStorageBytes,
-
-            AllocatedComputePoints = allocatedComputePoints,
-            AllocatedMemoryBytes = allocatedMemoryBytes,
-            AllocatedStorageBytes = allocatedStorageBytes,
-
-            RequiredComputePoints = 0 // Set during fit check
+            AllocatedComputePoints = node.ReservedResources.ComputePoints,
+            AllocatedMemoryBytes = node.ReservedResources.MemoryBytes,
+            AllocatedStorageBytes = node.ReservedResources.StorageBytes
         };
+    }
+
+    /// <summary>
+    /// Calculate total weighted score
+    /// </summary>
+    private double CalculateTotalScore(NodeScores scores, ScoringWeightsConfig weights)
+    {
+        return (scores.CapacityScore * weights.Capacity) +
+               (scores.LoadScore * weights.Load) +
+               (scores.ReputationScore * weights.Reputation) +
+               (scores.LocalityScore * weights.Locality);
     }
 
     private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
@@ -463,7 +464,7 @@ public class NodeService : INodeService
 
     // Implements deterministic node ID validation and registration
 
-    public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request)
+    public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default)
     {
         // =====================================================
         // STEP 1: Validate Wallet Address
@@ -556,9 +557,9 @@ public class NodeService : INodeService
 
             // Re-evaluate performance (hardware may have changed)
             var reregPerfLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-            var reregPerfEvaluator = new NodePerformanceEvaluator(reregPerfLogger);
+            var reregPerfEvaluator = new NodePerformanceEvaluator(reregPerfLogger, _configService);
 
-            existingNode.PerformanceEvaluation = reregPerfEvaluator.EvaluateNode(existingNode);
+            existingNode.PerformanceEvaluation = await reregPerfEvaluator.EvaluateNodeAsync(existingNode, ct);
 
             if (!existingNode.PerformanceEvaluation.IsAcceptable)
             {
@@ -573,8 +574,8 @@ public class NodeService : INodeService
 
             // Recalculate total capacity
             var reregCapLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-            var reregCapCalculator = new NodeCapacityCalculator(reregCapLogger);
-            var reregTotalCapacity = reregCapCalculator.CalculateTotalCapacity(existingNode);
+            var reregCapCalculator = new NodeCapacityCalculator(reregCapLogger, _configService);
+            var reregTotalCapacity = await reregCapCalculator.CalculateTotalCapacityAsync(existingNode, ct);
 
             existingNode.TotalResources = new ResourceSnapshot
             {
@@ -642,9 +643,11 @@ public class NodeService : INodeService
         // STEP 6: Performance Evaluation & Capacity Calculation
         // =====================================================
         var performanceLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-        var performanceEvaluator = new NodePerformanceEvaluator(performanceLogger);
+        var performanceEvaluator = new NodePerformanceEvaluator(
+            performanceLogger,
+            _configService); // Pass config service
 
-        node.PerformanceEvaluation = performanceEvaluator.EvaluateNode(node);
+        node.PerformanceEvaluation = await performanceEvaluator.EvaluateNodeAsync(node, ct);
 
         if (!node.PerformanceEvaluation.IsAcceptable)
         {
@@ -659,8 +662,11 @@ public class NodeService : INodeService
 
         // Calculate total capacity using NodeCapacityCalculator
         var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(capacityLogger);
-        var totalCapacity = capacityCalculator.CalculateTotalCapacity(node);
+        var capacityCalculator = new NodeCapacityCalculator(
+            capacityLogger,
+            _configService); // Pass config service
+
+        var totalCapacity = await capacityCalculator.CalculateTotalCapacityAsync(node, ct);
 
         node.TotalResources = new ResourceSnapshot
         {

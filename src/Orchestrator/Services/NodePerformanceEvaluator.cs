@@ -1,35 +1,44 @@
-﻿using MongoDB.Bson.Serialization.Attributes;
-using Orchestrator.Models;
+﻿using Orchestrator.Models;
+using Orchestrator.Services;
 
 namespace Orchestrator.Background;
 
 /// <summary>
 /// Evaluates node performance and determines tier eligibility
-/// Uses unified benchmark-based formula: PointsPerCore = NodeBenchmark / BurstableBaseline
+/// Uses database-backed configuration from SchedulingConfigService
 /// </summary>
 public class NodePerformanceEvaluator
 {
     private readonly ILogger<NodePerformanceEvaluator> _logger;
+    private readonly ISchedulingConfigService _configService;
 
     public NodePerformanceEvaluator(
-        ILogger<NodePerformanceEvaluator> logger)
+        ILogger<NodePerformanceEvaluator> logger,
+        ISchedulingConfigService configService)
     {
         _logger = logger;
+        _configService = configService;
     }
 
     /// <summary>
     /// Evaluate node performance and calculate tier eligibility
+    /// Now uses dynamic configuration from database
     /// </summary>
-    public NodePerformanceEvaluation EvaluateNode(Node node)
+    public async Task<NodePerformanceEvaluation> EvaluateNodeAsync(
+        Node node,
+        CancellationToken ct = default)
     {
+        // Load current configuration
+        var config = await _configService.GetConfigAsync(ct);
+
         var benchmarkScore = node.HardwareInventory.Cpu.BenchmarkScore;
         var cpuModel = node.HardwareInventory.Cpu.Model;
-        var burstableBaseline = SchedulingConfiguration.BaselineBenchmark;
+        var burstableBaseline = config.BaselineBenchmark;
 
         // Apply performance cap if configured
         var cappedScore = Math.Min(
             benchmarkScore,
-            (int)(burstableBaseline * SchedulingConfiguration.MaxPerformanceMultiplier));
+            (int)(burstableBaseline * config.MaxPerformanceMultiplier));
 
         // Single source of truth: points per core
         var pointsPerCore = (double)cappedScore / burstableBaseline;
@@ -48,11 +57,16 @@ public class NodePerformanceEvaluator
             TierCapabilities = new Dictionary<QualityTier, TierCapability>()
         };
 
+        // Get baseline overcommit ratio from Burstable tier
+        var baselineOvercommitRatio = config.Tiers[QualityTier.Burstable].CpuOvercommitRatio;
+
         // Check eligibility for each tier (from highest to lowest)
-        foreach (var (tier, requirements) in SchedulingConfiguration.TierRequirements
+        foreach (var (tier, tierConfig) in config.Tiers
             .OrderByDescending(kvp => kvp.Value.MinimumBenchmark))
         {
-            var requiredPointsPerVCpu = requirements.GetPointsPerVCpu();
+            var requiredPointsPerVCpu = tierConfig.GetPointsPerVCpu(
+                config.BaselineBenchmark,
+                baselineOvercommitRatio);
 
             // Simple comparison: can this node provide enough points?
             var isEligible = pointsPerCore >= requiredPointsPerVCpu;
@@ -64,12 +78,12 @@ public class NodePerformanceEvaluator
                 evaluation.TierCapabilities[tier] = new TierCapability
                 {
                     Tier = tier,
-                    MinimumBenchmark = requirements.MinimumBenchmark,
+                    MinimumBenchmark = tierConfig.MinimumBenchmark,
                     RequiredPointsPerVCpu = requiredPointsPerVCpu,
                     NodePointsPerCore = pointsPerCore,
                     MaxVCpusPerCore = (int)(pointsPerCore / requiredPointsPerVCpu),
-                    PriceMultiplier = requirements.PriceMultiplier,
-                    Description = requirements.Description,
+                    PriceMultiplier = tierConfig.PriceMultiplier,
+                    Description = tierConfig.Description,
                     IsEligible = true
                 };
             }
@@ -81,82 +95,55 @@ public class NodePerformanceEvaluator
                 evaluation.TierCapabilities[tier] = new TierCapability
                 {
                     Tier = tier,
-                    MinimumBenchmark = requirements.MinimumBenchmark,
+                    MinimumBenchmark = tierConfig.MinimumBenchmark,
                     RequiredPointsPerVCpu = requiredPointsPerVCpu,
                     NodePointsPerCore = pointsPerCore,
-                    PriceMultiplier = requirements.PriceMultiplier,
+                    PriceMultiplier = tierConfig.PriceMultiplier,
                     IsEligible = false,
                     IneligibilityReason = $"Node provides {pointsPerCore:F2} points/core, " +
-                                         $"tier requires {requiredPointsPerVCpu:F2} " +
-                                         $"(gap: {percentageGap:F1}%)"
+                                         $"tier requires {requiredPointsPerVCpu:F2} points/vCPU " +
+                                         $"(gap: {gap:F2} points, {percentageGap:F1}% below minimum)"
                 };
             }
         }
 
-        // Node must support at least Burstable tier
-        evaluation.IsAcceptable = evaluation.EligibleTiers.Any();
-
-        if (!evaluation.IsAcceptable)
+        // Determine overall acceptability
+        if (cappedScore < config.Tiers[QualityTier.Burstable].MinimumBenchmark)
         {
-            var burstableRequirement = SchedulingConfiguration.TierRequirements[QualityTier.Burstable]
-                .GetPointsPerVCpu();
-            evaluation.RejectionReason =
-                $"Performance {pointsPerCore:F2} points/core below minimum " +
-                $"Burstable requirement {burstableRequirement:F2}";
+            evaluation.IsAcceptable = false;
+            evaluation.RejectionReason = $"Benchmark score {cappedScore} below minimum " +
+                                         $"acceptable performance ({config.Tiers[QualityTier.Burstable].MinimumBenchmark})";
         }
         else
         {
-            evaluation.HighestTier = evaluation.EligibleTiers.First();
-            evaluation.PerformanceClass = ClassifyPerformance(pointsPerCore, burstableBaseline);
+            evaluation.IsAcceptable = true;
+            evaluation.HighestTier = evaluation.EligibleTiers.FirstOrDefault();
         }
 
-        LogEligibilityReport(evaluation);
+        LogEvaluationResult(evaluation);
 
         return evaluation;
     }
 
-    private PerformanceClass ClassifyPerformance(double pointsPerCore, int baseline)
-    {
-        var multiplier = pointsPerCore;
-        var guaranteedReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Guaranteed].MinimumBenchmark / baseline;
-        var standardReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Standard].MinimumBenchmark / baseline;
-        var balancedReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Balanced].MinimumBenchmark / baseline;
-        var burstableReq = (double)SchedulingConfiguration.TierRequirements[QualityTier.Burstable].MinimumBenchmark / baseline;
-
-        if (multiplier >= guaranteedReq)
-            return PerformanceClass.UltraHighEnd;
-        if (multiplier >= standardReq)
-            return PerformanceClass.HighEnd;
-        if (multiplier >= balancedReq)
-            return PerformanceClass.MidRange;
-        if (multiplier >= burstableReq)
-            return PerformanceClass.Budget;
-
-        return PerformanceClass.BelowMinimum;
-    }
-
-    private void LogEligibilityReport(NodePerformanceEvaluation evaluation)
+    private void LogEvaluationResult(NodePerformanceEvaluation evaluation)
     {
         _logger.LogInformation(
-            "═══════════════════════════════════════════════════════════\n" +
-            "NODE TIER ELIGIBILITY REPORT\n" +
-            "═══════════════════════════════════════════════════════════\n" +
-            "Node ID:      {NodeId}\n" +
-            "CPU:          {Model}\n" +
-            "Benchmark:    {Score} (capped: {Capped})\n" +
-            "Performance:  {Mult:F2}x baseline (capped: {CappedMult:F2}x)\n" +
-            "Points/Core:  {PointsPerCore:F2}\n" +
-            "Class:        {Class}\n" +
-            "Status:       {Status}\n" +
-            "───────────────────────────────────────────────────────────",
-            evaluation.NodeId,
-            evaluation.CpuModel,
-            evaluation.BenchmarkScore,
-            evaluation.CappedBenchmarkScore,
-            evaluation.PerformanceMultiplier,
-            evaluation.CappedPerformanceMultiplier,
-            evaluation.PointsPerCore,
-            evaluation.PerformanceClass,
+            "═══════════════════════════════════════════════════════════");
+        _logger.LogInformation(
+            "Node Performance Evaluation: {NodeId}",
+            evaluation.NodeId);
+        _logger.LogInformation(
+            "═══════════════════════════════════════════════════════════");
+
+        _logger.LogInformation("CPU Model:        {Model}", evaluation.CpuModel);
+        _logger.LogInformation("Benchmark:        {Score} (capped: {Capped})",
+            evaluation.BenchmarkScore, evaluation.CappedBenchmarkScore);
+        _logger.LogInformation("Baseline:         {Baseline}", evaluation.BurstableBaseline);
+        _logger.LogInformation("Points/Core:      {Points:F2}",
+            evaluation.PointsPerCore);
+        _logger.LogInformation("Multiplier:       {Multiplier:F2}x (raw), {Capped:F2}x (capped)",
+            evaluation.PerformanceMultiplier, evaluation.CappedPerformanceMultiplier);
+        _logger.LogInformation("Status:           {Status}",
             evaluation.IsAcceptable ? "✓ ACCEPTED" : "✗ REJECTED");
 
         if (!evaluation.IsAcceptable)
@@ -227,58 +214,21 @@ public class NodePerformanceEvaluation
 
     public List<QualityTier> EligibleTiers { get; set; } = new();
     public QualityTier? HighestTier { get; set; }
-    public PerformanceClass PerformanceClass { get; set; }
-    /// <summary>
-    /// Tier capabilities - stored as array in MongoDB to avoid enum key serialization issues
-    /// </summary>
-    [BsonDictionaryOptions(MongoDB.Bson.Serialization.Options.DictionaryRepresentation.ArrayOfArrays)]
     public Dictionary<QualityTier, TierCapability> TierCapabilities { get; set; } = new();
 }
 
 /// <summary>
-/// Capability for a specific tier
+/// Capability information for a specific tier
 /// </summary>
 public class TierCapability
 {
     public QualityTier Tier { get; set; }
-    public bool IsEligible { get; set; }
-
-    /// <summary>
-    /// Minimum benchmark score required for this tier
-    /// </summary>
     public int MinimumBenchmark { get; set; }
-
-    /// <summary>
-    /// Points required per vCPU for this tier
-    /// Formula: TierMinimumBenchmark / BurstableBaseline
-    /// </summary>
     public double RequiredPointsPerVCpu { get; set; }
-
-    /// <summary>
-    /// Points this node provides per core
-    /// Formula: NodeBenchmark / BurstableBaseline
-    /// </summary>
     public double NodePointsPerCore { get; set; }
-
-    /// <summary>
-    /// Maximum vCPUs this node can provide per physical core for this tier
-    /// Formula: NodePointsPerCore / RequiredPointsPerVCpu
-    /// </summary>
     public int MaxVCpusPerCore { get; set; }
-
     public decimal PriceMultiplier { get; set; }
     public string Description { get; set; } = string.Empty;
+    public bool IsEligible { get; set; }
     public string? IneligibilityReason { get; set; }
-}
-
-/// <summary>
-/// Performance classification
-/// </summary>
-public enum PerformanceClass
-{
-    BelowMinimum,      // < Burstable requirement - Rejected
-    Budget,            // Burstable only
-    MidRange,          // Up to Balanced
-    HighEnd,           // Up to Standard
-    UltraHighEnd       // All tiers including Guaranteed
 }

@@ -5,6 +5,7 @@ using Orchestrator.Models;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Orchestrator.Services;
 
 namespace Orchestrator.Background;
 
@@ -27,6 +28,7 @@ public class VmService : IVmService
 {
     private readonly DataStore _dataStore;
     private readonly INodeService _nodeService;
+    private readonly ISchedulingConfigService _configService;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<VmService> _logger;
@@ -34,12 +36,14 @@ public class VmService : IVmService
     public VmService(
         DataStore dataStore,
         INodeService nodeService,
+        ISchedulingConfigService configService,
         IEventService eventService,
         ICentralIngressService ingressService,
         ILogger<VmService> logger)
     {
         _dataStore = dataStore;
         _nodeService = nodeService;
+        _configService = configService;
         _eventService = eventService;
         _ingressService = ingressService;
         _logger = logger;
@@ -615,9 +619,10 @@ public class VmService : IVmService
         // ========================================
         // STEP 1: Calculate compute point cost FIRST
         // ========================================
-        var tierRequirements = SchedulingConfiguration.TierRequirements[vm.Spec.QualityTier];
+        var config = await _configService.GetConfigAsync();// .TierRequirements[vm.Spec.QualityTier];
+        var tierConfig = config.Tiers[vm.Spec.QualityTier];
         var pointCost = vm.Spec.VmType == VmType.Relay ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
-            (int)tierRequirements.GetPointsPerVCpu();
+            (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
 
         // CRITICAL: Store point cost in VM spec before scheduling
         vm.Spec.ComputePointCost = pointCost;

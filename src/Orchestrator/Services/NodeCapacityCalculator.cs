@@ -1,26 +1,32 @@
 ﻿using Orchestrator.Models;
+using Orchestrator.Services;
 
 namespace Orchestrator.Background;
 
 /// <summary>
 /// Calculates node capacity with tier-specific overcommit ratios
-/// Unified approach: Base capacity from performance, overcommit per tier
+/// Uses database-backed configuration from SchedulingConfigService
 /// </summary>
 public class NodeCapacityCalculator
 {
     private readonly ILogger<NodeCapacityCalculator> _logger;
+    private readonly ISchedulingConfigService _configService;
 
     public NodeCapacityCalculator(
-        ILogger<NodeCapacityCalculator> logger)
+        ILogger<NodeCapacityCalculator> logger,
+        ISchedulingConfigService configService)
     {
         _logger = logger;
+        _configService = configService;
     }
 
     /// <summary>
     /// Calculate total node capacity across all tiers
     /// Uses Burstable tier (highest overcommit) as maximum theoretical capacity
     /// </summary>
-    public NodeTotalCapacity CalculateTotalCapacity(Node node)
+    public async Task<NodeTotalCapacity> CalculateTotalCapacityAsync(
+        Node node,
+        CancellationToken ct = default)
     {
         var evaluation = node.PerformanceEvaluation;
         if (evaluation == null || !evaluation.IsAcceptable)
@@ -36,18 +42,19 @@ public class NodeCapacityCalculator
             };
         }
 
+        // Load current configuration
+        var config = await _configService.GetConfigAsync(ct);
+
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
 
         // Get Burstable tier (maximum overcommit)
-        var burstableTier = SchedulingConfiguration.TierRequirements[QualityTier.Burstable];
+        var burstableTier = config.Tiers[QualityTier.Burstable];
 
         // ========================================
         // CPU CAPACITY (using Burstable overcommit)
         // ========================================
-        // Total points = base points/core × physical cores × burstable overcommit
-        // This represents maximum theoretical capacity (single currency)
         var basePointsPerCore = evaluation.PointsPerCore;
         var totalComputePoints = (int)(
             physicalCores *
@@ -57,15 +64,11 @@ public class NodeCapacityCalculator
         // ========================================
         // MEMORY CAPACITY (NO overcommit - physical only)
         // ========================================
-        // Memory cannot be time-sliced - use physical capacity
-        // VMs get full memory allocation at boot
         var totalMemoryBytes = physicalMemory;
 
         // ========================================
         // STORAGE CAPACITY (using Burstable overcommit)
         // ========================================
-        // Safe with qcow2 thin provisioning
-        // Use Burstable tier's storage overcommit as maximum
         var totalStorageBytes = (long)(
             physicalStorage *
             burstableTier.StorageOvercommitRatio);
@@ -103,11 +106,16 @@ public class NodeCapacityCalculator
     /// <summary>
     /// Calculate tier-specific capacity for a given tier
     /// </summary>
-    public TierSpecificCapacity CalculateTierCapacity(
+    public async Task<TierSpecificCapacity> CalculateTierCapacityAsync(
         Node node,
-        QualityTier tier)
+        QualityTier tier,
+        CancellationToken ct = default)
     {
         var evaluation = node.PerformanceEvaluation;
+
+        // Load current configuration
+        var config = await _configService.GetConfigAsync(ct);
+
         if (evaluation == null || !evaluation.EligibleTiers.Contains(tier))
         {
             return new TierSpecificCapacity
@@ -120,7 +128,7 @@ public class NodeCapacityCalculator
             };
         }
 
-        var tierRequirements = SchedulingConfiguration.TierRequirements[tier];
+        var tierConfig = config.Tiers[tier];
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
@@ -130,11 +138,10 @@ public class NodeCapacityCalculator
         // ========================================
         // TIER-SPECIFIC CPU CAPACITY
         // ========================================
-        // Total points for this tier = base × cores × tier's overcommit
         var tierComputePoints = (int)(
             physicalCores *
             basePointsPerCore *
-            tierRequirements.CpuOvercommitRatio);
+            tierConfig.CpuOvercommitRatio);
 
         // ========================================
         // TIER-SPECIFIC MEMORY (always physical)
@@ -146,7 +153,7 @@ public class NodeCapacityCalculator
         // ========================================
         var tierStorageBytes = (long)(
             physicalStorage *
-            tierRequirements.StorageOvercommitRatio);
+            tierConfig.StorageOvercommitRatio);
 
         return new TierSpecificCapacity
         {
@@ -161,62 +168,31 @@ public class NodeCapacityCalculator
             TierMemoryBytes = tierMemoryBytes,
             TierStorageBytes = tierStorageBytes,
 
-            CpuOvercommitRatio = tierRequirements.CpuOvercommitRatio,
-            StorageOvercommitRatio = tierRequirements.StorageOvercommitRatio,
-
-            PointsPerVCpu = tierRequirements.GetPointsPerVCpu(),
-            MaxVCpus = (int)(tierComputePoints / tierRequirements.GetPointsPerVCpu()),
-            PriceMultiplier = tierRequirements.PriceMultiplier
+            CpuOvercommitRatio = tierConfig.CpuOvercommitRatio,
+            StorageOvercommitRatio = tierConfig.StorageOvercommitRatio
         };
     }
 
     private void LogCapacityReport(NodeTotalCapacity capacity, Node node)
     {
         _logger.LogInformation(
-            "═══════════════════════════════════════════════════════════\n" +
-            "NODE CAPACITY CALCULATION\n" +
-            "═══════════════════════════════════════════════════════════\n" +
-            "Node ID:         {NodeId}\n" +
-            "CPU:             {Model}\n" +
-            "Performance:     {Perf:F2}x baseline\n" +
-            "───────────────────────────────────────────────────────────\n" +
-            "PHYSICAL RESOURCES:\n" +
-            "  Cores:         {Cores}\n" +
-            "  Memory:        {Memory:N0} bytes ({MemoryGB:F1} GB)\n" +
-            "  Storage:       {Storage:N0} bytes ({StorageGB:F1} GB)\n" +
-            "───────────────────────────────────────────────────────────\n" +
-            "BASE PERFORMANCE:\n" +
-            "  Points/Core:   {PointsPerCore:F2}\n" +
-            "───────────────────────────────────────────────────────────\n" +
-            "TOTAL CAPACITY (Burstable overcommit):\n" +
-            "  Compute:       {TotalPoints} points (CPU overcommit: {CpuOver}x)\n" +
-            "  Memory:        {TotalMemory:N0} bytes (overcommit: {MemOver}x)\n" +
-            "  Storage:       {TotalStorage:N0} bytes (overcommit: {StorOver}x)\n" +
-            "───────────────────────────────────────────────────────────\n" +
-            "MAX VMs (if all Burstable):\n" +
-            "  vCPUs:         {MaxVCpus}\n" +
-            "═══════════════════════════════════════════════════════════",
+            "Node {NodeId} Total Capacity: {Points} compute points, {Memory}GB RAM, {Storage}GB storage " +
+            "(Physical: {PhysicalCores} cores, {PhysicalMem}GB RAM, {PhysicalStorage}GB storage) " +
+            "CPU Overcommit: {CpuOvercommit}x, Storage Overcommit: {StorageOvercommit}x",
             capacity.NodeId,
-            node.HardwareInventory.Cpu.Model,
-            capacity.PerformanceMultiplier,
-            capacity.PhysicalCores,
-            capacity.PhysicalMemoryBytes,
-            capacity.PhysicalMemoryBytes / 1024.0 / 1024.0 / 1024.0,
-            capacity.PhysicalStorageBytes,
-            capacity.PhysicalStorageBytes / 1024.0 / 1024.0 / 1024.0,
-            capacity.BasePointsPerCore,
             capacity.TotalComputePoints,
+            capacity.TotalMemoryBytes / (1024 * 1024 * 1024),
+            capacity.TotalStorageBytes / (1024 * 1024 * 1024),
+            capacity.PhysicalCores,
+            capacity.PhysicalMemoryBytes / (1024 * 1024 * 1024),
+            capacity.PhysicalStorageBytes / (1024 * 1024 * 1024),
             capacity.CpuOvercommitRatio,
-            capacity.TotalMemoryBytes,
-            capacity.MemoryOvercommitRatio,
-            capacity.TotalStorageBytes,
-            capacity.StorageOvercommitRatio,
-            capacity.TotalComputePoints / 1.0); // Burstable = 1 point per vCPU
+            capacity.StorageOvercommitRatio);
     }
 }
 
 /// <summary>
-/// Total node capacity (using Burstable tier overcommit as maximum)
+/// Total capacity for a node (using maximum overcommit)
 /// </summary>
 public class NodeTotalCapacity
 {
@@ -245,7 +221,7 @@ public class NodeTotalCapacity
 }
 
 /// <summary>
-/// Tier-specific capacity calculation
+/// Tier-specific capacity for a node
 /// </summary>
 public class TierSpecificCapacity
 {
@@ -254,6 +230,7 @@ public class TierSpecificCapacity
     public bool IsEligible { get; set; }
     public string? IneligibilityReason { get; set; }
 
+    // Physical resources
     public int PhysicalCores { get; set; }
     public double BasePointsPerCore { get; set; }
 
@@ -262,12 +239,7 @@ public class TierSpecificCapacity
     public long TierMemoryBytes { get; set; }
     public long TierStorageBytes { get; set; }
 
-    // Tier overcommit ratios
+    // Tier configuration
     public double CpuOvercommitRatio { get; set; }
     public double StorageOvercommitRatio { get; set; }
-
-    // Tier requirements
-    public double PointsPerVCpu { get; set; }
-    public int MaxVCpus { get; set; }
-    public decimal PriceMultiplier { get; set; }
 }
