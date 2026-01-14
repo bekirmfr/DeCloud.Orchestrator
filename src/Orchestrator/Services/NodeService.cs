@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
+using Org.BouncyCastle.Asn1.Ocsp;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -13,7 +14,7 @@ namespace Orchestrator.Background;
 public interface INodeService
 {
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
-    Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat);
+    Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat, CancellationToken ct = default);
     /// <summary>
     /// Process command acknowledgment from node
     /// </summary>
@@ -519,10 +520,16 @@ public class NodeService : INodeService
         // =====================================================
         string? orchestratorPublicKey = null;
 
-        orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync();
+        orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync(ct);
         _logger.LogInformation(
             "Including orchestrator WireGuard public key {PublicKey} in registration response for node {NodeId}",
             orchestratorPublicKey, nodeId);
+
+        // =====================================================
+        // Get scheduling configuration
+        // =====================================================
+
+        SchedulingConfig? schedulingConfig = await _configService.GetConfigAsync(ct);
 
         // =====================================================
         // Generate JWT token for node authentication
@@ -607,8 +614,9 @@ public class NodeService : INodeService
             return new NodeRegistrationResponse(
                 existingNode.Id,
                 TimeSpan.FromSeconds(15),
-                orchestratorPublicKey,
-                apiKey);
+                apiKey,
+                schedulingConfig,
+                orchestratorPublicKey);
         }
 
         // =====================================================
@@ -768,8 +776,9 @@ public class NodeService : INodeService
         return new NodeRegistrationResponse(
             node.Id,
             TimeSpan.FromSeconds(15),
-            orchestratorPublicKey,
-            apiKey);
+            apiKey,
+            schedulingConfig,
+            orchestratorPublicKey);
     }
 
     private bool VerifyWalletSignature(string walletAddress, string message, string signature)
@@ -794,12 +803,15 @@ public class NodeService : INodeService
     /// <summary>
     /// Process heartbeat without overwriting orchestrator resource tracking
     /// </summary>
-    public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat)
+    public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat,
+    CancellationToken ct = default)
     {
         if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
         {
-            return new NodeHeartbeatResponse(false, null, null);
+            return new NodeHeartbeatResponse(false, null, null, null);
         }
+
+        var currentConfig = await _configService.GetConfigAsync(ct);
 
         var wasOffline = node.Status == NodeStatus.Offline;
         node.Status = NodeStatus.Online;
@@ -854,10 +866,35 @@ public class NodeService : INodeService
         // Synchronize VM state from heartbeat
         await SyncVmStateFromHeartbeatAsync(nodeId, heartbeat);
 
+        AgentSchedulingConfig? agentSchedulingConfig = null;
+
+        if (heartbeat.SchedulingConfigVersion == 0 ||
+        heartbeat.SchedulingConfigVersion != currentConfig.Version)
+        {
+            agentSchedulingConfig = MapToAgentConfig(currentConfig);
+
+            _logger.LogInformation(
+                "Node {NodeId} has outdated config (node: v{NodeVersion}, current: v{CurrentVersion}), " +
+                "sending updated config in heartbeat response. " +
+                "Baseline: {Baseline}, Overcommit: {Overcommit:F1}",
+                nodeId,
+                heartbeat.SchedulingConfigVersion,
+                currentConfig.Version,
+                currentConfig.BaselineBenchmark,
+                currentConfig.Tiers[QualityTier.Burstable].CpuOvercommitRatio);
+        }
+        else
+        {
+            // Config is up-to-date, don't send it (saves bandwidth)
+            _logger.LogDebug(
+                "Node {NodeId} has current config v{Version}, no update needed",
+                nodeId, currentConfig.Version);
+        }
+
         // Get pending commands for this node
         var commands = _dataStore.GetAndClearPendingCommands(nodeId);
 
-        return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null, node.CgnatInfo);
+        return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null, agentSchedulingConfig, node.CgnatInfo);
     }
 
     /// <summary>
@@ -1708,5 +1745,38 @@ public class NodeService : INodeService
         return Convert.ToBase64String(
             System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(data)));
+    }
+
+    /// <summary>
+    /// Convert full SchedulingConfig to lightweight AgentSchedulingConfig
+    /// Only includes fields that Node Agent actually needs for CPU quota calculations
+    /// 
+    /// What's included:
+    /// - BaselineBenchmark: For calculating nodePointsPerCore
+    /// - BaselineOvercommitRatio: From Burstable tier for quota calculations
+    /// - MaxPerformanceMultiplier: Cap on performance advantage
+    /// - Version: For change tracking
+    /// 
+    /// What's excluded (not needed by agents):
+    /// - Full tier configurations (Standard, Balanced, Guaranteed)
+    /// - Scheduling limits (MaxUtilization, MinFreeMem, MaxLoad)
+    /// - Scoring weights (Capacity, Load, Reputation, Locality)
+    /// - Price multipliers
+    /// - Descriptions and target use cases
+    /// </summary>
+    private AgentSchedulingConfig MapToAgentConfig(SchedulingConfig config)
+    {
+        // Extract burstable tier configuration
+        // This is the baseline tier that all nodes must support
+        var burstableTier = config.Tiers[QualityTier.Burstable];
+
+        return new AgentSchedulingConfig
+        {
+            Version = config.Version,
+            BaselineBenchmark = config.BaselineBenchmark,
+            BaselineOvercommitRatio = burstableTier.CpuOvercommitRatio,
+            MaxPerformanceMultiplier = config.MaxPerformanceMultiplier,
+            UpdatedAt = config.UpdatedAt
+        };
     }
 }

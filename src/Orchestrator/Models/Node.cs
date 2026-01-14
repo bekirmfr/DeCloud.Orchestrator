@@ -269,12 +269,13 @@ public class NodeRegistrationRequest
 public record NodeRegistrationResponse(
     string NodeId,
     TimeSpan HeartbeatInterval,
+    string? ApiKey = null,
+    SchedulingConfig? SchedulingConfig = null,
     /// <summary>
     /// Orchestrator's WireGuard public key for relay configuration
     /// Null if WireGuard is not enabled on orchestrator
     /// </summary>
-    string? OrchestratorWireGuardPublicKey = null,
-    string? ApiKey = null
+    string? OrchestratorWireGuardPublicKey = null
 );
 
 /// <summary>
@@ -285,6 +286,7 @@ public record NodeHeartbeat(
     NodeMetrics Metrics,
     ResourceSnapshot AvailableResources,
     List<HeartbeatVmInfo>? ActiveVms = null,  // detailed VM information
+    int SchedulingConfigVersion = 0,
     CgnatNodeInfo? CgnatInfo = null
 );
 
@@ -323,6 +325,7 @@ public class HeartbeatVmInfo
 public record NodeHeartbeatResponse(
     bool Acknowledged,
     List<NodeCommand>? PendingCommands,
+    AgentSchedulingConfig? SchedulingConfig,
     /// <summary>
     /// Relay configuration if node is behind CGNAT
     /// </summary>

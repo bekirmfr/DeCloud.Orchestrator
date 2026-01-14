@@ -227,9 +227,40 @@ public static class SchedulingConfigExtensions
 }
 
 /// <summary>
-/// Quality tier for VM scheduling with benchmark-based allocation
+/// Represents configuration settings for agent scheduling, including versioning, benchmarking, and performance
+/// parameters.
 /// </summary>
-public enum QualityTier
+public class AgentSchedulingConfig
+{
+    /// <summary>
+    /// Configuration version for tracking changes
+    /// Node compares this to detect when config needs updating
+    /// </summary>
+    public int Version { get; set; }
+    /// <summary>
+    /// Baseline benchmark score (e.g., 1000 for Intel i3-10100)
+    /// Used for calculating nodePointsPerCore = BenchmarkScore / BaselineBenchmark
+    /// </summary>
+    public int BaselineBenchmark { get; set; } = 1000;
+
+    /// <summary>
+    /// Burstable tier overcommit ratio (e.g., 4.0)
+    /// Used for calculating CPU quotas with burstable VMs
+    /// </summary>
+    public double BaselineOvercommitRatio { get; set; } = 4.0;
+
+    /// <summary>
+    /// Maximum performance multiplier cap
+    /// Prevents nodes with extremely high benchmarks from dominating
+    /// </summary>
+    public double MaxPerformanceMultiplier { get; set; } = 20.0;
+
+    /// <summary>
+    /// Last update timestamp (for debugging/logging)
+    /// </summary>
+    public DateTime UpdatedAt { get; set; }
+}
+    public enum QualityTier
 {
     /// <summary>
     /// Dedicated resources, guaranteed performance
