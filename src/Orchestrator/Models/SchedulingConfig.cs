@@ -1,5 +1,6 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Options;
 
 namespace Orchestrator.Models;
 
@@ -65,6 +66,7 @@ public class SchedulingConfig
     /// <summary>
     /// Configuration for each quality tier
     /// </summary>
+    [BsonDictionaryOptions(DictionaryRepresentation.ArrayOfDocuments)] //MongoDB enum dictionary serialization
     public Dictionary<QualityTier, TierConfiguration> Tiers { get; set; } = new();
 
     // ========================================
