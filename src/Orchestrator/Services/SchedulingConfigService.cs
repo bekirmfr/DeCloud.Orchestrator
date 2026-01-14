@@ -154,6 +154,11 @@ public class SchedulingConfigService : ISchedulingConfigService
 
             return config;
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get scheduling configuration");
+            throw;
+        }
         finally
         {
             _cacheLock.Release();
