@@ -285,8 +285,8 @@ public record NodeHeartbeat(
     string NodeId,
     NodeMetrics Metrics,
     ResourceSnapshot AvailableResources,
+    int SchedulingConfigVersion,
     List<HeartbeatVmInfo>? ActiveVms = null,  // detailed VM information
-    int SchedulingConfigVersion = 0,
     CgnatNodeInfo? CgnatInfo = null
 );
 
