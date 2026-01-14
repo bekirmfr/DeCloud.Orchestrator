@@ -1,4 +1,6 @@
-﻿using Orchestrator.Models;
+﻿using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Options;
+using Orchestrator.Models;
 using Orchestrator.Services;
 
 namespace Orchestrator.Background;
@@ -214,6 +216,7 @@ public class NodePerformanceEvaluation
 
     public List<QualityTier> EligibleTiers { get; set; } = new();
     public QualityTier? HighestTier { get; set; }
+    [BsonDictionaryOptions(DictionaryRepresentation.ArrayOfDocuments)] //MongoDB enum dictionary serialization
     public Dictionary<QualityTier, TierCapability> TierCapabilities { get; set; } = new();
 }
 
