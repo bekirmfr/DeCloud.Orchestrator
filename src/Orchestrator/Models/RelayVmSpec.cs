@@ -19,6 +19,7 @@ public static class RelayVmSpec
         QualityTier = QualityTier.Burstable,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
         ComputePointCost = 1, // Minimal cost
+        MaxConnections = 20,
     };
 
     /// <summary>
@@ -33,6 +34,7 @@ public static class RelayVmSpec
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
         ComputePointCost = 2, // Minimal cost
+        MaxConnections = 40,
     };
 
     /// <summary>
@@ -46,6 +48,7 @@ public static class RelayVmSpec
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay",
         ComputePointCost = 4,
+        MaxConnections = 80,
     };
 
     /// <summary>
@@ -60,6 +63,7 @@ public static class RelayVmSpec
         QualityTier = QualityTier.Standard, // Upgraded tier
         ImageId = "ubuntu-24.04-relay",
         ComputePointCost = 13, // Calculated: 4 × (4.0/1.6) × 2 = 20
+        MaxConnections = 100,
     };
 
     /// <summary>

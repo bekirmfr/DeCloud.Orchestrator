@@ -167,6 +167,8 @@ public class VmSpec
 
     // Cloud-init / user data
     public string? UserData { get; set; }
+
+    public int MaxConnections { get; set; } = -1; // -1 = unlimited
 }
 
 public class VmNetworkConfig

@@ -144,7 +144,6 @@ public class RelayNodeService : IRelayNodeService
             // STEP 2: Create relay VM specification
             // ========================================
             var vmSpec = RelayVmSpec.Standard;
-            var maxCapacity = CalculateRelayCapacity(node);
 
             // ========================================
             // STEP 3: Create relay VM with WireGuard private key
@@ -163,7 +162,6 @@ public class RelayNodeService : IRelayNodeService
                     {
                         { "role", "relay" },
                         { "wireguard-private-key", relayPrivateKey },  // Pass private key to VM
-                        { "relay-capacity", maxCapacity.ToString() },
                         { "relay-region", node.Region ?? "default" },
                         { "node-public-ip", node.PublicIp }
                     }
@@ -181,7 +179,7 @@ public class RelayNodeService : IRelayNodeService
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
                 WireGuardPublicKey = relayPublicKey,  // ✅ Store public key
                 WireGuardPrivateKey = relayPrivateKey,
-                MaxCapacity = maxCapacity,
+                MaxCapacity = vmSpec.MaxConnections,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",
                 Status = RelayStatus.Active,
@@ -193,7 +191,7 @@ public class RelayNodeService : IRelayNodeService
             _logger.LogInformation(
                 "✓ Relay VM {VmId} deployed on node {NodeId} " +
                 "(Capacity: {Capacity}, WireGuard public key: {PubKey})",
-                relayVm.VmId, node.Id, maxCapacity, relayPublicKey);
+                relayVm.VmId, node.Id, vmSpec.MaxConnections, relayPublicKey);
 
             _logger.LogInformation(
                 "✓ Relay VM {VmId} deployed on node {NodeId} - " +
@@ -209,31 +207,6 @@ public class RelayNodeService : IRelayNodeService
                 node.Id);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Calculate relay capacity based on node resources
-    /// </summary>
-    private int CalculateRelayCapacity(Node node)
-    {
-        // Base capacity on available CPU cores and RAM
-        var computeCapacity = node.TotalResources.ComputePoints / 4; // 1 CGNAT node per 4 compute points
-        var ramCapacity = (int)(node.HardwareInventory.Memory.TotalBytes / (4L * 1024 * 1024 * 1024)); // 1 per 4GB
-
-        var capacity = Math.Min(computeCapacity, ramCapacity);
-
-        // Cap at reasonable maximum
-        capacity = Math.Min(capacity, 100);
-
-        // Minimum capacity
-        capacity = Math.Max(capacity, 10);
-
-        _logger.LogDebug(
-            "Calculated relay capacity for node {NodeId}: {Capacity} " +
-            "(CPU capacity: {CpuCap}, RAM capacity: {RamCap})",
-            node.Id, capacity, computeCapacity, ramCapacity);
-
-        return capacity;
     }
 
     /// <summary>
