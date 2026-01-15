@@ -8,17 +8,31 @@ namespace Orchestrator.Models;
 public static class RelayVmSpec
 {
     /// <summary>
+    /// Basic relay VM resource allocation
+    /// </summary>
+    public static VmSpec Basic => new()
+    {
+        VmType = VmType.Relay,
+        VirtualCpuCores = 1,
+        MemoryBytes = 1024L * 1024 * 1024, // 1GB
+        DiskBytes = 5L * 1024 * 1024 * 1024, // 5GB
+        QualityTier = QualityTier.Burstable,
+        ImageId = "ubuntu-24.04-relay", // Custom relay image
+        ComputePointCost = 1, // Minimal cost
+    };
+
+    /// <summary>
     /// Standard relay VM resource allocation
     /// </summary>
     public static VmSpec Standard => new()
     {
         VmType = VmType.Relay,
         VirtualCpuCores = 1,
-        MemoryBytes = 1024L * 1024 * 1024, // 1GB
-        DiskBytes = 10L * 1024 * 1024 * 1024, // 10GB
+        MemoryBytes = 2L * 1024 * 1024 * 1024, // 2GB
+        DiskBytes = 6L * 1024 * 1024 * 1024, // 6GB
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
-        ComputePointCost = 2, // Minimal cost
+        ComputePointCost = 5, // Minimal cost
     };
 
     /// <summary>
@@ -27,8 +41,8 @@ public static class RelayVmSpec
     public static VmSpec High => new()
     {
         VirtualCpuCores = 2,
-        MemoryBytes = 2L * 1024 * 1024 * 1024, // 2GB
-        DiskBytes = 20L * 1024 * 1024 * 1024, // 20GB
+        MemoryBytes = 3L * 1024 * 1024 * 1024, // 3GB
+        DiskBytes = 7L * 1024 * 1024 * 1024, // 7GB
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay",
         ComputePointCost = 11,
@@ -41,8 +55,8 @@ public static class RelayVmSpec
     {
         VmType = VmType.Relay,
         VirtualCpuCores = 2,
-        MemoryBytes = 3L * 1024 * 1024 * 1024, // 3GB
-        DiskBytes = 20L * 1024 * 1024 * 1024,
+        MemoryBytes = 4L * 1024 * 1024 * 1024, // 4GB
+        DiskBytes = 8L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Standard, // Upgraded tier
         ImageId = "ubuntu-24.04-relay",
         ComputePointCost = 20, // Calculated: 4 × (4.0/1.6) × 2 = 20
