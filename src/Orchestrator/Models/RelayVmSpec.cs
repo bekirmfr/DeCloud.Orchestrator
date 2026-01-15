@@ -32,7 +32,7 @@ public static class RelayVmSpec
         DiskBytes = 6L * 1024 * 1024 * 1024, // 6GB
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
-        ComputePointCost = 5, // Minimal cost
+        ComputePointCost = 2, // Minimal cost
     };
 
     /// <summary>
@@ -45,7 +45,7 @@ public static class RelayVmSpec
         DiskBytes = 7L * 1024 * 1024 * 1024, // 7GB
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay",
-        ComputePointCost = 11,
+        ComputePointCost = 4,
     };
 
     /// <summary>
@@ -59,7 +59,7 @@ public static class RelayVmSpec
         DiskBytes = 8L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Standard, // Upgraded tier
         ImageId = "ubuntu-24.04-relay",
-        ComputePointCost = 20, // Calculated: 4 × (4.0/1.6) × 2 = 20
+        ComputePointCost = 13, // Calculated: 4 × (4.0/1.6) × 2 = 20
     };
 
     /// <summary>
