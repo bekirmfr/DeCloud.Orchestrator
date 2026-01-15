@@ -35,15 +35,16 @@ public class NodePerformanceEvaluator
 
         var benchmarkScore = node.HardwareInventory.Cpu.BenchmarkScore;
         var cpuModel = node.HardwareInventory.Cpu.Model;
-        var burstableBaseline = config.BaselineBenchmark;
+        var baselineBenchmark = config.BaselineBenchmark;
 
         // Apply performance cap if configured
         var cappedScore = Math.Min(
             benchmarkScore,
-            (int)(burstableBaseline * config.MaxPerformanceMultiplier));
+            (int)(baselineBenchmark * config.MaxPerformanceMultiplier));
 
         // Single source of truth: points per core
-        var pointsPerCore = (double)cappedScore / burstableBaseline;
+        var pointsPerCore = (double)cappedScore / baselineBenchmark;
+        var totalPoints = pointsPerCore * node.HardwareInventory.Cpu.PhysicalCores; 
 
         var evaluation = new NodePerformanceEvaluation
         {
@@ -51,9 +52,11 @@ public class NodePerformanceEvaluator
             CpuModel = cpuModel,
             BenchmarkScore = benchmarkScore,
             CappedBenchmarkScore = cappedScore,
-            BurstableBaseline = burstableBaseline,
+            PhysicalCores = node.HardwareInventory.Cpu.PhysicalCores,
+            BaselineBenchmark = baselineBenchmark,
             PointsPerCore = pointsPerCore,
-            PerformanceMultiplier = (double)benchmarkScore / burstableBaseline,
+            TotalComputePoints = totalPoints,
+            PerformanceMultiplier = (double)benchmarkScore / baselineBenchmark,
             CappedPerformanceMultiplier = pointsPerCore,
             EligibleTiers = new List<QualityTier>(),
             TierCapabilities = new Dictionary<QualityTier, TierCapability>()
@@ -140,7 +143,7 @@ public class NodePerformanceEvaluator
         _logger.LogInformation("CPU Model:        {Model}", evaluation.CpuModel);
         _logger.LogInformation("Benchmark:        {Score} (capped: {Capped})",
             evaluation.BenchmarkScore, evaluation.CappedBenchmarkScore);
-        _logger.LogInformation("Baseline:         {Baseline}", evaluation.BurstableBaseline);
+        _logger.LogInformation("Baseline:         {Baseline}", evaluation.BaselineBenchmark);
         _logger.LogInformation("Points/Core:      {Points:F2}",
             evaluation.PointsPerCore);
         _logger.LogInformation("Multiplier:       {Multiplier:F2}x (raw), {Capped:F2}x (capped)",
@@ -191,25 +194,28 @@ public class NodePerformanceEvaluation
 {
     public string NodeId { get; set; } = string.Empty;
     public string CpuModel { get; set; } = string.Empty;
-    public int BenchmarkScore { get; set; }
-    public int CappedBenchmarkScore { get; set; }
-    public int BurstableBaseline { get; set; }
+    public int PhysicalCores { get; set; } = 1;
+    public int BenchmarkScore { get; set; } = 1000;
+    public int CappedBenchmarkScore { get; set; } = 1000;
+    public int BaselineBenchmark { get; set; } = 1000;
+    /// <summary>
+    /// Performance multiplier before capping
+    /// </summary>
+    public double PerformanceMultiplier { get; set; }
+    /// <summary>
+    /// Performance multiplier after capping (same as PointsPerCore)
+    /// </summary>
+    public double CappedPerformanceMultiplier { get; set; }
 
     /// <summary>
     /// Single source of truth: How many points this node provides per physical core
     /// Formula: CappedBenchmarkScore / BurstableBaseline
     /// </summary>
     public double PointsPerCore { get; set; }
-
     /// <summary>
-    /// Performance multiplier before capping
+    /// Gets or sets the total number of compute points granted to the node.
     /// </summary>
-    public double PerformanceMultiplier { get; set; }
-
-    /// <summary>
-    /// Performance multiplier after capping (same as PointsPerCore)
-    /// </summary>
-    public double CappedPerformanceMultiplier { get; set; }
+    public double TotalComputePoints {  get; set; }
 
     public bool IsAcceptable { get; set; }
     public string? RejectionReason { get; set; }

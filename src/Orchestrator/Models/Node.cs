@@ -268,14 +268,15 @@ public class NodeRegistrationRequest
 
 public record NodeRegistrationResponse(
     string NodeId,
-    TimeSpan HeartbeatInterval,
-    string? ApiKey = null,
-    SchedulingConfig? SchedulingConfig = null,
+    NodePerformanceEvaluation performanceEvaluation,
+    string ApiKey,
+    SchedulingConfig SchedulingConfig,
     /// <summary>
     /// Orchestrator's WireGuard public key for relay configuration
     /// Null if WireGuard is not enabled on orchestrator
     /// </summary>
-    string? OrchestratorWireGuardPublicKey = null
+    string OrchestratorWireGuardPublicKey,
+    TimeSpan HeartbeatInterval
 );
 
 /// <summary>

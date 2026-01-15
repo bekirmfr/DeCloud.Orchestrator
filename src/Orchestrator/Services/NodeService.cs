@@ -385,79 +385,6 @@ public class NodeService : INodeService
                (scores.LocalityScore * weights.Locality);
     }
 
-    private double CalculateCapacityScore(NodeResourceAvailability availability, VmSpec spec)
-    {
-        // Calculate how much capacity remains AFTER placing this VM
-        var cpuHeadroom = availability.RemainingComputePoints - spec.VirtualCpuCores;
-        var memoryHeadroom = availability.RemainingMemoryBytes - spec.MemoryBytes;
-
-        // Normalize to 0-1 range (prefer nodes that will have 50%+ capacity remaining)
-        var cpuScore = Math.Min(1.0, cpuHeadroom / (availability.TotalComputePoints * 0.5));
-        var memoryScore = Math.Min(1.0, memoryHeadroom / (availability.TotalMemoryBytes * 0.5));
-
-        // Average of CPU and memory scores
-        return (cpuScore + memoryScore) / 2.0;
-    }
-
-    private double CalculateLoadScore(Node node, NodeResourceAvailability availability)
-    {
-        // Use current utilization as primary indicator
-        var cpuUtil = availability.ComputeUtilization;
-        var memoryUtil = availability.MemoryUtilization;
-
-        // Convert utilization to score (inverse relationship)
-        var cpuScore = 1.0 - (cpuUtil / 100.0);
-        var memoryScore = 1.0 - (memoryUtil / 100.0);
-
-        // Factor in load average if available
-        double loadScore = 1.0;
-        if (node.LatestMetrics?.LoadAverage != null)
-        {
-            // Normalize load average (assume 1.0 per core is normal)
-            var normalizedLoad = node.LatestMetrics.LoadAverage / node.HardwareInventory.Cpu.PhysicalCores;
-            loadScore = Math.Max(0, 1.0 - normalizedLoad);
-        }
-
-        // Weighted average: utilization (70%), load average (30%)
-        return (cpuScore * 0.35) + (memoryScore * 0.35) + (loadScore * 0.30);
-    }
-
-    private double CalculateReputationScore(Node node)
-    {
-        double score = 0.5; // Start with neutral score
-
-        // Uptime bonus (max +0.3)
-        var uptime = DateTime.UtcNow - node.RegisteredAt;
-        var uptimeBonus = Math.Min(0.3, uptime.TotalDays / 30.0 * 0.3); // Max after 30 days
-        score += uptimeBonus;
-
-        // Recent heartbeat bonus (max +0.2)
-        var timeSinceHeartbeat = DateTime.UtcNow - node.LastHeartbeat;
-        if (timeSinceHeartbeat.TotalSeconds < 30)
-            score += 0.2; // Very recent
-        else if (timeSinceHeartbeat.TotalMinutes < 2)
-            score += 0.1; // Recent
-
-        return Math.Clamp(score, 0.0, 1.0);
-    }
-
-    private double CalculateLocalityScore(Node node, VmSpec spec)
-    {
-        if (string.IsNullOrEmpty(spec.PreferredRegion))
-            return 0.5; // Neutral if no preference
-
-        // Same region and zone
-        if (node.Region == spec.PreferredRegion &&
-            node.Zone == spec.PreferredZone)
-            return 1.0;
-
-        // Same region, different zone
-        if (node.Region == spec.PreferredRegion)
-            return 0.7;
-
-        // Different region
-        return 0.3;
-    }
 
     // ============================================================================
     // Registration and Heartbeat
@@ -613,10 +540,11 @@ public class NodeService : INodeService
 
             return new NodeRegistrationResponse(
                 existingNode.Id,
-                TimeSpan.FromSeconds(15),
+                existingNode.PerformanceEvaluation,
                 apiKey,
                 schedulingConfig,
-                orchestratorPublicKey);
+                orchestratorPublicKey,
+                TimeSpan.FromSeconds(15));
         }
 
         // =====================================================
@@ -775,10 +703,11 @@ public class NodeService : INodeService
 
         return new NodeRegistrationResponse(
             node.Id,
-            TimeSpan.FromSeconds(15),
+            node.PerformanceEvaluation,
             apiKey,
             schedulingConfig,
-            orchestratorPublicKey);
+            orchestratorPublicKey,
+            TimeSpan.FromSeconds(15));
     }
 
     private bool VerifyWalletSignature(string walletAddress, string message, string signature)
