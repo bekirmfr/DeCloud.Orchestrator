@@ -86,6 +86,36 @@ public class SchedulingConfig
     /// Weights for multi-factor node scoring (must sum to 1.0)
     /// </summary>
     public ScoringWeightsConfig Weights { get; set; } = new();
+
+    /// <summary>
+    /// Convert full SchedulingConfig to lightweight AgentSchedulingConfig
+    /// Only includes fields that Node Agent actually needs for CPU quota calculations
+    /// 
+    /// What's included:
+    /// - BaselineBenchmark: For calculating nodePointsPerCore
+    /// - BaselineOvercommitRatio: From Burstable tier for quota calculations
+    /// - MaxPerformanceMultiplier: Cap on performance advantage
+    /// - Version: For change tracking
+    /// 
+    /// What's excluded (not needed by agents):
+    /// - Full tier configurations (Standard, Balanced, Guaranteed)
+    /// - Scheduling limits (MaxUtilization, MinFreeMem, MaxLoad)
+    /// - Scoring weights (Capacity, Load, Reputation, Locality)
+    /// - Price multipliers
+    /// - Descriptions and target use cases
+    /// </summary>
+    public AgentSchedulingConfig MapToAgentConfig()
+    {
+        return new AgentSchedulingConfig
+        {
+            Version = Version,
+            BaselineBenchmark = BaselineBenchmark,
+            BaselineOvercommitRatio = BaselineOvercommitRatio,
+            MaxPerformanceMultiplier = MaxPerformanceMultiplier,
+            Tiers = Tiers,
+            UpdatedAt = UpdatedAt
+        };
+    }
 }
 
 /// <summary>
@@ -254,6 +284,11 @@ public class AgentSchedulingConfig
     /// Prevents nodes with extremely high benchmarks from dominating
     /// </summary>
     public double MaxPerformanceMultiplier { get; set; } = 20.0;
+
+    /// <summary>
+    /// Configuration for each quality tier
+    /// </summary>
+    public Dictionary<QualityTier, TierConfiguration> Tiers { get; set; } = new();
 
     /// <summary>
     /// Last update timestamp (for debugging/logging)

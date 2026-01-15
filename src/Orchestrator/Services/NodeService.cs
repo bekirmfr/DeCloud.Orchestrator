@@ -871,7 +871,7 @@ public class NodeService : INodeService
         if (heartbeat.SchedulingConfigVersion == 0 ||
         heartbeat.SchedulingConfigVersion != currentConfig.Version)
         {
-            agentSchedulingConfig = MapToAgentConfig(currentConfig);
+            agentSchedulingConfig = currentConfig.MapToAgentConfig();
 
             _logger.LogInformation(
                 "Node {NodeId} has outdated config (node: v{NodeVersion}, current: v{CurrentVersion}), " +
@@ -1745,38 +1745,5 @@ public class NodeService : INodeService
         return Convert.ToBase64String(
             System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(data)));
-    }
-
-    /// <summary>
-    /// Convert full SchedulingConfig to lightweight AgentSchedulingConfig
-    /// Only includes fields that Node Agent actually needs for CPU quota calculations
-    /// 
-    /// What's included:
-    /// - BaselineBenchmark: For calculating nodePointsPerCore
-    /// - BaselineOvercommitRatio: From Burstable tier for quota calculations
-    /// - MaxPerformanceMultiplier: Cap on performance advantage
-    /// - Version: For change tracking
-    /// 
-    /// What's excluded (not needed by agents):
-    /// - Full tier configurations (Standard, Balanced, Guaranteed)
-    /// - Scheduling limits (MaxUtilization, MinFreeMem, MaxLoad)
-    /// - Scoring weights (Capacity, Load, Reputation, Locality)
-    /// - Price multipliers
-    /// - Descriptions and target use cases
-    /// </summary>
-    private AgentSchedulingConfig MapToAgentConfig(SchedulingConfig config)
-    {
-        // Extract burstable tier configuration
-        // This is the baseline tier that all nodes must support
-        var burstableTier = config.Tiers[QualityTier.Burstable];
-
-        return new AgentSchedulingConfig
-        {
-            Version = config.Version,
-            BaselineBenchmark = config.BaselineBenchmark,
-            BaselineOvercommitRatio = burstableTier.CpuOvercommitRatio,
-            MaxPerformanceMultiplier = config.MaxPerformanceMultiplier,
-            UpdatedAt = config.UpdatedAt
-        };
     }
 }

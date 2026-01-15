@@ -28,6 +28,7 @@ public class NodeCapacityCalculator
         Node node,
         CancellationToken ct = default)
     {
+        var config = await _configService.GetConfigAsync(ct);
         var evaluation = node.PerformanceEvaluation;
         if (evaluation == null || !evaluation.IsAcceptable)
         {
@@ -43,8 +44,6 @@ public class NodeCapacityCalculator
         }
 
         // Load current configuration
-        var config = await _configService.GetConfigAsync(ct);
-
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
@@ -59,7 +58,7 @@ public class NodeCapacityCalculator
         var totalComputePoints = (int)(
             physicalCores *
             basePointsPerCore *
-            burstableTier.CpuOvercommitRatio);
+            config.BaselineOvercommitRatio);
 
         // ========================================
         // MEMORY CAPACITY (NO overcommit - physical only)
