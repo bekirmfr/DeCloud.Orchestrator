@@ -217,7 +217,7 @@ public class RelayNodeService : IRelayNodeService
     private int CalculateRelayCapacity(Node node)
     {
         // Base capacity on available CPU cores and RAM
-        var computeCapacity = node.TotalResources.ComputePoints / 8; // 1 CGNAT node per 8 compute points
+        var computeCapacity = node.TotalResources.ComputePoints / 4; // 1 CGNAT node per 4 compute points
         var ramCapacity = (int)(node.HardwareInventory.Memory.TotalBytes / (4L * 1024 * 1024 * 1024)); // 1 per 4GB
 
         var capacity = Math.Min(computeCapacity, ramCapacity);
