@@ -55,9 +55,9 @@ public class VmAttestationStats
     public bool BillingPaused { get; set; }
 }
 
-public class EphemeralAttestationService : IAttestationService
+public class AttestationService : IAttestationService
 {
-    private readonly ILogger<EphemeralAttestationService> _logger;
+    private readonly ILogger<AttestationService> _logger;
     private readonly AttestationConfig _config;
     private readonly DataStore _dataStore;
     private readonly HttpClient _httpClient;
@@ -69,8 +69,8 @@ public class EphemeralAttestationService : IAttestationService
     // Response time tracking for statistics
     private readonly Dictionary<string, List<double>> _responseTimes = new();
 
-    public EphemeralAttestationService(
-        ILogger<EphemeralAttestationService> logger,
+    public AttestationService(
+        ILogger<AttestationService> logger,
         IOptions<AttestationConfig> config,
         DataStore dataStore)
     {
@@ -524,7 +524,7 @@ public class EphemeralAttestationService : IAttestationService
         AttestationVerificationResult result,
         AttestationMetrics? metrics)
     {
-        var record = new AttestationRecord
+        var record = new Attestation
         {
             VmId = vm.Id,
             NodeId = vm.NodeId ?? string.Empty,
@@ -537,7 +537,7 @@ public class EphemeralAttestationService : IAttestationService
             Timestamp = DateTime.UtcNow
         };
 
-        await _dataStore.SaveAttestationRecordAsync(record);
+        await _dataStore.SaveAttestationAsync(record);
     }
 
     private string? GetVmAttestationAddress(VirtualMachine vm)

@@ -298,7 +298,7 @@ public class AttestationConfig
 /// <summary>
 /// Attestation record for audit trail
 /// </summary>
-public class AttestationRecord
+public class Attestation
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string VmId { get; set; } = string.Empty;

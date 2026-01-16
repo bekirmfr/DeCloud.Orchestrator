@@ -19,6 +19,7 @@ public interface IVmService
     Task<List<VirtualMachine>> GetVmsByNodeAsync(string nodeId);
     Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams);
     Task<bool> PerformVmActionAsync(string vmId, VmAction action, string? userId = null);
+
     Task<bool> DeleteVmAsync(string vmId, string? userId = null);
     Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null);
     Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics);

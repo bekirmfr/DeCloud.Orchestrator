@@ -30,6 +30,8 @@ public class DataStore
     // Add tracking dictionary
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
+    public ConcurrentDictionary<string, Deposit> Deposits { get; } = new();
+    public ConcurrentDictionary<string, UsageRecord> UsageRecords { get; } = new();
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
 
@@ -53,8 +55,12 @@ public class DataStore
         _database?.GetCollection<VmPricingTier>("pricingTiers");
     private IMongoCollection<OrchestratorEvent>? EventsCollection =>
         _database?.GetCollection<OrchestratorEvent>("events");
-    private IMongoCollection<AttestationRecord>? AttestationRecordsCollection =>
-    _database?.GetCollection<AttestationRecord>("attestationRecords");
+    private IMongoCollection<Attestation>? AttestationsCollection =>
+        _database?.GetCollection<Attestation>("attestations");
+    private IMongoCollection<Deposit>? DepositsCollection =>
+        _database?.GetCollection<Deposit>("deposits");
+    private IMongoCollection<UsageRecord>? UsageRecordsCollection =>
+        _database?.GetCollection<UsageRecord>("usageRecords");
 
     public DataStore(
         IMongoDatabase? database,
@@ -164,18 +170,41 @@ public class DataStore
                     new CreateIndexOptions { Name = "idx_user" })
             });
             // Attestations indexes
-            AttestationRecordsCollection!.Indexes.CreateMany(new[] {
-                new CreateIndexModel<AttestationRecord>(
-                    Builders<AttestationRecord>.IndexKeys
+            AttestationsCollection!.Indexes.CreateMany(new[] {
+                new CreateIndexModel<Attestation>(
+                    Builders<Attestation>.IndexKeys
                         .Ascending(r => r.VmId)
                         .Descending(r => r.Timestamp),
                     new CreateIndexOptions { Name = "idx_vm_timestamp" }),
-                new CreateIndexModel<AttestationRecord>(
-                    Builders<AttestationRecord>.IndexKeys.Ascending(r => r.NodeId),
+                new CreateIndexModel<Attestation>(
+                    Builders<Attestation>.IndexKeys.Ascending(r => r.NodeId),
                     new CreateIndexOptions { Name = "idx_node" }),
-                new CreateIndexModel<AttestationRecord>(
-                    Builders<AttestationRecord>.IndexKeys.Ascending(r => r.Success),
+                new CreateIndexModel<Attestation>(
+                    Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
                     new CreateIndexOptions { Name = "idx_success" })
+            });
+            // Deposits indexes
+            DepositsCollection.Indexes.CreateMany(new[] {
+                new CreateIndexModel<Deposit>(
+                    Builders<Deposit>.IndexKeys
+                        .Ascending(r => r.UserId)
+                        .Descending(r => r.Timestamp),
+                    new CreateIndexOptions { Name = "idx_user_timestamp" }),
+                new CreateIndexModel<Deposit>(
+                    Builders<Deposit>.IndexKeys.Ascending(r => r.Amount),
+                    new CreateIndexOptions { Name = "idx_amount" }),
+            });
+
+            //UsageRecords indexes
+            UsageRecordsCollection!.Indexes.CreateMany(new[] {
+                new CreateIndexModel<UsageRecord>(
+                    Builders<UsageRecord>.IndexKeys
+                        .Ascending(r => r.UserId)
+                        .Descending(r => r.CreatedAt),
+                    new CreateIndexOptions { Name = "idx_user_timestamp" }),
+                new CreateIndexModel<UsageRecord>(
+                    Builders<UsageRecord>.IndexKeys.Ascending(r => r.VmId),
+                    new CreateIndexOptions { Name = "idx_vm" }),
             });
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
@@ -392,16 +421,45 @@ public class DataStore
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // PAYMENT METHODS
+    // ═══════════════════════════════════════════════════════════════════
+
     /// <summary>
     /// Save an attestation record for audit trail
     /// </summary>
-    public async Task SaveAttestationRecordAsync(AttestationRecord record)
+    public async Task SaveDepositAsync(Deposit record)
     {
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
             {
-                await AttestationRecordsCollection!.InsertOneAsync(record);
+                await DepositsCollection!.InsertOneAsync(record);
+            }, $"persist deposit record {record.Id}", maxRetries: 2);
+        }
+    }
+
+    public Task<Deposit?> GetDepositByTxHashAsync(string txHash)
+    {
+        var deposit = Deposits.Values
+            .FirstOrDefault(d => d.TxHash.Equals(txHash, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(deposit);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ATTESTATION METHODS
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Save an attestation record for audit trail
+    /// </summary>
+    public async Task SaveAttestationAsync(Attestation record)
+    {
+        if (_useMongoDB)
+        {
+            await RetryMongoOperationAsync(async () =>
+            {
+                await AttestationsCollection!.InsertOneAsync(record);
             }, $"persist attestation record {record.Id}", maxRetries: 2);
         }
     }
@@ -409,17 +467,17 @@ public class DataStore
     /// <summary>
     /// Get attestation records for a VM
     /// </summary>
-    public async Task<List<AttestationRecord>> GetAttestationRecordsAsync(
+    public async Task<List<Attestation>> GetAttestationsAsync(
         string vmId,
         int limit = 100,
         DateTime? since = null)
     {
-        if (!_useMongoDB || AttestationRecordsCollection == null)
+        if (!_useMongoDB || AttestationsCollection == null)
         {
-            return new List<AttestationRecord>();
+            return new List<Attestation>();
         }
 
-        var filterBuilder = Builders<AttestationRecord>.Filter;
+        var filterBuilder = Builders<Attestation>.Filter;
         var filter = filterBuilder.Eq(r => r.VmId, vmId);
 
         if (since.HasValue)
@@ -427,7 +485,7 @@ public class DataStore
             filter = filterBuilder.And(filter, filterBuilder.Gte(r => r.Timestamp, since.Value));
         }
 
-        return await AttestationRecordsCollection
+        return await AttestationsCollection
             .Find(filter)
             .SortByDescending(r => r.Timestamp)
             .Limit(limit)

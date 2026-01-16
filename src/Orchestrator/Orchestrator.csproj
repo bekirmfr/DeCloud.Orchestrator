@@ -19,7 +19,9 @@
 		<!-- SignalR for WebSocket/real-time communication -->
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.0" />
 		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
+		<PackageReference Include="Nethereum.Contracts" Version="5.8.0" />
 		<PackageReference Include="Nethereum.Signer" Version="5.0.0" />
+		<PackageReference Include="Nethereum.Web3" Version="5.0.0" />
 		<PackageReference Include="NSec.Cryptography" Version="24.9.0" />
 		<PackageReference Include="SSH.NET" Version="2024.2.0" />
 		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
@@ -149,9 +151,6 @@
 
 		<!-- Note: dist/ files are automatically included by .NET SDK -->
 		<!-- No explicit include needed - avoids NETSDK1022 duplicate error -->
-	</ItemGroup>
-	<ItemGroup>
-	  <Folder Include="Services\Attestation\" />
 	</ItemGroup>
 
 	<!-- ============================================== -->

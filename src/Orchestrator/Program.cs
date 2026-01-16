@@ -119,7 +119,8 @@ builder.Services.AddHttpClient("SubdomainProxy")
         UseCookies = false
     });
 // Add attestation services
-builder.Services.AddEphemeralAttestation(builder.Configuration);
+builder.Services.AddAttestationServices(builder.Configuration);
+builder.Services.AddPaymentServices(builder.Configuration);
 // Configure JSON serialization for all HttpClient JSON extension methods
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

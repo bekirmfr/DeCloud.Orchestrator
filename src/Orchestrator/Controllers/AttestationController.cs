@@ -98,7 +98,7 @@ public class AttestationController : ControllerBase
             return Forbid();
         }
 
-        var records = await _dataStore.GetAttestationRecordsAsync(vmId, limit, since);
+        var records = await _dataStore.GetAttestationsAsync(vmId, limit, since);
 
         var response = records.Select(r => new AttestationRecordResponse
         {

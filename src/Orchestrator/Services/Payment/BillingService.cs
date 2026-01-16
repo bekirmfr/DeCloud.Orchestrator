@@ -2,7 +2,7 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 
-namespace Orchestrator.Services.Billing;
+namespace Orchestrator.Services.Payment;
 
 /// <summary>
 /// Attestation-aware billing service.
@@ -133,7 +133,10 @@ public class AttestationAwareBillingService : BackgroundService
                     vm.Id, user.CryptoBalance, user.BalanceToken, cost);
 
                 // Stop the VM due to insufficient funds
-                await StopVmForInsufficientFundsAsync(vm, dataStore);
+                using var scope = _serviceProvider.CreateScope();
+                var vmService = scope.ServiceProvider.GetRequiredService<IVmService>();
+
+                await StopVmForInsufficientFundsAsync(vm, dataStore, vmService);
                 insufficientFundsCount++;
                 continue;
             }
@@ -148,15 +151,19 @@ public class AttestationAwareBillingService : BackgroundService
             vm.BillingInfo.TotalRuntime += billableDuration;
             vm.BillingInfo.VerifiedRuntime += billableDuration;
 
-            // Calculate node payout (85% to node, 15% platform fee)
-            var nodePayout = cost * 0.85m;
-            var platformFee = cost * 0.15m;
+
+            // Calculate node payout (95% to node, 5% platform fee)
+            var platformBPS = 0.05m; // TO-DO: Make this dynamic. Get from deployed web3 contract
+            var nodeBPS = 1 - platformBPS;
+
+            var nodePayout = cost * nodeBPS; 
+            var platformFee = cost * platformBPS;
 
             // Track node earnings (using the EarningsTracker if available)
             if (!string.IsNullOrEmpty(vm.NodeId) && dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
             {
                 // Add to node's pending payout tracking
-                TrackNodeEarnings(node.Id, nodePayout, dataStore);
+                await TrackNodeEarnings(node.Id, nodePayout, dataStore);
             }
 
             await dataStore.SaveUserAsync(user);
@@ -182,37 +189,35 @@ public class AttestationAwareBillingService : BackgroundService
     /// <summary>
     /// Track node earnings for later payout
     /// </summary>
-    private void TrackNodeEarnings(string nodeId, decimal amount, DataStore dataStore)
+    private async Task TrackNodeEarnings(string nodeId, decimal amount, DataStore dataStore)
     {
-        // Use a simple in-memory tracker or extend Node model
-        // For now, log it - you can extend this based on your payout system
-        _logger.LogDebug("Node {NodeId}: Earned {Amount} USDC", nodeId, amount);
+        if (dataStore.Nodes.TryGetValue(nodeId, out var node))
+        {
+            node.PendingPayout += amount;
+            node.TotalEarned += amount;
+            await dataStore.SaveNodeAsync(node); // Persist immediately
 
-        // Option 1: Store in a separate earnings collection
-        // dataStore.NodeEarnings.AddOrUpdate(nodeId, amount, (k, v) => v + amount);
-
-        // Option 2: If you add PendingPayout to Node model, uncomment:
-        // if (dataStore.Nodes.TryGetValue(nodeId, out var node))
-        // {
-        //     node.PendingPayout += amount;
-        // }
+            _logger.LogInformation(
+                "Node {NodeId}: Earned {Amount:F4} USDC (Pending: {Pending:F4}, Lifetime: {Total:F4})",
+                nodeId, amount, node.PendingPayout, node.TotalEarned);
+        }
     }
 
-    private async Task StopVmForInsufficientFundsAsync(VirtualMachine vm, DataStore dataStore)
+    private async Task StopVmForInsufficientFundsAsync(
+    VirtualMachine vm,
+    DataStore dataStore,
+    IVmService vmService) // Inject this
     {
-        _logger.LogWarning(
-            "Stopping VM {VmId} ({Name}) due to insufficient funds",
-            vm.Id, vm.Name);
-
         vm.Status = VmStatus.Stopped;
-
-        // Store stop reason in Labels or a dedicated field if you add one
         vm.Labels["_stopped_reason"] = "Insufficient funds";
         vm.Labels["_stopped_at"] = DateTime.UtcNow.ToString("o");
-
         await dataStore.SaveVmAsync(vm);
 
-        // TODO: Send stop command to node agent
-        // This would integrate with the existing NodeService/CommandProcessor
+        // Send actual stop command to node
+        await vmService.PerformVmActionAsync(vm.Id, VmAction.Stop);
+
+        _logger.LogWarning(
+            "VM {VmId} stopped and shutdown command sent to node {NodeId} - insufficient funds",
+            vm.Id, vm.NodeId);
     }
 }

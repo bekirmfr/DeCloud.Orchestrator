@@ -12,7 +12,7 @@ public static class AttestationServiceExtensions
     /// <summary>
     /// Add ephemeral attestation services to the DI container
     /// </summary>
-    public static IServiceCollection AddEphemeralAttestation(
+    public static IServiceCollection AddAttestationServices(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -21,7 +21,7 @@ public static class AttestationServiceExtensions
             configuration.GetSection("Attestation"));
 
         // Register services
-        services.AddSingleton<IAttestationService, EphemeralAttestationService>();
+        services.AddSingleton<IAttestationService, AttestationService>();
         services.AddSingleton<AttestationSchedulerService>();
 
         // Register background services
