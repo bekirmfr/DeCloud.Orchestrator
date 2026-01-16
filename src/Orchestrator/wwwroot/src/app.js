@@ -15,6 +15,14 @@ import {
     showSSHConnectionModal,
     downloadSSHBundle
 } from './ssh-wallet.js';
+import {
+    initializePayment,
+    setAuthToken,
+    getBalance,
+    showDepositModal,
+    refreshBalanceDisplay,
+    isInitialized as isPaymentInitialized
+} from './payment.js';
 
 // ============================================
 // CONFIGURATION
@@ -280,6 +288,16 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
             localStorage.setItem('connectionType', connectionType);
             localStorage.setItem('wallet', walletAddress);
             CONFIG.wallet = walletAddress;
+
+            // Initialize payment module
+            try {
+                setAuthToken(authToken);
+                await initializePayment(ethersSigner, authToken);
+                console.log('[Payment] Module initialized');
+            } catch (paymentError) {
+                console.warn('[Payment] Init failed (non-fatal):', paymentError.message);
+                // Non-fatal - dashboard works without payment
+            }
 
             setTimeout(() => {
                 // Close the AppKit modal
@@ -832,6 +850,7 @@ function showDashboard() {
         if (disconnectBtn) disconnectBtn.style.display = 'block';
         if (settingsWallet) settingsWallet.value = CONFIG.wallet;
     }
+    loadUserBalance();
 }
 
 function showLoginStatus(type, message) {
@@ -903,8 +922,67 @@ function showPage(pageName) {
 async function refreshData() {
     await Promise.all([
         loadDashboardStats(),
-        loadVirtualMachines()
+        loadVirtualMachines(),
+        loadUserBalance()
     ]);
+}
+
+// ============================================
+// PAYMENT & BALANCE
+// ============================================
+
+/**
+ * Load and display user balance
+ */
+async function loadUserBalance() {
+    try {
+        const balance = await getBalance();
+        updateBalanceDisplay(balance);
+        return balance;
+    } catch (error) {
+        console.warn('[Balance] Failed to load:', error.message);
+        return null;
+    }
+}
+
+/**
+ * Update balance in UI
+ */
+function updateBalanceDisplay(balance) {
+    const balanceEl = document.getElementById('user-balance');
+    const balanceContainer = document.getElementById('balance-container');
+
+    if (balanceEl && balance) {
+        balanceEl.textContent = `${balance.balance.toFixed(2)} ${balance.tokenSymbol || 'USDC'}`;
+
+        // Show low balance warning (less than $5)
+        if (balance.balance < 5) {
+            balanceEl.classList.add('low-balance');
+        } else {
+            balanceEl.classList.remove('low-balance');
+        }
+    }
+
+    if (balanceContainer) {
+        balanceContainer.style.display = 'flex';
+    }
+}
+
+/**
+ * Handle deposit button click
+ */
+function handleDepositClick() {
+    if (!ethersSigner) {
+        showToast('Please connect your wallet first', 'error');
+        return;
+    }
+
+    if (!isPaymentInitialized()) {
+        showToast('Payment system not available', 'error');
+        return;
+    }
+
+    showDepositModal();
 }
 
 async function loadDashboardStats() {
@@ -2117,3 +2195,5 @@ window.saveSettings = saveSettings;
 window.refreshData = refreshData;
 window.showToast = showToast;
 window.ethersSigner = () => ethersSigner;
+window.handleDepositClick = handleDepositClick;
+window.loadUserBalance = loadUserBalance;
