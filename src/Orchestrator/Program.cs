@@ -3,6 +3,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Orchestrator.Background;
+using Orchestrator.Extensions;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
@@ -117,7 +118,8 @@ builder.Services.AddHttpClient("SubdomainProxy")
         AllowAutoRedirect = false,
         UseCookies = false
     });
-
+// Add attestation services
+builder.Services.AddEphemeralAttestation(builder.Configuration);
 // Configure JSON serialization for all HttpClient JSON extension methods
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
