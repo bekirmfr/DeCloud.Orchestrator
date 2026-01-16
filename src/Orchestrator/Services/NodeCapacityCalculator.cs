@@ -1,5 +1,5 @@
 ﻿using Orchestrator.Models;
-using Orchestrator.Services;
+using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Background;
 

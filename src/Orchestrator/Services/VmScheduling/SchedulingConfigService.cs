@@ -1,7 +1,7 @@
 ﻿using MongoDB.Driver;
 using Orchestrator.Models;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Services.VmScheduling;
 
 /// <summary>
 /// Service interface for managing scheduling configuration

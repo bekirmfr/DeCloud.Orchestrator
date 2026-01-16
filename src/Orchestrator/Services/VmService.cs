@@ -5,6 +5,7 @@ using Orchestrator.Models;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Orchestrator.Services.VmScheduling;
 using Orchestrator.Services;
 
 namespace Orchestrator.Background;
@@ -28,6 +29,7 @@ public class VmService : IVmService
 {
     private readonly DataStore _dataStore;
     private readonly INodeService _nodeService;
+    private readonly IVmSchedulingService _schedulingService;
     private readonly ISchedulingConfigService _configService;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
@@ -36,6 +38,7 @@ public class VmService : IVmService
     public VmService(
         DataStore dataStore,
         INodeService nodeService,
+        IVmSchedulingService schedulingService,
         ISchedulingConfigService configService,
         IEventService eventService,
         ICentralIngressService ingressService,
@@ -43,6 +46,7 @@ public class VmService : IVmService
     {
         _dataStore = dataStore;
         _nodeService = nodeService;
+        _schedulingService = schedulingService;
         _configService = configService;
         _eventService = eventService;
         _ingressService = ingressService;
@@ -121,7 +125,7 @@ public class VmService : IVmService
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
-            Type = EventType.VmCreated,
+            Type = EventType.VmScheduled,
             ResourceType = "vm",
             ResourceId = vm.Id,
             UserId = userId,
@@ -647,7 +651,7 @@ public class VmService : IVmService
         else
         {
             // Normal scheduling for user VMs
-            selectedNode = await _nodeService.SelectBestNodeForVmAsync(
+            selectedNode = await _schedulingService.SelectBestNodeForVmAsync(
                 vm.Spec,
                 vm.Spec.QualityTier);
         }

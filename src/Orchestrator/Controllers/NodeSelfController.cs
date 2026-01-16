@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Background;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services;
+using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Controllers;
 

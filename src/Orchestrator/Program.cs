@@ -8,7 +8,7 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services;
+using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
 using System.Text.Json;

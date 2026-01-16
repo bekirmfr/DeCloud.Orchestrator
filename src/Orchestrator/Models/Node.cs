@@ -16,6 +16,11 @@ public class Node
     /// </summary>
     public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
+    /// <summary>
+    /// CPU Architecture: x86_64, aarch64, etc.
+    /// CRITICAL: Used for VM scheduling compatibility
+    /// </summary>
+    public string Architecture { get; set; } = "x86_64"; // Default for backward compatibility
     public string? ApiKeyHash { get; set; }
     public DateTime? ApiKeyCreatedAt { get; set; }
     public DateTime? ApiKeyLastUsedAt { get; set; }

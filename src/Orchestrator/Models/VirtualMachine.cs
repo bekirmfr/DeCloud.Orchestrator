@@ -123,13 +123,13 @@ public class VmSpec
     /// Preferred region for deployment (e.g., "us-west", "eu-central")
     /// If null, any region is acceptable
     /// </summary>
-    public string? PreferredRegion { get; set; }
+    public string? Region { get; set; }
 
     /// <summary>
     /// Preferred availability zone within region (e.g., "us-west-2a")
     /// If null, any zone in preferred region is acceptable
     /// </summary>
-    public string? PreferredZone { get; set; }
+    public string? Zone { get; set; }
 
     /// <summary>
     /// Minimum node reputation score (0.0 to 1.0) required for scheduling

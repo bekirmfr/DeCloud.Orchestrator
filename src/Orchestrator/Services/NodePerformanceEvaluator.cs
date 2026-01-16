@@ -1,7 +1,7 @@
 ﻿using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Options;
 using Orchestrator.Models;
-using Orchestrator.Services;
+using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Background;
 
