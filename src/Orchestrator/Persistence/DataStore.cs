@@ -53,6 +53,8 @@ public class DataStore
         _database?.GetCollection<VmPricingTier>("pricingTiers");
     private IMongoCollection<OrchestratorEvent>? EventsCollection =>
         _database?.GetCollection<OrchestratorEvent>("events");
+    private IMongoCollection<AttestationRecord>? AttestationRecordsCollection =>
+    _database?.GetCollection<AttestationRecord>("attestationRecords");
 
     public DataStore(
         IMongoDatabase? database,
@@ -160,6 +162,20 @@ public class DataStore
                 new CreateIndexModel<OrchestratorEvent>(
                     Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.UserId),
                     new CreateIndexOptions { Name = "idx_user" })
+            });
+            // Attestations indexes
+            AttestationRecordsCollection!.Indexes.CreateMany(new[] {
+                new CreateIndexModel<AttestationRecord>(
+                    Builders<AttestationRecord>.IndexKeys
+                        .Ascending(r => r.VmId)
+                        .Descending(r => r.Timestamp),
+                    new CreateIndexOptions { Name = "idx_vm_timestamp" }),
+                new CreateIndexModel<AttestationRecord>(
+                    Builders<AttestationRecord>.IndexKeys.Ascending(r => r.NodeId),
+                    new CreateIndexOptions { Name = "idx_node" }),
+                new CreateIndexModel<AttestationRecord>(
+                    Builders<AttestationRecord>.IndexKeys.Ascending(r => r.Success),
+                    new CreateIndexOptions { Name = "idx_success" })
             });
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
@@ -377,6 +393,48 @@ public class DataStore
     }
 
     /// <summary>
+    /// Save an attestation record for audit trail
+    /// </summary>
+    public async Task SaveAttestationRecordAsync(AttestationRecord record)
+    {
+        if (_useMongoDB)
+        {
+            await RetryMongoOperationAsync(async () =>
+            {
+                await AttestationRecordsCollection!.InsertOneAsync(record);
+            }, $"persist attestation record {record.Id}", maxRetries: 2);
+        }
+    }
+
+    /// <summary>
+    /// Get attestation records for a VM
+    /// </summary>
+    public async Task<List<AttestationRecord>> GetAttestationRecordsAsync(
+        string vmId,
+        int limit = 100,
+        DateTime? since = null)
+    {
+        if (!_useMongoDB || AttestationRecordsCollection == null)
+        {
+            return new List<AttestationRecord>();
+        }
+
+        var filterBuilder = Builders<AttestationRecord>.Filter;
+        var filter = filterBuilder.Eq(r => r.VmId, vmId);
+
+        if (since.HasValue)
+        {
+            filter = filterBuilder.And(filter, filterBuilder.Gte(r => r.Timestamp, since.Value));
+        }
+
+        return await AttestationRecordsCollection
+            .Find(filter)
+            .SortByDescending(r => r.Timestamp)
+            .Limit(limit)
+            .ToListAsync();
+    }
+
+    /// <summary>
     /// Bulk sync all in-memory state to MongoDB (for background sync service)
     /// </summary>
     public async Task SyncAllToMongoDBAsync()
@@ -539,7 +597,6 @@ public class DataStore
     /// <summary>
     /// Get system statistics
     /// </summary>
-    // src/Orchestrator/Data/DataStore.cs
 
     public async Task<SystemStats> GetSystemStatsAsync()
     {
