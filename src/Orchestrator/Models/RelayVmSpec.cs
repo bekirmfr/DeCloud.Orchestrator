@@ -14,8 +14,8 @@ public static class RelayVmSpec
     {
         VmType = VmType.Relay,
         VirtualCpuCores = 1,
-        MemoryBytes = 1024L * 1024 * 1024, // 1GB
-        DiskBytes = 5L * 1024 * 1024 * 1024, // 5GB
+        MemoryBytes = 1024L * 1024 * 1024,
+        DiskBytes = 5L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Burstable,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
         ComputePointCost = 1, // Minimal cost
@@ -29,8 +29,8 @@ public static class RelayVmSpec
     {
         VmType = VmType.Relay,
         VirtualCpuCores = 1,
-        MemoryBytes = 2L * 1024 * 1024 * 1024, // 2GB
-        DiskBytes = 6L * 1024 * 1024 * 1024, // 6GB
+        MemoryBytes = 2L * 1024 * 1024 * 1024,
+        DiskBytes = 6L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay", // Custom relay image
         ComputePointCost = 2, // Minimal cost
@@ -43,8 +43,8 @@ public static class RelayVmSpec
     public static VmSpec High => new()
     {
         VirtualCpuCores = 2,
-        MemoryBytes = 3L * 1024 * 1024 * 1024, // 3GB
-        DiskBytes = 7L * 1024 * 1024 * 1024, // 7GB
+        MemoryBytes = 3L * 1024 * 1024 * 1024,
+        DiskBytes = 7L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Balanced,
         ImageId = "ubuntu-24.04-relay",
         ComputePointCost = 4,
@@ -58,11 +58,11 @@ public static class RelayVmSpec
     {
         VmType = VmType.Relay,
         VirtualCpuCores = 2,
-        MemoryBytes = 4L * 1024 * 1024 * 1024, // 4GB
+        MemoryBytes = 4L * 1024 * 1024 * 1024,
         DiskBytes = 8L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Standard, // Upgraded tier
         ImageId = "ubuntu-24.04-relay",
-        ComputePointCost = 13, // Calculated: 4 × (4.0/1.6) × 2 = 20
+        ComputePointCost = 13,
         MaxConnections = 100,
     };
 

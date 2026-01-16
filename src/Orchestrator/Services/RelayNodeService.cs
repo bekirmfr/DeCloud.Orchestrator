@@ -143,7 +143,8 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
             // STEP 2: Create relay VM specification
             // ========================================
-            var vmSpec = RelayVmSpec.Standard;
+
+            var vmSpec = DeterminRelayConfiguration(node);
 
             // ========================================
             // STEP 3: Create relay VM with WireGuard private key
@@ -209,6 +210,27 @@ public class RelayNodeService : IRelayNodeService
         }
     }
 
+    private VmSpec DeterminRelayConfiguration(Node node)
+    {
+        // Determine relay VM spec based on node resources
+        var computePoints = node.TotalResources.ComputePoints;
+        if (computePoints >= 200)
+        {
+            return RelayVmSpec.Premium;
+        }
+        else if (computePoints >= 100)
+        {
+            return RelayVmSpec.High;
+        }
+        else if (computePoints >= 20)
+        {
+            return RelayVmSpec.Standard;
+        }
+        else
+        {
+            return RelayVmSpec.Basic;
+        }
+    }
     /// <summary>
     /// Find the best relay node for a CGNAT node
     /// </summary>
