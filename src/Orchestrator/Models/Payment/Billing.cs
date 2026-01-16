@@ -6,49 +6,72 @@
 /// This extends the existing VmBillingInfo model.
 /// Add these properties to your existing model.
 /// </summary>
-public partial class VmBillingInfo
+public class VmBillingInfo
 {
     // =====================================================
-    // EXISTING PROPERTIES (keep these)
-    // =====================================================
-    // public decimal HourlyRateCrypto { get; set; }
-    // public string CryptoSymbol { get; set; } = "USDC";
-    // public decimal TotalChargedCrypto { get; set; }
-    // public DateTime? LastBillingAt { get; set; }
-
-    // =====================================================
-    // NEW ATTESTATION-AWARE BILLING PROPERTIES
+    // EXISTING PROPERTIES (you already have these)
     // =====================================================
 
     /// <summary>
-    /// Total minutes of verified runtime (attestation passing)
-    /// Only billed time is counted here
+    /// Hourly rate in cryptocurrency
     /// </summary>
-    public int VerifiedRuntimeMinutes { get; set; }
+    public decimal HourlyRateCrypto { get; set; }
 
     /// <summary>
-    /// Total minutes of unverified runtime (attestation failing)
-    /// This time is NOT billed to the user
+    /// Cryptocurrency symbol (e.g., "USDC")
     /// </summary>
-    public int UnverifiedRuntimeMinutes { get; set; }
+    public string CryptoSymbol { get; set; } = "USDC";
 
     /// <summary>
-    /// Reason VM was stopped (if stopped)
+    /// Total amount billed to user
     /// </summary>
-    public string? StoppedReason { get; set; }
+    public decimal TotalBilled { get; set; }
 
     /// <summary>
-    /// When VM was stopped
+    /// Total runtime duration
     /// </summary>
-    public DateTime? StoppedAt { get; set; }
+    public TimeSpan TotalRuntime { get; set; }
 
     /// <summary>
-    /// Billing verification rate (verified / total runtime)
+    /// Last time billing was processed
+    /// </summary>
+    public DateTime? LastBillingAt { get; set; }
+
+    // =====================================================
+    // NEW PROPERTIES FOR ATTESTATION TRACKING
+    // Add these to your existing class
+    // =====================================================
+
+    /// <summary>
+    /// Runtime where attestation was passing (verified resources)
+    /// Only this time is billed to the user
+    /// </summary>
+    public TimeSpan VerifiedRuntime { get; set; }
+
+    /// <summary>
+    /// Runtime where attestation was failing (unverified resources)
+    /// This time is NOT billed - the user isn't charged for time
+    /// when we can't verify the VM is actually running properly
+    /// </summary>
+    public TimeSpan UnverifiedRuntime { get; set; }
+
+    // =====================================================
+    // COMPUTED PROPERTIES (optional but useful)
+    // =====================================================
+
+    /// <summary>
+    /// Percentage of runtime that was verified
     /// </summary>
     public double VerificationRate =>
-        (VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes) > 0
-            ? (double)VerifiedRuntimeMinutes / (VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes) * 100.0
+        TotalRuntime.TotalMinutes > 0
+            ? VerifiedRuntime.TotalMinutes / TotalRuntime.TotalMinutes * 100.0
             : 100.0;
+
+    /// <summary>
+    /// Is the VM currently in good standing (attestation passing)?
+    /// </summary>
+    public bool IsVerified => UnverifiedRuntime.TotalMinutes == 0 ||
+        VerifiedRuntime > UnverifiedRuntime;
 }
 
 /// <summary>

@@ -1,5 +1,6 @@
 using MongoDB.Bson.Serialization.Attributes;
 using Orchestrator.Background;
+using Orchestrator.Models.Payment;
 using System.Text.Json.Serialization;
 
 namespace Orchestrator.Models;
@@ -220,16 +221,6 @@ public class VmAccessInfo
     public int VncPort { get; set; } = 5900;
     public string? VncPassword { get; set; }
     public string? ConsoleWebSocketUrl { get; set; }
-}
-
-public class VmBillingInfo
-{
-    public decimal HourlyRateCrypto { get; set; }          // Price per hour in crypto
-    public string CryptoSymbol { get; set; } = "USDC";    // Which token
-    public decimal TotalBilled { get; set; }
-    public decimal TotalPaid { get; set; }
-    public DateTime? LastBillingAt { get; set; }
-    public TimeSpan TotalRuntime { get; set; }
 }
 
 public class VmMetrics

@@ -16,6 +16,17 @@ public class Node
     /// </summary>
     public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Pending payout to this node operator (in USDC)
+    /// </summary>
+    public decimal PendingPayout { get; set; }
+
+    /// <summary>
+    /// Total earned by this node (lifetime)
+    /// </summary>
+    public decimal TotalEarned { get; set; }
+
     /// <summary>
     /// CPU Architecture: x86_64, aarch64, etc.
     /// CRITICAL: Used for VM scheduling compatibility

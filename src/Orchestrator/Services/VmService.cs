@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Orchestrator.Services.VmScheduling;
 using Orchestrator.Services;
+using Orchestrator.Models.Payment;
 
 namespace Orchestrator.Background;
 

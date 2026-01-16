@@ -1,4 +1,5 @@
-﻿using Orchestrator.Models;
+﻿using Orchestrator.Background;
+using Orchestrator.Models;
 using Orchestrator.Services;
 
 namespace Orchestrator.Extensions;
@@ -28,7 +29,7 @@ public static class AttestationServiceExtensions
             provider.GetRequiredService<AttestationSchedulerService>());
 
         // Replace the basic billing service with attestation-aware billing
-        services.AddHostedService<AttestationAwareBillingService>();
+        services.AddHostedService<BillingService>();
 
         return services;
     }

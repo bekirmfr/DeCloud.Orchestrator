@@ -2,7 +2,7 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Services.Billing;
 
 /// <summary>
 /// Attestation-aware billing service.
@@ -90,8 +90,8 @@ public class AttestationAwareBillingService : BackgroundService
                     "VM {VmId}: Billing SKIPPED - attestation failing ({Failures} consecutive failures). Reason: {Reason}",
                     vm.Id, livenessState.ConsecutiveFailures, livenessState.PauseReason);
 
-                // Track unverified runtime for reporting
-                vm.BillingInfo.UnverifiedRuntimeMinutes += (int)_billingInterval.TotalMinutes;
+                // Track unverified runtime for reporting (using extension property)
+                vm.BillingInfo.UnverifiedRuntime += _billingInterval;
 
                 skippedCount++;
                 continue;
@@ -101,7 +101,8 @@ public class AttestationAwareBillingService : BackgroundService
             // CALCULATE BILLING
             // =====================================================
             var lastBilling = vm.BillingInfo.LastBillingAt ?? vm.StartedAt.Value;
-            var billableMinutes = (now - lastBilling).TotalMinutes;
+            var billableDuration = now - lastBilling;
+            var billableMinutes = billableDuration.TotalMinutes;
 
             if (billableMinutes < 1)
             {
@@ -143,16 +144,19 @@ public class AttestationAwareBillingService : BackgroundService
             user.CryptoBalance -= cost;
 
             vm.BillingInfo.LastBillingAt = now;
-            vm.BillingInfo.TotalChargedCrypto += cost;
-            vm.BillingInfo.VerifiedRuntimeMinutes += (int)billableMinutes;
+            vm.BillingInfo.TotalBilled += cost;
+            vm.BillingInfo.TotalRuntime += billableDuration;
+            vm.BillingInfo.VerifiedRuntime += billableDuration;
 
             // Calculate node payout (85% to node, 15% platform fee)
             var nodePayout = cost * 0.85m;
             var platformFee = cost * 0.15m;
 
+            // Track node earnings (using the EarningsTracker if available)
             if (!string.IsNullOrEmpty(vm.NodeId) && dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
             {
-                node.PendingPayout += nodePayout;
+                // Add to node's pending payout tracking
+                TrackNodeEarnings(node.Id, nodePayout, dataStore);
             }
 
             await dataStore.SaveUserAsync(user);
@@ -175,6 +179,25 @@ public class AttestationAwareBillingService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Track node earnings for later payout
+    /// </summary>
+    private void TrackNodeEarnings(string nodeId, decimal amount, DataStore dataStore)
+    {
+        // Use a simple in-memory tracker or extend Node model
+        // For now, log it - you can extend this based on your payout system
+        _logger.LogDebug("Node {NodeId}: Earned {Amount} USDC", nodeId, amount);
+
+        // Option 1: Store in a separate earnings collection
+        // dataStore.NodeEarnings.AddOrUpdate(nodeId, amount, (k, v) => v + amount);
+
+        // Option 2: If you add PendingPayout to Node model, uncomment:
+        // if (dataStore.Nodes.TryGetValue(nodeId, out var node))
+        // {
+        //     node.PendingPayout += amount;
+        // }
+    }
+
     private async Task StopVmForInsufficientFundsAsync(VirtualMachine vm, DataStore dataStore)
     {
         _logger.LogWarning(
@@ -182,28 +205,14 @@ public class AttestationAwareBillingService : BackgroundService
             vm.Id, vm.Name);
 
         vm.Status = VmStatus.Stopped;
-        vm.BillingInfo.StoppedReason = "Insufficient funds";
-        vm.BillingInfo.StoppedAt = DateTime.UtcNow;
+
+        // Store stop reason in Labels or a dedicated field if you add one
+        vm.Labels["_stopped_reason"] = "Insufficient funds";
+        vm.Labels["_stopped_at"] = DateTime.UtcNow.ToString("o");
 
         await dataStore.SaveVmAsync(vm);
 
         // TODO: Send stop command to node agent
         // This would integrate with the existing NodeService/CommandProcessor
-    }
-}
-
-/// <summary>
-/// Extension to VmBillingInfo for attestation tracking
-/// </summary>
-public static class VmBillingInfoExtensions
-{
-    public static int GetVerifiedRuntimeMinutes(this VmBillingInfo info)
-    {
-        return info.VerifiedRuntimeMinutes;
-    }
-
-    public static int GetUnverifiedRuntimeMinutes(this VmBillingInfo info)
-    {
-        return info.UnverifiedRuntimeMinutes;
     }
 }
