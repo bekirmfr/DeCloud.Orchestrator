@@ -6,6 +6,7 @@ using Orchestrator.Background;
 using Orchestrator.Extensions;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
+using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
@@ -101,7 +102,7 @@ builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
-
+builder.Services.AddSingleton<IBlockchainService, BlockchainService>();
 builder.Services.AddHttpClient("SubdomainProxy")
     .ConfigureHttpClient(client =>
     {

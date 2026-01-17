@@ -15,10 +15,6 @@ public class User
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginAt { get; set; } = DateTime.UtcNow;
 
-    // Crypto balance
-    public decimal CryptoBalance { get; set; }
-    public string BalanceToken { get; set; } = "USDC";  // Default to USDC
-
     // SSH Keys for VMs
     public List<SshKey> SshKeys { get; set; } = new();
 

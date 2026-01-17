@@ -5,7 +5,6 @@ using Orchestrator.Background;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.Blockchain;
 
 namespace Orchestrator.Services.Settlement;
 

@@ -1,6 +1,8 @@
 ﻿using Orchestrator.Background;
+using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Blockchain;
 
 namespace Orchestrator.Services.Payment;
 
@@ -15,16 +17,19 @@ namespace Orchestrator.Services.Payment;
 public class BillingService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly IBlockchainService _blockchainService;
     private readonly PaymentConfig _paymentConfig;
     private readonly ILogger<BillingService> _logger;
     private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
 
     public BillingService(
         IServiceProvider serviceProvider,
+        IBlockchainService blockchainService,
         PaymentConfig paymentConfig,
         ILogger<BillingService> logger)
     {
         _serviceProvider = serviceProvider;
+        _blockchainService = blockchainService;
         _paymentConfig = paymentConfig;
         _logger = logger;
     }
@@ -129,11 +134,13 @@ public class BillingService : BackgroundService
                 continue;
             }
 
-            if (user.CryptoBalance < cost)
+            var balance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
+
+            if (balance < cost)
             {
                 _logger.LogWarning(
                     "VM {VmId}: Insufficient funds. Balance: {Balance} {Token}, Required: {Cost}",
-                    vm.Id, user.CryptoBalance, user.BalanceToken, cost);
+                    vm.Id, balance, "USDC", cost);
 
                 // Stop the VM due to insufficient funds
                 using var scope = _serviceProvider.CreateScope();
@@ -147,7 +154,7 @@ public class BillingService : BackgroundService
             // =====================================================
             // DEDUCT BALANCE AND RECORD
             // =====================================================
-            user.CryptoBalance -= cost;
+            balance -= cost;
 
             vm.BillingInfo.LastBillingAt = now;
             vm.BillingInfo.TotalBilled += cost;
@@ -177,8 +184,8 @@ public class BillingService : BackgroundService
             _logger.LogDebug(
                 "VM {VmId}: Billed {Cost:F4} {Token} for {Minutes:F1} minutes (verified). " +
                 "User balance: {Balance}, Node payout: {NodePayout}",
-                vm.Id, cost, user.BalanceToken, billableMinutes,
-                user.CryptoBalance, nodePayout);
+                vm.Id, cost, "USDC", billableMinutes,
+                balance, nodePayout);
         }
 
         if (billedCount > 0 || skippedCount > 0 || insufficientFundsCount > 0)

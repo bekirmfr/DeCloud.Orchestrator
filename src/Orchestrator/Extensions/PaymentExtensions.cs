@@ -3,6 +3,7 @@ using Orchestrator.Background;
 using Orchestrator.Models;
 using Orchestrator.Services;
 using Orchestrator.Services.Payment;
+using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Extensions;
 
@@ -122,7 +123,7 @@ public static class PaymentExtensions
         // =====================================================
 
         // User service for balance management
-        // Note: IUserService is already registered in Program.cs, we just ensure it exists
+        services.AddSingleton<ISettlementService, SettlementService>();
 
         // =====================================================
         // BACKGROUND SERVICES (Order matters for dependency resolution)

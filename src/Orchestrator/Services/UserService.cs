@@ -379,9 +379,7 @@ public class UserService : IUserService
             Email = null,
             Status = UserStatus.Active,
             CreatedAt = DateTime.UtcNow,
-            LastLoginAt = DateTime.UtcNow,
-            CryptoBalance = 0,
-            BalanceToken = "USDC"
+            LastLoginAt = DateTime.UtcNow
         };
 
         await _dataStore.SaveUserAsync(user);
