@@ -299,6 +299,35 @@ export async function depositUSDC(amount, onProgress = () => { }) {
         throw error;
     }
 
+    // Get current gas prices
+    async function getGasPrice() {
+        try {
+            const feeData = await currentSigner.provider.getFeeData();
+
+            // If network returns valid gas prices, use them with a 20% buffer
+            if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+                return {
+                    maxFeePerGas: (feeData.maxFeePerGas * 120n) / 100n,
+                    maxPriorityFeePerGas: (feeData.maxPriorityFeePerGas * 120n) / 100n
+                };
+            }
+        } catch (error) {
+            console.warn('[Payment] Failed to fetch gas prices:', error);
+        }
+
+        // Fallback: Use safe defaults for Polygon Amoy
+        return {
+            maxFeePerGas: ethers.parseUnits('50', 'gwei'),
+            maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei')
+        };
+    }
+
+    const gasPrice = await getGasPrice();
+    console.log('[Payment] Using gas prices:', {
+        maxFeePerGas: ethers.formatUnits(gasPrice.maxFeePerGas, 'gwei') + ' gwei',
+        maxPriorityFeePerGas: ethers.formatUnits(gasPrice.maxPriorityFeePerGas, 'gwei') + ' gwei'
+    });
+
     // Validate amount
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -332,10 +361,11 @@ export async function depositUSDC(amount, onProgress = () => { }) {
     if (allowance < amountWei) {
         onProgress({ step: 'approving', message: 'Approving USDC spend... Please confirm in wallet.' });
 
-        // Approve exact amount
+        // Approve exact amount with explicit gas prices
         const approveTx = await usdcContract.approve(
             depositConfig.escrowContractAddress,
-            amountWei
+            amountWei,
+            gasPrice
         );
 
         onProgress({
@@ -352,7 +382,7 @@ export async function depositUSDC(amount, onProgress = () => { }) {
     onProgress({ step: 'depositing', message: 'Depositing USDC... Please confirm in wallet.' });
 
     // Deposit
-    const depositTx = await escrowContract.deposit(amountWei);
+    const depositTx = await escrowContract.deposit(amountWei, gasPrice);
 
     onProgress({
         step: 'confirming',
