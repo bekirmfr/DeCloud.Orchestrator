@@ -609,6 +609,5 @@ export async function refreshBalanceDisplay() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export {
-    depositConfig,
-    ensureCorrectNetwork
+    depositConfig
 };
