@@ -9,7 +9,6 @@ using Nethereum.Web3;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.Blockchain;
 using Orchestrator.Services.Payment;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;

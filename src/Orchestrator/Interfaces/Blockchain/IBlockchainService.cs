@@ -1,17 +1,21 @@
-﻿// src/Orchestrator/Services/Blockchain/IBlockchainService.cs
-// Interface for all blockchain interactions
-// Abstracts Web3/Nethereum from rest of application
+﻿// src/Orchestrator/Interfaces/Blockchain/IBlockchainService.cs
+// Interface for all blockchain interactions including settlement execution
 
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 
 namespace Orchestrator.Interfaces.Blockchain;
 
 /// <summary>
 /// Service for all blockchain interactions
-/// Handles Web3 communication, contract calls, event queries
+/// Handles Web3 communication, contract calls, event queries, and settlement transactions
 /// </summary>
 public interface IBlockchainService
 {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // READ OPERATIONS (Stateless Queries)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// <summary>
     /// Get confirmed balance from escrow contract
     /// Source of truth for user balance on-chain
@@ -25,11 +29,11 @@ public interface IBlockchainService
     /// Queries recent Deposited events and filters by confirmations
     /// </summary>
     /// <param name="walletAddress">User's wallet address</param>
-    /// <param name="requiredConfirmations">Minimum confirmations required</param>
     /// <param name="lookbackBlocks">How many blocks to scan (default: 100)</param>
     /// <returns>List of pending deposits with confirmation counts</returns>
     Task<List<PendingDepositInfo>> GetPendingDepositsAsync(
-        string walletAddress, int lookbackBlocks = 100);
+        string walletAddress,
+        int lookbackBlocks = 100);
 
     /// <summary>
     /// Get current block number
@@ -45,4 +49,33 @@ public interface IBlockchainService
     /// Get transaction confirmation count
     /// </summary>
     Task<int> GetTransactionConfirmationsAsync(string txHash);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WRITE OPERATIONS (Settlement Transactions)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Execute settlement transaction on escrow contract
+    /// Settles usage charges: deducts from user balance, pays node operator
+    /// </summary>
+    /// <param name="userWallet">User's wallet address</param>
+    /// <param name="nodeWallet">Node operator's wallet address</param>
+    /// <param name="amount">Total amount to settle (USDC)</param>
+    /// <param name="nodeShare">Amount for node operator (85%)</param>
+    /// <param name="platformFee">Platform fee (15%)</param>
+    /// <returns>Transaction hash</returns>
+    Task<string> ExecuteSettlementAsync(
+        string userWallet,
+        string nodeWallet,
+        decimal amount,
+        decimal nodeShare,
+        decimal platformFee);
+
+    /// <summary>
+    /// Execute batch settlements in single transaction (gas optimization)
+    /// Future enhancement for reducing gas costs
+    /// </summary>
+    /// <param name="settlements">List of settlements to execute</param>
+    /// <returns>Transaction hash</returns>
+    Task<string> ExecuteBatchSettlementAsync(List<SettlementTransaction> settlements);
 }

@@ -30,7 +30,6 @@ public class DataStore
     // Add tracking dictionary
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
-    public ConcurrentDictionary<string, PendingDeposit> PendingDeposits { get; } = new();
     public ConcurrentDictionary<string, UsageRecord> UsageRecords { get; } = new();
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
@@ -57,8 +56,6 @@ public class DataStore
         _database?.GetCollection<OrchestratorEvent>("events");
     private IMongoCollection<Attestation>? AttestationsCollection =>
         _database?.GetCollection<Attestation>("attestations");
-    private IMongoCollection<PendingDeposit>? PendingDepositsCollection =>
-        _database?.GetCollection<PendingDeposit>("pendingDeposits");
     private IMongoCollection<UsageRecord>? UsageRecordsCollection =>
         _database?.GetCollection<UsageRecord>("usageRecords");
 
@@ -183,16 +180,6 @@ public class DataStore
                     Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
                     new CreateIndexOptions { Name = "idx_success" })
             });
-            // Pending deposit indexes
-            PendingDepositsCollection.Indexes.CreateMany(new[] {
-                new CreateIndexModel<PendingDeposit>(
-                    Builders<PendingDeposit>.IndexKeys
-                    .Ascending(d => d.WalletAddress),
-                    new CreateIndexOptions { Name = "idx_walletAddress" }),
-                new CreateIndexModel<PendingDeposit>(
-                    Builders<PendingDeposit>.IndexKeys.Ascending(d => d.TxHash),
-                    new CreateIndexOptions { Name = "idx_txHash" }),
-            });
             //UsageRecords indexes
             UsageRecordsCollection!.Indexes.CreateMany(new[] {
                 new CreateIndexModel<UsageRecord>(
@@ -266,9 +253,6 @@ public class DataStore
             {
                 PricingTiers.TryAdd(tier.Id, tier);
             }
-
-            // In LoadMongoDBStateAsync() method, add:
-            await LoadPendingDepositsAsync();
 
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             _logger.LogInformation(
@@ -419,52 +403,6 @@ public class DataStore
             {
                 await EventsCollection!.InsertOneAsync(evt);
             }, $"persist event {evt.Id}", maxRetries: 2); // Events are less critical
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // PAYMENT METHODS
-    // ═══════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Save pending deposit to database
-    /// </summary>
-    public async Task SavePendingDepositAsync(PendingDeposit deposit)
-    {
-        PendingDeposits[deposit.TxHash] = deposit;
-
-        if (_useMongoDB)
-        {
-            await PendingDepositsCollection!.ReplaceOneAsync(
-                d => d.TxHash == deposit.TxHash,
-                deposit,
-                new MongoDB.Driver.ReplaceOptions { IsUpsert = true });
-        }
-    }
-
-    /// <summary>
-    /// Load pending deposits from database
-    /// </summary>
-    private async Task LoadPendingDepositsAsync()
-    {
-        if (_useMongoDB)
-        {
-            var deposits = await PendingDepositsCollection!.Find(_ => true).ToListAsync();
-            foreach (var deposit in deposits)
-            {
-                PendingDeposits[deposit.TxHash] = deposit;
-            }
-            _logger.LogInformation("Loaded {Count} pending deposits from MongoDB", deposits.Count);
-        }
-        // JSON file loading handled in existing LoadStateAsync
-    }
-
-    public async Task DeletePendingDepositAsync(string txHash)
-    {
-        PendingDeposits.TryRemove(txHash, out _);
-        if (_useMongoDB)
-        {
-            await PendingDepositsCollection!.DeleteOneAsync(d => d.TxHash == txHash);
         }
     }
 

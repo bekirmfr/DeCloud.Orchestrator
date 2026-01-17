@@ -2,16 +2,11 @@
 using Nethereum.ABI.FunctionEncoding.Attributes;
 using Nethereum.RPC.Eth.DTOs;
 using Nethereum.Web3;
+using Nethereum.Web3.Accounts;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using System.Numerics;
-
-namespace Orchestrator.Services.Blockchain
-{
-    public class BlockchainService
-    {
-    }
-}
 
 /// <summary>
 /// Service for blockchain interactions
@@ -189,25 +184,185 @@ public class BlockchainService : IBlockchainService
         }
     }
 
-    // Minimal ABI for escrow contract - only what we need
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SETTLEMENT EXECUTION
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Execute settlement transaction on escrow contract
+    /// Deducts from user balance, pays node operator
+    /// </summary>
+    public async Task<string> ExecuteSettlementAsync(
+        string userWallet,
+        string nodeWallet,
+        decimal amount,
+        decimal nodeShare,
+        decimal platformFee)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Executing settlement: User={User}, Node={Node}, Amount={Amount} USDC",
+                userWallet[..10] + "...", nodeWallet[..10] + "...", amount);
+
+            // Load orchestrator account (has private key for signing)
+            var account = new Account(_config.OrchestratorPrivateKey, _config.ChainId);
+            var web3 = new Web3(account, _config.RpcUrl);
+
+            // Get escrow contract
+            var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
+            var settleFunction = contract.GetFunction("settle");
+
+            // Convert to wei (6 decimals for USDC)
+            var amountWei = Web3.Convert.ToWei(amount, 6);
+            var nodeShareWei = Web3.Convert.ToWei(nodeShare, 6);
+            var platformFeeWei = Web3.Convert.ToWei(platformFee, 6);
+
+            // Estimate gas (important for cost prediction)
+            var gas = await settleFunction.EstimateGasAsync(
+                from: account.Address,
+                gas: null,
+                value: null,
+                userWallet,
+                nodeWallet,
+                amountWei,
+                nodeShareWei,
+                platformFeeWei);
+
+            _logger.LogDebug(
+                "Estimated gas for settlement: {Gas} units",
+                gas.Value);
+
+            // Execute settlement transaction
+            var receipt = await settleFunction.SendTransactionAndWaitForReceiptAsync(
+                from: account.Address,
+                gas: gas,
+                gasPrice: null,  // Use network gas price
+                value: null,
+                receiptRequestCancellationToken: null,
+                userWallet,
+                nodeWallet,
+                amountWei,
+                nodeShareWei,
+                platformFeeWei);
+
+            // Check transaction status
+            if (receipt.Status?.Value != 1)
+            {
+                throw new Exception($"Settlement transaction reverted: {receipt.TransactionHash}");
+            }
+
+            _logger.LogInformation(
+                "✓ Settlement executed: tx={TxHash}, block={Block}, gasUsed={GasUsed}",
+                receipt.TransactionHash, receipt.BlockNumber, receipt.GasUsed);
+
+            return receipt.TransactionHash;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Settlement transaction failed for user {User}, node {Node}",
+                userWallet[..10], nodeWallet[..10]);
+            throw new Exception($"Settlement failed: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Execute batch settlements in single transaction
+    /// Future optimization for reducing gas costs
+    /// </summary>
+    public async Task<string> ExecuteBatchSettlementAsync(List<SettlementTransaction> settlements)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Executing batch settlement: {Count} settlements, total {Total} USDC",
+                settlements.Count, settlements.Sum(s => s.Amount));
+
+            var account = new Account(_config.OrchestratorPrivateKey, _config.ChainId);
+            var web3 = new Web3(account, _config.RpcUrl);
+
+            var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
+            var batchSettleFunction = contract.GetFunction("batchSettle");
+
+            // Prepare arrays for batch settlement
+            var userWallets = settlements.Select(s => s.UserWallet).ToArray();
+            var nodeWallets = settlements.Select(s => s.NodeWallet).ToArray();
+            var amounts = settlements.Select(s => Web3.Convert.ToWei(s.Amount, 6)).ToArray();
+            var nodeShares = settlements.Select(s => Web3.Convert.ToWei(s.NodeShare, 6)).ToArray();
+            var platformFees = settlements.Select(s => Web3.Convert.ToWei(s.PlatformFee, 6)).ToArray();
+
+            // Execute batch settlement
+            var receipt = await batchSettleFunction.SendTransactionAndWaitForReceiptAsync(
+                from: account.Address,
+                gas: null,
+                gasPrice: null,
+                value: null,
+                receiptRequestCancellationToken: null,
+                userWallets,
+                nodeWallets,
+                amounts,
+                nodeShares,
+                platformFees);
+
+            if (receipt.Status?.Value != 1)
+            {
+                throw new Exception($"Batch settlement transaction reverted: {receipt.TransactionHash}");
+            }
+
+            _logger.LogInformation(
+                "✓ Batch settlement executed: tx={TxHash}, gasUsed={GasUsed}",
+                receipt.TransactionHash, receipt.GasUsed);
+
+            return receipt.TransactionHash;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Batch settlement transaction failed");
+            throw new Exception($"Batch settlement failed: {ex.Message}", ex);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ESCROW CONTRACT ABI (with settlement methods)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     private const string ESCROW_ABI = @"[
         {
             ""inputs"": [
-                {
-                    ""internalType"": ""address"",
-                    ""name"": """",
-                    ""type"": ""address""
-                }
+                {""internalType"": ""address"", ""name"": """", ""type"": ""address""}
             ],
             ""name"": ""userBalances"",
             ""outputs"": [
-                {
-                    ""internalType"": ""uint256"",
-                    ""name"": """",
-                    ""type"": ""uint256""
-                }
+                {""internalType"": ""uint256"", ""name"": """", ""type"": ""uint256""}
             ],
             ""stateMutability"": ""view"",
+            ""type"": ""function""
+        },
+        {
+            ""inputs"": [
+                {""internalType"": ""address"", ""name"": ""user"", ""type"": ""address""},
+                {""internalType"": ""address"", ""name"": ""nodeOperator"", ""type"": ""address""},
+                {""internalType"": ""uint256"", ""name"": ""totalAmount"", ""type"": ""uint256""},
+                {""internalType"": ""uint256"", ""name"": ""nodeShare"", ""type"": ""uint256""},
+                {""internalType"": ""uint256"", ""name"": ""platformFee"", ""type"": ""uint256""}
+            ],
+            ""name"": ""settle"",
+            ""outputs"": [],
+            ""stateMutability"": ""nonpayable"",
+            ""type"": ""function""
+        },
+        {
+            ""inputs"": [
+                {""internalType"": ""address[]"", ""name"": ""users"", ""type"": ""address[]""},
+                {""internalType"": ""address[]"", ""name"": ""nodeOperators"", ""type"": ""address[]""},
+                {""internalType"": ""uint256[]"", ""name"": ""totalAmounts"", ""type"": ""uint256[]""},
+                {""internalType"": ""uint256[]"", ""name"": ""nodeShares"", ""type"": ""uint256[]""},
+                {""internalType"": ""uint256[]"", ""name"": ""platformFees"", ""type"": ""uint256[]""}
+            ],
+            ""name"": ""batchSettle"",
+            ""outputs"": [],
+            ""stateMutability"": ""nonpayable"",
             ""type"": ""function""
         }
     ]";

@@ -5,24 +5,30 @@ using Orchestrator.Services.Settlement;
 namespace Orchestrator.Services.Payment;
 
 /// <summary>
-/// Attestation-aware billing service.
+/// Attestation-aware billing service with clean dependency injection
 /// 
-/// Key principle: Only bill for VERIFIED runtime.
-/// If attestation is failing, billing is paused until attestation recovers.
-/// 
-/// Integration: Uses SettlementService for all usage recording.
+/// Key principles:
+/// - Only bill for VERIFIED runtime (attestation must pass)
+/// - Uses SettlementService for all usage recording
+/// - Clean DI (no service provider pattern)
 /// </summary>
 public class BillingService : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly DataStore _dataStore;
+    private readonly IAttestationService _attestationService;
+    private readonly ISettlementService _settlementService;
     private readonly ILogger<BillingService> _logger;
     private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
 
     public BillingService(
-        IServiceProvider serviceProvider,
+        DataStore dataStore,
+        IAttestationService attestationService,
+        ISettlementService settlementService,
         ILogger<BillingService> logger)
     {
-        _serviceProvider = serviceProvider;
+        _dataStore = dataStore;
+        _attestationService = attestationService;
+        _settlementService = settlementService;
         _logger = logger;
     }
 
@@ -34,12 +40,7 @@ public class BillingService : BackgroundService
         {
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var dataStore = scope.ServiceProvider.GetRequiredService<DataStore>();
-                var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
-                var settlementService = scope.ServiceProvider.GetRequiredService<ISettlementService>();
-
-                await ProcessBillingAsync(dataStore, attestationService, settlementService, stoppingToken);
+                await ProcessBillingAsync(stoppingToken);
             }
             catch (Exception ex)
             {
@@ -52,11 +53,7 @@ public class BillingService : BackgroundService
         _logger.LogInformation("Attestation-Aware Billing Service stopped");
     }
 
-    private async Task ProcessBillingAsync(
-        DataStore dataStore,
-        IAttestationService attestationService,
-        ISettlementService settlementService,
-        CancellationToken ct)
+    private async Task ProcessBillingAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var billedCount = 0;
@@ -64,7 +61,7 @@ public class BillingService : BackgroundService
         var insufficientFundsCount = 0;
         var attestationFailedCount = 0;
 
-        foreach (var vm in dataStore.VirtualMachines.Values.ToList())
+        foreach (var vm in _dataStore.VirtualMachines.Values.ToList())
         {
             if (ct.IsCancellationRequested) break;
 
@@ -86,7 +83,7 @@ public class BillingService : BackgroundService
                 // ATTESTATION CHECK - Core security feature
                 // ═══════════════════════════════════════════════════════════════
 
-                var attestationStatus = attestationService.GetLivenessState(vm.Id);
+                var attestationStatus = _attestationService.GetLivenessState(vm.Id);
 
                 if (attestationStatus == null || attestationStatus.BillingPaused)
                 {
@@ -136,7 +133,7 @@ public class BillingService : BackgroundService
                 // RECORD USAGE VIA SETTLEMENT SERVICE
                 // ═══════════════════════════════════════════════════════════════
 
-                var success = await settlementService.RecordUsageAsync(
+                var success = await _settlementService.RecordUsageAsync(
                     userId: vm.OwnerId,
                     vmId: vm.Id,
                     nodeId: vm.NodeId,
@@ -150,7 +147,7 @@ public class BillingService : BackgroundService
                     // Update VM billing info
                     vm.BillingInfo.LastBillingAt = now;
                     vm.BillingInfo.TotalBilled += cost;
-                    await dataStore.SaveVmAsync(vm);
+                    await _dataStore.SaveVmAsync(vm);
 
                     billedCount++;
 
@@ -168,8 +165,8 @@ public class BillingService : BackgroundService
                         "Cost: {Cost} USDC. VM will be stopped if balance not topped up.",
                         vm.Id, vm.OwnerId, cost);
 
-                    // TODO: Mark VM for shutdown if balance stays insufficient for > 15 minutes
-                    // For now, just log - don't shut down immediately to avoid false positives
+                    // TODO: Implement grace period before stopping VM
+                    // For now, just log the warning
                 }
             }
             catch (Exception ex)
@@ -182,8 +179,8 @@ public class BillingService : BackgroundService
         if (billedCount > 0 || insufficientFundsCount > 0 || attestationFailedCount > 0)
         {
             _logger.LogInformation(
-                "Billing cycle complete: Billed={Billed}, Insufficient={Insufficient}, " +
-                "AttestationFailed={AttestationFailed}, Skipped={Skipped}",
+                "Billing cycle complete: {Billed} billed, {InsufficientFunds} insufficient funds, " +
+                "{AttestationFailed} attestation failed, {Skipped} skipped",
                 billedCount, insufficientFundsCount, attestationFailedCount, skippedCount);
         }
     }

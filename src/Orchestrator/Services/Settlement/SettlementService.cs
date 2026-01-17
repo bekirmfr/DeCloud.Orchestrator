@@ -4,6 +4,7 @@
 using Orchestrator.Background;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 
 namespace Orchestrator.Services.Settlement;
