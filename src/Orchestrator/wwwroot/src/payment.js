@@ -357,7 +357,11 @@ function createDepositModal() {
     const minDeposit = depositConfig?.minDeposit || 1;
     const explorerUrl = depositConfig?.explorerUrl || 'https://polygonscan.com';
 
-    const modalHtml = `
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay hidden';
+    modal.id = 'deposit-modal';
+
+    modal.innerHTML = `
         <div id="deposit-modal" class="modal-overlay hidden">
             <div class="modal-content">
                 <div class="modal-header">
@@ -394,7 +398,7 @@ function createDepositModal() {
             </div>
         </div>
     `;
-    document.body.appendChild(modalHtml);
+    document.body.appendChild(modal);
 }
 
 /**
