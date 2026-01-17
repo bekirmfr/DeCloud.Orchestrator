@@ -12,15 +12,15 @@ namespace Orchestrator.Services.Payment;
 /// This prevents billing fraud where a node claims a VM is running but isn't
 /// providing the promised resources.
 /// </summary>
-public class AttestationAwareBillingService : BackgroundService
+public class BillingService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly ILogger<AttestationAwareBillingService> _logger;
+    private readonly ILogger<BillingService> _logger;
     private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
 
-    public AttestationAwareBillingService(
+    public BillingService(
         IServiceProvider serviceProvider,
-        ILogger<AttestationAwareBillingService> logger)
+        ILogger<BillingService> logger)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
