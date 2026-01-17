@@ -299,26 +299,54 @@ export async function depositUSDC(amount, onProgress = () => { }) {
         throw error;
     }
 
-    // Get current gas prices
+    /// Get current gas prices with minimum safety check
     async function getGasPrice() {
+        const MIN_GAS_PRICE = ethers.parseUnits('30', 'gwei'); // Minimum 30 Gwei
+        const FALLBACK_MAX_FEE = ethers.parseUnits('50', 'gwei');
+        const FALLBACK_PRIORITY_FEE = ethers.parseUnits('30', 'gwei');
+
         try {
             const feeData = await currentSigner.provider.getFeeData();
 
-            // If network returns valid gas prices, use them with a 20% buffer
+            console.log('[Payment] Network fee data:', {
+                maxFeePerGas: feeData.maxFeePerGas ? ethers.formatUnits(feeData.maxFeePerGas, 'gwei') + ' gwei' : 'null',
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ? ethers.formatUnits(feeData.maxPriorityFeePerGas, 'gwei') + ' gwei' : 'null'
+            });
+
+            // If network returns valid gas prices
             if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-                return {
-                    maxFeePerGas: (feeData.maxFeePerGas * 120n) / 100n,
-                    maxPriorityFeePerGas: (feeData.maxPriorityFeePerGas * 120n) / 100n
-                };
+                // Apply 20% buffer
+                let maxFee = (feeData.maxFeePerGas * 120n) / 100n;
+                let priorityFee = (feeData.maxPriorityFeePerGas * 120n) / 100n;
+
+                // ✨ CRITICAL: Enforce minimum gas prices
+                // Polygon Amoy RPC often returns unrealistically low values
+                if (priorityFee < MIN_GAS_PRICE) {
+                    console.warn('[Payment] Network priority fee too low, using fallback');
+                    priorityFee = FALLBACK_PRIORITY_FEE;
+                }
+
+                if (maxFee < MIN_GAS_PRICE) {
+                    console.warn('[Payment] Network max fee too low, using fallback');
+                    maxFee = FALLBACK_MAX_FEE;
+                }
+
+                // Max fee must be at least priority fee
+                if (maxFee < priorityFee) {
+                    maxFee = priorityFee;
+                }
+
+                return { maxFeePerGas: maxFee, maxPriorityFeePerGas: priorityFee };
             }
         } catch (error) {
             console.warn('[Payment] Failed to fetch gas prices:', error);
         }
 
         // Fallback: Use safe defaults for Polygon Amoy
+        console.log('[Payment] Using fallback gas prices');
         return {
-            maxFeePerGas: ethers.parseUnits('50', 'gwei'),
-            maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei')
+            maxFeePerGas: FALLBACK_MAX_FEE,
+            maxPriorityFeePerGas: FALLBACK_PRIORITY_FEE
         };
     }
 
