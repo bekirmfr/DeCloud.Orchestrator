@@ -154,11 +154,14 @@ export async function ensureCorrectNetwork() {
         return true;
     }
 
-    // Wrong network - try to switch
-    console.warn(`[Payment] Wrong network! Current: ${currentChainId}, Expected: ${expectedChainId}`);
+    // Wrong network - try to fix it automatically
+    const networkName = depositConfig.chainName || `Chain ID ${expectedChainId}`;
+    const currentNetworkName = getNetworkName(currentChainId);
+
+    console.warn(`[Payment] Wrong network! Current: ${currentNetworkName}, Expected: ${networkName}`);
 
     try {
-        // Convert chainId to hex for wallet_switchEthereumChain
+        // STEP 1: Try to switch to existing network
         const chainIdHex = '0x' + parseInt(expectedChainId).toString(16);
 
         await provider.send('wallet_switchEthereumChain', [
@@ -169,31 +172,42 @@ export async function ensureCorrectNetwork() {
         return true;
 
     } catch (switchError) {
-        // Error code 4902 means the chain hasn't been added to the wallet
+        console.log('[Payment] Switch failed:', switchError.code, switchError.message);
+
+        // STEP 2: If network doesn't exist (error 4902), try to add it
         if (switchError.code === 4902) {
             console.log('[Payment] Network not in wallet, attempting to add...');
 
             try {
-                // Add the network to wallet
                 await addNetworkToWallet(expectedChainId);
                 console.log('[Payment] ✓ Network added and switched');
                 return true;
             } catch (addError) {
                 console.error('[Payment] Failed to add network:', addError);
-                throw new Error(`Please add ${depositConfig.chainName} (Chain ID: ${expectedChainId}) to your wallet manually`);
+                // Fall through to show manual instructions
             }
         } else if (switchError.code === 4001) {
             // User rejected the request
-            throw new Error('Please switch to ' + depositConfig.chainName + ' network in your wallet');
-        } else {
-            console.error('[Payment] Network switch failed:', switchError);
-            throw new Error('Failed to switch network. Please switch to ' + depositConfig.chainName + ' manually');
+            throw new NetworkMismatchError(
+                'user_rejected',
+                currentChainId,
+                expectedChainId,
+                networkName
+            );
         }
+
+        // STEP 3: Auto-switch/add failed - need manual intervention
+        throw new NetworkMismatchError(
+            'switch_failed',
+            currentChainId,
+            expectedChainId,
+            networkName
+        );
     }
 }
 
 /**
- * Add network to wallet (for when it doesn't exist)
+ * Add network to wallet
  */
 async function addNetworkToWallet(chainId) {
     const provider = currentSigner.provider;
@@ -231,6 +245,34 @@ async function addNetworkToWallet(chainId) {
     }
 
     await provider.send('wallet_addEthereumChain', [networkConfig]);
+}
+
+/**
+ * Get human-readable network name
+ */
+function getNetworkName(chainId) {
+    const names = {
+        '1': 'Ethereum Mainnet',
+        '137': 'Polygon Mainnet',
+        '80002': 'Polygon Amoy Testnet',
+        '11155111': 'Sepolia Testnet',
+        '42161': 'Arbitrum One'
+    };
+    return names[chainId] || `Chain ID ${chainId}`;
+}
+
+/**
+ * Custom error for network mismatch
+ */
+class NetworkMismatchError extends Error {
+    constructor(reason, currentChainId, expectedChainId, networkName) {
+        super(`Network mismatch: ${reason}`);
+        this.name = 'NetworkMismatchError';
+        this.reason = reason;
+        this.currentChainId = currentChainId;
+        this.expectedChainId = expectedChainId;
+        this.networkName = networkName;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -560,18 +602,118 @@ window.handleDeposit = async function () {
 
     } catch (error) {
         progressDiv.classList.remove('hidden');
+        resultDiv.classList.add('hidden');
 
         let errorMessage = error.message;
-        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+
+        // Special handling for network errors
+        if (error.name === 'NetworkMismatchError') {
+            const currentName = getNetworkName(error.currentChainId);
+            const expectedName = error.networkName;
+
+            // Get network details for instructions
+            const networkDetails = getNetworkInstructions(error.expectedChainId);
+
+            statusP.innerHTML = `
+                <div style="color: #ef4444; text-align: left;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                        <span style="font-size: 24px;">🔄</span>
+                        <strong style="font-size: 16px;">Wrong Network</strong>
+                    </div>
+                    
+                    <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                        <p style="margin: 4px 0;"><strong>Current:</strong> ${currentName}</p>
+                        <p style="margin: 4px 0;"><strong>Required:</strong> ${expectedName}</p>
+                    </div>
+                    
+                    <p style="font-size: 14px; margin-bottom: 12px;">
+                        Please switch to <strong>${expectedName}</strong> in your wallet.
+                    </p>
+                    
+                    <button 
+                        onclick="document.getElementById('network-instructions').classList.toggle('hidden')"
+                        style="
+                            background: none;
+                            border: 1px solid #ef4444;
+                            color: #ef4444;
+                            padding: 8px 16px;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 13px;
+                            font-weight: 500;
+                            transition: all 0.2s;
+                        "
+                        onmouseover="this.style.background='rgba(239, 68, 68, 0.1)'"
+                        onmouseout="this.style.background='none'"
+                    >
+                        📖 Show me how
+                    </button>
+                    
+                    <div id="network-instructions" class="hidden" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(239, 68, 68, 0.3);">
+                        <p style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">Manual Setup Instructions:</p>
+                        
+                        <ol style="font-size: 13px; line-height: 1.8; padding-left: 20px; margin: 0;">
+                            <li>Open your wallet (MetaMask, Rainbow, etc.)</li>
+                            <li>Click on the <strong>network selector</strong> at the top</li>
+                            <li>Click <strong>"Add Network"</strong> or <strong>"Custom RPC"</strong></li>
+                            <li>Enter these details:
+                                <div style="background: #1a1a2e; border-radius: 6px; padding: 12px; margin: 8px 0; font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                                    <div style="margin: 4px 0;"><strong>Network Name:</strong> ${networkDetails.name}</div>
+                                    <div style="margin: 4px 0;"><strong>RPC URL:</strong> ${networkDetails.rpc}</div>
+                                    <div style="margin: 4px 0;"><strong>Chain ID:</strong> ${networkDetails.chainId}</div>
+                                    <div style="margin: 4px 0;"><strong>Currency:</strong> ${networkDetails.currency}</div>
+                                    <div style="margin: 4px 0;"><strong>Explorer:</strong> ${networkDetails.explorer}</div>
+                                </div>
+                            </li>
+                            <li>Click <strong>"Save"</strong> or <strong>"Add"</strong></li>
+                            <li>Switch to <strong>${expectedName}</strong></li>
+                            <li>Try depositing again</li>
+                        </ol>
+                    </div>
+                </div>
+            `;
+        } else if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             errorMessage = 'Transaction rejected by user';
+            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${errorMessage}</span>`;
+        } else {
+            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${errorMessage}</span>`;
         }
 
-        statusP.innerHTML = `<span style="color: #ef4444;">❌ ${errorMessage}</span>`;
         console.error('[Payment] Deposit error:', error);
     } finally {
         depositBtn.disabled = false;
     }
 };
+
+/**
+ * Get network setup instructions
+ */
+function getNetworkInstructions(chainId) {
+    const instructions = {
+        '80002': {
+            name: 'Polygon Amoy Testnet',
+            rpc: 'https://rpc-amoy.polygon.technology',
+            chainId: '80002',
+            currency: 'MATIC',
+            explorer: 'https://amoy.polygonscan.com'
+        },
+        '137': {
+            name: 'Polygon Mainnet',
+            rpc: 'https://polygon-rpc.com',
+            chainId: '137',
+            currency: 'MATIC',
+            explorer: 'https://polygonscan.com'
+        }
+    };
+
+    return instructions[chainId] || {
+        name: 'Unknown Network',
+        rpc: 'N/A',
+        chainId: chainId,
+        currency: 'N/A',
+        explorer: 'N/A'
+    };
+}
 
 /**
  * Close deposit modal
