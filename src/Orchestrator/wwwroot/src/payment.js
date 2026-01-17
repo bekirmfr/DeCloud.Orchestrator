@@ -129,6 +129,110 @@ export function getDepositConfig() {
     return depositConfig;
 }
 
+/**
+ * Check if wallet is on correct network and switch if needed
+ * @returns {Promise<boolean>} True if on correct network or successfully switched
+ */
+export async function ensureCorrectNetwork() {
+    if (!currentSigner) {
+        throw new Error('Wallet not connected');
+    }
+
+    if (!depositConfig) {
+        throw new Error('Payment not initialized');
+    }
+
+    const provider = currentSigner.provider;
+    const network = await provider.getNetwork();
+    const currentChainId = network.chainId.toString();
+    const expectedChainId = depositConfig.chainId;
+
+    console.log('[Payment] Current network:', currentChainId, 'Expected:', expectedChainId);
+
+    if (currentChainId === expectedChainId) {
+        console.log('[Payment] ✓ On correct network');
+        return true;
+    }
+
+    // Wrong network - try to switch
+    console.warn(`[Payment] Wrong network! Current: ${currentChainId}, Expected: ${expectedChainId}`);
+
+    try {
+        // Convert chainId to hex for wallet_switchEthereumChain
+        const chainIdHex = '0x' + parseInt(expectedChainId).toString(16);
+
+        await provider.send('wallet_switchEthereumChain', [
+            { chainId: chainIdHex }
+        ]);
+
+        console.log('[Payment] ✓ Switched to correct network');
+        return true;
+
+    } catch (switchError) {
+        // Error code 4902 means the chain hasn't been added to the wallet
+        if (switchError.code === 4902) {
+            console.log('[Payment] Network not in wallet, attempting to add...');
+
+            try {
+                // Add the network to wallet
+                await addNetworkToWallet(expectedChainId);
+                console.log('[Payment] ✓ Network added and switched');
+                return true;
+            } catch (addError) {
+                console.error('[Payment] Failed to add network:', addError);
+                throw new Error(`Please add ${depositConfig.chainName} (Chain ID: ${expectedChainId}) to your wallet manually`);
+            }
+        } else if (switchError.code === 4001) {
+            // User rejected the request
+            throw new Error('Please switch to ' + depositConfig.chainName + ' network in your wallet');
+        } else {
+            console.error('[Payment] Network switch failed:', switchError);
+            throw new Error('Failed to switch network. Please switch to ' + depositConfig.chainName + ' manually');
+        }
+    }
+}
+
+/**
+ * Add network to wallet (for when it doesn't exist)
+ */
+async function addNetworkToWallet(chainId) {
+    const provider = currentSigner.provider;
+
+    // Network configurations
+    const networks = {
+        '80002': {
+            chainId: '0x13882',
+            chainName: 'Polygon Amoy Testnet',
+            nativeCurrency: {
+                name: 'MATIC',
+                symbol: 'MATIC',
+                decimals: 18
+            },
+            rpcUrls: ['https://rpc-amoy.polygon.technology'],
+            blockExplorerUrls: ['https://amoy.polygonscan.com']
+        },
+        '137': {
+            chainId: '0x89',
+            chainName: 'Polygon Mainnet',
+            nativeCurrency: {
+                name: 'MATIC',
+                symbol: 'MATIC',
+                decimals: 18
+            },
+            rpcUrls: ['https://polygon-rpc.com'],
+            blockExplorerUrls: ['https://polygonscan.com']
+        }
+    };
+
+    const networkConfig = networks[chainId];
+
+    if (!networkConfig) {
+        throw new Error('Unsupported network: ' + chainId);
+    }
+
+    await provider.send('wallet_addEthereumChain', [networkConfig]);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DEPOSIT FLOW
 // ═══════════════════════════════════════════════════════════════════════════
@@ -142,6 +246,15 @@ export function getDepositConfig() {
 export async function depositUSDC(amount, onProgress = () => { }) {
     if (!isInitialized()) {
         throw new Error('Payment not initialized. Call initializePayment() first.');
+    }
+
+    // Check and switch network if needed
+    onProgress({ step: 'checking-network', message: 'Checking network...' });
+    try {
+        await ensureCorrectNetwork();
+    } catch (error) {
+        console.error('[Payment] Network check failed:', error);
+        throw error;
     }
 
     // Validate amount
@@ -496,5 +609,6 @@ export async function refreshBalanceDisplay() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export {
-    depositConfig
+    depositConfig,
+    ensureCorrectNetwork
 };
