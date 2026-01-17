@@ -205,8 +205,10 @@ public class BlockchainService : IBlockchainService
                 "Executing settlement: User={User}, Node={Node}, Amount={Amount} USDC",
                 userWallet[..10] + "...", nodeWallet[..10] + "...", amount);
 
-            // Load orchestrator account (has private key for signing)
-            var account = new Account(_config.OrchestratorPrivateKey, _config.ChainId);
+            // FIXED: Correct Account constructor
+            // Parse chain ID to BigInteger
+            var chainId = BigInteger.Parse(_config.ChainId);
+            var account = new Account(_config.OrchestratorPrivateKey, chainId);
             var web3 = new Web3(account, _config.RpcUrl);
 
             // Get escrow contract
@@ -279,7 +281,9 @@ public class BlockchainService : IBlockchainService
                 "Executing batch settlement: {Count} settlements, total {Total} USDC",
                 settlements.Count, settlements.Sum(s => s.Amount));
 
-            var account = new Account(_config.OrchestratorPrivateKey, _config.ChainId);
+            // FIXED: Correct Account constructor
+            var chainId = BigInteger.Parse(_config.ChainId);
+            var account = new Account(_config.OrchestratorPrivateKey, chainId);
             var web3 = new Web3(account, _config.RpcUrl);
 
             var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
