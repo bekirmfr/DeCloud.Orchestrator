@@ -3,7 +3,7 @@
 // ============================================
 import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-import { mainnet, polygon, arbitrum, sepolia } from '@reown/appkit/networks';
+import { mainnet, polygon, polygonAmoy, arbitrum, sepolia } from '@reown/appkit/networks';
 import { BrowserProvider } from 'ethers';
 
 // ============================================
@@ -88,7 +88,7 @@ async function initializeAppKit() {
         // Create AppKit instance - supports both mobile and desktop
         appKitModal = createAppKit({
             adapters: [new EthersAdapter()],
-            networks: [polygon, mainnet, arbitrum, sepolia],
+            networks: [polygonAmoy, polygon, mainnet, arbitrum, sepolia],
             projectId: WALLETCONNECT_PROJECT_ID,
             metadata: metadata,
             features: {

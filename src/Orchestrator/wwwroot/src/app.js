@@ -3,7 +3,7 @@
 // ============================================
 import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-import { mainnet, polygon, arbitrum } from '@reown/appkit/networks';
+import { mainnet, polygon, polygonAmoy, arbitrum } from '@reown/appkit/networks';
 import { BrowserProvider } from 'ethers';
 
 // @noble/ciphers - Works on HTTP and HTTPS (no secure context required)
@@ -144,7 +144,7 @@ async function initializeAppKit() {
         // Create AppKit instance with unified configuration
         appKitModal = createAppKit({
             adapters: [new EthersAdapter()],
-            networks: [polygon, mainnet, arbitrum],
+            networks: [polygonAmoy, polygon, mainnet, arbitrum],
             projectId: WALLETCONNECT_PROJECT_ID,
             metadata: CONFIG.metadata,
             features: {
