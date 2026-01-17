@@ -335,7 +335,8 @@ export function showDepositModal() {
     document.getElementById('deposit-result').classList.add('hidden');
     document.getElementById('deposit-btn').disabled = false;
 
-    modal.classList.remove('hidden');
+    modal.classList.add('active');
+    //modal.classList.remove('hidden');
 }
 
 /**
@@ -344,7 +345,8 @@ export function showDepositModal() {
 export function hideDepositModal() {
     const modal = document.getElementById('deposit-modal');
     if (modal) {
-        modal.classList.add('hidden');
+        //modal.classList.add('hidden');
+        modal.classList.remove('active');
     }
 }
 
@@ -358,46 +360,44 @@ function createDepositModal() {
     const explorerUrl = depositConfig?.explorerUrl || 'https://polygonscan.com';
 
     const modal = document.createElement('div');
-    modal.className = 'modal-overlay hidden';
+    modal.className = 'modal-overlay active';
     modal.id = 'deposit-modal';
 
     modal.innerHTML = `
-        <div id="deposit-modal" class="modal-overlay hidden">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2>💰 Deposit USDC</h2>
-                    <button onclick="window.closeDepositModal()" class="close-btn">&times;</button>
-                </div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>💰 Deposit USDC</h2>
+                <button onclick="window.closeDepositModal()" class="close-btn">&times;</button>
+            </div>
                 
-                <div class="modal-body">
-                    <div class="deposit-info">
-                        <p>Network: <strong>${chainName}</strong></p>
-                        <p>Contract: <code>${escrowAddr.slice(0, 10)}...${escrowAddr.slice(-8)}</code></p>
-                        <p>Min Deposit: <strong>${minDeposit} USDC</strong></p>
-                    </div>
+            <div class="modal-body">
+                <div class="deposit-info">
+                    <p>Network: <strong>${chainName}</strong></p>
+                    <p>Contract: <code>${escrowAddr.slice(0, 10)}...${escrowAddr.slice(-8)}</code></p>
+                    <p>Min Deposit: <strong>${minDeposit} USDC</strong></p>
+                </div>
                     
-                    <div class="deposit-form">
-                        <label for="deposit-amount">Amount (USDC)</label>
-                        <input type="number" id="deposit-amount" min="${minDeposit}" step="0.01" placeholder="10.00">
+                <div class="deposit-form">
+                    <label for="deposit-amount">Amount (USDC)</label>
+                    <input type="number" id="deposit-amount" min="${minDeposit}" step="0.01" placeholder="10.00">
                         
-                        <button id="deposit-btn" onclick="window.handleDeposit()" class="btn-primary">
-                            Deposit USDC
-                        </button>
-                    </div>
+                    <button id="deposit-btn" onclick="window.handleDeposit()" class="btn-primary">
+                        Deposit USDC
+                    </button>
+                </div>
                     
-                    <div id="deposit-progress" class="deposit-progress hidden">
-                        <div class="progress-spinner"></div>
-                        <p id="deposit-status">Processing...</p>
-                    </div>
+                <div id="deposit-progress" class="deposit-progress hidden">
+                    <div class="progress-spinner"></div>
+                    <p id="deposit-status">Processing...</p>
+                </div>
                     
-                    <div id="deposit-result" class="deposit-result hidden">
-                        <p class="success">✓ Deposit successful!</p>
-                        <p>Transaction: <a id="deposit-tx-link" href="#" target="_blank" rel="noopener"></a></p>
-                    </div>
+                <div id="deposit-result" class="deposit-result hidden">
+                    <p class="success">✓ Deposit successful!</p>
+                    <p>Transaction: <a id="deposit-tx-link" href="#" target="_blank" rel="noopener"></a></p>
                 </div>
             </div>
         </div>
-    `;
+        `;
     document.body.appendChild(modal);
 }
 
