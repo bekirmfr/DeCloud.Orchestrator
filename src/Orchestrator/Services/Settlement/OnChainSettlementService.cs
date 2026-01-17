@@ -87,7 +87,7 @@ public class OnChainSettlementService : BackgroundService
 
         // Process in chunks of 10 to avoid gas limits
         // Each blockchain transaction can handle ~10 settlements
-        foreach (var chunk in batches.Chunk(10))
+        foreach (var chunk in batches.Chunk(_config.MaxSettlementsPerBatch))
         {
             if (ct.IsCancellationRequested) break;
 

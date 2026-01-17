@@ -91,12 +91,6 @@ public interface ISettlementService
     /// <param name="minAmount">Minimum amount to settle (default: 1 USDC)</param>
     Task<List<SettlementBatch>> GetPendingSettlementsAsync(decimal minAmount = 1.0m);
 
-    /// <summary>
-    /// Validate that user has sufficient balance for usage
-    /// Checks: on-chain balance - unpaid usage >= required amount
-    /// </summary>
-    Task<bool> ValidateUserBalanceAsync(string userId, decimal requiredAmount);
-
     // ═══════════════════════════════════════════════════════════════════════════
     // NODE PAYOUTS
     // ═══════════════════════════════════════════════════════════════════════════

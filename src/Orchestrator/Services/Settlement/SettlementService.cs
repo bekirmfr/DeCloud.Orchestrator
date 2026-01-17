@@ -1,7 +1,7 @@
 ﻿// src/Orchestrator/Services/Settlement/SettlementService.cs
-// Handles all settlement and usage tracking operations
+// Updated: Removed circular dependency on UserService for validation
+// Balance validation is now handled by BalanceService
 
-using Orchestrator.Services;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -11,7 +11,7 @@ namespace Orchestrator.Services.Settlement;
 
 /// <summary>
 /// Service for managing VM usage tracking and on-chain settlements
-/// Clean separation: handles only settlement domain logic
+/// CLEAN: No circular dependencies - only depends on DataStore and BlockchainService
 /// </summary>
 public class SettlementService : ISettlementService
 {
@@ -41,6 +41,8 @@ public class SettlementService : ISettlementService
 
     /// <summary>
     /// Record VM usage for billing
+    /// NOTE: Balance validation is now handled by caller (BillingService via BalanceService)
+    /// This service just records the usage - no validation
     /// </summary>
     public async Task<bool> RecordUsageAsync(
         string userId,
@@ -51,14 +53,8 @@ public class SettlementService : ISettlementService
         DateTime periodEnd,
         bool attestationVerified = true)
     {
-        // Validate user has sufficient balance
-        if (!await ValidateUserBalanceAsync(userId, amount))
-        {
-            _logger.LogWarning(
-                "Insufficient balance for user {UserId}: needs {Amount} USDC",
-                userId, amount);
-            return false;
-        }
+        // REMOVED: Balance validation (now handled by BalanceService in caller)
+        // BillingService should call BalanceService.HasSufficientBalanceAsync() first
 
         // Create usage record
         var usageRecord = new UsageRecord
@@ -234,7 +230,7 @@ public class SettlementService : ISettlementService
                 NodeShare = g.Sum(r => r.NodeShare),
                 PlatformFee = g.Sum(r => r.PlatformFee)
             })
-            .Where(g => g.TotalAmount >= minAmount) // Filter by minimum settlement amount
+            .Where(g => g.TotalAmount >= minAmount)
             .ToList();
 
         // Build settlement batches
@@ -274,35 +270,6 @@ public class SettlementService : ISettlementService
             batches.Count, batches.Sum(b => b.TotalAmount));
 
         return batches;
-    }
-
-    /// <summary>
-    /// Validate that user has sufficient balance for usage
-    /// </summary>
-    public async Task<bool> ValidateUserBalanceAsync(string userId, decimal requiredAmount)
-    {
-        try
-        {
-            var user = await _userService.GetUserAsync(userId);
-            if (user == null)
-                return false;
-
-            // Get on-chain balance
-            var confirmedBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
-
-            // Get current unpaid usage
-            var unpaidUsage = await GetUnpaidUsageAsync(userId);
-
-            // Available = confirmed - unpaid
-            var availableBalance = confirmedBalance - unpaidUsage;
-
-            return availableBalance >= requiredAmount;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to validate balance for user {UserId}", userId);
-            return false;
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -346,4 +313,12 @@ public class SettlementService : ISettlementService
 
         return Task.FromResult(records);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REMOVED METHODS (to break circular dependency)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // REMOVED: ValidateUserBalanceAsync()
+    // Reason: Created circular dependency with UserService
+    // Solution: BillingService now calls BalanceService.HasSufficientBalanceAsync() directly
 }

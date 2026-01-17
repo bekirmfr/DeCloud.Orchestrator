@@ -1,12 +1,18 @@
-﻿using System.Threading.Channels;
+﻿// src/Orchestrator/Services/Payment/BillingService.cs
+// Updated: Uses BalanceService for balance validation (breaks circular dependency)
+
+using System.Threading.Channels;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Balance;
 using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Services.Payment;
 
 /// <summary>
 /// Event-driven billing service with queue
+/// UPDATED: Uses BalanceService for balance validation (no circular dependency)
 /// 
 /// Triggers:
 /// 1. Periodic timer (every 5 minutes) - bills all running VMs
@@ -24,6 +30,7 @@ public class BillingService : BackgroundService
     private readonly DataStore _dataStore;
     private readonly IAttestationService _attestationService;
     private readonly ISettlementService _settlementService;
+    private readonly IBalanceService _balanceService; // NEW: Use BalanceService instead
     private readonly ILogger<BillingService> _logger;
 
     // Event-driven billing queue
@@ -36,11 +43,13 @@ public class BillingService : BackgroundService
         DataStore dataStore,
         IAttestationService attestationService,
         ISettlementService settlementService,
+        IBalanceService balanceService, // NEW: Added BalanceService
         ILogger<BillingService> logger)
     {
         _dataStore = dataStore;
         _attestationService = attestationService;
         _settlementService = settlementService;
+        _balanceService = balanceService; // NEW
         _logger = logger;
 
         // Create bounded channel (max 1000 pending events)
@@ -209,6 +218,28 @@ public class BillingService : BackgroundService
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // BALANCE CHECK - UPDATED to use BalanceService
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // NEW: Use BalanceService instead of SettlementService.ValidateUserBalanceAsync()
+        // This breaks the circular dependency!
+        var hasSufficientBalance = await _balanceService.HasSufficientBalanceAsync(vm.OwnerId, cost);
+
+        if (!hasSufficientBalance)
+        {
+            _logger.LogWarning(
+                "⚠️ Insufficient balance for user {UserId}, pausing billing for VM {VmId}",
+                vm.OwnerId, vm.Id);
+
+            vm.BillingInfo.IsPaused = true;
+            vm.BillingInfo.PausedAt = now;
+            vm.BillingInfo.PauseReason = "Insufficient balance";
+
+            await _dataStore.SaveVmAsync(vm);
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // RECORD USAGE
         // ═══════════════════════════════════════════════════════════════════════
 
@@ -224,14 +255,8 @@ public class BillingService : BackgroundService
         if (!success)
         {
             _logger.LogWarning(
-                "⚠️ Insufficient balance for VM {VmId}, pausing billing",
+                "⚠️ Failed to record usage for VM {VmId}",
                 vm.Id);
-
-            vm.BillingInfo.IsPaused = true;
-            vm.BillingInfo.PausedAt = now;
-            vm.BillingInfo.PauseReason = "Insufficient balance";
-
-            await _dataStore.SaveVmAsync(vm);
             return;
         }
 
@@ -252,18 +277,3 @@ public class BillingService : BackgroundService
 // SUPPORTING TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-public class BillingEvent
-{
-    public string VmId { get; set; } = string.Empty;
-    public BillingTrigger Trigger { get; set; }
-    public string? Reason { get; set; }
-    public DateTime Timestamp { get; set; }
-}
-
-public enum BillingTrigger
-{
-    Periodic,       // Periodic timer (every 5 min)
-    VmStop,         // VM stopped - bill final usage
-    Manual,         // Admin trigger
-    BalanceAdded    // User added balance - resume billing
-}

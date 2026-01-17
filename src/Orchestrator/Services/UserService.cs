@@ -41,12 +41,6 @@ public interface IUserService
     // Quota Management
     Task<bool> CheckQuotaAsync(string userId, int virtualCpuCores, long memoryBytes, long storageBytes);
     Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta);
-
-    // Balance Management
-    Task<decimal> GetUserBalanceAsync(string userId);
-    Task<BalanceInfo> GetUserBalanceInfoAsync(string userId);
-    Task<bool> HasSufficientBalanceAsync(string userId, decimal requiredAmount);
-
 }
 
 /// <summary>
@@ -627,94 +621,6 @@ public class UserService : IUserService
 
         await _dataStore.SaveUserAsync(user);
     }
-
-    /// <summary>
-    /// Get complete balance information for user
-    /// Orchestrates: BlockchainService for on-chain data + DataStore for unpaid usage
-    /// </summary>
-    public async Task<BalanceInfo> GetUserBalanceInfoAsync(string userId)
-    {
-        var user = await GetUserAsync(userId);
-        if (user == null)
-        {
-            throw new Exception($"User {userId} not found");
-        }
-
-        if (_blockchainService == null)
-        {
-            _logger.LogWarning("Required services not available, returning zero balance");
-            return new BalanceInfo
-            {
-                ConfirmedBalance = 0,
-                PendingDeposits = 0,
-                UnpaidUsage = 0,
-                AvailableBalance = 0,
-                TotalBalance = 0,
-                TokenSymbol = "USDC"
-            };
-        }
-
-        // ✅ CONFIRMED BALANCE: From escrow contract (BlockchainService)
-        var confirmedBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
-
-        // ✅ PENDING DEPOSITS: From recent blockchain events (BlockchainService)
-        var pendingDeposits = await _blockchainService.GetPendingDepositsAsync(
-            user.WalletAddress);
-
-        var pendingAmount = pendingDeposits.Sum(d => d.Amount);
-
-        // ✅ UNPAID USAGE: From database (direct query - no service dependency)
-        var unpaidUsage = _dataStore.UsageRecords.Values
-            .Where(u => u.UserId == userId && !u.SettledOnChain)
-            .Sum(u => u.TotalCost);
-
-        // Calculate final balances
-        var availableBalance = confirmedBalance - unpaidUsage;
-        var totalBalance = confirmedBalance + pendingAmount - unpaidUsage;
-
-        _logger.LogDebug(
-            "Balance for {UserId}: Confirmed={Confirmed}, Pending={Pending}, Unpaid={Unpaid}, Available={Available}",
-            userId, confirmedBalance, pendingAmount, unpaidUsage, availableBalance);
-
-        return new BalanceInfo
-        {
-            ConfirmedBalance = confirmedBalance,
-            PendingDeposits = pendingAmount,
-            UnpaidUsage = unpaidUsage,
-            AvailableBalance = Math.Max(0, availableBalance), // Can't be negative
-            TotalBalance = totalBalance,
-            TokenSymbol = "USDC",
-            PendingDepositsList = pendingDeposits
-        };
-    }
-
-    /// <summary>
-    /// Get available balance (legacy method for compatibility)
-    /// </summary>
-    public async Task<decimal> GetUserBalanceAsync(string userId)
-    {
-        var balanceInfo = await GetUserBalanceInfoAsync(userId);
-        return balanceInfo.AvailableBalance;
-    }
-
-    /// <summary>
-    /// Check if user has sufficient available balance
-    /// Inline calculation - no dependency on SettlementService
-    /// </summary>
-    public async Task<bool> HasSufficientBalanceAsync(string userId, decimal requiredAmount)
-    {
-        try
-        {
-            var balanceInfo = await GetUserBalanceInfoAsync(userId);
-            return balanceInfo.AvailableBalance >= requiredAmount;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to check balance for user {UserId}", userId);
-            return false;
-        }
-    }
-
 }
 
 /// <summary>

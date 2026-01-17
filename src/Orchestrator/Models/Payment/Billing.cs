@@ -108,3 +108,19 @@ public class AttestationAwareBillingInfo
     public TimeSpan UnverifiedRuntime => TimeSpan.FromMinutes(UnverifiedRuntimeMinutes);
     public TimeSpan TotalRuntime => TimeSpan.FromMinutes(VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes);
 }
+
+public class BillingEvent
+{
+    public string VmId { get; set; } = string.Empty;
+    public BillingTrigger Trigger { get; set; }
+    public string? Reason { get; set; }
+    public DateTime Timestamp { get; set; }
+}
+
+public enum BillingTrigger
+{
+    Periodic,       // Periodic timer (every 5 min)
+    VmStop,         // VM stopped - bill final usage
+    Manual,         // Admin trigger
+    BalanceAdded    // User added balance - resume billing
+}

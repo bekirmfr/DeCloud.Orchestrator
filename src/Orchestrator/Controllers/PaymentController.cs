@@ -4,6 +4,7 @@ using Orchestrator.Services;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Security.Claims;
+using Orchestrator.Services.Balance;
 
 namespace Orchestrator.Controllers;
 
@@ -13,17 +14,20 @@ namespace Orchestrator.Controllers;
 public class PaymentController : ControllerBase
 {
     private readonly DataStore _dataStore;
+    private readonly IBalanceService _balanceService;
     private readonly PaymentConfig _paymentConfig;
     private readonly IUserService _userService;
     private readonly ILogger<PaymentController> _logger;
 
     public PaymentController(
         DataStore dataStore,
+        IBalanceService balanceService,
         PaymentConfig paymentConfig,
         IUserService userService,
         ILogger<PaymentController> logger)
     {
         _dataStore = dataStore;
+        _balanceService = balanceService;
         _paymentConfig = paymentConfig;
         _userService = userService;
         _logger = logger;
@@ -67,7 +71,7 @@ public class PaymentController : ControllerBase
             var userId = GetUserId();
 
             // ✅ Read balance from blockchain + pending deposits
-            var balanceInfo = await _userService.GetUserBalanceInfoAsync(userId);
+            var balanceInfo = await _balanceService.GetBalanceInfoAsync(userId);
 
             // Get recent usage for display
             var recentUsage = _dataStore.UsageRecords.Values
