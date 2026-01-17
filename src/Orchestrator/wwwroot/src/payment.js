@@ -394,8 +394,7 @@ function createDepositModal() {
             </div>
         </div>
     `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.body.appendChild(modalHtml);
 }
 
 /**

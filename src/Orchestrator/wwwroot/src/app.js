@@ -972,6 +972,7 @@ function updateBalanceDisplay(balance) {
  * Handle deposit button click
  */
 function handleDepositClick() {
+    console.debug('[Payment] Deposit button clicked');
     if (!ethersSigner) {
         console.warn('[Payment] Please connect your wallet first.');
         showToast('Please connect your wallet first', 'error');
