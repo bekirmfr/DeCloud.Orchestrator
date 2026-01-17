@@ -973,11 +973,13 @@ function updateBalanceDisplay(balance) {
  */
 function handleDepositClick() {
     if (!ethersSigner) {
+        console.warn('[Payment] Please connect your wallet first.');
         showToast('Please connect your wallet first', 'error');
         return;
     }
 
     if (!isPaymentInitialized()) {
+        console.warn('[Payment] Payment system not available. isPaymentInitialized:', isPaymentInitialized());
         showToast('Payment system not available', 'error');
         return;
     }
