@@ -19,7 +19,7 @@
 		<!-- SignalR for WebSocket/real-time communication -->
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.0" />
 		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
-		<PackageReference Include="Nethereum.Contracts" Version="5.8.0" />
+		<PackageReference Include="Nethereum.Contracts" Version="5.0.0" />
 		<PackageReference Include="Nethereum.Signer" Version="5.0.0" />
 		<PackageReference Include="Nethereum.Web3" Version="5.0.0" />
 		<PackageReference Include="NSec.Cryptography" Version="24.9.0" />

@@ -23,6 +23,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B1D8E7F-2345-4CDE-9BCD-EF0123456789}"
 	ProjectSection(SolutionItems) = preProject
 		src\Orchestrator\wwwroot\src\app.js = src\Orchestrator\wwwroot\src\app.js
+		src\Orchestrator\wwwroot\src\payment.js = src\Orchestrator\wwwroot\src\payment.js
 		src\Orchestrator\wwwroot\src\sign.js = src\Orchestrator\wwwroot\src\sign.js
 		src\Orchestrator\wwwroot\src\ssh-wallet.js = src\Orchestrator\wwwroot\src\ssh-wallet.js
 	EndProjectSection
