@@ -9,30 +9,26 @@ using Orchestrator.Services.Settlement;
 namespace Orchestrator.Services;
 
 /// <summary>
-/// Background service that executes pending settlements on the blockchain
+/// Automated settlement background service
+/// Batches unpaid usage and settles to blockchain periodically
 /// 
-/// Flow:
-/// 1. Query pending settlements from SettlementService (grouped by user/node)
-/// 2. Execute settlement transaction on escrow contract via BlockchainService
-/// 3. Mark usage records as settled via SettlementService
-/// 
-/// Runs every hour (configurable)
+/// Configuration:
+/// - Runs every {SettlementInterval} (e.g., every 1 hour)
+/// - Only settles batches >= {MinSettlementAmount} (e.g., 1 USDC)
+/// - Processes up to 10 batches per transaction (gas limit)
 /// </summary>
 public class OnChainSettlementService : BackgroundService
 {
-    private readonly ISettlementService _settlementService;
-    private readonly IBlockchainService _blockchainService;
+    private readonly IServiceProvider _serviceProvider;
     private readonly PaymentConfig _config;
     private readonly ILogger<OnChainSettlementService> _logger;
 
     public OnChainSettlementService(
-        ISettlementService settlementService,
-        IBlockchainService blockchainService,
+        IServiceProvider serviceProvider,
         PaymentConfig config,
         ILogger<OnChainSettlementService> logger)
     {
-        _settlementService = settlementService;
-        _blockchainService = blockchainService;
+        _serviceProvider = serviceProvider;
         _config = config;
         _logger = logger;
     }
@@ -40,11 +36,11 @@ public class OnChainSettlementService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "On-Chain Settlement Service started (interval: {Interval})",
-            _config.SettlementInterval);
+            "Automated Settlement Service started - interval: {Interval}, min amount: {MinAmount} USDC",
+            _config.SettlementInterval, _config.MinSettlementAmount);
 
-        // Wait 5 minutes before first settlement (let system stabilize)
-        await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+        // Wait 1 minute before first run (let system stabilize)
+        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -60,97 +56,114 @@ public class OnChainSettlementService : BackgroundService
             await Task.Delay(_config.SettlementInterval, stoppingToken);
         }
 
-        _logger.LogInformation("On-Chain Settlement Service stopped");
+        _logger.LogInformation("Automated Settlement Service stopped");
     }
 
     private async Task ProcessSettlementsAsync(CancellationToken ct)
     {
+        using var scope = _serviceProvider.CreateScope();
+        var settlementService = scope.ServiceProvider.GetRequiredService<ISettlementService>();
+        var blockchainService = scope.ServiceProvider.GetRequiredService<IBlockchainService>();
+
+        // Get batches ready for settlement
+        var batches = await settlementService.GetPendingSettlementsAsync(_config.MinSettlementAmount);
+
+        if (batches.Count == 0)
+        {
+            _logger.LogDebug("No settlements ready (min amount: {MinAmount} USDC)", _config.MinSettlementAmount);
+            return;
+        }
+
+        var totalAmount = batches.Sum(b => b.TotalAmount);
+        var totalNodeShare = batches.Sum(b => b.NodeShare);
+        var totalPlatformFee = batches.Sum(b => b.PlatformFee);
+
+        _logger.LogInformation(
+            "📦 Processing {Count} settlement batches: Total={Total} USDC, Nodes={NodeShare} USDC, Platform={PlatformFee} USDC",
+            batches.Count, totalAmount, totalNodeShare, totalPlatformFee);
+
         var settledCount = 0;
         var failedCount = 0;
-        var totalAmount = 0m;
 
-        try
+        // Process in chunks of 10 to avoid gas limits
+        // Each blockchain transaction can handle ~10 settlements
+        foreach (var chunk in batches.Chunk(10))
         {
-            // Get pending settlements (grouped by user/node)
-            var batches = await _settlementService.GetPendingSettlementsAsync(
-                minAmount: _config.MinSettlementAmount);
+            if (ct.IsCancellationRequested) break;
 
-            if (batches.Count == 0)
+            try
             {
-                _logger.LogDebug("No settlements pending (min amount: {MinAmount} USDC)",
-                    _config.MinSettlementAmount);
-                return;
-            }
+                await ProcessBatchChunkAsync(
+                    chunk,
+                    settlementService,
+                    blockchainService,
+                    ct);
 
-            _logger.LogInformation(
-                "Processing {Count} settlement batches totaling {Total} USDC",
-                batches.Count, batches.Sum(b => b.TotalAmount));
+                settledCount += chunk.Length;
 
-            foreach (var batch in batches)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                try
+                // Wait 5 seconds between batches to avoid rate limiting
+                if (batches.Count > 10)
                 {
-                    await ProcessSingleSettlementAsync(batch);
-                    settledCount++;
-                    totalAmount += batch.TotalAmount;
+                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex,
-                        "Failed to settle batch for user {User}, node {Node}, amount {Amount} USDC",
-                        batch.UserWallet[..10], batch.NodeWallet[..10], batch.TotalAmount);
-                    failedCount++;
-                }
-
-                // Small delay between settlements to avoid overwhelming the RPC
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
             }
-
-            if (settledCount > 0 || failedCount > 0)
+            catch (Exception ex)
             {
-                _logger.LogInformation(
-                    "Settlement cycle complete: {Settled} settled ({Total} USDC), {Failed} failed",
-                    settledCount, totalAmount, failedCount);
+                _logger.LogError(ex, "Batch settlement failed for chunk of {Count} settlements", chunk.Length);
+                failedCount += chunk.Length;
+
+                // Continue with next chunk (don't fail entire settlement)
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in settlement cycle");
-        }
+
+        _logger.LogInformation(
+            "✓ Settlement cycle complete: {Settled} settled, {Failed} failed",
+            settledCount, failedCount);
     }
 
-    private async Task ProcessSingleSettlementAsync(SettlementBatch batch)
+    private async Task ProcessBatchChunkAsync(
+        SettlementBatch[] chunk,
+        ISettlementService settlementService,
+        IBlockchainService blockchainService,
+        CancellationToken ct)
     {
-        _logger.LogInformation(
-            "Executing settlement: User={User}, Node={Node}, Amount={Amount} USDC " +
-            "(NodeShare={NodeShare}, PlatformFee={PlatformFee})",
-            batch.UserWallet[..10] + "...",
-            batch.NodeWallet[..10] + "...",
-            batch.TotalAmount,
-            batch.NodeShare,
-            batch.PlatformFee);
+        // Convert to settlement transactions
+        var transactions = chunk.Select(b => new SettlementTransaction
+        {
+            UserWallet = b.UserWallet,
+            NodeWallet = b.NodeWallet,
+            Amount = b.TotalAmount,
+            NodeShare = b.NodeShare,
+            PlatformFee = b.PlatformFee
+        }).ToList();
 
-        // Execute settlement transaction on blockchain
-        var txHash = await _blockchainService.ExecuteSettlementAsync(
-            userWallet: batch.UserWallet,
-            nodeWallet: batch.NodeWallet,
-            amount: batch.TotalAmount,
-            nodeShare: batch.NodeShare,
-            platformFee: batch.PlatformFee);
+        var chunkTotal = transactions.Sum(t => t.Amount);
 
         _logger.LogInformation(
-            "✓ Settlement executed: {Amount} USDC, tx={TxHash}",
-            batch.TotalAmount, txHash[..16] + "...");
+            "Executing batch settlement: {Count} settlements, {Total} USDC",
+            transactions.Count, chunkTotal);
 
-        // Mark usage records as settled
-        await _settlementService.MarkUsageAsSettledAsync(
-            batch.UsageRecordIds,
-            txHash);
+        // Execute on blockchain
+        var txHash = await blockchainService.ExecuteBatchSettlementAsync(transactions);
 
         _logger.LogInformation(
-            "✓ Marked {Count} usage records as settled",
-            batch.UsageRecordIds.Count);
+            "✓ Batch settlement executed: tx={TxHash}, {Count} settlements",
+            txHash[..16] + "...", transactions.Count);
+
+        // Mark all usage records in this batch as settled
+        var allRecordIds = chunk.SelectMany(b => b.UsageRecordIds).ToList();
+        await settlementService.MarkUsageAsSettledAsync(allRecordIds, txHash);
+
+        _logger.LogDebug(
+            "Marked {Count} usage records as settled",
+            allRecordIds.Count);
+
+        // Log per-node breakdown for accounting
+        foreach (var batch in chunk)
+        {
+            _logger.LogInformation(
+                "📊 Settled for node {NodeId}: {Amount} USDC ({NodeShare} to node, {PlatformFee} platform fee)",
+                batch.NodeId, batch.TotalAmount, batch.NodeShare, batch.PlatformFee);
+        }
     }
 }

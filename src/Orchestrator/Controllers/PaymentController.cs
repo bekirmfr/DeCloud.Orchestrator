@@ -56,7 +56,8 @@ public class PaymentController : ControllerBase
     }
 
     /// <summary>
-    /// Get user's balance - reads from blockchain + pending deposits
+    /// Get user balance information
+    /// Reads directly from blockchain - NO sync needed!
     /// </summary>
     [HttpGet("balance")]
     public async Task<ActionResult<ApiResponse<BalanceResponse>>> GetBalance()

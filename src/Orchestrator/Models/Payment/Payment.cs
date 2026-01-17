@@ -86,6 +86,7 @@ public class PaymentConfig
     
     // Settlement
     public decimal MinSettlementAmount { get; set; } = 10.0m; // Min $10 to settle
+    public int MaxSettlementsPerBatch { get; set; } = 10; // // Max 10 per blockchain tx
     public TimeSpan SettlementInterval { get; set; } = TimeSpan.FromHours(24);
     
     // Fee structure

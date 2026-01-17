@@ -427,36 +427,11 @@ export async function depositUSDC(amount, onProgress = () => { }) {
         blockNumber: receipt.blockNumber
     });
 
-    // Notify backend to sync balance (fire and forget)
-    syncDepositWithBackend(depositTx.hash).catch(err => {
-        console.warn('[Payment] Backend sync failed (non-critical):', err);
-    });
-
     return {
         txHash: depositTx.hash,
         blockNumber: receipt.blockNumber,
         amount: amount
     };
-}
-
-/**
- * Notify backend about the deposit so it can update platform balance
- */
-async function syncDepositWithBackend(txHash) {
-    if (!authToken) return;
-
-    const response = await fetch('/api/payment/sync', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ txHash })
-    });
-
-    if (!response.ok) {
-        console.warn('[Payment] Sync endpoint returned:', response.status);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
