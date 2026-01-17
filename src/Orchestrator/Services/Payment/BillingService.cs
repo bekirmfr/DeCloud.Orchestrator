@@ -1,8 +1,6 @@
-﻿using Orchestrator.Background;
-using Orchestrator.Interfaces.Blockchain;
-using Orchestrator.Models;
+﻿using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.Blockchain;
+using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Services.Payment;
 
@@ -11,32 +9,26 @@ namespace Orchestrator.Services.Payment;
 /// 
 /// Key principle: Only bill for VERIFIED runtime.
 /// If attestation is failing, billing is paused until attestation recovers.
-/// This prevents billing fraud where a node claims a VM is running but isn't
-/// providing the promised resources.
+/// 
+/// Integration: Uses SettlementService for all usage recording.
 /// </summary>
 public class BillingService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly IBlockchainService _blockchainService;
-    private readonly PaymentConfig _paymentConfig;
     private readonly ILogger<BillingService> _logger;
     private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
 
     public BillingService(
         IServiceProvider serviceProvider,
-        IBlockchainService blockchainService,
-        PaymentConfig paymentConfig,
         ILogger<BillingService> logger)
     {
         _serviceProvider = serviceProvider;
-        _blockchainService = blockchainService;
-        _paymentConfig = paymentConfig;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Attestation-Aware Billing Service started");
+        _logger.LogInformation("Attestation-Aware Billing Service started (5-minute cycle)");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -45,9 +37,9 @@ public class BillingService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var dataStore = scope.ServiceProvider.GetRequiredService<DataStore>();
                 var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
-                var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+                var settlementService = scope.ServiceProvider.GetRequiredService<ISettlementService>();
 
-                await ProcessBillingAsync(dataStore, attestationService, userService, stoppingToken);
+                await ProcessBillingAsync(dataStore, attestationService, settlementService, stoppingToken);
             }
             catch (Exception ex)
             {
@@ -63,13 +55,14 @@ public class BillingService : BackgroundService
     private async Task ProcessBillingAsync(
         DataStore dataStore,
         IAttestationService attestationService,
-        IUserService userService,
+        ISettlementService settlementService,
         CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var billedCount = 0;
         var skippedCount = 0;
         var insufficientFundsCount = 0;
+        var attestationFailedCount = 0;
 
         foreach (var vm in dataStore.VirtualMachines.Values.ToList())
         {
@@ -81,153 +74,117 @@ public class BillingService : BackgroundService
                 continue;
             }
 
-            // Skip system VMs (relay, etc.)
-            if (vm.VmType == VmType.Relay || string.IsNullOrEmpty(vm.OwnerId))
+            // Skip system VMs (relay, DHT, storage, etc.)
+            if (vm.Spec.VmType != VmType.General)
             {
                 continue;
             }
 
-            // =====================================================
-            // CHECK ATTESTATION STATUS BEFORE BILLING
-            // =====================================================
-            var livenessState = attestationService.GetLivenessState(vm.Id);
-
-            if (livenessState != null && livenessState.BillingPaused)
+            try
             {
-                _logger.LogDebug(
-                    "VM {VmId}: Billing SKIPPED - attestation failing ({Failures} consecutive failures). Reason: {Reason}",
-                    vm.Id, livenessState.ConsecutiveFailures, livenessState.PauseReason);
+                // ═══════════════════════════════════════════════════════════════
+                // ATTESTATION CHECK - Core security feature
+                // ═══════════════════════════════════════════════════════════════
 
-                // Track unverified runtime for reporting (using extension property)
-                vm.BillingInfo.UnverifiedRuntime += _billingInterval;
+                var attestationStatus = attestationService.GetLivenessState(vm.Id);
 
+                if (attestationStatus == null || attestationStatus.BillingPaused)
+                {
+                    _logger.LogWarning(
+                        "⚠️ Billing PAUSED for VM {VmId} - attestation failing. " +
+                        "Node may be compromised or VM not running as claimed.",
+                        vm.Id);
+
+                    attestationFailedCount++;
+
+                    // Don't bill for potentially fraudulent usage
+                    // VM will be marked for shutdown if attestation stays failed
+                    continue;
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // CALCULATE BILLING PERIOD
+                // ═══════════════════════════════════════════════════════════════
+
+                var lastBillingAt = vm.BillingInfo.LastBillingAt ?? vm.StartedAt.Value;
+                var billingPeriod = now - lastBillingAt;
+
+                // Skip if already billed recently (within 1 minute to avoid duplicates)
+                if (billingPeriod < TimeSpan.FromMinutes(1))
+                {
+                    continue;
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // CALCULATE COST
+                // ═══════════════════════════════════════════════════════════════
+
+                var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
+                var hours = (decimal)billingPeriod.TotalHours;
+                var cost = hours * hourlyRate;
+
+                // Round to 6 decimals (USDC precision)
+                cost = Math.Round(cost, 6);
+
+                if (cost == 0)
+                {
+                    // Skip zero-cost billing periods
+                    continue;
+                }
+
+                // ═══════════════════════════════════════════════════════════════
+                // RECORD USAGE VIA SETTLEMENT SERVICE
+                // ═══════════════════════════════════════════════════════════════
+
+                var success = await settlementService.RecordUsageAsync(
+                    userId: vm.OwnerId,
+                    vmId: vm.Id,
+                    nodeId: vm.NodeId,
+                    amount: cost,
+                    periodStart: lastBillingAt,
+                    periodEnd: now,
+                    attestationVerified: true);
+
+                if (success)
+                {
+                    // Update VM billing info
+                    vm.BillingInfo.LastBillingAt = now;
+                    vm.BillingInfo.TotalBilled += cost;
+                    await dataStore.SaveVmAsync(vm);
+
+                    billedCount++;
+
+                    _logger.LogDebug(
+                        "✓ Billed {Cost} USDC for VM {VmId} ({Hours:F2}h at {Rate}/h)",
+                        cost, vm.Id, hours, hourlyRate);
+                }
+                else
+                {
+                    // Insufficient balance
+                    insufficientFundsCount++;
+
+                    _logger.LogWarning(
+                        "⚠️ Insufficient balance for VM {VmId}, user {UserId}. " +
+                        "Cost: {Cost} USDC. VM will be stopped if balance not topped up.",
+                        vm.Id, vm.OwnerId, cost);
+
+                    // TODO: Mark VM for shutdown if balance stays insufficient for > 15 minutes
+                    // For now, just log - don't shut down immediately to avoid false positives
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error billing VM {VmId}", vm.Id);
                 skippedCount++;
-                continue;
             }
-
-            // =====================================================
-            // CALCULATE BILLING
-            // =====================================================
-            var lastBilling = vm.BillingInfo.LastBillingAt ?? vm.StartedAt.Value;
-            var billableDuration = now - lastBilling;
-            var billableMinutes = billableDuration.TotalMinutes;
-
-            if (billableMinutes < 1)
-            {
-                continue; // Less than a minute, skip
-            }
-
-            var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
-            var cost = (decimal)(billableMinutes / 60.0) * hourlyRate;
-
-            if (cost <= 0)
-            {
-                continue;
-            }
-
-            // =====================================================
-            // CHECK USER BALANCE
-            // =====================================================
-            if (!dataStore.Users.TryGetValue(vm.OwnerId, out var user))
-            {
-                _logger.LogWarning("VM {VmId}: Owner {OwnerId} not found", vm.Id, vm.OwnerId);
-                continue;
-            }
-
-            var balance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
-
-            if (balance < cost)
-            {
-                _logger.LogWarning(
-                    "VM {VmId}: Insufficient funds. Balance: {Balance} {Token}, Required: {Cost}",
-                    vm.Id, balance, "USDC", cost);
-
-                // Stop the VM due to insufficient funds
-                using var scope = _serviceProvider.CreateScope();
-                var vmService = scope.ServiceProvider.GetRequiredService<IVmService>();
-
-                await StopVmForInsufficientFundsAsync(vm, dataStore, vmService);
-                insufficientFundsCount++;
-                continue;
-            }
-
-            // =====================================================
-            // DEDUCT BALANCE AND RECORD
-            // =====================================================
-            balance -= cost;
-
-            vm.BillingInfo.LastBillingAt = now;
-            vm.BillingInfo.TotalBilled += cost;
-            vm.BillingInfo.TotalRuntime += billableDuration;
-            vm.BillingInfo.VerifiedRuntime += billableDuration;
-
-
-            // Calculate node payout (95% to node, 5% platform fee)
-            var platformBPS = _paymentConfig.PlatformFeePercent / 100; // TO-DO: Make this dynamic. Get from deployed web3 contract
-            var nodeBPS = 1 - platformBPS;
-
-            var nodePayout = cost * nodeBPS; 
-            var platformFee = cost * platformBPS;
-
-            // Track node earnings (using the EarningsTracker if available)
-            if (!string.IsNullOrEmpty(vm.NodeId) && dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
-            {
-                // Add to node's pending payout tracking
-                await TrackNodeEarnings(node.Id, nodePayout, dataStore);
-            }
-
-            await dataStore.SaveUserAsync(user);
-            await dataStore.SaveVmAsync(vm);
-
-            billedCount++;
-
-            _logger.LogDebug(
-                "VM {VmId}: Billed {Cost:F4} {Token} for {Minutes:F1} minutes (verified). " +
-                "User balance: {Balance}, Node payout: {NodePayout}",
-                vm.Id, cost, "USDC", billableMinutes,
-                balance, nodePayout);
         }
 
-        if (billedCount > 0 || skippedCount > 0 || insufficientFundsCount > 0)
+        if (billedCount > 0 || insufficientFundsCount > 0 || attestationFailedCount > 0)
         {
             _logger.LogInformation(
-                "Billing cycle complete: {Billed} billed, {Skipped} skipped (attestation), {Insufficient} stopped (no funds)",
-                billedCount, skippedCount, insufficientFundsCount);
+                "Billing cycle complete: Billed={Billed}, Insufficient={Insufficient}, " +
+                "AttestationFailed={AttestationFailed}, Skipped={Skipped}",
+                billedCount, insufficientFundsCount, attestationFailedCount, skippedCount);
         }
-    }
-
-    /// <summary>
-    /// Track node earnings for later payout
-    /// </summary>
-    private async Task TrackNodeEarnings(string nodeId, decimal amount, DataStore dataStore)
-    {
-        if (dataStore.Nodes.TryGetValue(nodeId, out var node))
-        {
-            node.PendingPayout += amount;
-            node.TotalEarned += amount;
-            await dataStore.SaveNodeAsync(node); // Persist immediately
-
-            _logger.LogInformation(
-                "Node {NodeId}: Earned {Amount:F4} USDC (Pending: {Pending:F4}, Lifetime: {Total:F4})",
-                nodeId, amount, node.PendingPayout, node.TotalEarned);
-        }
-    }
-
-    private async Task StopVmForInsufficientFundsAsync(
-    VirtualMachine vm,
-    DataStore dataStore,
-    IVmService vmService) // Inject this
-    {
-        vm.Status = VmStatus.Stopped;
-        vm.Labels["_stopped_reason"] = "Insufficient funds";
-        vm.Labels["_stopped_at"] = DateTime.UtcNow.ToString("o");
-        await dataStore.SaveVmAsync(vm);
-
-        // Send actual stop command to node
-        await vmService.PerformVmActionAsync(vm.Id, VmAction.Stop);
-
-        _logger.LogWarning(
-            "VM {VmId} stopped and shutdown command sent to node {NodeId} - insufficient funds",
-            vm.Id, vm.NodeId);
     }
 }

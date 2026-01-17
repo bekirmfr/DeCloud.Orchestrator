@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Orchestrator.Background;
+using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Services;
 using Orchestrator.Services.Payment;
@@ -122,15 +123,15 @@ public static class PaymentExtensions
         // SERVICE REGISTRATION
         // =====================================================
 
-        // User service for balance management
+        // Blockchain Service - handles ALL Web3 interactions
+        services.AddSingleton<IBlockchainService, BlockchainService>();
+
+        // Settlement Service - handles usage tracking and settlements
         services.AddSingleton<ISettlementService, SettlementService>();
 
         // =====================================================
         // BACKGROUND SERVICES (Order matters for dependency resolution)
         // =====================================================
-
-        // 1. Deposit Monitor - watches blockchain for incoming deposits
-        services.AddHostedService<DepositMonitorService>();
 
         // 2. Attestation-Aware Billing Service - bills users based on verified runtime
         //    NOTE: This integrates with IAttestationService to pause billing when attestation fails
