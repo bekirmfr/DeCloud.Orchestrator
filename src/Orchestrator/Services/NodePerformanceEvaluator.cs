@@ -3,7 +3,7 @@ using MongoDB.Bson.Serialization.Options;
 using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Evaluates node performance and determines tier eligibility

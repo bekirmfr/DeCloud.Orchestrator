@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using Orchestrator.Background;
+using Orchestrator.Services;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Services;
@@ -135,7 +135,7 @@ public static class PaymentExtensions
 
         // 2. Attestation-Aware Billing Service - bills users based on verified runtime
         //    NOTE: This integrates with IAttestationService to pause billing when attestation fails
-        services.AddHostedService<Background.BillingService>();
+        services.AddHostedService<Services.BillingService>();
 
         // 3. Settlement Service - batches payments to nodes (commented out for now)
         // services.AddHostedService<SettlementService>();

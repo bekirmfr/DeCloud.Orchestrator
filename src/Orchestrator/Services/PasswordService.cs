@@ -1,6 +1,6 @@
 ﻿using System.Security.Cryptography;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 public interface IPasswordService
 {

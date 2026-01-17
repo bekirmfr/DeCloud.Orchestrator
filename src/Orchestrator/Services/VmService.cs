@@ -9,7 +9,7 @@ using Orchestrator.Services.VmScheduling;
 using Orchestrator.Services;
 using Orchestrator.Models.Payment;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 public interface IVmService
 {

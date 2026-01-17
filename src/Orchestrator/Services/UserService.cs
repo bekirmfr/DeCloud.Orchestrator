@@ -9,7 +9,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// User management service interface

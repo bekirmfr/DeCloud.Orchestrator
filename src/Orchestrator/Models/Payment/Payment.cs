@@ -3,33 +3,6 @@
 
 namespace Orchestrator.Models;
 
-/// <summary>
-/// Tracks a user deposit from blockchain
-/// </summary>
-public class Deposit
-{
-    public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string UserId { get; set; } = string.Empty;
-    public string WalletAddress { get; set; } = string.Empty;
-    
-    // Blockchain data
-    public string TxHash { get; set; } = string.Empty;
-    public string ChainId { get; set; } = "80002"; // Polygon Amoy
-    public long BlockNumber { get; set; }
-    public int Confirmations { get; set; }
-    
-    // Amount
-    public decimal Amount { get; set; }
-    public string TokenSymbol { get; set; } = "USDC";
-    
-    // Status
-    public DepositStatus Status { get; set; } = DepositStatus.Pending;
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? ConfirmedAt { get; set; }
-    public string? ErrorMessage { get; set; }
-    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-}
-
 public enum DepositStatus
 {
     Pending,      // Detected, waiting for confirmations

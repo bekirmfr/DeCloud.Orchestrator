@@ -1,7 +1,7 @@
 ﻿// src/Orchestrator/Services/Settlement/SettlementService.cs
 // Handles all settlement and usage tracking operations
 
-using Orchestrator.Background;
+using Orchestrator.Services;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;

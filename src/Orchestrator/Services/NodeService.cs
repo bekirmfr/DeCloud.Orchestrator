@@ -10,7 +10,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 public interface INodeService
 {

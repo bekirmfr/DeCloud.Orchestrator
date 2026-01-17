@@ -1,7 +1,7 @@
 ﻿using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Calculates node capacity with tier-specific overcommit ratios

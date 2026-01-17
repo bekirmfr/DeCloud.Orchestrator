@@ -1,7 +1,7 @@
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 public interface IEventService
 {

@@ -6,7 +6,7 @@ using Nethereum.Util;
 using NSec.Cryptography;
 using Orchestrator.Models;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Service interface for deriving SSH keys from wallet signatures

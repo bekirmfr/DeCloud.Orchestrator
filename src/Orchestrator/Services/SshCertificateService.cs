@@ -1,6 +1,6 @@
 using Orchestrator.Models;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Service interface for SSH certificate management

@@ -4,7 +4,7 @@ using Orchestrator.Persistence;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Service for managing central ingress routes with automatic subdomain assignment.

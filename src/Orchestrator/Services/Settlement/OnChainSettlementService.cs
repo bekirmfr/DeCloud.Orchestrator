@@ -6,7 +6,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Services.Settlement;
 
-namespace Orchestrator.Background;
+namespace Orchestrator.Services;
 
 /// <summary>
 /// Background service that executes pending settlements on the blockchain
