@@ -92,14 +92,7 @@ builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
 builder.Services.AddSingleton<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
-builder.Services.AddScoped<IUserService>(sp =>
-{
-    var dataStore = sp.GetRequiredService<DataStore>();
-    var logger = sp.GetRequiredService<ILogger<UserService>>();
-    var config = sp.GetRequiredService<IConfiguration>();
-    var env = sp.GetRequiredService<IWebHostEnvironment>();
-    return new UserService(dataStore, logger, config, env);
-});
+builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();

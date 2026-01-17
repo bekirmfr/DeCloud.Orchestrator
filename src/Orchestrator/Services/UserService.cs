@@ -1,15 +1,20 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Nethereum.RPC.Eth.DTOs;
 using Nethereum.Signer;
 using Nethereum.Util;
-using Orchestrator.Persistence;
+using Nethereum.Web3;
+using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
+using Orchestrator.Services.Blockchain;
+using Orchestrator.Services.Payment;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Orchestrator.Background;
 
@@ -45,8 +50,10 @@ public interface IUserService
     Task UpdateQuotaUsageAsync(string userId, int cpuDelta, long memoryDelta, long storageDelta);
 
     // Balance Management
-    Task<bool> DeductBalanceAsync(string userId, decimal amount);
-    Task<bool> AddBalanceAsync(string userId, decimal amount);
+    Task<decimal> GetUserBalanceAsync(string userId);
+    Task<BalanceInfo> GetUserBalanceInfoAsync(string userId);
+    Task<bool> HasSufficientBalanceAsync(string userId, decimal requiredAmount);
+
 }
 
 /// <summary>
@@ -55,6 +62,7 @@ public interface IUserService
 public class UserService : IUserService
 {
     private readonly DataStore _dataStore;
+    private readonly IBlockchainService _blockchainService;
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IWebHostEnvironment _environment;
@@ -72,12 +80,14 @@ public class UserService : IUserService
     /// Constructor matching Program.cs registration (4 parameters)
     /// </summary>
     public UserService(
-        DataStore dataStore, 
+        DataStore dataStore,
+        IBlockchainService blockchainService,
         ILogger<UserService> logger, 
         IConfiguration configuration,
         IWebHostEnvironment environment)
     {
         _dataStore = dataStore;
+        _blockchainService = blockchainService;
         _logger = logger;
         _configuration = configuration;
         _environment = environment;
@@ -627,34 +637,93 @@ public class UserService : IUserService
         await _dataStore.SaveUserAsync(user);
     }
 
-    // =====================================================
-    // BALANCE MANAGEMENT
-    // =====================================================
-
-    public async Task<bool> DeductBalanceAsync(string userId, decimal amount)
+    /// <summary>
+    /// Get complete balance information for user
+    /// Orchestrates: BlockchainService for on-chain data + DataStore for unpaid usage
+    /// </summary>
+    public async Task<BalanceInfo> GetUserBalanceInfoAsync(string userId)
     {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
+        var user = await GetUserAsync(userId);
+        if (user == null)
+        {
+            throw new Exception($"User {userId} not found");
+        }
 
-        if (user.CryptoBalance < amount)
-            return false;
+        if (_blockchainService == null)
+        {
+            _logger.LogWarning("Required services not available, returning zero balance");
+            return new BalanceInfo
+            {
+                ConfirmedBalance = 0,
+                PendingDeposits = 0,
+                UnpaidUsage = 0,
+                AvailableBalance = 0,
+                TotalBalance = 0,
+                TokenSymbol = "USDC"
+            };
+        }
 
-        user.CryptoBalance -= amount;
-        await _dataStore.SaveUserAsync(user);
+        // ✅ CONFIRMED BALANCE: From escrow contract (BlockchainService)
+        var confirmedBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
 
-        return true;
+        // ✅ PENDING DEPOSITS: From recent blockchain events (BlockchainService)
+        var pendingDeposits = await _blockchainService.GetPendingDepositsAsync(
+            user.WalletAddress);
+
+        var pendingAmount = pendingDeposits.Sum(d => d.Amount);
+
+        // ✅ UNPAID USAGE: From database (direct query - no service dependency)
+        var unpaidUsage = _dataStore.UsageRecords.Values
+            .Where(u => u.UserId == userId && !u.SettledOnChain)
+            .Sum(u => u.TotalCost);
+
+        // Calculate final balances
+        var availableBalance = confirmedBalance - unpaidUsage;
+        var totalBalance = confirmedBalance + pendingAmount - unpaidUsage;
+
+        _logger.LogDebug(
+            "Balance for {UserId}: Confirmed={Confirmed}, Pending={Pending}, Unpaid={Unpaid}, Available={Available}",
+            userId, confirmedBalance, pendingAmount, unpaidUsage, availableBalance);
+
+        return new BalanceInfo
+        {
+            ConfirmedBalance = confirmedBalance,
+            PendingDeposits = pendingAmount,
+            UnpaidUsage = unpaidUsage,
+            AvailableBalance = Math.Max(0, availableBalance), // Can't be negative
+            TotalBalance = totalBalance,
+            TokenSymbol = "USDC",
+            PendingDepositsList = pendingDeposits
+        };
     }
 
-    public async Task<bool> AddBalanceAsync(string userId, decimal amount)
+    /// <summary>
+    /// Get available balance (legacy method for compatibility)
+    /// </summary>
+    public async Task<decimal> GetUserBalanceAsync(string userId)
     {
-        if (!_dataStore.Users.TryGetValue(userId, out var user))
-            return false;
-
-        user.CryptoBalance += amount;
-        await _dataStore.SaveUserAsync(user);
-
-        return true;
+        var balanceInfo = await GetUserBalanceInfoAsync(userId);
+        return balanceInfo.AvailableBalance;
     }
+
+    /// <summary>
+    /// Check if user has sufficient available balance
+    /// Inline calculation - no dependency on SettlementService
+    /// </summary>
+    public async Task<bool> HasSufficientBalanceAsync(string userId, decimal requiredAmount)
+    {
+        try
+        {
+            var balanceInfo = await GetUserBalanceInfoAsync(userId);
+            return balanceInfo.AvailableBalance >= requiredAmount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to check balance for user {UserId}", userId);
+            return false;
+        }
+    }
+
 }
 
 /// <summary>

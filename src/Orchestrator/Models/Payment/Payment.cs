@@ -200,3 +200,109 @@ public enum SettlementStatus
     Confirmed,    // Tx confirmed
     Failed        // Tx failed
 }
+
+/// <summary>
+/// Temporary tracking for deposits with insufficient confirmations
+/// Once confirmed, this record is DELETED and balance is read from blockchain
+/// </summary>
+public class PendingDeposit
+{
+    /// <summary>
+    /// Transaction hash - primary key
+    /// </summary>
+    public string TxHash { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Wallet address that made the deposit
+    /// Note: Stored lowercase for case-insensitive matching
+    /// </summary>
+    public string WalletAddress { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Deposit amount in USDC
+    /// </summary>
+    public decimal Amount { get; set; }
+
+    /// <summary>
+    /// Block number where deposit occurred
+    /// </summary>
+    public long BlockNumber { get; set; }
+
+    /// <summary>
+    /// Current number of confirmations
+    /// </summary>
+    public int Confirmations { get; set; }
+
+    /// <summary>
+    /// Chain ID (80002 for Polygon Amoy)
+    /// </summary>
+    public string ChainId { get; set; } = "80002";
+
+    /// <summary>
+    /// When this pending deposit was first detected
+    /// </summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Last update timestamp
+    /// </summary>
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Complete balance information for a user
+/// </summary>
+public class BalanceInfo
+{
+    /// <summary>
+    /// Confirmed balance from blockchain (≥20 confirmations)
+    /// Source of truth: escrow.userBalances(wallet)
+    /// </summary>
+    public decimal ConfirmedBalance { get; set; }
+
+    /// <summary>
+    /// Deposits awaiting confirmation (< 20 blocks)
+    /// Temporary state, will be deleted once confirmed
+    /// </summary>
+    public decimal PendingDeposits { get; set; }
+
+    /// <summary>
+    /// Usage charges not yet settled on-chain
+    /// These will be deducted from balance when settled
+    /// </summary>
+    public decimal UnpaidUsage { get; set; }
+
+    /// <summary>
+    /// Available balance for VM usage (confirmed - unpaid)
+    /// This is what user can actually spend right now
+    /// </summary>
+    public decimal AvailableBalance { get; set; }
+
+    /// <summary>
+    /// Total balance including pending deposits
+    /// = Confirmed + Pending - Unpaid
+    /// </summary>
+    public decimal TotalBalance { get; set; }
+
+    /// <summary>
+    /// Token symbol (USDC)
+    /// </summary>
+    public string TokenSymbol { get; set; } = "USDC";
+
+    /// <summary>
+    /// List of pending deposits (for UI display)
+    /// </summary>
+    public List<PendingDepositInfo> PendingDepositsList { get; set; } = new();
+}
+
+/// <summary>
+/// Pending deposit info for UI display
+/// </summary>
+public class PendingDepositInfo
+{
+    public string TxHash { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public int Confirmations { get; set; }
+    public int RequiredConfirmations { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

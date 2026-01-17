@@ -1,6 +1,3 @@
-// src/Orchestrator/Controllers/PaymentController.cs
-// Payment API endpoints
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Background;
@@ -49,111 +46,87 @@ public class PaymentController : ControllerBase
             EscrowContractAddress = _paymentConfig.EscrowContractAddress,
             UsdcTokenAddress = _paymentConfig.UsdcTokenAddress,
             ChainId = _paymentConfig.ChainId,
-            ChainName = "Polygon Amoy Testnet",
+            ChainName = GetChainName(_paymentConfig.ChainId),
+            ExplorerUrl = GetExplorerUrl(_paymentConfig.ChainId),
             MinDeposit = 1.0m,
             RequiredConfirmations = _paymentConfig.RequiredConfirmations
         };
-        
+
         return Ok(ApiResponse<DepositInfoResponse>.Ok(response));
     }
 
     /// <summary>
-    /// Get user's balance and payment history
+    /// Get user's balance - reads from blockchain + pending deposits
     /// </summary>
     [HttpGet("balance")]
     public async Task<ActionResult<ApiResponse<BalanceResponse>>> GetBalance()
     {
-        var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
-        
-        if (user == null)
-            return NotFound(ApiResponse<BalanceResponse>.Fail("NOT_FOUND", "User not found"));
-        
-        // Get recent deposits
-        var deposits = _dataStore.Deposits.Values
-            .Where(d => d.UserId == userId)
-            .OrderByDescending(d => d.CreatedAt)
-            .Take(10)
-            .ToList();
-        
-        // Get recent usage
-        var usage = _dataStore.UsageRecords.Values
-            .Where(u => u.UserId == userId)
-            .OrderByDescending(u => u.CreatedAt)
-            .Take(10)
-            .ToList();
-        
-        var response = new BalanceResponse
+        try
         {
-            Balance = user.CryptoBalance,
-            TokenSymbol = user.BalanceToken,
-            RecentDeposits = deposits.Select(d => new DepositSummary
+            var userId = GetUserId();
+
+            // ✅ Read balance from blockchain + pending deposits
+            var balanceInfo = await _userService.GetUserBalanceInfoAsync(userId);
+
+            // Get recent usage for display
+            var recentUsage = _dataStore.UsageRecords.Values
+                .Where(u => u.UserId == userId)
+                .OrderByDescending(u => u.CreatedAt)
+                .Take(10)
+                .Select(u => new UsageSummary
+                {
+                    VmId = u.VmId,
+                    Cost = u.TotalCost,
+                    Duration = u.Duration,
+                    CreatedAt = u.CreatedAt
+                })
+                .ToList();
+
+            var response = new BalanceResponse
             {
-                TxHash = d.TxHash,
-                Amount = d.Amount,
-                Status = d.Status.ToString(),
-                Confirmations = d.Confirmations,
-                CreatedAt = d.CreatedAt,
-                ConfirmedAt = d.ConfirmedAt
-            }).ToList(),
-            RecentUsage = usage.Select(u => new UsageSummary
-            {
-                VmId = u.VmId,
-                Cost = u.TotalCost,
-                Duration = u.Duration,
-                CreatedAt = u.CreatedAt
-            }).ToList()
-        };
-        
-        return Ok(ApiResponse<BalanceResponse>.Ok(response));
+                Balance = balanceInfo.AvailableBalance,
+                ConfirmedBalance = balanceInfo.ConfirmedBalance,
+                PendingDeposits = balanceInfo.PendingDeposits,
+                UnpaidUsage = balanceInfo.UnpaidUsage,
+                TotalBalance = balanceInfo.TotalBalance,
+                TokenSymbol = balanceInfo.TokenSymbol,
+                PendingDepositsList = balanceInfo.PendingDepositsList.Select(p => new PendingDepositSummary
+                {
+                    TxHash = p.TxHash,
+                    Amount = p.Amount,
+                    Confirmations = p.Confirmations,
+                    RequiredConfirmations = p.RequiredConfirmations,
+                    CreatedAt = p.CreatedAt
+                }).ToList(),
+                RecentUsage = recentUsage
+            };
+
+            return Ok(ApiResponse<BalanceResponse>.Ok(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get balance for user {UserId}", GetUserId());
+            return StatusCode(500, ApiResponse<BalanceResponse>.Fail("BALANCE_FETCH_ERROR","Failed to fetch balance"));
+        }
     }
 
     /// <summary>
-    /// Get user's deposit history
-    /// </summary>
-    [HttpGet("deposits")]
-    public ActionResult<ApiResponse<List<DepositSummary>>> GetDeposits(
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20)
-    {
-        var userId = GetUserId();
-        
-        var deposits = _dataStore.Deposits.Values
-            .Where(d => d.UserId == userId)
-            .OrderByDescending(d => d.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(d => new DepositSummary
-            {
-                TxHash = d.TxHash,
-                Amount = d.Amount,
-                Status = d.Status.ToString(),
-                Confirmations = d.Confirmations,
-                CreatedAt = d.CreatedAt,
-                ConfirmedAt = d.ConfirmedAt
-            })
-            .ToList();
-        
-        return Ok(ApiResponse<List<DepositSummary>>.Ok(deposits));
-    }
-
-    /// <summary>
-    /// Get usage history for user's VMs
+    /// Get usage history
     /// </summary>
     [HttpGet("usage")]
-    public ActionResult<ApiResponse<List<UsageSummary>>> GetUsage(
+    public ActionResult<ApiResponse<List<UsageSummary>>> GetUsageHistory(
         [FromQuery] string? vmId = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
         var userId = GetUserId();
-        
+
         var query = _dataStore.UsageRecords.Values
             .Where(u => u.UserId == userId);
-        
+
         if (!string.IsNullOrEmpty(vmId))
             query = query.Where(u => u.VmId == vmId);
-        
+
         var usage = query
             .OrderByDescending(u => u.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -166,9 +139,27 @@ public class PaymentController : ControllerBase
                 CreatedAt = u.CreatedAt
             })
             .ToList();
-        
+
         return Ok(ApiResponse<List<UsageSummary>>.Ok(usage));
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // HELPER METHODS
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static string GetChainName(string chainId) => chainId switch
+    {
+        "80002" => "Polygon Amoy Testnet",
+        "137" => "Polygon Mainnet",
+        _ => $"Chain {chainId}"
+    };
+
+    private static string GetExplorerUrl(string chainId) => chainId switch
+    {
+        "80002" => "https://amoy.polygonscan.com",
+        "137" => "https://polygonscan.com",
+        _ => "https://polygonscan.com"
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -181,26 +172,55 @@ public record DepositInfoResponse
     public string UsdcTokenAddress { get; init; } = string.Empty;
     public string ChainId { get; init; } = string.Empty;
     public string ChainName { get; init; } = string.Empty;
+    public string ExplorerUrl { get; init; } = string.Empty;
     public decimal MinDeposit { get; init; }
     public int RequiredConfirmations { get; init; }
 }
 
 public record BalanceResponse
 {
+    /// <summary>
+    /// Available balance for VM usage (confirmed - unpaid usage)
+    /// </summary>
     public decimal Balance { get; init; }
+
+    /// <summary>
+    /// Confirmed balance from blockchain
+    /// </summary>
+    public decimal ConfirmedBalance { get; init; }
+
+    /// <summary>
+    /// Deposits awaiting confirmation
+    /// </summary>
+    public decimal PendingDeposits { get; init; }
+
+    /// <summary>
+    /// Usage not yet settled on-chain
+    /// </summary>
+    public decimal UnpaidUsage { get; init; }
+
+    /// <summary>
+    /// Total balance including pending
+    /// </summary>
+    public decimal TotalBalance { get; init; }
+
     public string TokenSymbol { get; init; } = "USDC";
-    public List<DepositSummary> RecentDeposits { get; init; } = new();
+
+    /// <summary>
+    /// List of pending deposits
+    /// </summary>
+    public List<PendingDepositSummary> PendingDepositsList { get; init; } = new();
+
     public List<UsageSummary> RecentUsage { get; init; } = new();
 }
 
-public record DepositSummary
+public record PendingDepositSummary
 {
     public string TxHash { get; init; } = string.Empty;
     public decimal Amount { get; init; }
-    public string Status { get; init; } = string.Empty;
     public int Confirmations { get; init; }
+    public int RequiredConfirmations { get; init; }
     public DateTime CreatedAt { get; init; }
-    public DateTime? ConfirmedAt { get; init; }
 }
 
 public record UsageSummary

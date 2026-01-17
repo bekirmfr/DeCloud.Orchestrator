@@ -30,7 +30,7 @@ public class DataStore
     // Add tracking dictionary
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
-    public ConcurrentDictionary<string, Deposit> Deposits { get; } = new();
+    public ConcurrentDictionary<string, PendingDeposit> PendingDeposits { get; } = new();
     public ConcurrentDictionary<string, UsageRecord> UsageRecords { get; } = new();
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
@@ -57,8 +57,8 @@ public class DataStore
         _database?.GetCollection<OrchestratorEvent>("events");
     private IMongoCollection<Attestation>? AttestationsCollection =>
         _database?.GetCollection<Attestation>("attestations");
-    private IMongoCollection<Deposit>? DepositsCollection =>
-        _database?.GetCollection<Deposit>("deposits");
+    private IMongoCollection<PendingDeposit>? PendingDepositsCollection =>
+        _database?.GetCollection<PendingDeposit>("pendingDeposits");
     private IMongoCollection<UsageRecord>? UsageRecordsCollection =>
         _database?.GetCollection<UsageRecord>("usageRecords");
 
@@ -183,18 +183,16 @@ public class DataStore
                     Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
                     new CreateIndexOptions { Name = "idx_success" })
             });
-            // Deposits indexes
-            DepositsCollection.Indexes.CreateMany(new[] {
-                new CreateIndexModel<Deposit>(
-                    Builders<Deposit>.IndexKeys
-                        .Ascending(r => r.UserId)
-                        .Descending(r => r.Timestamp),
-                    new CreateIndexOptions { Name = "idx_user_timestamp" }),
-                new CreateIndexModel<Deposit>(
-                    Builders<Deposit>.IndexKeys.Ascending(r => r.Amount),
-                    new CreateIndexOptions { Name = "idx_amount" }),
+            // Pending deposit indexes
+            PendingDepositsCollection.Indexes.CreateMany(new[] {
+                new CreateIndexModel<PendingDeposit>(
+                    Builders<PendingDeposit>.IndexKeys
+                    .Ascending(d => d.WalletAddress),
+                    new CreateIndexOptions { Name = "idx_walletAddress" }),
+                new CreateIndexModel<PendingDeposit>(
+                    Builders<PendingDeposit>.IndexKeys.Ascending(d => d.TxHash),
+                    new CreateIndexOptions { Name = "idx_txHash" }),
             });
-
             //UsageRecords indexes
             UsageRecordsCollection!.Indexes.CreateMany(new[] {
                 new CreateIndexModel<UsageRecord>(
@@ -268,6 +266,9 @@ public class DataStore
             {
                 PricingTiers.TryAdd(tier.Id, tier);
             }
+
+            // In LoadMongoDBStateAsync() method, add:
+            await LoadPendingDepositsAsync();
 
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
             _logger.LogInformation(
@@ -426,24 +427,45 @@ public class DataStore
     // ═══════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Save an attestation record for audit trail
+    /// Save pending deposit to database
     /// </summary>
-    public async Task SaveDepositAsync(Deposit record)
+    public async Task SavePendingDepositAsync(PendingDeposit deposit)
     {
+        PendingDeposits[deposit.TxHash] = deposit;
+
         if (_useMongoDB)
         {
-            await RetryMongoOperationAsync(async () =>
-            {
-                await DepositsCollection!.InsertOneAsync(record);
-            }, $"persist deposit record {record.Id}", maxRetries: 2);
+            await PendingDepositsCollection!.ReplaceOneAsync(
+                d => d.TxHash == deposit.TxHash,
+                deposit,
+                new MongoDB.Driver.ReplaceOptions { IsUpsert = true });
         }
     }
 
-    public Task<Deposit?> GetDepositByTxHashAsync(string txHash)
+    /// <summary>
+    /// Load pending deposits from database
+    /// </summary>
+    private async Task LoadPendingDepositsAsync()
     {
-        var deposit = Deposits.Values
-            .FirstOrDefault(d => d.TxHash.Equals(txHash, StringComparison.OrdinalIgnoreCase));
-        return Task.FromResult(deposit);
+        if (_useMongoDB)
+        {
+            var deposits = await PendingDepositsCollection!.Find(_ => true).ToListAsync();
+            foreach (var deposit in deposits)
+            {
+                PendingDeposits[deposit.TxHash] = deposit;
+            }
+            _logger.LogInformation("Loaded {Count} pending deposits from MongoDB", deposits.Count);
+        }
+        // JSON file loading handled in existing LoadStateAsync
+    }
+
+    public async Task DeletePendingDepositAsync(string txHash)
+    {
+        PendingDeposits.TryRemove(txHash, out _);
+        if (_useMongoDB)
+        {
+            await PendingDepositsCollection!.DeleteOneAsync(d => d.TxHash == txHash);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -490,6 +512,17 @@ public class DataStore
             .SortByDescending(r => r.Timestamp)
             .Limit(limit)
             .ToListAsync();
+    }
+
+    public async Task SaveUsageRecordAsync( UsageRecord record)
+    {
+        if (_useMongoDB)
+        {
+            await RetryMongoOperationAsync(async () =>
+            {
+                await UsageRecordsCollection!.InsertOneAsync(record);
+            }, $"persist usage record {record.Id}", maxRetries: 2);
+        }
     }
 
     /// <summary>
