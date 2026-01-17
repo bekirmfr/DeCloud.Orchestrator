@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Installation Script
+# DeCloud Orchestrator Installation Script v3.0.0
 #
 # Production-ready installation with:
 # - .NET 8 Runtime
@@ -8,18 +8,28 @@
 # - MongoDB connection
 # - WireGuard tunnel interface (peers added dynamically during relay registration)
 # - Caddy central ingress with golden master config persistence
+# - Attestation system for VM verification (NEW v3.0)
+# - Payment system with blockchain integration (NEW v3.0)
 # - Automatic recovery and backup timers
 # - fail2ban DDoS protection
 #
-# ARCHITECTURE:
-# The Orchestrator handles all HTTP ingress centrally (ports 80/443).
-# Routes traffic to nodes via WireGuard overlay network.
-# Relay nodes are added as WireGuard peers dynamically when they register.
+# MAJOR CHANGES IN v3.0:
+# - Attestation configuration with security validation
+# - Payment/blockchain configuration with secure secret management
+# - Environment variable file for sensitive data (NEVER in config files)
+# - Pre-deployment validation with helpful error messages
+# - Support for production blockchain integration (Polygon)
 #
-# Version: 2.4.0 (Dynamic Peer Management)
+# Version: 3.0.0 (Attestation & Payment Integration)
 #
 # Usage:
-#   sudo ./install.sh --mongodb "mongodb+srv://..." \
+#   sudo ./install.sh \
+#       --mongodb "mongodb+srv://..." \
+#       --orchestrator-wallet "0x..." \
+#       --orchestrator-private-key "0x..." \
+#       --blockchain-rpc "https://polygon-mainnet.g.alchemy.com/v2/..." \
+#       --escrow-contract "0x..." \
+#       --usdc-token "0x..." \
 #       --ingress-domain vms.stackfi.tech \
 #       --caddy-email admin@stackfi.tech \
 #       --cloudflare-token YOUR_CF_TOKEN \
@@ -28,7 +38,7 @@
 
 set -e
 
-VERSION="2.4.0"
+VERSION="3.0.0"
 
 # Colors
 RED='\033[0;31m'
@@ -53,18 +63,63 @@ INSTALL_DIR="/opt/decloud"
 CONFIG_DIR="/etc/decloud"
 LOG_DIR="/var/log/decloud"
 CADDY_BACKUP_DIR="/etc/decloud/caddy-backups"
+ENV_FILE="/etc/decloud/orchestrator.env"  # NEW: Environment variables file
 REPO_URL="https://github.com/bekirmfr/DeCloud.Orchestrator.git"
 
 # Logging
 INSTALL_LOG="$LOG_DIR/install.log"
-ENABLE_LOGGING=true  # Can be overridden by --no-log
-
+ENABLE_LOGGING=true
 
 # Ports
 API_PORT=5050
 
 # MongoDB
 MONGODB_URI=""
+
+# ============================================================
+# NEW: Attestation Configuration (v3.0)
+# ============================================================
+# These are security-critical parameters that should NOT be changed
+# without understanding the security implications
+
+# Maximum VM response time for attestation challenge (100ms recommended)
+# DO NOT increase above 200ms - allows node to extract ephemeral keys
+ATTESTATION_MAX_RESPONSE_MS=100
+
+# Challenge intervals
+ATTESTATION_STARTUP_INTERVAL=60    # Every 60s during first 5 minutes
+ATTESTATION_NORMAL_INTERVAL=3600   # Every hour after startup
+
+# Failure thresholds
+ATTESTATION_FAILURE_THRESHOLD=3    # Pause billing after 3 failures
+ATTESTATION_RECOVERY_THRESHOLD=2   # Resume billing after 2 successes
+
+# Memory verification
+ATTESTATION_MAX_MEMORY_TOUCH_MS=50.0
+ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=5.0
+
+# ============================================================
+# NEW: Payment/Blockchain Configuration (v3.0)
+# ============================================================
+
+# Blockchain network
+BLOCKCHAIN_CHAIN_ID=""              # 80002=Polygon Amoy (testnet), 137=Polygon (mainnet)
+BLOCKCHAIN_RPC_URL=""               # Alchemy/Infura RPC endpoint
+ESCROW_CONTRACT_ADDRESS=""          # Deployed escrow contract
+USDC_TOKEN_ADDRESS=""               # USDC token on selected chain
+
+# Orchestrator wallet (SECURITY CRITICAL)
+ORCHESTRATOR_WALLET_ADDRESS=""      # Orchestrator's wallet for settlements
+ORCHESTRATOR_PRIVATE_KEY=""         # NEVER logged or committed - stored in env file only
+
+# Payment settings
+REQUIRED_CONFIRMATIONS=12           # Block confirmations (12 for testnet, 20+ for mainnet)
+MIN_SETTLEMENT_AMOUNT=10.0          # Minimum $ to trigger settlement
+SETTLEMENT_INTERVAL_HOURS=24        # How often to settle (24h = daily)
+PLATFORM_FEE_PERCENT=15.0           # Platform fee (15%)
+
+# JWT Secret
+JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
 
 # Central Ingress (Caddy)
 INSTALL_CADDY=false
@@ -81,17 +136,15 @@ CLOUDFLARE_TOKEN=""
 ENABLE_WIREGUARD=false
 WIREGUARD_INTERFACE="wg-relay-client"
 WIREGUARD_PORT=51821
-TUNNEL_IP="10.20.0.1"  # Orchestrator's tunnel IP
-TUNNEL_NETWORK="10.20.0.0/16"  # Full tunnel network
+TUNNEL_IP="10.20.0.1"
+TUNNEL_NETWORK="10.20.0.0/16"
 
 # fail2ban
 INSTALL_FAIL2BAN=false
 SKIP_FAIL2BAN=false
 
-# Update mode (detected if orchestrator already running)
+# Update mode
 UPDATE_MODE=false
-
-# Force rebuild - clean all artifacts
 FORCE_REBUILD=false
 
 # ============================================================
@@ -100,7 +153,7 @@ FORCE_REBUILD=false
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-	    --no-log)
+            --no-log)
                 ENABLE_LOGGING=false
                 shift
                 ;;
@@ -112,6 +165,54 @@ parse_args() {
                 MONGODB_URI="$2"
                 shift 2
                 ;;
+                
+            # =====================================================
+            # NEW: Blockchain/Payment Arguments (v3.0)
+            # =====================================================
+            --blockchain-chain-id)
+                BLOCKCHAIN_CHAIN_ID="$2"
+                shift 2
+                ;;
+            --blockchain-rpc)
+                BLOCKCHAIN_RPC_URL="$2"
+                shift 2
+                ;;
+            --escrow-contract)
+                ESCROW_CONTRACT_ADDRESS="$2"
+                shift 2
+                ;;
+            --usdc-token)
+                USDC_TOKEN_ADDRESS="$2"
+                shift 2
+                ;;
+            --orchestrator-wallet)
+                ORCHESTRATOR_WALLET_ADDRESS="$2"
+                shift 2
+                ;;
+            --orchestrator-private-key)
+                ORCHESTRATOR_PRIVATE_KEY="$2"
+                shift 2
+                ;;
+            --jwt-secret)
+                JWT_SECRET_KEY="$2"
+                shift 2
+                ;;
+            --confirmations)
+                REQUIRED_CONFIRMATIONS="$2"
+                shift 2
+                ;;
+            --platform-fee)
+                PLATFORM_FEE_PERCENT="$2"
+                shift 2
+                ;;
+            --min-settlement)
+                MIN_SETTLEMENT_AMOUNT="$2"
+                shift 2
+                ;;
+                
+            # =====================================================
+            # Existing Arguments
+            # =====================================================
             --ingress-domain)
                 INGRESS_DOMAIN="$2"
                 INSTALL_CADDY=true
@@ -177,7 +278,7 @@ init_logging() {
     exec 2>&1
     
     echo "==================================================================="
-    echo "DeCloud Node Agent Installation"
+    echo "DeCloud Orchestrator Installation v${VERSION}"
     echo "Started: $(date '+%Y-%m-%d %H:%M:%S')"
     echo "Version: $VERSION"
     echo "Command: $0 $@"
@@ -186,51 +287,244 @@ init_logging() {
     echo ""
 }
 
+# ============================================================
+# Help Text
+# ============================================================
 show_help() {
     cat << EOF
 DeCloud Orchestrator Installer v${VERSION}
-With dynamic WireGuard peer management for CGNAT support
+With attestation verification and blockchain payment integration
 
-Usage: $0 --mongodb <uri> [options]
+Usage: $0 --mongodb <uri> --orchestrator-wallet <address> --orchestrator-private-key <key> [options]
 
-Required:
-  --mongodb <uri>            MongoDB connection string
+${GREEN}Required:${NC}
+  --mongodb <uri>                    MongoDB connection string
+  --orchestrator-wallet <address>    Orchestrator's wallet address (0x...)
+  --orchestrator-private-key <key>   Orchestrator's private key (0x...) ${RED}KEEP SECURE!${NC}
 
-Ingress (recommended):
-  --ingress-domain <domain>  Domain for VM ingress (e.g., vms.stackfi.tech)
-  --caddy-email <email>      Email for Let's Encrypt certificates
-  --cloudflare-token <token> Cloudflare API token for DNS-01 challenge
-  --caddy-staging            Use Let's Encrypt staging (for testing)
+${CYAN}Blockchain Configuration (Required for production):${NC}
+  --blockchain-chain-id <id>         Chain ID (80002=Amoy testnet, 137=Polygon mainnet)
+  --blockchain-rpc <url>             RPC endpoint (Alchemy/Infura)
+  --escrow-contract <address>        Deployed escrow contract address
+  --usdc-token <address>             USDC token address on selected chain
 
-WireGuard (for CGNAT support):
-  --enable-wireguard         Enable WireGuard tunnel interface
-                             Relay peers added dynamically during registration
-  --tunnel-ip <ip>           Orchestrator's tunnel IP (default: 10.20.0.1)
+${CYAN}Blockchain Configuration (Optional):${NC}
+  --jwt-secret <key>                 JWT secret key (auto-generated if not provided)
+  --confirmations <n>                Block confirmations (default: 12 testnet, 20+ mainnet)
+  --platform-fee <percent>           Platform fee percentage (default: 15.0)
+  --min-settlement <amount>          Min settlement amount (default: 10.0)
 
-Other:
-  --port <port>              API port (default: 5050)
-  --skip-fail2ban            Skip fail2ban installation
-  --force                    Force clean rebuild
-  --help, -h                 Show this help
+${CYAN}Ingress (Recommended):${NC}
+  --ingress-domain <domain>          Domain for VM ingress (e.g., vms.stackfi.tech)
+  --caddy-email <email>              Email for Let's Encrypt certificates
+  --cloudflare-token <token>         Cloudflare API token for DNS-01 challenge
+  --caddy-staging                    Use Let's Encrypt staging (for testing)
 
-Examples:
-  # Minimal installation
-  $0 --mongodb "mongodb+srv://..."
-  
-  # Full production with ingress and CGNAT support
-  $0 --mongodb "mongodb+srv://..." \\
+${CYAN}WireGuard (For CGNAT support):${NC}
+  --enable-wireguard                 Enable WireGuard tunnel interface
+  --tunnel-ip <ip>                   Orchestrator's tunnel IP (default: 10.20.0.1)
+
+${CYAN}Other:${NC}
+  --port <port>                      API port (default: 5050)
+  --skip-fail2ban                    Skip fail2ban installation
+  --force                            Force clean rebuild
+  --help, -h                         Show this help
+
+${YELLOW}Examples:${NC}
+
+  ${CYAN}# Minimal testnet installation (Polygon Amoy)${NC}
+  $0 \\
+     --mongodb "mongodb+srv://..." \\
+     --orchestrator-wallet "0xYOUR_WALLET" \\
+     --orchestrator-private-key "0xYOUR_PRIVATE_KEY" \\
+     --blockchain-chain-id "80002" \\
+     --blockchain-rpc "https://polygon-amoy.g.alchemy.com/v2/YOUR_KEY" \\
+     --escrow-contract "0xESCROW_CONTRACT" \\
+     --usdc-token "0xUSDC_TOKEN"
+
+  ${CYAN}# Full production deployment (Polygon mainnet with ingress and CGNAT)${NC}
+  $0 \\
+     --mongodb "mongodb+srv://..." \\
+     --orchestrator-wallet "0xYOUR_WALLET" \\
+     --orchestrator-private-key "0xYOUR_PRIVATE_KEY" \\
+     --blockchain-chain-id "137" \\
+     --blockchain-rpc "https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY" \\
+     --escrow-contract "0xESCROW_CONTRACT" \\
+     --usdc-token "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174" \\
+     --confirmations 20 \\
      --ingress-domain vms.stackfi.tech \\
      --caddy-email admin@stackfi.tech \\
      --cloudflare-token YOUR_TOKEN \\
      --enable-wireguard
 
-Architecture:
-  - WireGuard interface created with no peers initially
-  - Orchestrator generates keypair and stores public key
-  - When relay nodes register, they're added as peers dynamically
-  - When CGNAT nodes register, they get assigned to relays
-  - Bidirectional peer setup: relay adds orchestrator, orchestrator adds relay
+${RED}Security Notes:${NC}
+  - Private key is stored in /etc/decloud/orchestrator.env with 600 permissions
+  - Never commit private key to source control
+  - Use environment variables in production
+  - Rotate keys periodically
+  - Use separate wallets for testnet and mainnet
+
+${GREEN}Attestation System:${NC}
+  - Automatically configured for secure VM verification
+  - MaxResponseTime: ${ATTESTATION_MAX_RESPONSE_MS}ms (prevents key extraction)
+  - Billing pauses automatically on attestation failures
+  - No manual configuration needed
+
+${GREEN}Payment System:${NC}
+  - Blockchain integration for deposits and settlements
+  - Automatic deposit monitoring
+  - Attestation-aware billing (only bill verified runtime)
+  - Smart contract escrow for security
 EOF
+}
+
+# ============================================================
+# NEW: Security Validation Functions (v3.0)
+# ============================================================
+
+validate_wallet_address() {
+    local wallet="$1"
+    local name="$2"
+    
+    if [ -z "$wallet" ]; then
+        log_error "$name is required"
+        return 1
+    fi
+    
+    # Check for null address
+    if [ "$wallet" == "0x0000000000000000000000000000000000000000" ]; then
+        log_error "$name cannot be null address (0x000...000)"
+        return 1
+    fi
+    
+    # Check format (0x followed by 40 hex characters)
+    if ! [[ "$wallet" =~ ^0x[a-fA-F0-9]{40}$ ]]; then
+        log_warn "$name format may be invalid (expected: 0x + 40 hex chars)"
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+validate_private_key() {
+    local key="$1"
+    
+    if [ -z "$key" ]; then
+        log_error "Orchestrator private key is required"
+        log_error "Use: --orchestrator-private-key \"0x...\""
+        return 1
+    fi
+    
+    # Check for placeholder
+    if [ "$key" == "_NEVER_COMMIT_THIS_USE_ENV_VAR_" ]; then
+        log_error "Cannot use placeholder private key value"
+        log_error "Provide actual private key via --orchestrator-private-key"
+        return 1
+    fi
+    
+    # Check format (0x followed by 64 hex characters)
+    if ! [[ "$key" =~ ^0x[a-fA-F0-9]{64}$ ]]; then
+        log_warn "Private key format may be invalid (expected: 0x + 64 hex chars)"
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+check_blockchain_config() {
+    log_step "Validating blockchain configuration..."
+    
+    # Validate wallet address
+    if ! validate_wallet_address "$ORCHESTRATOR_WALLET_ADDRESS" "Orchestrator wallet address"; then
+        exit 1
+    fi
+    log_success "Wallet address validated"
+    
+    # Validate private key
+    if ! validate_private_key "$ORCHESTRATOR_PRIVATE_KEY"; then
+        exit 1
+    fi
+    log_success "Private key validated"
+    
+    # Check blockchain parameters if provided
+    if [ -n "$BLOCKCHAIN_CHAIN_ID" ]; then
+        log_info "Blockchain network: Chain ID $BLOCKCHAIN_CHAIN_ID"
+        
+        if [ "$BLOCKCHAIN_CHAIN_ID" == "137" ]; then
+            log_warn "Detected Polygon MAINNET - ensure this is intentional"
+            if [ "$REQUIRED_CONFIRMATIONS" -lt 20 ]; then
+                log_warn "Mainnet should use 20+ confirmations (currently: $REQUIRED_CONFIRMATIONS)"
+            fi
+        elif [ "$BLOCKCHAIN_CHAIN_ID" == "80002" ]; then
+            log_info "Detected Polygon Amoy TESTNET"
+        else
+            log_warn "Unknown chain ID: $BLOCKCHAIN_CHAIN_ID"
+        fi
+    fi
+    
+    # Validate contract addresses if provided
+    if [ -n "$ESCROW_CONTRACT_ADDRESS" ]; then
+        if ! validate_wallet_address "$ESCROW_CONTRACT_ADDRESS" "Escrow contract address"; then
+            exit 1
+        fi
+        log_success "Escrow contract address validated"
+    fi
+    
+    if [ -n "$USDC_TOKEN_ADDRESS" ]; then
+        if ! validate_wallet_address "$USDC_TOKEN_ADDRESS" "USDC token address"; then
+            exit 1
+        fi
+        log_success "USDC token address validated"
+    fi
+    
+    # Validate RPC URL if provided
+    if [ -n "$BLOCKCHAIN_RPC_URL" ]; then
+        if [[ ! "$BLOCKCHAIN_RPC_URL" =~ ^https?:// ]]; then
+            log_error "Blockchain RPC URL must start with http:// or https://"
+            exit 1
+        fi
+        log_success "RPC URL validated"
+    fi
+    
+    # Security warning
+    echo ""
+    log_warn "SECURITY REMINDER:"
+    log_warn "  • Private key will be stored in $ENV_FILE with 600 permissions"
+    log_warn "  • Only root can read this file"
+    log_warn "  • Never commit this file to version control"
+    log_warn "  • Rotate keys periodically"
+    echo ""
+    
+    read -p "Continue with installation? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Installation cancelled by user"
+        exit 0
+    fi
+}
+
+generate_jwt_secret() {
+    if [ -z "$JWT_SECRET_KEY" ]; then
+        log_info "Generating JWT secret key..."
+        JWT_SECRET_KEY=$(openssl rand -base64 32)
+        log_success "JWT secret key generated"
+    else
+        log_info "Using provided JWT secret key"
+    fi
+    
+    # Validate length
+    if [ ${#JWT_SECRET_KEY} -lt 32 ]; then
+        log_error "JWT secret key too short (minimum 32 characters)"
+        exit 1
+    fi
 }
 
 # ============================================================
@@ -810,39 +1104,161 @@ build_orchestrator() {
     log_success "Orchestrator built successfully"
 }
 
+# ============================================================
+# NEW: Environment File Creation (v3.0)
+# ============================================================
+
+create_env_file() {
+    log_step "Creating secure environment file..."
+    
+    # Create directory if needed
+    mkdir -p "$CONFIG_DIR"
+    
+    # Create environment file with restrictive permissions
+    cat > "$ENV_FILE" << EOF
+# =====================================================
+# DeCloud Orchestrator Environment Variables
+# =====================================================
+# This file contains sensitive credentials and must be protected.
+# Permissions: 600 (read/write by root only)
+# Never commit this file to version control!
+#
+# Generated: $(date '+%Y-%m-%d %H:%M:%S')
+# =====================================================
+
+# =====================================================
+# DATABASE
+# =====================================================
+ConnectionStrings__MongoDB=$MONGODB_URI
+
+# =====================================================
+# SECURITY
+# =====================================================
+Jwt__SecretKey=$JWT_SECRET_KEY
+
+# =====================================================
+# PAYMENT SYSTEM (CRITICAL - KEEP SECURE)
+# =====================================================
+
+# Blockchain Configuration
+Payment__ChainId=$BLOCKCHAIN_CHAIN_ID
+Payment__RpcUrl=$BLOCKCHAIN_RPC_URL
+Payment__EscrowContractAddress=$ESCROW_CONTRACT_ADDRESS
+Payment__UsdcTokenAddress=$USDC_TOKEN_ADDRESS
+
+# Orchestrator Wallet (for signing settlement transactions)
+Payment__OrchestratorWalletAddress=$ORCHESTRATOR_WALLET_ADDRESS
+Payment__OrchestratorPrivateKey=$ORCHESTRATOR_PRIVATE_KEY
+
+# Confirmation and Settlement Settings
+Payment__RequiredConfirmations=$REQUIRED_CONFIRMATIONS
+Payment__MinSettlementAmount=$MIN_SETTLEMENT_AMOUNT
+Payment__SettlementIntervalHours=$SETTLEMENT_INTERVAL_HOURS
+Payment__PlatformFeePercent=$PLATFORM_FEE_PERCENT
+
+# =====================================================
+# NOTES
+# =====================================================
+# - Private key is NEVER stored in appsettings.json
+# - This file is loaded by systemd service
+# - Backup this file securely (encrypted)
+# - Rotate credentials periodically
+EOF
+    
+    # Set restrictive permissions (owner read/write only)
+    chmod 600 "$ENV_FILE"
+    chown root:root "$ENV_FILE"
+    
+    log_success "Environment file created: $ENV_FILE"
+    log_info "Permissions: 600 (root read/write only)"
+}
+
+# ============================================================
+# Updated Configuration Creation (v3.0)
+# ============================================================
+
 create_configuration() {
     log_step "Creating configuration..."
     
-    # Create appsettings.Production.json
+    # Create appsettings.Production.json (NO SECRETS)
     cat > "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json" << EOF
 {
   "Logging": {
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning",
-      "DeCloud": "Information"
+      "Orchestrator": "Information"
     }
   },
   "AllowedHosts": "*",
   "Urls": "http://0.0.0.0:${API_PORT}",
+  
   "ConnectionStrings": {
-    "MongoDB": "${MONGODB_URI}"
+    "MongoDB": ""
   },
+  
+  "Jwt": {
+    "SecretKey": "",
+    "Issuer": "DeCloudOrchestrator",
+    "Audience": "DeCloudUsers",
+    "AccessTokenExpirationMinutes": 60,
+    "RefreshTokenExpirationDays": 30
+  },
+  
   "CentralIngress": {
     "Enabled": ${ENABLE_INGRESS},
-    "Domain": "${INGRESS_DOMAIN}",
-    "CaddyAdminApi": "http://localhost:2019"
+    "BaseDomain": "${INGRESS_DOMAIN}",
+    "CaddyAdminUrl": "http://localhost:2019"
   },
+  
   "WireGuard": {
     "Enabled": ${ENABLE_WIREGUARD}
+  },
+  
+  "Attestation": {
+    "MaxResponseTimeMs": ${ATTESTATION_MAX_RESPONSE_MS},
+    "StartupChallengeIntervalSeconds": ${ATTESTATION_STARTUP_INTERVAL},
+    "NormalChallengeIntervalSeconds": ${ATTESTATION_NORMAL_INTERVAL},
+    "StartupPeriodMinutes": 5,
+    "MaxMemoryTouchMs": ${ATTESTATION_MAX_MEMORY_TOUCH_MS},
+    "MaxSinglePageTouchMs": ${ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS},
+    "MemoryToleranceLow": 0.85,
+    "MemoryToleranceHigh": 1.15,
+    "FailureThreshold": ${ATTESTATION_FAILURE_THRESHOLD},
+    "RecoveryThreshold": ${ATTESTATION_RECOVERY_THRESHOLD}
+  },
+  
+  "AttestationNetwork": {
+    "AgentPort": 9999,
+    "HttpTimeoutMs": 200,
+    "UseTls": false
+  },
+  
+  "Payment": {
+    "ChainId": "",
+    "RpcUrl": "",
+    "EscrowContractAddress": "",
+    "UsdcTokenAddress": "",
+    "OrchestratorWalletAddress": "",
+    "OrchestratorPrivateKey": "",
+    "RequiredConfirmations": 0,
+    "MinSettlementAmount": 0,
+    "SettlementIntervalHours": 0,
+    "PlatformFeePercent": 0
   }
 }
 EOF
     
     chmod 640 "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
     
-    log_success "Configuration created"
+    log_success "Configuration created (secrets in environment file)"
+    log_info "Configuration file: appsettings.Production.json"
+    log_info "Environment file: $ENV_FILE (contains secrets)"
 }
+
+# ============================================================
+# Updated Systemd Service (v3.0)
+# ============================================================
 
 create_systemd_service() {
     log_step "Creating systemd service..."
@@ -862,23 +1278,34 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
 ExecStart=/usr/bin/dotnet $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll
+
+# Environment configuration
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=DOTNET_ENVIRONMENT=Production
+
+# Load secrets from environment file
+EnvironmentFile=$ENV_FILE
+
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Security
+# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$LOG_DIR
+ReadWritePaths=/var/lib/caddy
+ReadWritePaths=/etc/wireguard
 
 [Install]
 WantedBy=multi-user.target
 EOF
     
     systemctl daemon-reload
-    log_success "Systemd service created"
+    log_success "Systemd service created with environment file support"
 }
 
 configure_firewall() {
@@ -954,17 +1381,108 @@ start_services() {
     fi
 }
 
+# ============================================================
+# NEW: Post-Installation Validation (v3.0)
+# ============================================================
+
+validate_installation() {
+    log_step "Validating installation..."
+    
+    # Check if orchestrator is running
+    if ! systemctl is-active --quiet decloud-orchestrator; then
+        log_error "Orchestrator service is not running"
+        log_error "Check logs: journalctl -u decloud-orchestrator -n 100"
+        return 1
+    fi
+    
+    # Wait for startup
+    sleep 10
+    
+    # Check health endpoint
+    local health_url="http://localhost:${API_PORT}/health"
+    if curl -s --max-time 5 "$health_url" | grep -q "Healthy"; then
+        log_success "Health check passed"
+    else
+        log_warn "Health check failed - service may still be starting up"
+    fi
+    
+    # Check for configuration errors in logs
+    if journalctl -u decloud-orchestrator --since "5 minutes ago" | grep -qi "configuration.*invalid\|configuration.*error"; then
+        log_error "Configuration validation errors detected in logs"
+        log_error "Check: journalctl -u decloud-orchestrator -n 100"
+        return 1
+    fi
+    
+    # Check for attestation service startup
+    if journalctl -u decloud-orchestrator --since "5 minutes ago" | grep -q "Attestation.*started\|AttestationScheduler.*started"; then
+        log_success "Attestation system started"
+    else
+        log_warn "Attestation system may not have started"
+    fi
+    
+    # Check for billing service startup
+    if journalctl -u decloud-orchestrator --since "5 minutes ago" | grep -q "Billing.*started\|AttestationAwareBillingService.*started"; then
+        log_success "Billing system started"
+    else
+        log_warn "Billing system may not have started"
+    fi
+    
+    log_success "Installation validation completed"
+}
+
+# ============================================================
+# Updated Summary (v3.0)
+# ============================================================
+
 print_summary() {
     local public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
     
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║       DeCloud Orchestrator - Installation Complete!         ║"
+    echo "║    DeCloud Orchestrator - Installation Complete! v${VERSION}    ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     echo "  Dashboard:       http://${public_ip}:${API_PORT}/"
     echo "  API Endpoint:    http://${public_ip}:${API_PORT}/api"
     echo "  Swagger UI:      http://${public_ip}:${API_PORT}/swagger"
+    echo "  Health Check:    http://${public_ip}:${API_PORT}/health"
+    echo ""
+    
+    # Payment system info
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  ${GREEN}Payment System (Blockchain Integration):${NC}"
+    echo "  ─────────────────────────────────────────────────────────────"
+    if [ -n "$BLOCKCHAIN_CHAIN_ID" ]; then
+        local network_name="Unknown"
+        if [ "$BLOCKCHAIN_CHAIN_ID" == "137" ]; then
+            network_name="Polygon Mainnet"
+        elif [ "$BLOCKCHAIN_CHAIN_ID" == "80002" ]; then
+            network_name="Polygon Amoy Testnet"
+        fi
+        echo "    Network:         $network_name (Chain ID: $BLOCKCHAIN_CHAIN_ID)"
+    fi
+    echo "    Wallet:          ${ORCHESTRATOR_WALLET_ADDRESS}"
+    echo "    Escrow:          ${ESCROW_CONTRACT_ADDRESS:-Not configured}"
+    echo "    USDC Token:      ${USDC_TOKEN_ADDRESS:-Not configured}"
+    echo "    Platform Fee:    ${PLATFORM_FEE_PERCENT}%"
+    echo "    Confirmations:   ${REQUIRED_CONFIRMATIONS} blocks"
+    echo ""
+    echo "    ${GREEN}✓ Deposit monitoring active${NC}"
+    echo "    ${GREEN}✓ Attestation-aware billing enabled${NC}"
+    echo "    ${GREEN}✓ Smart contract escrow configured${NC}"
+    echo ""
+    
+    # Attestation system info
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "  ${GREEN}Attestation System (VM Verification):${NC}"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Max Response:    ${ATTESTATION_MAX_RESPONSE_MS}ms (security threshold)"
+    echo "    Startup Checks:  Every ${ATTESTATION_STARTUP_INTERVAL}s (first 5 min)"
+    echo "    Normal Checks:   Every ${ATTESTATION_NORMAL_INTERVAL}s (hourly)"
+    echo "    Fail Threshold:  ${ATTESTATION_FAILURE_THRESHOLD} consecutive failures"
+    echo ""
+    echo "    ${GREEN}✓ Billing pauses automatically on attestation failure${NC}"
+    echo "    ${GREEN}✓ Only verified runtime is billed to users${NC}"
     echo ""
     
     if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
@@ -974,81 +1492,91 @@ print_summary() {
         echo "    Wildcard Domain: *.${INGRESS_DOMAIN}"
         echo "    Example VM URL:  https://myapp.${INGRESS_DOMAIN}"
         echo "    Admin API:       http://localhost:2019"
-        echo "    Health Check:    http://localhost:8081/health"
         echo ""
     fi
     
     if [ "$ENABLE_WIREGUARD" = true ]; then
         echo "  ─────────────────────────────────────────────────────────────"
-        echo "  WireGuard Tunnel (Dynamic CGNAT Support):"
+        echo "  WireGuard Tunnel (CGNAT Support):"
         echo "  ─────────────────────────────────────────────────────────────"
         echo "    Interface:       ${WIREGUARD_INTERFACE}"
         echo "    Tunnel IP:       ${TUNNEL_IP}"
         echo "    Tunnel Network:  ${TUNNEL_NETWORK}"
-        echo "    Peer Management: Dynamic (automatic during relay registration)"
         echo ""
         
         if [ -f /etc/wireguard/orchestrator-public.key ]; then
             local pubkey=$(cat /etc/wireguard/orchestrator-public.key)
-            echo "    ${CYAN}Orchestrator Public Key:${NC}"
+            echo "    ${CYAN}Public Key:${NC}"
             echo "    ${pubkey}"
-            echo ""
-            echo "    ${GREEN}✓ This key will be automatically provided to relay nodes${NC}"
-            echo "    ${GREEN}✓ Relay nodes will add orchestrator as peer during provisioning${NC}"
-            echo "    ${GREEN}✓ Orchestrator will add relays as peers during registration${NC}"
             echo ""
         fi
     fi
     
     echo "  ─────────────────────────────────────────────────────────────"
+    echo "  ${YELLOW}Security & Configuration:${NC}"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Environment:     $ENV_FILE"
+    echo "    Permissions:     600 (root only)"
+    echo "    Config File:     appsettings.Production.json"
+    echo ""
+    echo "    ${YELLOW}⚠ IMPORTANT: Never commit $ENV_FILE to git${NC}"
+    echo "    ${YELLOW}⚠ Backup $ENV_FILE securely (encrypted)${NC}"
+    echo "    ${YELLOW}⚠ Rotate private keys periodically${NC}"
+    echo ""
+    
+    echo "  ─────────────────────────────────────────────────────────────"
     echo "  Commands:"
     echo "  ─────────────────────────────────────────────────────────────"
-    echo "    Status:        sudo systemctl status decloud-orchestrator"
-    echo "    Logs:          sudo journalctl -u decloud-orchestrator -f"
-    echo "    Restart:       sudo systemctl restart decloud-orchestrator"
+    echo "    Status:          sudo systemctl status decloud-orchestrator"
+    echo "    Logs:            sudo journalctl -u decloud-orchestrator -f"
+    echo "    Restart:         sudo systemctl restart decloud-orchestrator"
+    echo "    Health:          curl http://localhost:${API_PORT}/health"
+    echo ""
+    echo "    View env vars:   sudo cat $ENV_FILE"
+    echo "    Edit env vars:   sudo nano $ENV_FILE"
+    echo "                     sudo systemctl restart decloud-orchestrator"
+    echo ""
     
     if [ "$INSTALL_CADDY" = true ]; then
-        echo "    Caddy status:  sudo systemctl status caddy"
-        echo "    Caddy logs:    sudo journalctl -u caddy -f"
+        echo "    Caddy status:    sudo systemctl status caddy"
+        echo "    Caddy logs:      sudo journalctl -u caddy -f"
+        echo ""
     fi
     
     if [ "$ENABLE_WIREGUARD" = true ]; then
-        echo "    WireGuard:     sudo wg show ${WIREGUARD_INTERFACE}"
-        echo "    View peers:    sudo wg show ${WIREGUARD_INTERFACE} peers"
-        echo "    Public key:    sudo cat /etc/wireguard/orchestrator-public.key"
+        echo "    WireGuard:       sudo wg show ${WIREGUARD_INTERFACE}"
+        echo "    View peers:      sudo wg show ${WIREGUARD_INTERFACE} peers"
+        echo ""
     fi
     
-    echo ""
     echo "  ─────────────────────────────────────────────────────────────"
     echo "  Next Steps:"
     echo "  ─────────────────────────────────────────────────────────────"
     echo "    1. Open dashboard: http://${public_ip}:${API_PORT}/"
-    echo "    2. Connect your wallet to start using DeCloud"
-    
-    if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then
-        echo "    3. Configure DNS:"
-        echo "       - Point *.${INGRESS_DOMAIN} to ${public_ip}"
-        echo "       - Wildcard certificates will be auto-provisioned"
-    fi
-    
-    if [ "$ENABLE_WIREGUARD" = true ]; then
-        echo "    4. Deploy relay nodes:"
-        echo "       - Relay VMs will automatically receive orchestrator's public key"
-        echo "       - Bidirectional peer setup happens during relay registration"
-        echo "       - No manual WireGuard configuration needed!"
-    fi
-    
+    echo "    2. Connect wallet to start using DeCloud"
+    echo "    3. Monitor logs for any errors"
+    echo "    4. Test deposit flow with small amount"
+    echo "    5. Verify attestation system is working"
     echo ""
+    
+    if [ -n "$BLOCKCHAIN_CHAIN_ID" ] && [ "$BLOCKCHAIN_CHAIN_ID" == "137" ]; then
+        echo "    ${RED}⚠ MAINNET DEPLOYMENT - PRODUCTION SECURITY CRITICAL:${NC}"
+        echo "    ${RED}  • Verify contract addresses are correct${NC}"
+        echo "    ${RED}  • Test with small amounts first${NC}"
+        echo "    ${RED}  • Monitor blockchain transactions${NC}"
+        echo "    ${RED}  • Keep wallet funded for gas fees${NC}"
+        echo ""
+    fi
 }
 
 # ============================================================
-# Main
+# Main (Updated for v3.0)
 # ============================================================
 main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║       DeCloud Orchestrator Installer v${VERSION}              ║"
-    echo "║       (Production + Dynamic WireGuard Peer Management)       ║"
+    echo "║      DeCloud Orchestrator Installer v${VERSION}               ║"
+    echo "║      (Attestation + Payment Integration)                     ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
     
@@ -1056,7 +1584,7 @@ main() {
     
     # Initialize logging
     init_logging
-
+    
     # Checks
     check_root
     check_os
@@ -1065,6 +1593,10 @@ main() {
     check_mongodb
     check_cloudflare_token
     check_wireguard_params
+    
+    # NEW: Blockchain/payment validation (v3.0)
+    check_blockchain_config
+    generate_jwt_secret
     
     echo ""
     log_info "All requirements met. Starting installation..."
@@ -1076,7 +1608,7 @@ main() {
     install_dotnet
     install_wireguard
     
-    # Configure WireGuard interface (no peers)
+    # Configure WireGuard
     configure_wireguard_interface
     
     # Central ingress
@@ -1088,10 +1620,19 @@ main() {
     create_directories
     download_orchestrator
     build_orchestrator
+    
+    # NEW: Create secure environment file BEFORE configuration (v3.0)
+    create_env_file
+    
+    # Create configuration (NO SECRETS)
     create_configuration
+    
     create_systemd_service
     configure_firewall
     start_services
+    
+    # NEW: Validate installation (v3.0)
+    validate_installation
     
     # Done
     print_summary

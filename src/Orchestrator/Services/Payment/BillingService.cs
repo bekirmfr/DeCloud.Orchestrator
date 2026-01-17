@@ -15,14 +15,17 @@ namespace Orchestrator.Services.Payment;
 public class BillingService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly PaymentConfig _paymentConfig;
     private readonly ILogger<BillingService> _logger;
     private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
 
     public BillingService(
         IServiceProvider serviceProvider,
+        PaymentConfig paymentConfig,
         ILogger<BillingService> logger)
     {
         _serviceProvider = serviceProvider;
+        _paymentConfig = paymentConfig;
         _logger = logger;
     }
 
@@ -153,7 +156,7 @@ public class BillingService : BackgroundService
 
 
             // Calculate node payout (95% to node, 5% platform fee)
-            var platformBPS = 0.05m; // TO-DO: Make this dynamic. Get from deployed web3 contract
+            var platformBPS = _paymentConfig.PlatformFeePercent / 100; // TO-DO: Make this dynamic. Get from deployed web3 contract
             var nodeBPS = 1 - platformBPS;
 
             var nodePayout = cost * nodeBPS; 
