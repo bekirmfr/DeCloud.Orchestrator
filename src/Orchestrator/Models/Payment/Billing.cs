@@ -36,6 +36,10 @@ public class VmBillingInfo
     /// Last time billing was processed
     /// </summary>
     public DateTime? LastBillingAt { get; set; }
+    public DateTime? CurrentPeriodStart { get; set; }
+    public bool IsPaused { get; set; }
+    public DateTime? PausedAt { get; set; }
+    public string? PauseReason { get; set; }
 
     // =====================================================
     // NEW PROPERTIES FOR ATTESTATION TRACKING

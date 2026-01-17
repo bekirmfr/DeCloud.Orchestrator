@@ -1,16 +1,23 @@
-﻿using Orchestrator.Models;
+﻿using System.Threading.Channels;
+using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Services.Payment;
 
 /// <summary>
-/// Attestation-aware billing service with clean dependency injection
+/// Event-driven billing service with queue
 /// 
-/// Key principles:
-/// - Only bill for VERIFIED runtime (attestation must pass)
-/// - Uses SettlementService for all usage recording
-/// - Clean DI (no service provider pattern)
+/// Triggers:
+/// 1. Periodic timer (every 5 minutes) - bills all running VMs
+/// 2. VM stop event - immediate billing
+/// 3. Manual trigger - for admin/testing
+/// 
+/// Benefits over polling:
+/// - No wasted cycles when no VMs running
+/// - Immediate billing on VM stop
+/// - Queue prevents overload
+/// - Backpressure handling
 /// </summary>
 public class BillingService : BackgroundService
 {
@@ -18,7 +25,12 @@ public class BillingService : BackgroundService
     private readonly IAttestationService _attestationService;
     private readonly ISettlementService _settlementService;
     private readonly ILogger<BillingService> _logger;
-    private readonly TimeSpan _billingInterval = TimeSpan.FromMinutes(5);
+
+    // Event-driven billing queue
+    private readonly Channel<BillingEvent> _billingQueue;
+
+    // Periodic billing timer
+    private readonly TimeSpan _periodicBillingInterval = TimeSpan.FromMinutes(5);
 
     public BillingService(
         DataStore dataStore,
@@ -30,158 +42,228 @@ public class BillingService : BackgroundService
         _attestationService = attestationService;
         _settlementService = settlementService;
         _logger = logger;
+
+        // Create bounded channel (max 1000 pending events)
+        _billingQueue = Channel.CreateBounded<BillingEvent>(new BoundedChannelOptions(1000)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Attestation-Aware Billing Service started (5-minute cycle)");
+        _logger.LogInformation("Event-Driven Billing Service started");
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await ProcessBillingAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing billing");
-            }
+        // Start periodic billing timer
+        _ = Task.Run(() => PeriodicBillingTimerAsync(stoppingToken), stoppingToken);
 
-            await Task.Delay(_billingInterval, stoppingToken);
-        }
+        // Process billing events from queue
+        await ProcessBillingQueueAsync(stoppingToken);
 
-        _logger.LogInformation("Attestation-Aware Billing Service stopped");
+        _logger.LogInformation("Event-Driven Billing Service stopped");
     }
 
-    private async Task ProcessBillingAsync(CancellationToken ct)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PUBLIC API - Enqueue Billing Events
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Enqueue a VM for billing
+    /// Called when VM stops or needs immediate billing
+    /// </summary>
+    public async Task EnqueueBillingAsync(string vmId, BillingTrigger trigger, string? reason = null)
     {
-        var now = DateTime.UtcNow;
-        var billedCount = 0;
-        var skippedCount = 0;
-        var insufficientFundsCount = 0;
-        var attestationFailedCount = 0;
-
-        foreach (var vm in _dataStore.VirtualMachines.Values.ToList())
+        var evt = new BillingEvent
         {
-            if (ct.IsCancellationRequested) break;
+            VmId = vmId,
+            Trigger = trigger,
+            Reason = reason,
+            Timestamp = DateTime.UtcNow
+        };
 
-            // Skip non-running VMs
-            if (vm.Status != VmStatus.Running || !vm.StartedAt.HasValue)
-            {
-                continue;
-            }
+        await _billingQueue.Writer.WriteAsync(evt);
 
-            // Skip system VMs (relay, DHT, storage, etc.)
-            if (vm.Spec.VmType != VmType.General)
-            {
-                continue;
-            }
+        _logger.LogDebug(
+            "Billing queued: VM={VmId}, Trigger={Trigger}, Reason={Reason}",
+            vmId, trigger, reason);
+    }
 
+    /// <summary>
+    /// Enqueue all running VMs for billing
+    /// Called by periodic timer
+    /// </summary>
+    public async Task EnqueueAllRunningVmsAsync()
+    {
+        var runningVms = _dataStore.VirtualMachines.Values
+            .Where(vm => vm.Status == VmStatus.Running)
+            .ToList();
+
+        foreach (var vm in runningVms)
+        {
+            await EnqueueBillingAsync(vm.Id, BillingTrigger.Periodic);
+        }
+
+        _logger.LogDebug("Enqueued {Count} running VMs for periodic billing", runningVms.Count);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PERIODIC BILLING TIMER
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private async Task PeriodicBillingTimerAsync(CancellationToken ct)
+    {
+        // Wait 1 minute before first run
+        await Task.Delay(TimeSpan.FromMinutes(1), ct);
+
+        while (!ct.IsCancellationRequested)
+        {
             try
             {
-                // ═══════════════════════════════════════════════════════════════
-                // ATTESTATION CHECK - Core security feature
-                // ═══════════════════════════════════════════════════════════════
-
-                var attestationStatus = _attestationService.GetLivenessState(vm.Id);
-
-                if (attestationStatus == null || attestationStatus.BillingPaused)
-                {
-                    _logger.LogWarning(
-                        "⚠️ Billing PAUSED for VM {VmId} - attestation failing. " +
-                        "Node may be compromised or VM not running as claimed.",
-                        vm.Id);
-
-                    attestationFailedCount++;
-
-                    // Don't bill for potentially fraudulent usage
-                    // VM will be marked for shutdown if attestation stays failed
-                    continue;
-                }
-
-                // ═══════════════════════════════════════════════════════════════
-                // CALCULATE BILLING PERIOD
-                // ═══════════════════════════════════════════════════════════════
-
-                var lastBillingAt = vm.BillingInfo.LastBillingAt ?? vm.StartedAt.Value;
-                var billingPeriod = now - lastBillingAt;
-
-                // Skip if already billed recently (within 1 minute to avoid duplicates)
-                if (billingPeriod < TimeSpan.FromMinutes(1))
-                {
-                    continue;
-                }
-
-                // ═══════════════════════════════════════════════════════════════
-                // CALCULATE COST
-                // ═══════════════════════════════════════════════════════════════
-
-                var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
-                var hours = (decimal)billingPeriod.TotalHours;
-                var cost = hours * hourlyRate;
-
-                // Round to 6 decimals (USDC precision)
-                cost = Math.Round(cost, 6);
-
-                if (cost == 0)
-                {
-                    // Skip zero-cost billing periods
-                    continue;
-                }
-
-                // ═══════════════════════════════════════════════════════════════
-                // RECORD USAGE VIA SETTLEMENT SERVICE
-                // ═══════════════════════════════════════════════════════════════
-
-                var success = await _settlementService.RecordUsageAsync(
-                    userId: vm.OwnerId,
-                    vmId: vm.Id,
-                    nodeId: vm.NodeId,
-                    amount: cost,
-                    periodStart: lastBillingAt,
-                    periodEnd: now,
-                    attestationVerified: true);
-
-                if (success)
-                {
-                    // Update VM billing info
-                    vm.BillingInfo.LastBillingAt = now;
-                    vm.BillingInfo.TotalBilled += cost;
-                    await _dataStore.SaveVmAsync(vm);
-
-                    billedCount++;
-
-                    _logger.LogDebug(
-                        "✓ Billed {Cost} USDC for VM {VmId} ({Hours:F2}h at {Rate}/h)",
-                        cost, vm.Id, hours, hourlyRate);
-                }
-                else
-                {
-                    // Insufficient balance
-                    insufficientFundsCount++;
-
-                    _logger.LogWarning(
-                        "⚠️ Insufficient balance for VM {VmId}, user {UserId}. " +
-                        "Cost: {Cost} USDC. VM will be stopped if balance not topped up.",
-                        vm.Id, vm.OwnerId, cost);
-
-                    // TODO: Implement grace period before stopping VM
-                    // For now, just log the warning
-                }
+                await EnqueueAllRunningVmsAsync();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error billing VM {VmId}", vm.Id);
-                skippedCount++;
+                _logger.LogError(ex, "Error enqueuing periodic billing");
             }
-        }
 
-        if (billedCount > 0 || insufficientFundsCount > 0 || attestationFailedCount > 0)
-        {
-            _logger.LogInformation(
-                "Billing cycle complete: {Billed} billed, {InsufficientFunds} insufficient funds, " +
-                "{AttestationFailed} attestation failed, {Skipped} skipped",
-                billedCount, insufficientFundsCount, attestationFailedCount, skippedCount);
+            await Task.Delay(_periodicBillingInterval, ct);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // QUEUE PROCESSOR
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private async Task ProcessBillingQueueAsync(CancellationToken ct)
+    {
+        await foreach (var evt in _billingQueue.Reader.ReadAllAsync(ct))
+        {
+            try
+            {
+                await ProcessVmBillingAsync(evt, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing billing for VM {VmId}", evt.VmId);
+            }
+        }
+    }
+
+    private async Task ProcessVmBillingAsync(BillingEvent evt, CancellationToken ct)
+    {
+        if (!_dataStore.VirtualMachines.TryGetValue(evt.VmId, out var vm))
+        {
+            _logger.LogWarning("VM {VmId} not found for billing", evt.VmId);
+            return;
+        }
+
+        // Skip non-running VMs (unless it's a stop event - bill final usage)
+        if (vm.Status != VmStatus.Running && evt.Trigger != BillingTrigger.VmStop)
+        {
+            return;
+        }
+
+        // Skip system VMs
+        if (vm.Spec.VmType != VmType.General)
+        {
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // ATTESTATION CHECK - Core security feature
+        // ═══════════════════════════════════════════════════════════════════════
+
+        var attestationStatus = _attestationService.GetLivenessState(vm.Id);
+
+        if (attestationStatus?.BillingPaused == true && evt.Trigger != BillingTrigger.VmStop)
+        {
+            _logger.LogWarning(
+                "⚠️ Billing PAUSED for VM {VmId} - attestation failing. Skipping billing.",
+                vm.Id);
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // CALCULATE BILLING PERIOD
+        // ═══════════════════════════════════════════════════════════════════════
+
+        var now = DateTime.UtcNow;
+        var lastBillingAt = vm.BillingInfo.LastBillingAt ?? vm.StartedAt ?? now;
+        var currentPeriodStart = vm.BillingInfo.CurrentPeriodStart ?? lastBillingAt;
+
+        var billingPeriod = now - currentPeriodStart;
+
+        // Don't bill if period < 1 minute (avoid spam)
+        if (billingPeriod < TimeSpan.FromMinutes(1) && evt.Trigger != BillingTrigger.VmStop)
+        {
+            return;
+        }
+
+        // Calculate cost
+        var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
+        var cost = hourlyRate * (decimal)billingPeriod.TotalHours;
+
+        if (cost < 0.01m) // Minimum 0.01 USDC
+        {
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // RECORD USAGE
+        // ═══════════════════════════════════════════════════════════════════════
+
+        var success = await _settlementService.RecordUsageAsync(
+            userId: vm.OwnerId,
+            vmId: vm.Id,
+            nodeId: vm.NodeId ?? string.Empty,
+            amount: cost,
+            periodStart: currentPeriodStart,
+            periodEnd: now,
+            attestationVerified: attestationStatus?.ConsecutiveSuccesses > 0);
+
+        if (!success)
+        {
+            _logger.LogWarning(
+                "⚠️ Insufficient balance for VM {VmId}, pausing billing",
+                vm.Id);
+
+            vm.BillingInfo.IsPaused = true;
+            vm.BillingInfo.PausedAt = now;
+            vm.BillingInfo.PauseReason = "Insufficient balance";
+
+            await _dataStore.SaveVmAsync(vm);
+            return;
+        }
+
+        // Update billing info
+        vm.BillingInfo.LastBillingAt = now;
+        vm.BillingInfo.CurrentPeriodStart = now;
+        vm.BillingInfo.TotalBilled += cost;
+
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogInformation(
+            "✓ Billed VM {VmId}: {Cost} USDC for {Duration}, trigger={Trigger}",
+            vm.Id, cost, billingPeriod, evt.Trigger);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUPPORTING TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class BillingEvent
+{
+    public string VmId { get; set; } = string.Empty;
+    public BillingTrigger Trigger { get; set; }
+    public string? Reason { get; set; }
+    public DateTime Timestamp { get; set; }
+}
+
+public enum BillingTrigger
+{
+    Periodic,       // Periodic timer (every 5 min)
+    VmStop,         // VM stopped - bill final usage
+    Manual,         // Admin trigger
+    BalanceAdded    // User added balance - resume billing
 }
