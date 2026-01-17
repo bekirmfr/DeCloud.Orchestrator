@@ -9,6 +9,7 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -84,11 +85,11 @@ builder.Services.AddSingleton(sp =>
     return new DataStore(database, logger);
 });
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
+builder.Services.AddSingleton<IVmSchedulingService, VmSchedulingService>();
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
-builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddSingleton<IVmService, VmService>();
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService>(sp =>
