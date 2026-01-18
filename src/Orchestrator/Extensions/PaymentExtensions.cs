@@ -1,9 +1,6 @@
-using Microsoft.Extensions.Options;
-using Orchestrator.Services;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
-using Orchestrator.Services;
-using Orchestrator.Services.Payment;
+using Orchestrator.Services.Balance;
 using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Extensions;
@@ -123,6 +120,8 @@ public static class PaymentExtensions
         // SERVICE REGISTRATION
         // =====================================================
 
+        // BalanceService - handles blance tracking
+        services.AddSingleton<IBalanceService, BalanceService>();
         // Blockchain Service - handles ALL Web3 interactions
         services.AddSingleton<IBlockchainService, BlockchainService>();
 

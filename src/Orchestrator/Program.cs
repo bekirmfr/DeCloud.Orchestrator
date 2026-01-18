@@ -10,7 +10,6 @@ using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
