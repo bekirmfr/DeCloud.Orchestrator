@@ -16,20 +16,17 @@ public class PaymentController : ControllerBase
     private readonly DataStore _dataStore;
     private readonly IBalanceService _balanceService;
     private readonly PaymentConfig _paymentConfig;
-    private readonly IUserService _userService;
     private readonly ILogger<PaymentController> _logger;
 
     public PaymentController(
         DataStore dataStore,
         IBalanceService balanceService,
         PaymentConfig paymentConfig,
-        IUserService userService,
         ILogger<PaymentController> logger)
     {
         _dataStore = dataStore;
         _balanceService = balanceService;
         _paymentConfig = paymentConfig;
-        _userService = userService;
         _logger = logger;
     }
 
