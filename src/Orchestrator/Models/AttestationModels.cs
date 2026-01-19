@@ -100,6 +100,17 @@ public class AttestationMetrics
     public string MachineId { get; set; } = string.Empty;
 }
 
+public class VmAttestationStats
+{
+    public string VmId { get; set; } = string.Empty;
+    public int TotalChallenges { get; set; }
+    public int SuccessfulChallenges { get; set; }
+    public double SuccessRate { get; set; }
+    public double AverageResponseTimeMs { get; set; }
+    public DateTime? LastAttestation { get; set; }
+    public bool BillingPaused { get; set; }
+}
+
 /// <summary>
 /// Memory touch test results
 /// Proves VM has real RAM (not swap) by measuring access timing

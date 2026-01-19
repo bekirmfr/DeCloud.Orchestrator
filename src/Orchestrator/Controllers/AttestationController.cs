@@ -45,13 +45,15 @@ public class AttestationController : ControllerBase
         // Verify user owns this VM
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
         {
-            return NotFound(ApiResponse<AttestationStatusResponse>.Fail("NOT_FOUND", "VM not found"));
+            return NotFound(ApiResponse<AttestationStatusResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId)
+        if(!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
-            return Forbid();
+            return NotFound(ApiResponse<AttestationStatusResponse>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
+
+        var nodeUser = _dataStore.Users.GetValueOrDefault(node.WalletAddress);
 
         var livenessState = _attestationService.GetLivenessState(vmId);
         var stats = await _attestationService.GetVmStatsAsync(vmId);

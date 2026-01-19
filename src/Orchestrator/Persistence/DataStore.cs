@@ -1,6 +1,7 @@
-﻿using System.Collections.Concurrent;
+﻿using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
+using System.Collections.Concurrent;
 
 namespace Orchestrator.Persistence;
 
@@ -81,7 +82,8 @@ public class DataStore
     }
 
     /// <summary>
-    /// Create MongoDB indexes for optimal query performance
+    /// Create MongoDB indexes for optimal query performance.
+    /// Uses safe index creation that handles existing indexes properly.
     /// </summary>
     private void CreateIndexes()
     {
@@ -89,108 +91,120 @@ public class DataStore
 
         try
         {
+            _logger.LogInformation("Creating MongoDB indexes...");
+
             // Nodes indexes
-            NodesCollection!.Indexes.CreateMany(new[]
+            var nodeIndexes = new[]
             {
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.WalletAddress),
-                    new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.Status),
-                    new CreateIndexOptions { Name = "idx_status" }),
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.LastHeartbeat),
-                    new CreateIndexOptions { Name = "idx_heartbeat" }),
-                new CreateIndexModel<Node>(
-                    Builders<Node>.IndexKeys.Ascending(n => n.Region).Ascending(n => n.Zone),
-                    new CreateIndexOptions { Name = "idx_region_zone" })
-            });
+            new CreateIndexModel<Node>(
+                Builders<Node>.IndexKeys.Ascending(n => n.WalletAddress),
+                new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
+            new CreateIndexModel<Node>(
+                Builders<Node>.IndexKeys.Ascending(n => n.Status),
+                new CreateIndexOptions { Name = "idx_status" }),
+            new CreateIndexModel<Node>(
+                Builders<Node>.IndexKeys.Ascending(n => n.LastHeartbeat),
+                new CreateIndexOptions { Name = "idx_heartbeat" }),
+            new CreateIndexModel<Node>(
+                Builders<Node>.IndexKeys.Ascending(n => n.Region).Ascending(n => n.Zone),
+                new CreateIndexOptions { Name = "idx_region_zone" })
+        };
+            TryCreateIndexesAsync(NodesCollection!, "nodes", nodeIndexes).Wait();
 
             // VMs indexes
-            VmsCollection!.Indexes.CreateMany(new[]
+            var vmIndexes = new[]
             {
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerId),
-                    new CreateIndexOptions { Name = "idx_owner" }),
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.NodeId),
-                    new CreateIndexOptions { Name = "idx_node" }),
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.Status),
-                    new CreateIndexOptions { Name = "idx_status" }),
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerWallet),
-                    new CreateIndexOptions { Name = "idx_wallet" }),
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys.Descending(v => v.CreatedAt),
-                    new CreateIndexOptions { Name = "idx_created" }),
-                new CreateIndexModel<VirtualMachine>(
-                    Builders<VirtualMachine>.IndexKeys
-                        .Ascending(v => v.OwnerId)
-                        .Descending(v => v.CreatedAt),
-                    new CreateIndexOptions { Name = "idx_owner_created" })
-            });
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerId),
+                new CreateIndexOptions { Name = "idx_owner" }),
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys.Ascending(v => v.NodeId),
+                new CreateIndexOptions { Name = "idx_node" }),
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys.Ascending(v => v.Status),
+                new CreateIndexOptions { Name = "idx_status" }),
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys.Ascending(v => v.OwnerWallet),
+                new CreateIndexOptions { Name = "idx_wallet" }),
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys.Descending(v => v.CreatedAt),
+                new CreateIndexOptions { Name = "idx_created" }),
+            new CreateIndexModel<VirtualMachine>(
+                Builders<VirtualMachine>.IndexKeys
+                    .Ascending(v => v.OwnerId)
+                    .Descending(v => v.CreatedAt),
+                new CreateIndexOptions { Name = "idx_owner_created" })
+        };
+            TryCreateIndexesAsync(VmsCollection!, "vms", vmIndexes).Wait();
 
             // Users indexes
-            UsersCollection!.Indexes.CreateMany(new[]
+            var userIndexes = new[]
             {
-                new CreateIndexModel<User>(
-                    Builders<User>.IndexKeys.Ascending(u => u.WalletAddress),
-                    new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
-                new CreateIndexModel<User>(
-                    Builders<User>.IndexKeys.Ascending(u => u.Email),
-                    new CreateIndexOptions
-                    {
-                        Name = "idx_email",
-                        Unique = true,
-                        Sparse = true // Allow null emails
-                    }),
-                new CreateIndexModel<User>(
-                    Builders<User>.IndexKeys.Ascending(u => u.Status),
-                    new CreateIndexOptions { Name = "idx_status" })
-            });
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.WalletAddress),
+                new CreateIndexOptions { Name = "idx_wallet", Unique = true }),
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.Email),
+                new CreateIndexOptions
+                {
+                    Name = "idx_email",
+                    Unique = true,
+                    Sparse = true // Allow null emails
+                }),
+            new CreateIndexModel<User>(
+                Builders<User>.IndexKeys.Ascending(u => u.Status),
+                new CreateIndexOptions { Name = "idx_status" })
+        };
+            TryCreateIndexesAsync(UsersCollection!, "users", userIndexes).Wait();
 
             // Events indexes
-            EventsCollection!.Indexes.CreateMany(new[]
+            var eventIndexes = new[]
             {
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Descending(e => e.Timestamp),
-                    new CreateIndexOptions { Name = "idx_timestamp" }),
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.Type),
-                    new CreateIndexOptions { Name = "idx_type" }),
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.ResourceId),
-                    new CreateIndexOptions { Name = "idx_resource" }),
-                new CreateIndexModel<OrchestratorEvent>(
-                    Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.UserId),
-                    new CreateIndexOptions { Name = "idx_user" })
-            });
+            new CreateIndexModel<OrchestratorEvent>(
+                Builders<OrchestratorEvent>.IndexKeys.Descending(e => e.Timestamp),
+                new CreateIndexOptions { Name = "idx_timestamp" }),
+            new CreateIndexModel<OrchestratorEvent>(
+                Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.Type),
+                new CreateIndexOptions { Name = "idx_type" }),
+            new CreateIndexModel<OrchestratorEvent>(
+                Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.ResourceId),
+                new CreateIndexOptions { Name = "idx_resource" }),
+            new CreateIndexModel<OrchestratorEvent>(
+                Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.UserId),
+                new CreateIndexOptions { Name = "idx_user" })
+        };
+            TryCreateIndexesAsync(EventsCollection!, "events", eventIndexes).Wait();
+
             // Attestations indexes
-            AttestationsCollection!.Indexes.CreateMany(new[] {
-                new CreateIndexModel<Attestation>(
-                    Builders<Attestation>.IndexKeys
-                        .Ascending(r => r.VmId)
-                        .Descending(r => r.Timestamp),
-                    new CreateIndexOptions { Name = "idx_vm_timestamp" }),
-                new CreateIndexModel<Attestation>(
-                    Builders<Attestation>.IndexKeys.Ascending(r => r.NodeId),
-                    new CreateIndexOptions { Name = "idx_node" }),
-                new CreateIndexModel<Attestation>(
-                    Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
-                    new CreateIndexOptions { Name = "idx_success" })
-            });
-            //UsageRecords indexes
-            UsageRecordsCollection!.Indexes.CreateMany(new[] {
-                new CreateIndexModel<UsageRecord>(
-                    Builders<UsageRecord>.IndexKeys
-                        .Ascending(r => r.UserId)
-                        .Descending(r => r.CreatedAt),
-                    new CreateIndexOptions { Name = "idx_user_timestamp" }),
-                new CreateIndexModel<UsageRecord>(
-                    Builders<UsageRecord>.IndexKeys.Ascending(r => r.VmId),
-                    new CreateIndexOptions { Name = "idx_vm" }),
-            });
+            var attestationIndexes = new[]
+            {
+            new CreateIndexModel<Attestation>(
+                Builders<Attestation>.IndexKeys
+                    .Ascending(r => r.VmId)
+                    .Descending(r => r.Timestamp),
+                new CreateIndexOptions { Name = "idx_vm_timestamp" }),
+            new CreateIndexModel<Attestation>(
+                Builders<Attestation>.IndexKeys.Ascending(r => r.NodeId),
+                new CreateIndexOptions { Name = "idx_node" }),
+            new CreateIndexModel<Attestation>(
+                Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
+                new CreateIndexOptions { Name = "idx_success" })
+        };
+            TryCreateIndexesAsync(AttestationsCollection!, "attestations", attestationIndexes).Wait();
+
+            // UsageRecords indexes
+            var usageIndexes = new[]
+            {
+            new CreateIndexModel<UsageRecord>(
+                Builders<UsageRecord>.IndexKeys
+                    .Ascending(r => r.UserId)
+                    .Descending(r => r.CreatedAt),
+                new CreateIndexOptions { Name = "idx_user_timestamp" }),
+            new CreateIndexModel<UsageRecord>(
+                Builders<UsageRecord>.IndexKeys.Ascending(r => r.VmId),
+                new CreateIndexOptions { Name = "idx_vm" })
+        };
+            TryCreateIndexesAsync(UsageRecordsCollection!, "usageRecords", usageIndexes).Wait();
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
         }
@@ -198,6 +212,7 @@ public class DataStore
         {
             _logger.LogError(ex, "Failed to create MongoDB indexes");
             // Don't throw - indexes are optimization, not critical
+            // The application can still function without indexes, just slower
         }
     }
 
@@ -963,6 +978,109 @@ public class DataStore
         foreach (var tier in tiers)
         {
             PricingTiers.TryAdd(tier.Id, tier);
+        }
+    }
+
+    /// <summary>
+    /// Safely creates indexes for a collection.
+    /// If an index exists with different properties, it will be dropped and recreated.
+    /// This prevents startup errors from index conflicts.
+    /// </summary>
+    private async Task<bool> TryCreateIndexesAsync<T>(
+        IMongoCollection<T> collection,
+        string collectionName,
+        IEnumerable<CreateIndexModel<T>> indexModels)
+    {
+        try
+        {
+            // Get existing indexes
+            var existingIndexes = new Dictionary<string, BsonDocument>();
+            using (var cursor = await collection.Indexes.ListAsync())
+            {
+                var indexes = await cursor.ToListAsync();
+                foreach (var index in indexes)
+                {
+                    var indexName = index["name"].AsString;
+                    if (indexName != "_id_") // Skip default _id index
+                    {
+                        existingIndexes[indexName] = index;
+                    }
+                }
+            }
+
+            foreach (var indexModel in indexModels)
+            {
+                var indexName = indexModel.Options?.Name;
+                if (string.IsNullOrEmpty(indexName))
+                {
+                    // MongoDB will auto-generate name, just create it
+                    _logger.LogWarning("Index model for {Collection} has no explicit name, using auto-generated name",
+                        collectionName);
+                    await collection.Indexes.CreateOneAsync(indexModel);
+                    continue;
+                }
+
+                // Check if index exists
+                if (existingIndexes.TryGetValue(indexName, out var existingIndex))
+                {
+                    // Compare index properties
+                    var needsRecreation = false;
+
+                    // Check if unique constraint matches
+                    var requestedUnique = indexModel.Options?.Unique ?? false;
+                    var existingUnique = existingIndex.Contains("unique") && existingIndex["unique"].AsBoolean;
+
+                    if (requestedUnique != existingUnique)
+                    {
+                        _logger.LogInformation(
+                            "Index '{IndexName}' on {Collection} has different unique constraint (existing: {Existing}, requested: {Requested})",
+                            indexName, collectionName, existingUnique, requestedUnique);
+                        needsRecreation = true;
+                    }
+
+                    // Check if sparse constraint matches
+                    var requestedSparse = indexModel.Options?.Sparse ?? false;
+                    var existingSparse = existingIndex.Contains("sparse") && existingIndex["sparse"].AsBoolean;
+
+                    if (requestedSparse != existingSparse)
+                    {
+                        _logger.LogInformation(
+                            "Index '{IndexName}' on {Collection} has different sparse constraint (existing: {Existing}, requested: {Requested})",
+                            indexName, collectionName, existingSparse, requestedSparse);
+                        needsRecreation = true;
+                    }
+
+                    // If properties differ, drop and recreate
+                    if (needsRecreation)
+                    {
+                        _logger.LogInformation("Dropping index '{IndexName}' on {Collection} to recreate with new properties",
+                            indexName, collectionName);
+                        await collection.Indexes.DropOneAsync(indexName);
+                        await collection.Indexes.CreateOneAsync(indexModel);
+                        _logger.LogInformation("✓ Recreated index '{IndexName}' on {Collection}",
+                            indexName, collectionName);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Index '{IndexName}' on {Collection} already exists with correct properties",
+                            indexName, collectionName);
+                    }
+                }
+                else
+                {
+                    // Index doesn't exist, create it
+                    await collection.Indexes.CreateOneAsync(indexModel);
+                    _logger.LogInformation("✓ Created new index '{IndexName}' on {Collection}",
+                        indexName, collectionName);
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create indexes for collection {Collection}", collectionName);
+            return false;
         }
     }
 }

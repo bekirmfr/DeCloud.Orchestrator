@@ -44,16 +44,7 @@ public interface IAttestationService
     Task<VmAttestationStats?> GetVmStatsAsync(string vmId);
 }
 
-public class VmAttestationStats
-{
-    public string VmId { get; set; } = string.Empty;
-    public int TotalChallenges { get; set; }
-    public int SuccessfulChallenges { get; set; }
-    public double SuccessRate { get; set; }
-    public double AverageResponseTimeMs { get; set; }
-    public DateTime? LastAttestation { get; set; }
-    public bool BillingPaused { get; set; }
-}
+
 
 public class AttestationService : IAttestationService
 {

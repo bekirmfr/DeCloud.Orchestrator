@@ -19,7 +19,7 @@ public class VirtualMachine
     public string? OwnerWallet { get; set; } = string.Empty;    // Wallet address
     
     // Placement
-    public string? NodeId { get; set; }                        // Which node it's running on
+    public string NodeId { get; set; }                        // Which node it's running on
     public string? TargetNodeId { get; set; }                  // For migrations
     
     // Specification
