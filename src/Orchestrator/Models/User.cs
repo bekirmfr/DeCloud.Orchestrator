@@ -5,8 +5,20 @@ namespace Orchestrator.Models;
 /// </summary>
 public class User
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string WalletAddress { get; set; } = string.Empty;
+    /// <summary>
+    /// Wallet address serves as the primary ID (checksum format)
+    /// This ensures deterministic user IDs that survive database resets
+    /// </summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>
+    /// Wallet address (same as Id, kept for clarity in queries)
+    /// Always stored in checksum format
+    /// </summary>
+    public string WalletAddress
+    {
+        get => Id;
+        set => Id = value;
+    }
     public string? Email { get; set; }
     public string? Username { get; set; }
     public string? DisplayName { get; set; }

@@ -62,7 +62,7 @@ public class SshCertificateController : ControllerBase
         try
         {
             // Get user and VM
-            var user = await _userService.GetUserAsync(userId);
+            var user = await _userService.GetUserByIdAsync(userId);
             if (user == null)
             {
                 return Unauthorized(ApiResponse<SshCertificateResponse>.Fail(
@@ -204,7 +204,7 @@ public class SshCertificateController : ControllerBase
             return NotFound();
         }
 
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
         var hasUserKey = user?.SshKeys.Any() ?? false;
 
         // Look up node to get public IP

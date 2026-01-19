@@ -44,7 +44,7 @@ public class BalanceService : IBalanceService
         _logger.LogDebug("Calculating balance for user {UserId}", userId);
 
         // 1. Get user wallet address
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
         if (user == null)
         {
             throw new Exception($"User {userId} not found");
@@ -121,7 +121,7 @@ public class BalanceService : IBalanceService
     /// </summary>
     public async Task<BalanceBreakdown> GetBalanceBreakdownAsync(string userId)
     {
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
         if (user == null)
         {
             throw new Exception($"User {userId} not found");

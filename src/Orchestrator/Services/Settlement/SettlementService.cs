@@ -239,7 +239,7 @@ public class SettlementService : ISettlementService
         foreach (var group in grouped)
         {
             // Get user and node wallets
-            var user = await _userService.GetUserAsync(group.UserId);
+            var user = await _userService.GetUserByIdAsync(group.UserId);
             var node = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == group.NodeId);
 
             if (user == null || node == null)

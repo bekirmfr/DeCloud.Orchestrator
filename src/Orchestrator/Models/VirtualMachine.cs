@@ -16,10 +16,14 @@ public class VirtualMachine
 
     // Ownership
     public string? OwnerId { get; set; } = string.Empty;        // User/tenant ID
-    public string? OwnerWallet { get; set; } = string.Empty;    // Wallet address
-    
+    public string? OwnerWallet
+    {
+        get => OwnerId;
+        set => OwnerId = value;
+    }
+
     // Placement
-    public string NodeId { get; set; }                        // Which node it's running on
+    public string? NodeId { get; set; }                        // Which node it's running on
     public string? TargetNodeId { get; set; }                  // For migrations
     
     // Specification

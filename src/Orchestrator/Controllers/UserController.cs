@@ -34,7 +34,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<UserProfileResponse>>> GetProfile()
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
@@ -70,7 +70,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
@@ -95,7 +95,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<SshKey>>>> GetSshKeys()
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
@@ -146,7 +146,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<ApiKeySummary>>>> GetApiKeys()
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
@@ -185,7 +185,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> DeleteApiKey(string keyId)
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
@@ -211,7 +211,7 @@ public class UserController : ControllerBase
     public async Task<ActionResult<ApiResponse<UserQuotas>>> GetQuotas()
     {
         var userId = GetUserId();
-        var user = await _userService.GetUserAsync(userId);
+        var user = await _userService.GetUserByIdAsync(userId);
 
         if (user == null)
         {
