@@ -148,7 +148,6 @@ public class DataStore
                 new CreateIndexOptions
                 {
                     Name = "idx_email",
-                    Unique = true,
                     Sparse = true // Allow null emails
                 }),
             new CreateIndexModel<User>(
