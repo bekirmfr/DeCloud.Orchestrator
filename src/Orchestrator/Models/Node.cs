@@ -445,7 +445,7 @@ public class RelayNodeInfo
     /// <summary>
     /// Is this node currently operating as a relay?
     /// </summary>
-    public bool IsActive { get; set; }
+    public bool IsActive => Status == RelayStatus.Active;
 
     /// <summary>
     /// VM ID of the relay VM running on this node
@@ -467,6 +467,7 @@ public class RelayNodeInfo
     /// <remarks>The private key must be a valid WireGuard key in base64 format. This value should be kept
     /// confidential to maintain the security of the VPN connection.</remarks>
     public string? WireGuardPrivateKey { get; set; }
+    public string? TunnelIp { get; set; }
 
     /// <summary>
     /// Maximum number of CGNAT nodes this relay can serve

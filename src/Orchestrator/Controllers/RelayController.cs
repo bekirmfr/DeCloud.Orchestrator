@@ -102,10 +102,12 @@ public class RelayController : ControllerBase
                 "CGNAT nodes can now connect",
                 node.Id);
 
-            // Update relay status
-            node.RelayInfo.IsActive = true;
-            node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+            // Update relay info with WireGuard details
+            node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
+            node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
             node.RelayInfo.Status = RelayStatus.Active;
+            node.RelayInfo.TunnelIp = "10.20.0.254";
+            node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(node);
 
             return Ok(new

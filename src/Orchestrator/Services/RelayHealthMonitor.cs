@@ -80,7 +80,8 @@ public class RelayHealthMonitor : BackgroundService
         try
         {
             // Health check relay node's agent API
-            var healthUrl = $"http://{relay.PublicIp}/health";
+            var tunnelIp = relay.RelayInfo.TunnelIp ?? "10.20.0.254";
+            var healthUrl = $"http://{tunnelIp}/health";
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(10)); // 10 second timeout

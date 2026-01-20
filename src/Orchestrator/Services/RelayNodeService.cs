@@ -175,11 +175,11 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
             node.RelayInfo = new RelayNodeInfo
             {
-                IsActive = true,
                 RelayVmId = relayVm.VmId,
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
                 WireGuardPublicKey = relayPublicKey,  // ✅ Store public key
                 WireGuardPrivateKey = relayPrivateKey,
+                TunnelIp = "10.20.0.254",
                 MaxCapacity = vmSpec.MaxConnections,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",
