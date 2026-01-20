@@ -361,15 +361,14 @@ public class CentralCaddyManager : ICentralCaddyManager
         {
             match = new[]
             {
-                new { host = new[] { subdomain } }
-            },
+            new { host = new[] { subdomain } }
+        },
             handle = new object[]
             {
-                // Rewrite to internal proxy path
                 new
                 {
                     handler = "rewrite",
-                    uri = $"/internal/proxy/{route.VmId}{{http.request.uri}}"
+                    uri = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{{http.request.uri}}"
                 },
                 // Proxy to node agent
                 new
@@ -388,9 +387,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                                 ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
                                 ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
                                 ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
-                                ["X-Real-IP"] = new[] { "{http.request.remote.host}" },
-                                ["X-DeCloud-VM-Id"] = new[] { route.VmId },
-                                ["X-DeCloud-Target-Port"] = new[] { route.TargetPort.ToString() }
+                                ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
                             }
                         }
                     },

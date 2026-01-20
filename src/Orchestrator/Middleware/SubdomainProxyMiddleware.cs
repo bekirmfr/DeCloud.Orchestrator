@@ -100,8 +100,8 @@ public class SubdomainProxyMiddleware
         }
 
         // Build target URL: NodeAgent's internal proxy endpoint
-        var nodePort = 5100; // NodeAgent port
-        var targetPath = $"/internal/proxy/{route.VmId}{path}";
+        var nodePort = 5100;
+        var targetPath = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{path}";
         var queryString = context.Request.QueryString.Value ?? "";
         var targetUrl = $"http://{route.NodePublicIp}:{nodePort}{targetPath}{queryString}";
 
@@ -157,7 +157,6 @@ public class SubdomainProxyMiddleware
             request.Headers.TryAddWithoutValidation("X-Forwarded-Host",
                 context.Request.Headers["X-Forwarded-Host"].FirstOrDefault()
                 ?? context.Request.Host.Value);
-            request.Headers.TryAddWithoutValidation("X-DeCloud-Target-Port", route.TargetPort.ToString());
             request.Headers.TryAddWithoutValidation("X-DeCloud-VM-Id", route.VmId);
 
             // Copy body

@@ -1,9 +1,9 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Orchestrator.Services;
 
@@ -104,6 +104,23 @@ public class AttestationService : IAttestationService
             return result;
         }
 
+        // Get node details - REQUIRED for proxying
+        if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        {
+            result.Errors.Add("Node not found");
+            await RecordFailureAsync(vmId, "Node not found");
+            return result;
+        }
+
+        // Build node agent URL for attestation proxy
+        var nodeAgentUrl = GetNodeAgentUrl(node);
+        if (string.IsNullOrEmpty(nodeAgentUrl))
+        {
+            result.Errors.Add("Node agent URL not available");
+            await RecordFailureAsync(vmId, "No node agent URL");
+            return result;
+        }
+
         // Create challenge
         var challenge = CreateChallenge(vm);
 
@@ -116,7 +133,7 @@ public class AttestationService : IAttestationService
             // Send challenge and measure response time (CRITICAL: wall-clock timing)
             var sendTime = DateTime.UtcNow;
 
-            var response = await SendChallengeAsync(vmAddress, challenge, ct);
+            var response = await SendChallengeAsync(nodeAgentUrl, vmId, challenge, ct);
 
             var receiveTime = DateTime.UtcNow;
             result.ResponseTimeMs = (receiveTime - sendTime).TotalMilliseconds;
@@ -169,6 +186,28 @@ public class AttestationService : IAttestationService
         }
     }
 
+    /// <summary>
+    /// Get NodeAgent URL for proxying requests
+    /// </summary>
+    private string? GetNodeAgentUrl(Node node)
+    {
+        if (string.IsNullOrEmpty(node.PublicIp))
+        {
+            return null;
+        }
+
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+
+        // For CGNAT nodes, use tunnel IP if available
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+        {
+            return $"http://{node.CgnatInfo.TunnelIp}:{port}";
+        }
+
+        // Regular nodes: use public IP
+        return $"http://{node.PublicIp}:{port}";
+    }
+
     private AttestationChallenge CreateChallenge(VirtualMachine vm)
     {
         var nonce = GenerateNonce();
@@ -188,11 +227,12 @@ public class AttestationService : IAttestationService
     }
 
     private async Task<AttestationResponse?> SendChallengeAsync(
-        string vmAddress,
+        string nodeAgentUrl,
+        string vmId,
         AttestationChallenge challenge,
         CancellationToken ct)
     {
-        var url = $"http://{vmAddress}:9999/challenge";
+        var url = $"{nodeAgentUrl}/api/vms/{vmId}/proxy/http/9999/challenge";
 
         var payload = new
         {
