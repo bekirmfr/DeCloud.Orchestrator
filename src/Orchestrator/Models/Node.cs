@@ -467,7 +467,16 @@ public class RelayNodeInfo
     /// <remarks>The private key must be a valid WireGuard key in base64 format. This value should be kept
     /// confidential to maintain the security of the VPN connection.</remarks>
     public string? WireGuardPrivateKey { get; set; }
+    /// <summary>
+    /// WireGuard tunnel IP of the relay VM (e.g., 10.20.1.254)
+    /// </summary>
     public string? TunnelIp { get; set; }
+
+    /// <summary>
+    /// Unique subnet number for this relay (1-254)
+    /// Used for WireGuard network isolation: 10.20.{RelaySubnet}.0/24
+    /// </summary>
+    public int RelaySubnet { get; set; } = 0;
 
     /// <summary>
     /// Maximum number of CGNAT nodes this relay can serve

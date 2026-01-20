@@ -127,6 +127,16 @@ public class RelayNodeService : IRelayNodeService
         try
         {
             // ========================================
+            // STEP 0: Allocate unique subnet for this relay
+            // ========================================
+            var relaySubnet = AllocateRelaySubnet();
+            var relayTunnelIp = $"10.20.{relaySubnet}.254";
+
+            _logger.LogInformation(
+                "Relay on node {NodeId} assigned subnet {Subnet} (tunnel IP: {TunnelIp})",
+                node.Id, relaySubnet, relayTunnelIp);
+
+            // ========================================
             // STEP 1: Generate WireGuard keypair for relay VM
             // ========================================
             _logger.LogInformation(
@@ -164,7 +174,8 @@ public class RelayNodeService : IRelayNodeService
                         { "role", "relay" },
                         { "wireguard-private-key", relayPrivateKey },  // Pass private key to VM
                         { "relay-region", node.Region ?? "default" },
-                        { "node-public-ip", node.PublicIp }
+                        { "node-public-ip", node.PublicIp },
+                        { "relay-subnet", relaySubnet.ToString() }
                     }
                 ),
                 node.Id
@@ -177,9 +188,10 @@ public class RelayNodeService : IRelayNodeService
             {
                 RelayVmId = relayVm.VmId,
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
-                WireGuardPublicKey = relayPublicKey,  // ✅ Store public key
+                WireGuardPublicKey = relayPublicKey,
                 WireGuardPrivateKey = relayPrivateKey,
-                TunnelIp = "10.20.0.254",
+                TunnelIp = relayTunnelIp,
+                RelaySubnet = relaySubnet,
                 MaxCapacity = vmSpec.MaxConnections,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",
@@ -191,13 +203,8 @@ public class RelayNodeService : IRelayNodeService
 
             _logger.LogInformation(
                 "✓ Relay VM {VmId} deployed on node {NodeId} " +
-                "(Capacity: {Capacity}, WireGuard public key: {PubKey})",
-                relayVm.VmId, node.Id, vmSpec.MaxConnections, relayPublicKey);
-
-            _logger.LogInformation(
-                "✓ Relay VM {VmId} deployed on node {NodeId} - " +
-                "waiting for initialization callback",
-                relayVm.VmId, node.Id);
+                "(Subnet: 10.20.{Subnet}.0/24, Gateway: {TunnelIp}, Capacity: {Capacity})",
+                relayVm.VmId, node.Id, relaySubnet, relayTunnelIp, vmSpec.MaxConnections);
 
             return relayVm.VmId;
         }
@@ -208,6 +215,35 @@ public class RelayNodeService : IRelayNodeService
                 node.Id);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Allocate next available relay subnet (1-254)
+    /// Each relay gets a unique /24 subnet within 10.20.0.0/16
+    /// </summary>
+    private int AllocateRelaySubnet()
+    {
+        // Get all existing relay subnets
+        var usedSubnets = _dataStore.Nodes.Values
+            .Where(n => n.RelayInfo?.IsActive == true)
+            .Select(n => n.RelayInfo.RelaySubnet)
+            .Where(s => s > 0)  // Filter out uninitialized (0)
+            .ToHashSet();
+
+        // Find first available subnet (1-254)
+        for (int subnet = 1; subnet <= 254; subnet++)
+        {
+            if (!usedSubnets.Contains(subnet))
+            {
+                _logger.LogInformation(
+                    "Allocated relay subnet: 10.20.{Subnet}.0/24",
+                    subnet);
+                return subnet;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "No available relay subnets (maximum 254 relays reached)");
     }
 
     private VmSpec DeterminRelayConfiguration(Node node)
@@ -372,16 +408,47 @@ public class RelayNodeService : IRelayNodeService
         }
     }
 
+    /// <summary>
+    /// Allocate tunnel IP for CGNAT node within relay's subnet
+    /// Format: 10.20.{relaySubnet}.{2-253}
+    /// </summary>
     private string AllocateTunnelIp(Node relayNode)
     {
-        // Use relay node ID hash to create unique subnet
-        var relayIdHash = Math.Abs(relayNode.Id.GetHashCode());
-        var subnet = (relayIdHash % 200) + 1; // 10.20.1.0 - 10.20.200.0
+        if (relayNode.RelayInfo == null)
+        {
+            throw new InvalidOperationException("Relay node has no RelayInfo");
+        }
 
-        var currentLoad = relayNode.RelayInfo?.CurrentLoad ?? 0;
-        var hostId = currentLoad + 2; // Start from .2 (.1 is relay itself)
+        var relaySubnet = relayNode.RelayInfo.RelaySubnet;
+        if (relaySubnet == 0)
+        {
+            // Fallback for old relays without subnet assigned
+            relaySubnet = 0;
+            _logger.LogWarning(
+                "Relay {RelayId} has no subnet assigned, using subnet 0",
+                relayNode.Id);
+        }
 
-        return $"10.20.{subnet}.{hostId}";
+        // IPs in relay's subnet:
+        // .1 = orchestrator peer on this relay's subnet (not used)
+        // .254 = relay VM gateway
+        // .2 - .253 = available for CGNAT nodes (252 IPs)
+        var hostId = relayNode.RelayInfo.CurrentLoad + 2;
+
+        if (hostId > 253)
+        {
+            throw new InvalidOperationException(
+            $"Relay {relayNode.Id} (subnet 10.20.{relaySubnet}.0/24) has reached capacity " +
+            $"(252 CGNAT nodes per relay, currently: {relayNode.RelayInfo.CurrentLoad})");
+        }
+
+        var tunnelIp = $"10.20.{relaySubnet}.{hostId}";
+
+        _logger.LogDebug(
+            "Allocated tunnel IP {TunnelIp} for CGNAT node on relay {RelayId} (subnet {Subnet}, load {Load})",
+            tunnelIp, relayNode.Id, relaySubnet, relayNode.RelayInfo.CurrentLoad);
+
+        return tunnelIp;
     }
 
     private async Task<string> GenerateWireGuardConfigAsync(

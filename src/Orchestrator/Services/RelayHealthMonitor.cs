@@ -79,9 +79,17 @@ public class RelayHealthMonitor : BackgroundService
 
         try
         {
-            // Health check relay node's agent API
-            var tunnelIp = relay.RelayInfo.TunnelIp ?? "10.20.0.254";
+            // Use relay VM's WireGuard tunnel IP
+            // Fallback to legacy subnet 0 if not set (backward compatibility)
+            var tunnelIp = relay.RelayInfo.TunnelIp
+                ?? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
+                ?? "10.20.0.254";  // Double fallback for very old relays
+
             var healthUrl = $"http://{tunnelIp}/health";
+
+            _logger.LogDebug(
+                "Checking relay {RelayId} health at {HealthUrl} (subnet {Subnet})",
+                relay.Id, healthUrl, relay.RelayInfo.RelaySubnet);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(10)); // 10 second timeout

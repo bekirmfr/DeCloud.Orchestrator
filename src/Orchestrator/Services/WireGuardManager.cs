@@ -160,9 +160,16 @@ public class WireGuardManager : IWireGuardManager
 
         try
         {
+            // Use relay-specific subnet for allowed-ips
+            var relaySubnet = relayNode.RelayInfo.RelaySubnet;
+            var allowedIps = relaySubnet > 0
+                ? $"10.20.{relaySubnet}.0/24"  // Relay-specific subnet
+                : "10.20.0.0/16";               // Fallback for old relays
+
             _logger.LogInformation(
-                "Adding relay {RelayId} as WireGuard peer (endpoint: {Endpoint})",
-                relayNode.Id, relayNode.RelayInfo.WireGuardEndpoint);
+                "Adding relay {RelayId} as WireGuard peer " +
+                "(endpoint: {Endpoint}, allowed-ips: {AllowedIps}, subnet: {Subnet})",
+                relayNode.Id, relayNode.RelayInfo.WireGuardEndpoint, allowedIps, relaySubnet);
 
             // Add peer using wg command
             var process = new Process
@@ -173,7 +180,7 @@ public class WireGuardManager : IWireGuardManager
                     Arguments = $"set {INTERFACE_NAME} " +
                                $"peer {relayNode.RelayInfo.WireGuardPublicKey} " +
                                $"endpoint {relayNode.RelayInfo.WireGuardEndpoint} " +
-                               $"allowed-ips 10.20.0.0/16 " +
+                               $"allowed-ips {allowedIps} " +  // ✅ Relay-specific subnet
                                $"persistent-keepalive 25",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -195,7 +202,9 @@ public class WireGuardManager : IWireGuardManager
             // Save configuration
             await ExecuteCommandAsync("wg-quick", $"save {INTERFACE_NAME}", ct);
 
-            _logger.LogInformation("✓ Added relay {RelayId} as WireGuard peer", relayNode.Id);
+            _logger.LogInformation(
+                "✓ Added relay {RelayId} as WireGuard peer (subnet 10.20.{Subnet}.0/24)",
+                relayNode.Id, relaySubnet);
             return true;
         }
         catch (Exception ex)
