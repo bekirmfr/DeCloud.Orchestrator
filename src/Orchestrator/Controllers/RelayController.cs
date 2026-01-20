@@ -106,7 +106,6 @@ public class RelayController : ControllerBase
             node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
             node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
             node.RelayInfo.Status = RelayStatus.Active;
-            node.RelayInfo.TunnelIp = "10.20.0.254";
             node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(node);
 
