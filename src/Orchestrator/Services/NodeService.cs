@@ -451,6 +451,8 @@ public class NodeService : INodeService
         node.Status = NodeStatus.Online;
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
+        // Update CGNAT tunnel info from heartbeat (critical for attestation routing)
+        node.CgnatInfo = heartbeat.CgnatInfo;
 
         // Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
