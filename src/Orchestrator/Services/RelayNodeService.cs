@@ -652,7 +652,8 @@ PersistentKeepalive = 25";
             var publicKey = await DerivePublicKeyAsync(privateKey, ct);
 
             // Call relay VM's API to add peer
-            var relayTunnelIp = "10.20.0.254";  // Relay's WireGuard gateway IP
+            // Use relay's actual tunnel IP from RelayInfo
+            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
             var relayApiUrl = $"http://{relayTunnelIp}:8080/api/relay/add-peer";
 
             var payload = new
