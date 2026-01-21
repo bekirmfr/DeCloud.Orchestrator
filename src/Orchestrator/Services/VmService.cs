@@ -800,12 +800,14 @@ public class VmService : IVmService
         var baseMemoryRate = 0m;  // per GB
         var baseStorageRate = 0m; // per GB
 
+        const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
+
         switch (spec.VmType)
         {
             case VmType.General:
                 baseCpuRate = 0.01m;
-                baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
-                baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
+                baseMemoryRate = 0.005m;  // per GB
+                baseStorageRate = 0.0001m; // per GB
                 break;
             case VmType.Compute:
                 break;
@@ -823,10 +825,11 @@ public class VmService : IVmService
                 baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
                 break;
         }
-        
-        return (spec.VirtualCpuCores * baseCpuRate) +
-               (spec.MemoryBytes * baseMemoryRate) +
-               (spec.DiskBytes * baseStorageRate);
+
+        return 
+            (spec.VirtualCpuCores * baseCpuRate) +
+            ((spec.MemoryBytes / BYTES_PER_GB) * baseMemoryRate) +  // Divide by bytes per GB
+            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate);
     }
 
     private static string GeneratePrivateIp()
