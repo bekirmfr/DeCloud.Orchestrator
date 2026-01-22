@@ -88,7 +88,7 @@ ATTESTATION_MIN_VM_AGE_SECONDS=90               # Wait 90s after VM starts befor
 ATTESTATION_MAX_PROCESSING_MS=50                # Max processing time inside VM (SECURITY CRITICAL - DO NOT INCREASE)
 ATTESTATION_SAFETY_MARGIN_MS=20                 # Safety margin for network jitter
 ATTESTATION_ABSOLUTE_MAX_MS=500                 # Absolute maximum timeout (prevents abuse via fake high RTT)
-ATTESTATION_MAX_RESPONSE_MS=100                 # Fallback fixed timeout (when adaptive disabled or no metrics)
+ATTESTATION_MAX_RESPONSE_MS=300                 # Fallback fixed timeout (when adaptive disabled or no metrics)
 
 # Challenge intervals (UPDATED: 5 minutes instead of 1 hour for normal period)
 ATTESTATION_STARTUP_INTERVAL=60                 # Every 60s during first 5 minutes

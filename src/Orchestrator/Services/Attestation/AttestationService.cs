@@ -131,7 +131,7 @@ public class AttestationService : IAttestationService
         double adaptiveTimeout;
         double expectedNetworkRtt;
 
-        if (networkMetrics != null)
+        if (networkMetrics != null && networkMetrics.TotalMeasurements > 0)
         {
             // Calculate adaptive timeout based on measured RTT
             adaptiveTimeout = networkMetrics.CalculateAdaptiveTimeout(
@@ -147,8 +147,27 @@ public class AttestationService : IAttestationService
         }
         else
         {
-            // Fallback to fixed timeout (should only happen for brand new VMs)
-            adaptiveTimeout = _config.MaxResponseTimeMs;
+            // First attestation or no calibration
+            // Use generous timeout for cold start
+            var vmAge = DateTime.UtcNow - (vm.StartedAt ?? vm.CreatedAt);
+
+            if (vmAge.TotalMinutes < 10)
+            {
+                // First 10 minutes: Generous timeout for warmup
+                adaptiveTimeout = 500;  // 500ms for cold start
+                _logger.LogDebug(
+                    "VM {VmId} using first-attestation timeout: {Timeout}ms (VM age: {Age:F1}min)",
+                    vmId, adaptiveTimeout, vmAge.TotalMinutes);
+            }
+            else
+            {
+                // After 10 minutes: Standard uncalibrated timeout
+                adaptiveTimeout = _config.MaxResponseTimeMs;
+                _logger.LogDebug(
+                    "VM {VmId} using uncalibrated timeout: {Timeout}ms",
+                    vmId, adaptiveTimeout);
+            }
+
             expectedNetworkRtt = 50; // Default estimate
 
             _logger.LogWarning(
@@ -199,9 +218,25 @@ public class AttestationService : IAttestationService
                 // Timeout occurred
                 var elapsed = Stopwatch.GetElapsedTime(challengeStart).TotalMilliseconds;
                 result.ResponseTimeMs = elapsed;
+
+                // Check if this is first attestation
+                var isFirstAttestation = networkMetrics == null || networkMetrics.TotalMeasurements == 0;
+
+                if (isFirstAttestation)
+                {
+                    _logger.LogDebug(
+                        "VM {VmId} first attestation timeout (>{Timeout:F1}ms) - agent warming up, not counting as failure",
+                        vmId, adaptiveTimeout);
+
+                    result.Errors.Add("First attestation timeout (agent warming up)");
+                    result.TimingValid = false;
+                    // Don't call RecordFailureAsync - this is expected
+                    return result;
+                }
+
+                // Normal timeout handling for subsequent attestations
                 result.Errors.Add($"Response timeout (>{adaptiveTimeout:F1}ms, measured: {elapsed:F1}ms)");
                 result.TimingValid = false;
-
                 await RecordFailureAsync(vmId, "Timeout");
                 return result;
             }
