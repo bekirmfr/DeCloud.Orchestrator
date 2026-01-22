@@ -196,8 +196,7 @@ public class BlockchainService : IBlockchainService
         string userWallet,
         string nodeWallet,
         decimal amount,
-        decimal nodeShare,
-        decimal platformFee)
+		string vmId)
     {
         try
         {
@@ -213,12 +212,10 @@ public class BlockchainService : IBlockchainService
 
             // Get escrow contract
             var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
-            var settleFunction = contract.GetFunction("settle");
+            var settleFunction = contract.GetFunction("reportUsage");
 
             // Convert to wei (6 decimals for USDC)
             var amountWei = Web3.Convert.ToWei(amount, 6);
-            var nodeShareWei = Web3.Convert.ToWei(nodeShare, 6);
-            var platformFeeWei = Web3.Convert.ToWei(platformFee, 6);
 
             // Estimate gas (important for cost prediction)
             var gas = await settleFunction.EstimateGasAsync(
@@ -228,8 +225,7 @@ public class BlockchainService : IBlockchainService
                 userWallet,
                 nodeWallet,
                 amountWei,
-                nodeShareWei,
-                platformFeeWei);
+                vmId);
 
             _logger.LogDebug(
                 "Estimated gas for settlement: {Gas} units",
@@ -245,18 +241,17 @@ public class BlockchainService : IBlockchainService
                 userWallet,
                 nodeWallet,
                 amountWei,
-                nodeShareWei,
-                platformFeeWei);
+                vmId);
 
             // Check transaction status
             if (receipt.Status?.Value != 1)
             {
-                throw new Exception($"Settlement transaction reverted: {receipt.TransactionHash}");
+                throw new Exception($"reportUsage transaction reverted: {receipt.TransactionHash}");
             }
 
             _logger.LogInformation(
-                "✓ Settlement executed: tx={TxHash}, block={Block}, gasUsed={GasUsed}",
-                receipt.TransactionHash, receipt.BlockNumber, receipt.GasUsed);
+				"✓ Usage reported: tx={TxHash}, user={User}, node={Node}, amount={Amount} USDC, vmId={VmId}",
+				receipt.TransactionHash, userWallet[..10], nodeWallet[..10], amount, vmId);
 
             return receipt.TransactionHash;
         }
@@ -293,8 +288,7 @@ public class BlockchainService : IBlockchainService
             var userWallets = settlements.Select(s => s.UserWallet).ToArray();
             var nodeWallets = settlements.Select(s => s.NodeWallet).ToArray();
             var amounts = settlements.Select(s => Web3.Convert.ToWei(s.Amount, 6)).ToArray();
-            var nodeShares = settlements.Select(s => Web3.Convert.ToWei(s.NodeShare, 6)).ToArray();
-            var platformFees = settlements.Select(s => Web3.Convert.ToWei(s.PlatformFee, 6)).ToArray();
+            var vmIds = settlements.Select(s => s.VmId ?? "").ToArray();
 
             // Execute batch settlement
             var receipt = await batchSettleFunction.SendTransactionAndWaitForReceiptAsync(
@@ -303,19 +297,18 @@ public class BlockchainService : IBlockchainService
                 gasPrice: null,
                 value: null,
                 receiptRequestCancellationToken: null,
-                userWallets,
-                nodeWallets,
-                amounts,
-                nodeShares,
-                platformFees);
+                userWallets,  // address[] users
+				nodeWallets,  // address[] nodes
+				amounts,      // uint256[] amounts
+				vmIds);       // string[] vmIds
 
             if (receipt.Status?.Value != 1)
             {
-                throw new Exception($"Batch settlement transaction reverted: {receipt.TransactionHash}");
+                throw new Exception($"batchReportUsage settlement transaction reverted: {receipt.TransactionHash}");
             }
 
             _logger.LogInformation(
-                "✓ Batch settlement executed: tx={TxHash}, gasUsed={GasUsed}",
+                "✓ Batch usage reported: tx={TxHash}, gasUsed={GasUsed}",
                 receipt.TransactionHash, receipt.GasUsed);
 
             return receipt.TransactionHash;

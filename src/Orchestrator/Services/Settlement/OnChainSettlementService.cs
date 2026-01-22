@@ -130,8 +130,7 @@ public class OnChainSettlementService : BackgroundService
             UserWallet = b.UserWallet,
             NodeWallet = b.NodeWallet,
             Amount = b.TotalAmount,
-            NodeShare = b.NodeShare,
-            PlatformFee = b.PlatformFee
+            VmId = b.VmId
         }).ToList();
 
         var chunkTotal = transactions.Sum(t => t.Amount);

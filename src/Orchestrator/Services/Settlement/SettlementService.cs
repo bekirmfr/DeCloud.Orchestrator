@@ -223,11 +223,12 @@ public class SettlementService : ISettlementService
 
         // Group by user + node
         var grouped = unpaidRecords
-            .GroupBy(u => new { u.UserId, u.NodeId })
+            .GroupBy(u => new { u.UserId, u.NodeId, u.VmId })
             .Select(g => new
             {
                 g.Key.UserId,
                 g.Key.NodeId,
+                g.Key.VmId,
                 Records = g.ToList(),
                 TotalAmount = g.Sum(r => r.TotalCost),
                 NodeShare = g.Sum(r => r.NodeShare),
@@ -259,6 +260,7 @@ public class SettlementService : ISettlementService
                 UserWallet = user.WalletAddress,
                 NodeId = group.NodeId,
                 NodeWallet = node.WalletAddress,
+                VmId = group.VmId,
                 UsageRecordIds = group.Records.Select(r => r.Id).ToList(),
                 TotalAmount = group.TotalAmount,
                 NodeShare = group.NodeShare,

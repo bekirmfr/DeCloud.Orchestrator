@@ -68,8 +68,7 @@ public interface IBlockchainService
         string userWallet,
         string nodeWallet,
         decimal amount,
-        decimal nodeShare,
-        decimal platformFee);
+        string vmId);
 
     /// <summary>
     /// Execute batch settlements in single transaction (gas optimization)

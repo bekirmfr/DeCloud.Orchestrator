@@ -8,8 +8,7 @@
         public string UserWallet { get; set; } = string.Empty;
         public string NodeWallet { get; set; } = string.Empty;
         public decimal Amount { get; set; }
-        public decimal NodeShare { get; set; }
-        public decimal PlatformFee { get; set; }
+        public string VmId { get; set; } = string.Empty;
     }
 
     public class SettlementItem
@@ -55,6 +54,7 @@
         public string UserWallet { get; set; } = string.Empty;
         public string NodeId { get; set; } = string.Empty;
         public string NodeWallet { get; set; } = string.Empty;
+        public string VmId { get; set; } = string.Empty;
         public List<string> UsageRecordIds { get; set; } = new();
         public decimal TotalAmount { get; set; }
         public decimal NodeShare { get; set; }
