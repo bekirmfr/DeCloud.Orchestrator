@@ -189,24 +189,18 @@ public class AttestationSchedulerService : BackgroundService
     }
 
     private async Task CheckAndRecalibrateAsync(
-        VirtualMachine vm,
-        INetworkLatencyTracker latencyTracker,
-        CancellationToken ct)
+    VirtualMachine vm,
+    INetworkLatencyTracker latencyTracker,
+    CancellationToken ct)
     {
-
         if (ct.IsCancellationRequested)
             return;
 
-        // ✨ SIMPLIFIED: Check metrics directly from VM
         if (vm.NetworkMetrics == null)
             return;
 
         if (vm.NetworkMetrics.NeedsRecalibration())
         {
-            var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
-            if (string.IsNullOrEmpty(vmIp))
-                return;
-
             _logger.LogInformation(
                 "Triggering recalibration for VM {VmId}",
                 vm.Id);

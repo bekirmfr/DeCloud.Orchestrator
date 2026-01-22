@@ -125,7 +125,7 @@ public class AttestationService : IAttestationService
         // =====================================================
 
         // Get network metrics for this VM
-        var networkMetrics = await _latencyTracker.GetMetricsAsync(vmId);
+        var networkMetrics = _latencyTracker.GetMetrics(vmId);
 
         double adaptiveTimeout;
         double expectedNetworkRtt;
@@ -163,19 +163,11 @@ public class AttestationService : IAttestationService
             double currentNetworkRtt;
             try
             {
-                var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
-                if (!string.IsNullOrEmpty(vmIp))
-                {
-                    currentNetworkRtt = await _latencyTracker.MeasureRttAsync(vmIp, ct);
+                currentNetworkRtt = await _latencyTracker.MeasureRttAsync(vm.Id, ct);
 
-                    _logger.LogDebug(
-                        "VM {VmId} current RTT: {Rtt:F1}ms (expected: {Expected:F1}ms)",
-                        vmId, currentNetworkRtt, expectedNetworkRtt);
-                }
-                else
-                {
-                    currentNetworkRtt = expectedNetworkRtt;
-                }
+                _logger.LogDebug(
+                    "VM {VmId} current RTT: {Rtt:F1}ms (expected: {Expected:F1}ms)",
+                    vmId, currentNetworkRtt, expectedNetworkRtt);
             }
             catch (Exception ex)
             {
@@ -267,11 +259,7 @@ public class AttestationService : IAttestationService
                     vmId);
 
                 // Trigger recalibration in background
-                var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
-                if (!string.IsNullOrEmpty(vmIp))
-                {
-                    _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, vmIp));
-                }
+                _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, ct));  // ✅
             }
 
             // Record result
