@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# DeCloud Orchestrator Installation Script v3.0.0
+# DeCloud Orchestrator Installation Script v3.1.0
 #
 # Production-ready installation with:
 # - .NET 8 Runtime
@@ -20,7 +20,7 @@
 # - Pre-deployment validation with helpful error messages
 # - Support for production blockchain integration (Polygon)
 #
-# Version: 3.0.0 (Attestation & Payment Integration)
+# Version: 3.1.0 (Adaptive Attestation)
 #
 # Usage:
 #   sudo ./install.sh \
@@ -38,7 +38,7 @@
 
 set -e
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -77,26 +77,37 @@ API_PORT=5050
 MONGODB_URI=""
 
 # ============================================================
-# NEW: Attestation Configuration (v3.0)
+# NEW: Attestation Configuration (v3.1 - Adaptive Timeout)
 # ============================================================
 # These are security-critical parameters that should NOT be changed
 # without understanding the security implications
 
-# Maximum VM response time for attestation challenge (100ms recommended)
-# DO NOT increase above 200ms - allows node to extract ephemeral keys
-ATTESTATION_MAX_RESPONSE_MS=100
+# Adaptive timeout configuration
+ATTESTATION_ENABLE_ADAPTIVE=true                # Enable adaptive timeout based on network RTT
+ATTESTATION_MAX_PROCESSING_MS=50                # Max processing time inside VM (SECURITY CRITICAL - DO NOT INCREASE)
+ATTESTATION_SAFETY_MARGIN_MS=20                 # Safety margin for network jitter
+ATTESTATION_ABSOLUTE_MAX_MS=500                 # Absolute maximum timeout (prevents abuse via fake high RTT)
+ATTESTATION_MAX_RESPONSE_MS=100                 # Fallback fixed timeout (when adaptive disabled or no metrics)
 
-# Challenge intervals
-ATTESTATION_STARTUP_INTERVAL=60    # Every 60s during first 5 minutes
-ATTESTATION_NORMAL_INTERVAL=3600   # Every hour after startup
+# Challenge intervals (UPDATED: 5 minutes instead of 1 hour for normal period)
+ATTESTATION_STARTUP_INTERVAL=60                 # Every 60s during first 5 minutes
+ATTESTATION_NORMAL_INTERVAL=300                 # Every 5 minutes after startup (CHANGED from 3600)
 
 # Failure thresholds
-ATTESTATION_FAILURE_THRESHOLD=3    # Pause billing after 3 failures
-ATTESTATION_RECOVERY_THRESHOLD=2   # Resume billing after 2 successes
+ATTESTATION_FAILURE_THRESHOLD=3                 # Pause billing after 3 consecutive failures
+ATTESTATION_RECOVERY_THRESHOLD=2                # Resume billing after 2 consecutive successes
 
-# Memory verification
-ATTESTATION_MAX_MEMORY_TOUCH_MS=50.0
-ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=5.0
+# Memory verification (UPDATED: More lenient for hardware diversity)
+ATTESTATION_MAX_MEMORY_TOUCH_MS=100.0          # Total time for memory touch test (CHANGED from 50.0)
+ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=10.0      # Single page touch max (CHANGED from 5.0)
+
+# Network calibration (NEW)
+ATTESTATION_CALIBRATION_PINGS=5                 # Number of pings for baseline RTT calibration
+ATTESTATION_RECALIBRATION_HOURS=24              # How often to recalibrate baseline (hours)
+ATTESTATION_RTT_CHANGE_THRESHOLD=0.3            # Trigger recalibration if RTT changes by 30%
+ATTESTATION_MAX_STDDEV_RATIO=0.5                # Trigger recalibration if variance is high
+ATTESTATION_SMOOTHING_FACTOR=0.3                # Exponential smoothing factor for moving average
+ATTESTATION_DEFAULT_RTT_MS=50.0                 # Default RTT when measurement fails
 
 # ============================================================
 # NEW: Payment/Blockchain Configuration (v3.0)
@@ -1216,6 +1227,10 @@ create_configuration() {
   },
   
   "Attestation": {
+    "EnableAdaptiveTimeout": ${ATTESTATION_ENABLE_ADAPTIVE},
+    "MaxProcessingTimeMs": ${ATTESTATION_MAX_PROCESSING_MS},
+    "SafetyMarginMs": ${ATTESTATION_SAFETY_MARGIN_MS},
+    "AbsoluteMaxTimeoutMs": ${ATTESTATION_ABSOLUTE_MAX_MS},
     "MaxResponseTimeMs": ${ATTESTATION_MAX_RESPONSE_MS},
     "StartupChallengeIntervalSeconds": ${ATTESTATION_STARTUP_INTERVAL},
     "NormalChallengeIntervalSeconds": ${ATTESTATION_NORMAL_INTERVAL},
@@ -1225,7 +1240,13 @@ create_configuration() {
     "MemoryToleranceLow": 0.85,
     "MemoryToleranceHigh": 1.15,
     "FailureThreshold": ${ATTESTATION_FAILURE_THRESHOLD},
-    "RecoveryThreshold": ${ATTESTATION_RECOVERY_THRESHOLD}
+    "RecoveryThreshold": ${ATTESTATION_RECOVERY_THRESHOLD},
+    "InitialCalibrationPings": ${ATTESTATION_CALIBRATION_PINGS},
+    "RecalibrationIntervalHours": ${ATTESTATION_RECALIBRATION_HOURS},
+    "RttChangeThreshold": ${ATTESTATION_RTT_CHANGE_THRESHOLD},
+    "MaxStdDevRatio": ${ATTESTATION_MAX_STDDEV_RATIO},
+    "DefaultRttMs": ${ATTESTATION_DEFAULT_RTT_MS},
+    "SmoothingFactor": ${ATTESTATION_SMOOTHING_FACTOR}
   },
   
   "AttestationNetwork": {
@@ -1474,13 +1495,20 @@ print_summary() {
     
     # Attestation system info
     echo "  ─────────────────────────────────────────────────────────────"
-    echo "  ${GREEN}Attestation System (VM Verification):${NC}"
+    echo "  ${GREEN}Attestation System (Adaptive Timeout):${NC}"
     echo "  ─────────────────────────────────────────────────────────────"
-    echo "    Max Response:    ${ATTESTATION_MAX_RESPONSE_MS}ms (security threshold)"
+    if [ "$ATTESTATION_ENABLE_ADAPTIVE" = true ]; then
+        echo "    Mode:            Adaptive (Network-aware)"
+    else
+        echo "    Mode:            Fixed timeout"
+    fi
+    echo "    Max Processing:  ${ATTESTATION_MAX_PROCESSING_MS}ms (security threshold)"
+    echo "    Fallback Timeout: ${ATTESTATION_MAX_RESPONSE_MS}ms"
     echo "    Startup Checks:  Every ${ATTESTATION_STARTUP_INTERVAL}s (first 5 min)"
-    echo "    Normal Checks:   Every ${ATTESTATION_NORMAL_INTERVAL}s (hourly)"
+    echo "    Normal Checks:   Every ${ATTESTATION_NORMAL_INTERVAL}s (5 min intervals)"
     echo "    Fail Threshold:  ${ATTESTATION_FAILURE_THRESHOLD} consecutive failures"
     echo ""
+    echo "    ${GREEN}✓ Adaptive timeout adjusts for network latency${NC}"
     echo "    ${GREEN}✓ Billing pauses automatically on attestation failure${NC}"
     echo "    ${GREEN}✓ Only verified runtime is billed to users${NC}"
     echo ""
