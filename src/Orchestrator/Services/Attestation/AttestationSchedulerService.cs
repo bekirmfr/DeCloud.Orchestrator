@@ -143,7 +143,17 @@ public class AttestationSchedulerService : BackgroundService
     private bool ShouldChallenge(VirtualMachine vm)
     {
         var now = DateTime.UtcNow;
-        var vmAge = now - vm.CreatedAt;
+        var vmStartTime = vm.StartedAt ?? vm.CreatedAt;
+        var vmAge = now - vmStartTime;
+
+        // Skip VMs that started less than 90 seconds ago
+        if (vmAge.TotalSeconds < _config.MinVmAgeForAttestationSeconds)
+        {
+            _logger.LogDebug(
+                "Skipping attestation for VM {VmId} - started {Age:F0}s ago (minimum 90s)",
+                vm.Id, vmAge.TotalSeconds);
+            return false;
+        }
 
         // Determine challenge interval based on VM age
         var challengeInterval = vmAge.TotalMinutes < _config.StartupPeriodMinutes

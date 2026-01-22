@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Nethereum.Contracts.QueryHandlers.MultiCall;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Diagnostics;
@@ -186,22 +187,12 @@ public class AttestationService : IAttestationService
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromMilliseconds(adaptiveTimeout + 100)); // Add buffer
 
-            var requestUrl = $"{nodeAgentUrl}/api/vms/{vm.Id}/proxy/http/9999/challenge";
-            var content = new StringContent(
-                JsonSerializer.Serialize(challenge),
-                Encoding.UTF8,
-                "application/json");
-
             HttpResponseMessage? httpResponse = null;
             AttestationResponse? response = null;
 
             try
             {
-                httpResponse = await _httpClient.PostAsync(requestUrl, content, cts.Token);
-                httpResponse.EnsureSuccessStatusCode();
-
-                var responseJson = await httpResponse.Content.ReadAsStringAsync(cts.Token);
-                response = JsonSerializer.Deserialize<AttestationResponse>(responseJson);
+                response = await SendChallengeAsync(nodeAgentUrl, vm.Id, challenge, cts.Token);
             }
             catch (TaskCanceledException)
             {
@@ -280,6 +271,18 @@ public class AttestationService : IAttestationService
         }
         catch (HttpRequestException ex)
         {
+            // 502 = VM not ready yet, don't count as failure
+            if (ex.StatusCode == System.Net.HttpStatusCode.BadGateway)
+            {
+                _logger.LogDebug(
+                    "VM {VmId} attestation agent not ready (502 Bad Gateway), will retry later",
+                    vmId);
+                result.Errors.Add("VM attestation agent not ready yet");
+                // Don't call RecordFailureAsync - this isn't a real failure
+                return result;
+            }
+
+            // Other HTTP errors are real failures
             result.Errors.Add($"Network error: {ex.Message}");
             await RecordFailureAsync(vmId, $"Network: {ex.Message}");
             return result;

@@ -84,6 +84,7 @@ MONGODB_URI=""
 
 # Adaptive timeout configuration
 ATTESTATION_ENABLE_ADAPTIVE=true                # Enable adaptive timeout based on network RTT
+ATTESTATION_MIN_VM_AGE_SECONDS=90               # Wait 90s after VM starts before first attestation
 ATTESTATION_MAX_PROCESSING_MS=50                # Max processing time inside VM (SECURITY CRITICAL - DO NOT INCREASE)
 ATTESTATION_SAFETY_MARGIN_MS=20                 # Safety margin for network jitter
 ATTESTATION_ABSOLUTE_MAX_MS=500                 # Absolute maximum timeout (prevents abuse via fake high RTT)
@@ -1228,6 +1229,7 @@ create_configuration() {
   
   "Attestation": {
     "EnableAdaptiveTimeout": ${ATTESTATION_ENABLE_ADAPTIVE},
+    "MinVmAgeForAttestationSeconds": ${ATTESTATION_MIN_VM_AGE_SECONDS},
     "MaxProcessingTimeMs": ${ATTESTATION_MAX_PROCESSING_MS},
     "SafetyMarginMs": ${ATTESTATION_SAFETY_MARGIN_MS},
     "AbsoluteMaxTimeoutMs": ${ATTESTATION_ABSOLUTE_MAX_MS},
@@ -1502,6 +1504,7 @@ print_summary() {
     else
         echo "    Mode:            Fixed timeout"
     fi
+    echo "    Min Vm Age:  ${ATTESTATION_MIN_VM_AGE_SECONDS}s (attestation starts after)"
     echo "    Max Processing:  ${ATTESTATION_MAX_PROCESSING_MS}ms (security threshold)"
     echo "    Fallback Timeout: ${ATTESTATION_MAX_RESPONSE_MS}ms"
     echo "    Startup Checks:  Every ${ATTESTATION_STARTUP_INTERVAL}s (first 5 min)"

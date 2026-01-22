@@ -268,6 +268,12 @@ public class AttestationConfig
     public bool EnableAdaptiveTimeout { get; set; } = true;
 
     /// <summary>
+    /// Minimum VM age (in seconds) before attempting attestation
+    /// Gives cloud-init time to install and start the attestation agent
+    /// </summary>
+    public int MinVmAgeForAttestationSeconds { get; set; } = 90;
+
+    /// <summary>
     /// Maximum processing time inside VM (milliseconds)
     /// THIS IS THE KEY SECURITY PARAMETER
     /// Must be short enough that node can't pause VM and extract ephemeral key
