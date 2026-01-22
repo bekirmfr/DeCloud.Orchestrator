@@ -186,7 +186,7 @@ public class AttestationService : IAttestationService
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromMilliseconds(adaptiveTimeout + 100)); // Add buffer
 
-            var requestUrl = $"{nodeAgentUrl}/api/vm/{vm.Id}/attest";
+            var requestUrl = $"{nodeAgentUrl}/api/vms/{vm.Id}/proxy/http/9999/challenge";
             var content = new StringContent(
                 JsonSerializer.Serialize(challenge),
                 Encoding.UTF8,

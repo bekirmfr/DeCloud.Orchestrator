@@ -226,7 +226,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         int port,
         CancellationToken ct)
     {
-        var url = $"http://{host}:{port}/health";
+        string healthPath = port == 5100 ? "/api/node/health" : "/health";
+        var url = $"http://{host}:{port}{healthPath}";
 
         var stopwatch = Stopwatch.StartNew();
 
