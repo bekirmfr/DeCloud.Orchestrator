@@ -316,12 +316,4 @@ public class SettlementService : ISettlementService
 
         return Task.FromResult(records);
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // REMOVED METHODS (to break circular dependency)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // REMOVED: ValidateUserBalanceAsync()
-    // Reason: Created circular dependency with UserService
-    // Solution: BillingService now calls BalanceService.HasSufficientBalanceAsync() directly
 }

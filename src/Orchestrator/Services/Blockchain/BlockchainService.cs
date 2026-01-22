@@ -332,44 +332,634 @@ public class BlockchainService : IBlockchainService
     // ═══════════════════════════════════════════════════════════════════════════
 
     private const string ESCROW_ABI = @"[
-        {
-            ""inputs"": [
-                {""internalType"": ""address"", ""name"": """", ""type"": ""address""}
-            ],
-            ""name"": ""userBalances"",
-            ""outputs"": [
-                {""internalType"": ""uint256"", ""name"": """", ""type"": ""uint256""}
-            ],
-            ""stateMutability"": ""view"",
-            ""type"": ""function""
-        },
-        {
-            ""inputs"": [
-                {""internalType"": ""address"", ""name"": ""user"", ""type"": ""address""},
-                {""internalType"": ""address"", ""name"": ""nodeOperator"", ""type"": ""address""},
-                {""internalType"": ""uint256"", ""name"": ""totalAmount"", ""type"": ""uint256""},
-                {""internalType"": ""uint256"", ""name"": ""nodeShare"", ""type"": ""uint256""},
-                {""internalType"": ""uint256"", ""name"": ""platformFee"", ""type"": ""uint256""}
-            ],
-            ""name"": ""settle"",
-            ""outputs"": [],
-            ""stateMutability"": ""nonpayable"",
-            ""type"": ""function""
-        },
-        {
-            ""inputs"": [
-                {""internalType"": ""address[]"", ""name"": ""users"", ""type"": ""address[]""},
-                {""internalType"": ""address[]"", ""name"": ""nodeOperators"", ""type"": ""address[]""},
-                {""internalType"": ""uint256[]"", ""name"": ""totalAmounts"", ""type"": ""uint256[]""},
-                {""internalType"": ""uint256[]"", ""name"": ""nodeShares"", ""type"": ""uint256[]""},
-                {""internalType"": ""uint256[]"", ""name"": ""platformFees"", ""type"": ""uint256[]""}
-            ],
-            ""name"": ""batchSettle"",
-            ""outputs"": [],
-            ""stateMutability"": ""nonpayable"",
-            ""type"": ""function""
-        }
-    ]";
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""owner"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""OwnableInvalidOwner"",
+		""type"": ""error""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""account"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""OwnableUnauthorizedAccount"",
+		""type"": ""error""
+	},
+	{
+		""inputs"": [],
+		""name"": ""ReentrancyGuardReentrantCall"",
+		""type"": ""error""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""token"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""SafeERC20FailedOperation"",
+		""type"": ""error""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""user"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""newBalance"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""timestamp"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""Deposited"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""node"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""timestamp"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""NodeWithdrawal"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""oldOrchestrator"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""newOrchestrator"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""OrchestratorUpdated"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""previousOwner"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""newOwner"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""OwnershipTransferred"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""to"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""PlatformWithdrawal"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""user"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""node"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""nodeShare"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""platformFee"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""string"",
+				""name"": ""vmId"",
+				""type"": ""string""
+			}
+		],
+		""name"": ""UsageReported"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{
+				""indexed"": true,
+				""internalType"": ""address"",
+				""name"": ""user"",
+				""type"": ""address""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			},
+			{
+				""indexed"": false,
+				""internalType"": ""uint256"",
+				""name"": ""timestamp"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""UserWithdrawal"",
+		""type"": ""event""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address[]"",
+				""name"": ""users"",
+				""type"": ""address[]""
+			},
+			{
+				""internalType"": ""address[]"",
+				""name"": ""nodes"",
+				""type"": ""address[]""
+			},
+			{
+				""internalType"": ""uint256[]"",
+				""name"": ""amounts"",
+				""type"": ""uint256[]""
+			},
+			{
+				""internalType"": ""string[]"",
+				""name"": ""vmIds"",
+				""type"": ""string[]""
+			}
+		],
+		""name"": ""batchReportUsage"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""deposit"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""nodeWithdraw"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""nodeWithdrawAmount"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""renounceOwnership"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""user"",
+				""type"": ""address""
+			},
+			{
+				""internalType"": ""address"",
+				""name"": ""node"",
+				""type"": ""address""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			},
+			{
+				""internalType"": ""string"",
+				""name"": ""vmId"",
+				""type"": ""string""
+			}
+		],
+		""name"": ""reportUsage"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""newOrchestrator"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""setOrchestrator"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""newOwner"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""transferOwnership"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""withdrawBalance"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""to"",
+				""type"": ""address""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""amount"",
+				""type"": ""uint256""
+			}
+		],
+		""name"": ""withdrawPlatformFees"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""_paymentToken"",
+				""type"": ""address""
+			},
+			{
+				""internalType"": ""address"",
+				""name"": ""_orchestrator"",
+				""type"": ""address""
+			}
+		],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""constructor""
+	},
+	{
+		""inputs"": [],
+		""name"": ""BPS_DENOMINATOR"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""user"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""getBalance"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": ""node"",
+				""type"": ""address""
+			}
+		],
+		""name"": ""getNodePayout"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""getStats"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": ""_totalDeposited"",
+				""type"": ""uint256""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""_totalWithdrawn"",
+				""type"": ""uint256""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""_totalUsageReported"",
+				""type"": ""uint256""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""_platformFees"",
+				""type"": ""uint256""
+			},
+			{
+				""internalType"": ""uint256"",
+				""name"": ""_contractBalance"",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""MIN_DEPOSIT"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": """",
+				""type"": ""address""
+			}
+		],
+		""name"": ""nodePendingPayouts"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""orchestrator"",
+		""outputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": """",
+				""type"": ""address""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""owner"",
+		""outputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": """",
+				""type"": ""address""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""paymentToken"",
+		""outputs"": [
+			{
+				""internalType"": ""contract IERC20"",
+				""name"": """",
+				""type"": ""address""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""PLATFORM_FEE_BPS"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""platformFees"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""totalDeposited"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""totalUsageReported"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [],
+		""name"": ""totalWithdrawn"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{
+				""internalType"": ""address"",
+				""name"": """",
+				""type"": ""address""
+			}
+		],
+		""name"": ""userBalances"",
+		""outputs"": [
+			{
+				""internalType"": ""uint256"",
+				""name"": """",
+				""type"": ""uint256""
+			}
+		],
+		""stateMutability"": ""view"",
+		""type"": ""function""
+	}
+]";
 }
 
 /// <summary>

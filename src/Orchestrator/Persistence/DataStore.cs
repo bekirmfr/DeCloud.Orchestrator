@@ -466,10 +466,11 @@ public class DataStore
             .ToListAsync();
     }
 
-    public async Task SaveUsageRecordAsync( UsageRecord record)
+    public async Task SaveUsageRecordAsync(UsageRecord record)
     {
         if (_useMongoDB)
         {
+            UsageRecords[record.Id] = record;
             await RetryMongoOperationAsync(async () =>
             {
                 await UsageRecordsCollection!.InsertOneAsync(record);

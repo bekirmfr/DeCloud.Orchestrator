@@ -1,7 +1,4 @@
-﻿// src/Orchestrator/Background/OnChainSettlementService.cs
-// Executes pending settlements to blockchain
-
-using Orchestrator.Interfaces.Blockchain;
+﻿using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Services.Settlement;
