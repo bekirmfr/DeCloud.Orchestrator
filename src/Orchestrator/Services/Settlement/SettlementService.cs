@@ -57,6 +57,9 @@ public class SettlementService : ISettlementService
         // BillingService should call BalanceService.HasSufficientBalanceAsync() first
 
         // Create usage record
+
+        var platformFee = amount * _paymentConfig.PlatformFeePercent / 100;
+        var nodeShare = amount * (1 - platformFee);
         var usageRecord = new UsageRecord
         {
             Id = Guid.NewGuid().ToString(),
@@ -66,8 +69,8 @@ public class SettlementService : ISettlementService
             PeriodStart = periodStart,
             PeriodEnd = periodEnd,
             TotalCost = amount,
-            NodeShare = amount * 0.85m, // 85% to node
-            PlatformFee = amount * 0.15m, // 15% to platform
+            NodeShare = nodeShare,
+            PlatformFee = platformFee,
             AttestationVerified = attestationVerified,
             SettledOnChain = false,
             CreatedAt = DateTime.UtcNow

@@ -202,6 +202,17 @@ public class BillingService : BackgroundService
 
         var billingPeriod = now - currentPeriodStart;
 
+        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
+
+        if (isVerified)
+        {
+            vm.BillingInfo.VerifiedRuntime += billingPeriod;
+        }
+        else
+        {
+            vm.BillingInfo.UnverifiedRuntime += billingPeriod;
+        }
+
         // Don't bill if period < 1 minute (avoid spam)
         if (billingPeriod < TimeSpan.FromMinutes(1) && evt.Trigger != BillingTrigger.VmStop)
         {
