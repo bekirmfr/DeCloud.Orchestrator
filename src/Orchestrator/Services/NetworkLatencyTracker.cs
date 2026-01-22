@@ -6,20 +6,20 @@ using Orchestrator.Persistence;
 namespace Orchestrator.Services;
 
 /// <summary>
-/// Network latency tracker for VMs
-/// Measures and tracks RTT to calculate adaptive attestation timeouts
+/// Network latency tracker for VMs - CGNAT-aware version
+/// Handles both public IP nodes and CGNAT nodes correctly
 /// </summary>
 public interface INetworkLatencyTracker
 {
     /// <summary>
     /// Calibrate baseline RTT for a new VM
     /// </summary>
-    Task<double> CalibrateBaselineRttAsync(string vmIp, CancellationToken ct = default);
+    Task<double> CalibrateBaselineRttAsync(string vmId, CancellationToken ct = default);
 
     /// <summary>
     /// Get network metrics for a VM
     /// </summary>
-    Task<VmNetworkMetrics?> GetMetricsAsync(string vmId);
+    VmNetworkMetrics? GetMetrics(string vmId);
 
     /// <summary>
     /// Update metrics after an attestation
@@ -29,12 +29,12 @@ public interface INetworkLatencyTracker
     /// <summary>
     /// Re-calibrate baseline RTT
     /// </summary>
-    Task RecalibrateAsync(string vmId, string vmIp, CancellationToken ct = default);
+    Task RecalibrateAsync(string vmId, CancellationToken ct = default);
 
     /// <summary>
-    /// Measure current RTT to a VM
+    /// Measure current RTT to a VM (CGNAT-aware)
     /// </summary>
-    Task<double> MeasureRttAsync(string vmIp, CancellationToken ct = default);
+    Task<double> MeasureRttAsync(string vmId, CancellationToken ct = default);
 }
 
 public class NetworkLatencyTracker : INetworkLatencyTracker
@@ -43,13 +43,9 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     private readonly ILogger<NetworkLatencyTracker> _logger;
     private readonly HttpClient _httpClient;
 
-    // In-memory cache of network metrics (also persisted to DB)
-    private readonly Dictionary<string, VmNetworkMetrics> _metricsCache = new();
-    private readonly SemaphoreSlim _cacheLock = new(1);
-
     // Configuration
     private const int INITIAL_CALIBRATION_PINGS = 5;
-    private const double SMOOTHING_FACTOR = 0.3; // For exponential moving average
+    private const double SMOOTHING_FACTOR = 0.3;
     private const int MAX_RECENT_MEASUREMENTS = 10;
     private const double DEFAULT_RTT_MS = 50.0;
 
@@ -67,10 +63,17 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// <summary>
     /// Calibrate baseline RTT during VM creation
     /// Takes median of 5 ping measurements to avoid outliers
+    /// CGNAT-AWARE: Uses NodeAgent endpoint for CGNAT VMs
     /// </summary>
-    public async Task<double> CalibrateBaselineRttAsync(string vmIp, CancellationToken ct = default)
+    public async Task<double> CalibrateBaselineRttAsync(string vmId, CancellationToken ct = default)
     {
-        _logger.LogInformation("Calibrating baseline RTT for VM at {VmIp}", vmIp);
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        {
+            _logger.LogWarning("VM {VmId} not found for RTT calibration", vmId);
+            return DEFAULT_RTT_MS;
+        }
+
+        _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vmId);
 
         var measurements = new List<double>();
 
@@ -78,7 +81,7 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         {
             try
             {
-                var rtt = await MeasureRttAsync(vmIp, ct);
+                var rtt = await MeasureRttAsync(vmId, ct);
                 measurements.Add(rtt);
 
                 _logger.LogDebug("RTT measurement {Index}/{Total}: {Rtt:F1}ms",
@@ -98,8 +101,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         if (measurements.Count < 3)
         {
             _logger.LogWarning(
-                "Failed to calibrate RTT for {VmIp} (only {Count} successful measurements), using default {Default}ms",
-                vmIp, measurements.Count, DEFAULT_RTT_MS);
+                "Failed to calibrate RTT for VM {VmId} (only {Count} successful measurements), using default {Default}ms",
+                vmId, measurements.Count, DEFAULT_RTT_MS);
             return DEFAULT_RTT_MS;
         }
 
@@ -108,26 +111,109 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         var median = measurements[measurements.Count / 2];
 
         _logger.LogInformation(
-            "Baseline RTT calibrated for {VmIp}: {Median:F1}ms (min: {Min:F1}ms, max: {Max:F1}ms, samples: {Count})",
-            vmIp, median, measurements.Min(), measurements.Max(), measurements.Count);
+            "Baseline RTT calibrated for VM {VmId}: {Median:F1}ms (min: {Min:F1}ms, max: {Max:F1}ms, samples: {Count})",
+            vmId, median, measurements.Min(), measurements.Max(), measurements.Count);
 
         return median;
     }
 
     /// <summary>
-    /// Measure RTT to a VM using lightweight HTTP health check
+    /// Measure RTT to a VM - CGNAT-AWARE
+    /// For public nodes: pings VM directly
+    /// For CGNAT nodes: pings NodeAgent (since VM is not directly reachable)
     /// </summary>
-    public async Task<double> MeasureRttAsync(string vmIp, CancellationToken ct = default)
+    public async Task<double> MeasureRttAsync(string vmId, CancellationToken ct = default)
     {
-        // Try HTTP health check first (preferred - more realistic)
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        {
+            throw new InvalidOperationException($"VM {vmId} not found");
+        }
+
+        if (string.IsNullOrEmpty(vm.NodeId))
+        {
+            throw new InvalidOperationException($"VM {vmId} has no assigned node");
+        }
+
+        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        {
+            throw new InvalidOperationException($"Node {vm.NodeId} not found");
+        }
+
+        // =====================================================
+        // CRITICAL: Determine reachable endpoint based on node type
+        // =====================================================
+
+        string targetHost;
+        int targetPort;
+        string targetDescription;
+
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+        {
+            // =====================================================
+            // CGNAT NODE: VM is not directly reachable
+            // Measure RTT to NodeAgent via WireGuard tunnel
+            // =====================================================
+            targetHost = node.CgnatInfo.TunnelIp;
+            targetPort = node.AgentPort > 0 ? node.AgentPort : 5100;
+            targetDescription = $"NodeAgent via tunnel (CGNAT)";
+
+            _logger.LogDebug(
+                "Measuring RTT for CGNAT VM {VmId}: {TunnelIp}:{Port}",
+                vmId, targetHost, targetPort);
+        }
+        else
+        {
+            // =====================================================
+            // PUBLIC NODE: VM is directly reachable
+            // Measure RTT directly to VM's attestation agent
+            // =====================================================
+
+            // Try to get VM's IP address
+            var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig?.PrivateIp;
+
+            if (string.IsNullOrEmpty(vmIp))
+            {
+                _logger.LogWarning(
+                    "VM {VmId} has no IP address yet, falling back to NodeAgent",
+                    vmId);
+
+                targetHost = node.PublicIp;
+                targetPort = node.AgentPort > 0 ? node.AgentPort : 5100;
+                targetDescription = "NodeAgent (fallback)";
+            }
+            else
+            {
+                targetHost = vmIp;
+                targetPort = 9999; // Attestation agent port
+                targetDescription = "VM attestation agent (direct)";
+            }
+
+            _logger.LogDebug(
+                "Measuring RTT for public VM {VmId}: {Host}:{Port}",
+                vmId, targetHost, targetPort);
+        }
+
+        // =====================================================
+        // Measure RTT using HTTP health check
+        // =====================================================
         try
         {
-            return await MeasureHttpRttAsync(vmIp, ct);
+            var rtt = await MeasureHttpRttAsync(targetHost, targetPort, ct);
+
+            _logger.LogDebug(
+                "RTT measured for VM {VmId} ({Target}): {Rtt:F1}ms",
+                vmId, targetDescription, rtt);
+
+            return rtt;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(
+                "HTTP RTT measurement failed for VM {VmId} ({Target}): {Error}, trying ICMP",
+                vmId, targetDescription, ex.Message);
+
             // Fallback to ICMP ping
-            return await MeasureIcmpRttAsync(vmIp, ct);
+            return await MeasureIcmpRttAsync(targetHost, ct);
         }
     }
 
@@ -135,9 +221,12 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// Measure RTT using HTTP GET to health endpoint
     /// More realistic than ICMP as it includes TCP handshake
     /// </summary>
-    private async Task<double> MeasureHttpRttAsync(string vmIp, CancellationToken ct)
+    private async Task<double> MeasureHttpRttAsync(
+        string host,
+        int port,
+        CancellationToken ct)
     {
-        var url = $"http://{vmIp}:9999/health"; // Attestation agent health endpoint
+        var url = $"http://{host}:{port}/health";
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -150,7 +239,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("HTTP RTT measurement failed for {VmIp}: {Error}", vmIp, ex.Message);
+            _logger.LogDebug("HTTP RTT measurement failed for {Host}:{Port}: {Error}",
+                host, port, ex.Message);
             throw;
         }
     }
@@ -158,13 +248,13 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// <summary>
     /// Fallback: Measure RTT using ICMP ping
     /// </summary>
-    private async Task<double> MeasureIcmpRttAsync(string vmIp, CancellationToken ct)
+    private async Task<double> MeasureIcmpRttAsync(string host, CancellationToken ct)
     {
         using var ping = new Ping();
 
         try
         {
-            var reply = await ping.SendPingAsync(vmIp, 5000);
+            var reply = await ping.SendPingAsync(host, 5000);
 
             if (reply.Status == IPStatus.Success)
             {
@@ -175,44 +265,22 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("ICMP RTT measurement failed for {VmIp}: {Error}", vmIp, ex.Message);
+            _logger.LogDebug("ICMP RTT measurement failed for {Host}: {Error}", host, ex.Message);
             throw;
         }
     }
 
     /// <summary>
-    /// Get or create network metrics for a VM
+    /// Get network metrics for a VM
     /// </summary>
-    public async Task<VmNetworkMetrics?> GetMetricsAsync(string vmId)
+    public VmNetworkMetrics? GetMetrics(string vmId)
     {
-        await _cacheLock.WaitAsync();
-        try
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
         {
-            // Check cache first
-            if (_metricsCache.TryGetValue(vmId, out var cached))
-            {
-                return cached;
-            }
-
-            // Load from database
-            if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
-                {
-                _logger.LogWarning("VM {VmId} not found in datastore", vmId);
-                return null;
-            }
-            var metrics = vm.NetworkMetrics;
-
-            if (metrics != null)
-            {
-                _metricsCache[vmId] = metrics;
-            }
-
-            return metrics;
+            return null;
         }
-        finally
-        {
-            _cacheLock.Release();
-        }
+
+        return vm.NetworkMetrics;
     }
 
     /// <summary>
@@ -224,117 +292,94 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         double processingTimeMs,
         bool success)
     {
-        await _cacheLock.WaitAsync();
-        try
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
         {
-            var metrics = await GetMetricsAsync(vmId);
-
-            if (metrics == null)
-            {
-                _logger.LogWarning("No network metrics found for VM {VmId}, cannot update", vmId);
-                return;
-            }
-
-            // Update moving average of RTT (exponential smoothing)
-            metrics.CurrentRttMs = (SMOOTHING_FACTOR * networkRttMs) +
-                                   ((1 - SMOOTHING_FACTOR) * metrics.CurrentRttMs);
-
-            // Update average processing time
-            metrics.AvgProcessingTimeMs = (SMOOTHING_FACTOR * processingTimeMs) +
-                                          ((1 - SMOOTHING_FACTOR) * metrics.AvgProcessingTimeMs);
-
-            // Add to recent measurements
-            metrics.RecentMeasurements.Enqueue(new RttMeasurement
-            {
-                Timestamp = DateTime.UtcNow,
-                RttMs = networkRttMs,
-                ProcessingTimeMs = processingTimeMs,
-                WasSuccessful = success
-            });
-
-            // Keep only last N measurements
-            while (metrics.RecentMeasurements.Count > MAX_RECENT_MEASUREMENTS)
-            {
-                metrics.RecentMeasurements.Dequeue();
-            }
-
-            // Update statistics
-            var recentRtts = metrics.RecentMeasurements.Select(m => m.RttMs).ToList();
-            if (recentRtts.Any())
-            {
-                metrics.MinRttMs = recentRtts.Min();
-                metrics.MaxRttMs = recentRtts.Max();
-                metrics.StdDevRttMs = CalculateStdDev(recentRtts);
-            }
-
-            metrics.TotalMeasurements++;
-            metrics.UpdatedAt = DateTime.UtcNow;
-
-            // Update cache and persist
-            _metricsCache[vmId] = metrics;
-            if(!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
-            {
-                _logger.LogWarning("VM {VmId} not found in datastore", vmId);
-                return;
-            }
-            vm.NetworkMetrics = metrics;
-            await _dataStore.SaveVmAsync(vm);
-
-            _logger.LogDebug(
-                "Updated metrics for VM {VmId}: RTT={Rtt:F1}ms, Processing={Proc:F1}ms, Success={Success}",
-                vmId, networkRttMs, processingTimeMs, success);
+            _logger.LogWarning("VM {VmId} not found, cannot update network metrics", vmId);
+            return;
         }
-        catch
+
+        if (vm.NetworkMetrics == null)
         {
-            _logger.LogError("Failed to update network metrics for VM {VmId}", vmId);
-            throw;
+            _logger.LogWarning("VM {VmId} has no network metrics initialized", vmId);
+            return;
         }
-        finally
+
+        var metrics = vm.NetworkMetrics;
+
+        // Update moving average of RTT (exponential smoothing)
+        metrics.CurrentRttMs = (SMOOTHING_FACTOR * networkRttMs) +
+                               ((1 - SMOOTHING_FACTOR) * metrics.CurrentRttMs);
+
+        // Update average processing time
+        metrics.AvgProcessingTimeMs = (SMOOTHING_FACTOR * processingTimeMs) +
+                                      ((1 - SMOOTHING_FACTOR) * metrics.AvgProcessingTimeMs);
+
+        // Add to recent measurements
+        metrics.RecentMeasurements.Add(new RttMeasurement
         {
-            _cacheLock.Release();
+            Timestamp = DateTime.UtcNow,
+            RttMs = networkRttMs,
+            ProcessingTimeMs = processingTimeMs,
+            WasSuccessful = success
+        });
+
+        // Keep only last N measurements
+        if (metrics.RecentMeasurements.Count > MAX_RECENT_MEASUREMENTS)
+        {
+            metrics.RecentMeasurements.RemoveAt(0);
         }
+
+        // Update statistics
+        var recentRtts = metrics.RecentMeasurements.Select(m => m.RttMs).ToList();
+        if (recentRtts.Any())
+        {
+            metrics.MinRttMs = recentRtts.Min();
+            metrics.MaxRttMs = recentRtts.Max();
+            metrics.StdDevRttMs = CalculateStdDev(recentRtts);
+        }
+
+        metrics.TotalMeasurements++;
+        metrics.UpdatedAt = DateTime.UtcNow;
+
+        // Save the entire VM (metrics are embedded)
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogDebug(
+            "Updated metrics for VM {VmId}: RTT={Rtt:F1}ms, Processing={Proc:F1}ms, Success={Success}",
+            vmId, networkRttMs, processingTimeMs, success);
     }
 
     /// <summary>
     /// Re-calibrate baseline RTT (called when significant changes detected)
     /// </summary>
-    public async Task RecalibrateAsync(string vmId, string vmIp, CancellationToken ct = default)
+    public async Task RecalibrateAsync(string vmId, CancellationToken ct = default)
     {
         _logger.LogInformation("Re-calibrating baseline RTT for VM {VmId}", vmId);
 
-        var newBaseline = await CalibrateBaselineRttAsync(vmIp, ct);
-
-        await _cacheLock.WaitAsync(ct);
-        try
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
         {
-            var metrics = await GetMetricsAsync(vmId);
-
-            if (metrics != null)
-            {
-                var oldBaseline = metrics.BaselineRttMs;
-                metrics.BaselineRttMs = newBaseline;
-                metrics.CurrentRttMs = newBaseline;
-                metrics.LastCalibrationAt = DateTime.UtcNow;
-
-                _metricsCache[vmId] = metrics;
-
-                if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
-                {
-                    _logger.LogWarning("VM {VmId} not found in datastore", vmId);
-                    return;
-                }
-                vm.NetworkMetrics = metrics;
-                await _dataStore.SaveVmAsync(vm);
-
-                _logger.LogInformation(
-                    "Re-calibrated baseline RTT for VM {VmId}: {Old:F1}ms → {New:F1}ms",
-                    vmId, oldBaseline, newBaseline);
-            }
+            _logger.LogWarning("VM {VmId} not found, cannot recalibrate", vmId);
+            return;
         }
-        finally
+
+        if (vm.NetworkMetrics == null)
         {
-            _cacheLock.Release();
+            _logger.LogWarning("VM {VmId} has no network metrics to recalibrate", vmId);
+            return;
         }
+
+        var newBaseline = await CalibrateBaselineRttAsync(vmId, ct);
+
+        var oldBaseline = vm.NetworkMetrics.BaselineRttMs;
+        vm.NetworkMetrics.BaselineRttMs = newBaseline;
+        vm.NetworkMetrics.CurrentRttMs = newBaseline;
+        vm.NetworkMetrics.LastCalibrationAt = DateTime.UtcNow;
+
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogInformation(
+            "Re-calibrated baseline RTT for VM {VmId}: {Old:F1}ms → {New:F1}ms",
+            vmId, oldBaseline, newBaseline);
     }
 
     /// <summary>

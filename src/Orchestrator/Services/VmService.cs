@@ -770,19 +770,22 @@ public class VmService : IVmService
         _dataStore.AddPendingCommand(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
 
-        // After VM is successfully created and has IP
-        if (vm.Status == VmStatus.Running && !string.IsNullOrEmpty(vm.NetworkConfig.PublicIp))
+        // After VM is successfully created and running
+        if (vm.Status == VmStatus.Running)
         {
             // Background task to calibrate network RTT
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(15)); // Wait for VM to be fully ready
+                    // Wait for VM to be fully ready
+                    await Task.Delay(TimeSpan.FromSeconds(15));
 
                     _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
 
-                    var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.NetworkConfig.PublicIp);
+                    // ✨ UPDATED: Pass vmId instead of IP address
+                    // NetworkLatencyTracker now determines the correct endpoint internally
+                    var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id);
 
                     // Update VM with calibrated RTT
                     if (_dataStore.VirtualMachines.TryGetValue(vm.Id, out var currentVm))

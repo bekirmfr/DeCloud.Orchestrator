@@ -211,7 +211,7 @@ public class AttestationSchedulerService : BackgroundService
                 "Triggering recalibration for VM {VmId}",
                 vm.Id);
 
-            await latencyTracker.RecalibrateAsync(vm.Id, vmIp, ct);
+            await latencyTracker.RecalibrateAsync(vm.Id, ct);
 
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
         }
