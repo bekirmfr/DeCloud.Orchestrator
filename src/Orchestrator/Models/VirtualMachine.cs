@@ -43,6 +43,8 @@ public class VirtualMachine
     // Networking
     public VmNetworkConfig NetworkConfig { get; set; } = new();
 
+    public VmNetworkMetrics? NetworkMetrics { get; set; }
+
     /// <summary>
     /// Ingress configuration for this VM (auto-subdomain and custom domains)
     /// </summary>
@@ -327,3 +329,131 @@ public record VmDetailResponse(
     VirtualMachine Vm,
     Node? HostNode
 );
+
+/// <summary>
+/// Network latency metrics for adaptive attestation timeouts
+/// Embedded in VirtualMachine model (similar to BillingInfo, AccessInfo, etc.)
+/// </summary>
+public class VmNetworkMetrics
+{
+    /// <summary>
+    /// Baseline RTT measured during VM creation (ms)
+    /// Median of 5 initial ping measurements
+    /// </summary>
+    public double BaselineRttMs { get; set; }
+
+    /// <summary>
+    /// Current RTT (exponential moving average, ms)
+    /// Updated after each successful attestation
+    /// </summary>
+    public double CurrentRttMs { get; set; }
+
+    /// <summary>
+    /// Recent RTT measurements (last 10)
+    /// Stored as arrays for MongoDB compatibility
+    /// </summary>
+    public List<RttMeasurement> RecentMeasurements { get; set; } = new();
+
+    /// <summary>
+    /// When the baseline was last calibrated
+    /// </summary>
+    public DateTime LastCalibrationAt { get; set; }
+
+    /// <summary>
+    /// Statistical metrics for monitoring
+    /// </summary>
+    public double MinRttMs { get; set; }
+    public double MaxRttMs { get; set; }
+    public double StdDevRttMs { get; set; }
+
+    /// <summary>
+    /// Average processing time inside VM (excluding network RTT)
+    /// Should be ~20-40ms for legitimate attestation
+    /// </summary>
+    public double AvgProcessingTimeMs { get; set; }
+
+    /// <summary>
+    /// Last time metrics were updated
+    /// </summary>
+    public DateTime UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Number of measurements taken
+    /// </summary>
+    public int TotalMeasurements { get; set; }
+
+    /// <summary>
+    /// Calculate adaptive timeout for this VM
+    /// </summary>
+    public double CalculateAdaptiveTimeout(
+        double maxProcessingTimeMs = 50,
+        double safetyMarginMs = 20,
+        double absoluteMaxMs = 500)
+    {
+        var timeout = CurrentRttMs + maxProcessingTimeMs + safetyMarginMs;
+        return Math.Min(timeout, absoluteMaxMs);
+    }
+
+    /// <summary>
+    /// Check if recalibration is needed
+    /// </summary>
+    public bool NeedsRecalibration(
+        TimeSpan maxAge = default,
+        double rttChangeThreshold = 0.3,
+        double maxStdDevRatio = 0.5)
+    {
+        if (maxAge == default)
+            maxAge = TimeSpan.FromHours(24);
+
+        // Time-based recalibration
+        if (DateTime.UtcNow - LastCalibrationAt > maxAge)
+            return true;
+
+        // Significant RTT change
+        var rttChange = Math.Abs(CurrentRttMs - BaselineRttMs) / Math.Max(1, BaselineRttMs);
+        if (rttChange > rttChangeThreshold)
+            return true;
+
+        // High variance in measurements
+        if (StdDevRttMs > CurrentRttMs * maxStdDevRatio)
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Initialize default metrics (called at VM creation)
+    /// </summary>
+    public static VmNetworkMetrics CreateDefault(double baselineRttMs = 50.0)
+    {
+        return new VmNetworkMetrics
+        {
+            BaselineRttMs = baselineRttMs,
+            CurrentRttMs = baselineRttMs,
+            MinRttMs = baselineRttMs,
+            MaxRttMs = baselineRttMs,
+            StdDevRttMs = 0,
+            AvgProcessingTimeMs = 30, // Default estimate
+            LastCalibrationAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            TotalMeasurements = 0,
+            RecentMeasurements = new List<RttMeasurement>()
+        };
+    }
+}
+
+/// <summary>
+/// Single RTT measurement
+/// </summary>
+public class RttMeasurement
+{
+    public DateTime Timestamp { get; set; }
+    public double RttMs { get; set; }
+    public double ProcessingTimeMs { get; set; }
+    public bool WasSuccessful { get; set; }
+
+    /// <summary>
+    /// Total response time (RTT + processing)
+    /// </summary>
+    public double TotalTimeMs => RttMs + ProcessingTimeMs;
+}

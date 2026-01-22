@@ -35,6 +35,7 @@ public class VmService : IVmService
     private readonly ISchedulingConfigService _configService;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
+    private readonly INetworkLatencyTracker _latencyTracker;
     private readonly ILogger<VmService> _logger;
 
     public VmService(
@@ -44,6 +45,7 @@ public class VmService : IVmService
         ISchedulingConfigService configService,
         IEventService eventService,
         ICentralIngressService ingressService,
+        INetworkLatencyTracker latencyTracker,
         ILogger<VmService> logger)
     {
         _dataStore = dataStore;
@@ -52,6 +54,7 @@ public class VmService : IVmService
         _configService = configService;
         _eventService = eventService;
         _ingressService = ingressService;
+        _latencyTracker = latencyTracker;
         _logger = logger;
     }
 
@@ -106,7 +109,8 @@ public class VmService : IVmService
             NetworkConfig = new VmNetworkConfig
             {
                 Hostname = SanitizeHostname(request.Name)
-            }
+            },
+            NetworkMetrics = VmNetworkMetrics.CreateDefault(),
         };
 
         // Save to DataStore with persistence
@@ -765,6 +769,49 @@ public class VmService : IVmService
 
         _dataStore.AddPendingCommand(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
+
+        // After VM is successfully created and has IP
+        if (vm.Status == VmStatus.Running && !string.IsNullOrEmpty(vm.NetworkConfig.PublicIp))
+        {
+            // Background task to calibrate network RTT
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(15)); // Wait for VM to be fully ready
+
+                    _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
+
+                    var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.NetworkConfig.PublicIp);
+
+                    // Update VM with calibrated RTT
+                    if (_dataStore.VirtualMachines.TryGetValue(vm.Id, out var currentVm))
+                    {
+                        if (currentVm.NetworkMetrics != null)
+                        {
+                            currentVm.NetworkMetrics.BaselineRttMs = baselineRtt;
+                            currentVm.NetworkMetrics.CurrentRttMs = baselineRtt;
+                            currentVm.NetworkMetrics.MinRttMs = baselineRtt;
+                            currentVm.NetworkMetrics.MaxRttMs = baselineRtt;
+                            currentVm.NetworkMetrics.LastCalibrationAt = DateTime.UtcNow;
+
+                            await _dataStore.SaveVmAsync(currentVm);
+
+                            _logger.LogInformation(
+                                "VM {VmId} baseline RTT calibrated: {Rtt:F1}ms",
+                                vm.Id, baselineRtt);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to calibrate baseline RTT for VM {VmId}, using defaults",
+                        vm.Id);
+                }
+            });
+        }
 
         _logger.LogInformation(
             "Relay VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);

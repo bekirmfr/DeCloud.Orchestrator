@@ -66,6 +66,7 @@ public class AttestationSchedulerService : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var dataStore = scope.ServiceProvider.GetRequiredService<DataStore>();
         var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
+        var latencyTracker = scope.ServiceProvider.GetRequiredService<INetworkLatencyTracker>();
 
         // Get all running VMs
         var runningVms = dataStore.VirtualMachines.Values
@@ -98,6 +99,8 @@ public class AttestationSchedulerService : BackgroundService
             {
                 continue;
             }
+
+            await CheckAndRecalibrateAsync(vm, latencyTracker, ct);
 
             challengedCount++;
 
@@ -183,5 +186,34 @@ public class AttestationSchedulerService : BackgroundService
         }
 
         return result;
+    }
+
+    private async Task CheckAndRecalibrateAsync(
+        VirtualMachine vm,
+        INetworkLatencyTracker latencyTracker,
+        CancellationToken ct)
+    {
+
+        if (ct.IsCancellationRequested)
+            return;
+
+        // ✨ SIMPLIFIED: Check metrics directly from VM
+        if (vm.NetworkMetrics == null)
+            return;
+
+        if (vm.NetworkMetrics.NeedsRecalibration())
+        {
+            var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
+            if (string.IsNullOrEmpty(vmIp))
+                return;
+
+            _logger.LogInformation(
+                "Triggering recalibration for VM {VmId}",
+                vm.Id);
+
+            await latencyTracker.RecalibrateAsync(vm.Id, vmIp, ct);
+
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        }
     }
 }

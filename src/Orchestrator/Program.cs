@@ -112,6 +112,13 @@ builder.Services.AddHttpClient("SubdomainProxy")
         AllowAutoRedirect = false,
         UseCookies = false
     });
+builder.Services.AddSingleton<INetworkLatencyTracker, NetworkLatencyTracker>();
+// Configure HTTP client for latency tracker
+builder.Services.AddHttpClient("latency-tracker")
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(5);
+    });
 // Add attestation services
 builder.Services.AddAttestationServices(builder.Configuration);
 builder.Services.AddPaymentServices(builder.Configuration);

@@ -253,47 +253,134 @@ public class VmLivenessState
 }
 
 /// <summary>
-/// Attestation configuration
+/// Attestation configuration with adaptive timeout support
 /// </summary>
 public class AttestationConfig
 {
+    // =====================================================
+    // ADAPTIVE TIMEOUT CONFIGURATION
+    // =====================================================
+
     /// <summary>
-    /// Maximum allowed response time in milliseconds
+    /// Enable adaptive timeout based on measured network RTT
+    /// If false, falls back to fixed MaxResponseTimeMs
+    /// </summary>
+    public bool EnableAdaptiveTimeout { get; set; } = true;
+
+    /// <summary>
+    /// Maximum processing time inside VM (milliseconds)
     /// THIS IS THE KEY SECURITY PARAMETER
     /// Must be short enough that node can't pause VM and extract ephemeral key
+    /// 
+    /// Attack requires >150ms (pause + dump + extract)
+    /// We allow 50ms for legitimate processing
+    /// </summary>
+    public double MaxProcessingTimeMs { get; set; } = 50;
+
+    /// <summary>
+    /// Safety margin added to account for network jitter (milliseconds)
+    /// </summary>
+    public double SafetyMarginMs { get; set; } = 20;
+
+    /// <summary>
+    /// Absolute maximum timeout regardless of network conditions (milliseconds)
+    /// Prevents abuse via fake high RTT
+    /// </summary>
+    public double AbsoluteMaxTimeoutMs { get; set; } = 500;
+
+    /// <summary>
+    /// Fallback: Fixed maximum response time when adaptive timeout is disabled
+    /// or network metrics are unavailable
     /// </summary>
     public int MaxResponseTimeMs { get; set; } = 100;
 
+    // =====================================================
+    // NETWORK RTT CALIBRATION
+    // =====================================================
+
     /// <summary>
-    /// Challenge interval during startup period (more frequent to catch fraud early)
+    /// Number of ping measurements for initial baseline calibration
+    /// </summary>
+    public int InitialCalibrationPings { get; set; } = 5;
+
+    /// <summary>
+    /// How often to automatically recalibrate baseline RTT (hours)
+    /// </summary>
+    public int RecalibrationIntervalHours { get; set; } = 24;
+
+    /// <summary>
+    /// Threshold for triggering recalibration (percentage change from baseline)
+    /// Example: 0.3 = recalibrate if RTT changes by 30%
+    /// </summary>
+    public double RttChangeThreshold { get; set; } = 0.3;
+
+    /// <summary>
+    /// Threshold for triggering recalibration based on variance
+    /// Example: 0.5 = recalibrate if stddev > 50% of mean RTT
+    /// </summary>
+    public double MaxStdDevRatio { get; set; } = 0.5;
+
+    /// <summary>
+    /// Default RTT to use when measurement fails (milliseconds)
+    /// </summary>
+    public double DefaultRttMs { get; set; } = 50;
+
+    /// <summary>
+    /// Exponential smoothing factor for moving average (0-1)
+    /// Lower = more smoothing, Higher = more responsive
+    /// </summary>
+    public double SmoothingFactor { get; set; } = 0.3;
+
+    // =====================================================
+    // CHALLENGE SCHEDULE
+    // =====================================================
+
+    /// <summary>
+    /// Challenge interval during startup period (seconds)
+    /// More frequent to catch fraud early
     /// </summary>
     public int StartupChallengeIntervalSeconds { get; set; } = 60;
 
     /// <summary>
-    /// Challenge interval after startup period (hourly)
+    /// Challenge interval after startup period (seconds)
+    /// Recommendation: 300 (5 minutes) rather than 3600 (1 hour)
     /// </summary>
-    public int NormalChallengeIntervalSeconds { get; set; } = 3600;
+    public int NormalChallengeIntervalSeconds { get; set; } = 300;
 
     /// <summary>
-    /// How long the startup period lasts
+    /// How long the startup period lasts (minutes)
     /// </summary>
     public int StartupPeriodMinutes { get; set; } = 5;
 
-    /// <summary>
-    /// Maximum allowed total memory touch time (detects swap)
-    /// </summary>
-    public double MaxMemoryTouchMs { get; set; } = 50;
+    // =====================================================
+    // MEMORY TOUCH TEST (Detects Swap/Overcommit)
+    // =====================================================
 
     /// <summary>
-    /// Maximum allowed single page touch time (detects swap thrashing)
+    /// Maximum total time for 64 page touches (milliseconds)
+    /// Real RAM: 5-15ms, SSD swap: 50-200ms, HDD swap: 200-2000ms
     /// </summary>
-    public double MaxSinglePageTouchMs { get; set; } = 5;
+    public double MaxMemoryTouchMs { get; set; } = 100;
+
+    /// <summary>
+    /// Maximum time for single page touch (milliseconds)
+    /// Detects intermittent swap thrashing
+    /// </summary>
+    public double MaxSinglePageTouchMs { get; set; } = 10;
+
+    // =====================================================
+    // RESOURCE VERIFICATION
+    // =====================================================
 
     /// <summary>
     /// Memory tolerance - allow some variance from expected
     /// </summary>
     public double MemoryToleranceLow { get; set; } = 0.85;
     public double MemoryToleranceHigh { get; set; } = 1.15;
+
+    // =====================================================
+    // FAILURE HANDLING
+    // =====================================================
 
     /// <summary>
     /// Consecutive failures before pausing billing

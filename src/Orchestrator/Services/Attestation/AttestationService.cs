@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,16 +9,21 @@ using System.Text.Json;
 namespace Orchestrator.Services;
 
 /// <summary>
-/// Ephemeral Key Attestation Service
+/// Ephemeral Key Attestation Service with ADAPTIVE TIMEOUT
 /// 
 /// Security model:
 /// - Each challenge triggers fresh Ed25519 keypair generation INSIDE the VM
 /// - Private key exists for ~20ms, then is zeroed
-/// - Response must arrive within 100ms (wall-clock, measured by Orchestrator)
+/// - Response timeout is ADAPTIVE based on measured network RTT
 /// - Node cannot extract the ephemeral key fast enough to forge responses
 /// 
-/// The node CAN read VM memory, but reading takes TIME.
-/// If the key exists for only milliseconds, there's no time to extract it.
+/// Adaptive Timeout Formula:
+///   AdaptiveTimeout = BaselineRTT + MaxProcessingTime + SafetyMargin
+/// 
+/// Security guarantee:
+///   MaxProcessingTime is FIXED at 50ms (prevents key extraction)
+///   Network RTT is MEASURED (not self-reported)
+///   Total timeout adapts to network conditions while maintaining security
 /// </summary>
 public interface IAttestationService
 {
@@ -52,6 +58,12 @@ public class AttestationService : IAttestationService
     private readonly AttestationConfig _config;
     private readonly DataStore _dataStore;
     private readonly HttpClient _httpClient;
+    private readonly INetworkLatencyTracker _latencyTracker;
+
+    // Configuration for adaptive timeouts
+    private const double MAX_PROCESSING_TIME_MS = 50;
+    private const double SAFETY_MARGIN_MS = 20;
+    private const double ABSOLUTE_MAX_TIMEOUT_MS = 500;
 
     // Liveness state per VM
     private readonly Dictionary<string, VmLivenessState> _livenessStates = new();
@@ -63,17 +75,16 @@ public class AttestationService : IAttestationService
     public AttestationService(
         ILogger<AttestationService> logger,
         IOptions<AttestationConfig> config,
-        DataStore dataStore)
+        DataStore dataStore,
+        INetworkLatencyTracker latencyTracker)
     {
         _logger = logger;
         _config = config.Value;
         _dataStore = dataStore;
+        _latencyTracker = latencyTracker;
 
-        // HTTP client with strict timeout
-        _httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromMilliseconds(_config.MaxResponseTimeMs + 100)
-        };
+        // HTTP client - timeout will be set dynamically per request
+        _httpClient = new HttpClient();
     }
 
     public async Task<AttestationVerificationResult> ChallengeVmAsync(
@@ -91,68 +102,183 @@ public class AttestationService : IAttestationService
 
         if (vm.Status != VmStatus.Running)
         {
-            result.Errors.Add($"VM is not running (status: {vm.Status})");
+            result.Errors.Add("VM not running");
             return result;
         }
 
-        // Get VM's network address
-        var vmAddress = GetVmAttestationAddress(vm);
-        if (string.IsNullOrEmpty(vmAddress))
-        {
-            result.Errors.Add("VM address not available");
-            await RecordFailureAsync(vmId, "No network address");
-            return result;
-        }
-
-        // Get node details - REQUIRED for proxying
+        // Get node
         if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
         {
             result.Errors.Add("Node not found");
-            await RecordFailureAsync(vmId, "Node not found");
             return result;
         }
 
-        // Build node agent URL for attestation proxy
         var nodeAgentUrl = GetNodeAgentUrl(node);
         if (string.IsNullOrEmpty(nodeAgentUrl))
         {
             result.Errors.Add("Node agent URL not available");
-            await RecordFailureAsync(vmId, "No node agent URL");
             return result;
         }
 
-        // Create challenge
-        var challenge = CreateChallenge(vm);
+        // =====================================================
+        // ADAPTIVE TIMEOUT CALCULATION
+        // =====================================================
 
-        _logger.LogDebug(
-            "Sending attestation challenge to VM {VmId} at {Address}, nonce: {Nonce}",
-            vmId, vmAddress, challenge.Nonce[..8] + "...");
+        // Get network metrics for this VM
+        var networkMetrics = await _latencyTracker.GetMetricsAsync(vmId);
+
+        double adaptiveTimeout;
+        double expectedNetworkRtt;
+
+        if (networkMetrics != null)
+        {
+            // Calculate adaptive timeout based on measured RTT
+            adaptiveTimeout = networkMetrics.CalculateAdaptiveTimeout(
+                MAX_PROCESSING_TIME_MS,
+                SAFETY_MARGIN_MS,
+                ABSOLUTE_MAX_TIMEOUT_MS);
+
+            expectedNetworkRtt = networkMetrics.CurrentRttMs;
+
+            _logger.LogDebug(
+                "VM {VmId} adaptive timeout: {Timeout:F1}ms (RTT: {Rtt:F1}ms, Processing: {Proc}ms, Safety: {Safety}ms)",
+                vmId, adaptiveTimeout, expectedNetworkRtt, MAX_PROCESSING_TIME_MS, SAFETY_MARGIN_MS);
+        }
+        else
+        {
+            // Fallback to fixed timeout (should only happen for brand new VMs)
+            adaptiveTimeout = _config.MaxResponseTimeMs;
+            expectedNetworkRtt = 50; // Default estimate
+
+            _logger.LogWarning(
+                "VM {VmId} has no network metrics, using default timeout: {Timeout}ms",
+                vmId, adaptiveTimeout);
+        }
 
         try
         {
-            // Send challenge and measure response time (CRITICAL: wall-clock timing)
-            var sendTime = DateTime.UtcNow;
+            // =====================================================
+            // STEP 1: Measure current network RTT (lightweight ping)
+            // =====================================================
+            double currentNetworkRtt;
+            try
+            {
+                var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
+                if (!string.IsNullOrEmpty(vmIp))
+                {
+                    currentNetworkRtt = await _latencyTracker.MeasureRttAsync(vmIp, ct);
 
-            var response = await SendChallengeAsync(nodeAgentUrl, vmId, challenge, ct);
+                    _logger.LogDebug(
+                        "VM {VmId} current RTT: {Rtt:F1}ms (expected: {Expected:F1}ms)",
+                        vmId, currentNetworkRtt, expectedNetworkRtt);
+                }
+                else
+                {
+                    currentNetworkRtt = expectedNetworkRtt;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Failed to measure RTT for VM {VmId}: {Error}", vmId, ex.Message);
+                currentNetworkRtt = expectedNetworkRtt; // Use cached value
+            }
 
-            var receiveTime = DateTime.UtcNow;
-            result.ResponseTimeMs = (receiveTime - sendTime).TotalMilliseconds;
+            // =====================================================
+            // STEP 2: Generate and send challenge
+            // =====================================================
+            var challenge = CreateChallenge(vm);
 
+            var challengeStart = Stopwatch.GetTimestamp();
+
+            // Set timeout for this specific request
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(adaptiveTimeout + 100)); // Add buffer
+
+            var requestUrl = $"{nodeAgentUrl}/api/vm/{vm.Id}/attest";
+            var content = new StringContent(
+                JsonSerializer.Serialize(challenge),
+                Encoding.UTF8,
+                "application/json");
+
+            HttpResponseMessage? httpResponse = null;
+            AttestationResponse? response = null;
+
+            try
+            {
+                httpResponse = await _httpClient.PostAsync(requestUrl, content, cts.Token);
+                httpResponse.EnsureSuccessStatusCode();
+
+                var responseJson = await httpResponse.Content.ReadAsStringAsync(cts.Token);
+                response = JsonSerializer.Deserialize<AttestationResponse>(responseJson);
+            }
+            catch (TaskCanceledException)
+            {
+                // Timeout occurred
+                var elapsed = Stopwatch.GetElapsedTime(challengeStart).TotalMilliseconds;
+                result.ResponseTimeMs = elapsed;
+                result.Errors.Add($"Response timeout (>{adaptiveTimeout:F1}ms, measured: {elapsed:F1}ms)");
+                result.TimingValid = false;
+
+                await RecordFailureAsync(vmId, "Timeout");
+                return result;
+            }
+
+            var totalResponseMs = Stopwatch.GetElapsedTime(challengeStart).TotalMilliseconds;
+            result.ResponseTimeMs = totalResponseMs;
+
+            // =====================================================
+            // STEP 3: Calculate actual processing time
+            // =====================================================
+            var processingTimeMs = totalResponseMs - currentNetworkRtt;
+
+            _logger.LogDebug(
+                "VM {VmId} attestation timing: Total={Total:F1}ms, Network={Network:F1}ms, Processing={Proc:F1}ms",
+                vmId, totalResponseMs, currentNetworkRtt, processingTimeMs);
+
+            // =====================================================
+            // STEP 4: Verify response with processing time check
+            // =====================================================
             if (response == null)
             {
-                result.Errors.Add("No response received (timeout or error)");
+                result.Errors.Add("No response received");
                 await RecordFailureAsync(vmId, "No response");
                 return result;
             }
 
             // Verify the response
-            result = VerifyResponse(challenge, response, vm, result.ResponseTimeMs);
+            result = VerifyResponse(challenge, response, vm, totalResponseMs, processingTimeMs);
+
+            // =====================================================
+            // STEP 5: Update network metrics for future attestations
+            // =====================================================
+            await _latencyTracker.UpdateMetricsAsync(
+                vmId,
+                currentNetworkRtt,
+                processingTimeMs,
+                result.Success);
+
+            // =====================================================
+            // STEP 6: Check if recalibration needed
+            // =====================================================
+            if (networkMetrics != null && networkMetrics.NeedsRecalibration())
+            {
+                _logger.LogInformation(
+                    "VM {VmId} network metrics need recalibration (RTT changed or high variance)",
+                    vmId);
+
+                // Trigger recalibration in background
+                var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig.PrivateIp;
+                if (!string.IsNullOrEmpty(vmIp))
+                {
+                    _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, vmIp));
+                }
+            }
 
             // Record result
             if (result.Success)
             {
                 await RecordSuccessAsync(vmId, response.Metrics.BootId, response.Metrics.MachineId);
-                TrackResponseTime(vmId, result.ResponseTimeMs);
+                TrackResponseTime(vmId, totalResponseMs);
             }
             else
             {
@@ -160,15 +286,8 @@ public class AttestationService : IAttestationService
             }
 
             // Save attestation record for audit
-            await SaveAttestationRecordAsync(vm, challenge, result, response?.Metrics);
+            await SaveAttestationRecordAsync(vm, challenge, result, response.Metrics);
 
-            return result;
-        }
-        catch (TaskCanceledException)
-        {
-            result.Errors.Add($"Response timeout (>{_config.MaxResponseTimeMs}ms)");
-            result.TimingValid = false;
-            await RecordFailureAsync(vmId, "Timeout");
             return result;
         }
         catch (HttpRequestException ex)
@@ -263,26 +382,33 @@ public class AttestationService : IAttestationService
         });
     }
 
+    /// <summary>
+    /// Verify attestation response with processing time check
+    /// </summary>
     private AttestationVerificationResult VerifyResponse(
         AttestationChallenge challenge,
         AttestationResponse response,
         VirtualMachine vm,
-        double responseTimeMs)
+        double totalResponseMs,
+        double processingTimeMs)
     {
         var result = new AttestationVerificationResult
         {
-            ResponseTimeMs = responseTimeMs
+            ResponseTimeMs = totalResponseMs
         };
 
         var expectedMemoryKb = vm.Spec.MemoryBytes / 1024;
 
         // =============================================
-        // CHECK 1: Response Time (CRITICAL SECURITY CHECK)
+        // CHECK 1: Processing Time (CRITICAL SECURITY CHECK)
         // This is the KEY defense against key extraction attacks
+        // Network RTT is accounted for, but processing time is fixed
         // =============================================
-        if (responseTimeMs > _config.MaxResponseTimeMs)
+        if (processingTimeMs > MAX_PROCESSING_TIME_MS)
         {
-            result.Errors.Add($"Response too slow: {responseTimeMs:F1}ms (max: {_config.MaxResponseTimeMs}ms)");
+            result.Errors.Add(
+                $"Processing time too slow: {processingTimeMs:F1}ms (max: {MAX_PROCESSING_TIME_MS}ms) " +
+                $"- possible key extraction attempt");
             result.TimingValid = false;
         }
         else
@@ -291,7 +417,21 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 2: Nonce Match (prevents replay attacks)
+        // CHECK 2: Total Response Time (secondary check)
+        // Total time should not wildly exceed expected
+        // =============================================
+        // This is now more lenient since we account for network RTT
+        // Just check for obvious anomalies
+        var expectedTotal = processingTimeMs + 100; // Processing + reasonable RTT estimate
+        if (totalResponseMs > expectedTotal * 3)
+        {
+            result.Warnings.Add(
+                $"Total response time unusually high: {totalResponseMs:F1}ms " +
+                $"(expected <{expectedTotal:F1}ms)");
+        }
+
+        // =============================================
+        // CHECK 3: Nonce Match (prevents replay attacks)
         // =============================================
         if (response.Nonce != challenge.Nonce)
         {
@@ -304,8 +444,7 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 3: Signature Verification
-        // Response is signed with ephemeral key generated inside VM
+        // CHECK 4: Signature Verification
         // =============================================
         try
         {
@@ -322,7 +461,7 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 4: CPU Cores
+        // CHECK 5: CPU Cores
         // =============================================
         if (response.Metrics.CpuCores < challenge.ExpectedCores)
         {
@@ -339,7 +478,7 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 5: Memory Amount
+        // CHECK 6: Memory Amount
         // =============================================
         var memoryRatio = (double)response.Metrics.MemoryKb / expectedMemoryKb;
         if (memoryRatio < _config.MemoryToleranceLow)
@@ -358,7 +497,7 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 6: Memory Touch Test (detects swap/overcommit)
+        // CHECK 7: Memory Touch Test (detects swap/overcommit)
         // =============================================
         if (response.MemoryTouch.TotalMs > _config.MaxMemoryTouchMs)
         {
@@ -376,7 +515,7 @@ public class AttestationService : IAttestationService
         }
 
         // =============================================
-        // CHECK 7: Identity Consistency
+        // CHECK 8: Identity Consistency
         // =============================================
         result.IdentityValid = VerifyIdentityConsistency(
             challenge.VmId,
@@ -396,13 +535,19 @@ public class AttestationService : IAttestationService
                       && result.IdentityValid;
 
         _logger.LogInformation(
-            "VM {VmId} attestation {Result} in {ResponseTime:F1}ms: " +
+            "VM {VmId} attestation {Result} in {ResponseTime:F1}ms (processing: {Processing:F1}ms): " +
             "timing={Timing}, sig={Sig}, nonce={Nonce}, cpu={Cpu}, mem={Mem}, touch={Touch}, id={Id}",
             challenge.VmId,
-            result.Success ? "PASSED" : "FAILED",
-            responseTimeMs,
-            result.TimingValid, result.SignatureValid, result.NonceValid,
-            result.CpuValid, result.MemoryValid, result.MemoryTouchValid, result.IdentityValid);
+            result.Success ? "SUCCESS" : "FAILED",
+            totalResponseMs,
+            processingTimeMs,
+            result.TimingValid,
+            result.SignatureValid,
+            result.NonceValid,
+            result.CpuValid,
+            result.MemoryValid,
+            result.MemoryTouchValid,
+            result.IdentityValid);
 
         return result;
     }
