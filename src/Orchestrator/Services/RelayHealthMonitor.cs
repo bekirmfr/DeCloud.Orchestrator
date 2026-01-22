@@ -19,6 +19,13 @@ public class RelayHealthMonitor : BackgroundService
     // Health check interval
     private static readonly TimeSpan HealthCheckInterval = TimeSpan.FromMinutes(1);
 
+    // FIXED: Grace period for newly deployed relays to fully initialize
+    // Relays need time for cloud-init, package installation, WireGuard setup, etc.
+    private static readonly TimeSpan RelayInitializationGracePeriod = TimeSpan.FromMinutes(7);
+
+    // Timeout for individual health checks
+    private static readonly TimeSpan HealthCheckTimeout = TimeSpan.FromSeconds(10);
+
     public RelayHealthMonitor(
         DataStore dataStore,
         IRelayNodeService relayNodeService,
@@ -77,6 +84,27 @@ public class RelayHealthMonitor : BackgroundService
             return;
         }
 
+        // FIXED: Skip health checks for newly deployed relays (grace period)
+        var relayAge = DateTime.UtcNow - relay.RegisteredAt;
+        if (relayAge < RelayInitializationGracePeriod)
+        {
+            var remainingWait = RelayInitializationGracePeriod - relayAge;
+
+            _logger.LogDebug(
+                "Relay {RelayId} is initializing (age: {Age:mm\\:ss}, grace period: {Grace:mm\\:ss} remaining)",
+                relay.Id, relayAge, remainingWait);
+
+            // Keep status as Active during initialization
+            if (relay.RelayInfo.Status != RelayStatus.Active)
+            {
+                relay.RelayInfo.Status = RelayStatus.Active;
+                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                await _dataStore.SaveNodeAsync(relay);
+            }
+
+            return;
+        }
+
         try
         {
             // Use relay VM's WireGuard tunnel IP
@@ -88,11 +116,11 @@ public class RelayHealthMonitor : BackgroundService
             var healthUrl = $"http://{tunnelIp}/health";
 
             _logger.LogDebug(
-                "Checking relay {RelayId} health at {HealthUrl} (subnet {Subnet})",
-                relay.Id, healthUrl, relay.RelayInfo.RelaySubnet);
+                "Checking relay {RelayId} health at {HealthUrl} (subnet {Subnet}, age: {Age:mm\\:ss})",
+                relay.Id, healthUrl, relay.RelayInfo.RelaySubnet, relayAge);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(10)); // 10 second timeout
+            cts.CancelAfter(HealthCheckTimeout);
 
             var response = await _httpClient.GetAsync(healthUrl, cts.Token);
 
@@ -101,8 +129,8 @@ public class RelayHealthMonitor : BackgroundService
                 if (relay.RelayInfo.Status != RelayStatus.Active)
                 {
                     _logger.LogInformation(
-                        "Relay {RelayId} recovered - marking as Active",
-                        relay.Id);
+                        "✓ Relay {RelayId} recovered - marking as Active (age: {Age:mm\\:ss})",
+                        relay.Id, relayAge);
                 }
 
                 relay.RelayInfo.Status = RelayStatus.Active;
@@ -142,14 +170,19 @@ public class RelayHealthMonitor : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Relay {RelayId} health check timed out", relay.Id);
+            _logger.LogWarning(
+                "Relay {RelayId} health check timed out after {Timeout}s (age: {Age:mm\\:ss})",
+                relay.Id, HealthCheckTimeout.TotalSeconds, relayAge);
+
             relay.RelayInfo.Status = RelayStatus.Degraded;
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(relay);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Relay {RelayId} health check failed - marking offline", relay.Id);
+            _logger.LogError(ex,
+                "Relay {RelayId} health check failed - marking offline (age: {Age:mm\\:ss})",
+                relay.Id, relayAge);
 
             relay.RelayInfo.Status = RelayStatus.Offline;
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
@@ -180,19 +213,22 @@ public class RelayHealthMonitor : BackgroundService
         }
 
         _logger.LogWarning(
-            "Failing over {Count} CGNAT nodes from relay {RelayId}",
-            affectedNodes.Count, failedRelay.Id);
+            "Relay {RelayId} failed with {Count} connected CGNAT nodes - initiating failover",
+            failedRelay.Id, affectedNodes.Count);
 
         foreach (var node in affectedNodes)
         {
             try
             {
-                var newRelay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node, ct);
+                // Find alternative relay
+                var newRelay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(
+                    node,
+                    ct);
 
-                if (newRelay != null && newRelay.Id != failedRelay.Id)
+                if (newRelay != null)
                 {
                     _logger.LogInformation(
-                        "Reassigning CGNAT node {NodeId} from relay {OldRelay} to {NewRelay}",
+                        "Failing over CGNAT node {NodeId} from relay {OldRelay} to {NewRelay}",
                         node.Id, failedRelay.Id, newRelay.Id);
 
                     await _relayNodeService.AssignCgnatNodeToRelayAsync(node, newRelay, ct);
@@ -200,25 +236,16 @@ public class RelayHealthMonitor : BackgroundService
                 else
                 {
                     _logger.LogWarning(
-                        "No alternative relay found for CGNAT node {NodeId}",
+                        "No alternative relay available for CGNAT node {NodeId}",
                         node.Id);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Failed to failover CGNAT node {NodeId}",
-                    node.Id);
+                    "Failed to failover CGNAT node {NodeId} from relay {RelayId}",
+                    node.Id, failedRelay.Id);
             }
         }
-
-        // Update failed relay's connected nodes list
-        failedRelay.RelayInfo.ConnectedNodeIds.Clear();
-        failedRelay.RelayInfo.CurrentLoad = 0;
-        await _dataStore.SaveNodeAsync(failedRelay);
-
-        _logger.LogInformation(
-            "Failover completed for relay {RelayId} - reassigned {Count} nodes",
-            failedRelay.Id, affectedNodes.Count);
     }
 }
