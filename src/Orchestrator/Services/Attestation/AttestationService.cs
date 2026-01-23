@@ -151,17 +151,6 @@ public class AttestationService : IAttestationService
 
         if (networkMetrics != null && networkMetrics.TotalMeasurements > 0)
         {
-            // Check if recalibration needed
-            if (networkMetrics != null && networkMetrics.NeedsRecalibration())
-            {
-                _logger.LogInformation(
-                    "VM {VmId} network metrics need recalibration (RTT changed or high variance)",
-                    vmId);
-
-                // Trigger recalibration in background
-                _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, ct));
-            }
-
             // Calculate adaptive timeout based on measured RTT
             adaptiveTimeout = networkMetrics.CalculateAdaptiveTimeout(
                 _config.MaxProcessingTimeMs,
@@ -196,7 +185,7 @@ public class AttestationService : IAttestationService
 
             try
             {
-                _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
+                _logger.LogInformation("Executing initial baseline RTT calibration for VM {VmId}", vm.Id);
 
                 var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id, ct);
 
