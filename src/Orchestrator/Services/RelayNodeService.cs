@@ -225,8 +225,8 @@ public class RelayNodeService : IRelayNodeService
     {
         // Get all existing relay subnets
         var usedSubnets = _dataStore.Nodes.Values
-            .Where(n => n.RelayInfo?.IsActive == true)
-            .Select(n => n.RelayInfo.RelaySubnet)
+            .Where(n => n.RelayInfo?.Status == RelayStatus.Active)
+            .Select(n => n.RelayInfo?.RelaySubnet)
             .Where(s => s > 0)  // Filter out uninitialized (0)
             .ToHashSet();
 
@@ -277,7 +277,6 @@ public class RelayNodeService : IRelayNodeService
         var relayNodes = _dataStore.Nodes.Values
             .Where(n => n.Status == NodeStatus.Online &&
                        n.RelayInfo != null &&
-                       n.RelayInfo.IsActive &&
                        n.RelayInfo.Status == RelayStatus.Active &&
                        n.RelayInfo.CurrentLoad < n.RelayInfo.MaxCapacity)
             .ToList();
@@ -342,7 +341,7 @@ public class RelayNodeService : IRelayNodeService
         Node relayNode,
         CancellationToken ct = default)
     {
-        if (relayNode.RelayInfo == null || !relayNode.RelayInfo.IsActive)
+        if (relayNode.RelayInfo == null || relayNode.RelayInfo.Status != RelayStatus.Active)
         {
             _logger.LogError("Cannot assign to inactive relay {RelayId}", relayNode.Id);
             return false;

@@ -65,7 +65,7 @@ public class RelayHealthMonitor : BackgroundService
     private async Task CheckAllRelaysAsync(CancellationToken ct)
     {
         var relayNodes = _dataStore.Nodes.Values
-            .Where(n => n.RelayInfo?.IsActive == true)
+            .Where(n => n.RelayInfo?.Status == RelayStatus.Active)
             .ToList();
 
         _logger.LogDebug("Checking health of {Count} relay nodes", relayNodes.Count);
@@ -149,7 +149,7 @@ public class RelayHealthMonitor : BackgroundService
                 // Check if relay peer is configured on orchestrator
                 var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
 
-                if (!hasPeer && relay.RelayInfo?.IsActive == true)
+                if (!hasPeer && relay.RelayInfo?.Status == RelayStatus.Active)
                 {
                     _logger.LogWarning(
                         "Relay {RelayId} is active but not configured as peer - " +

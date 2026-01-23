@@ -443,11 +443,6 @@ public record CommandRegistration(
 public class RelayNodeInfo
 {
     /// <summary>
-    /// Is this node currently operating as a relay?
-    /// </summary>
-    public bool IsActive => Status == RelayStatus.Active;
-
-    /// <summary>
     /// VM ID of the relay VM running on this node
     /// </summary>
     public string? RelayVmId { get; set; }
