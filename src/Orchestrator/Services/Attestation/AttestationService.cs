@@ -147,6 +147,22 @@ public class AttestationService : IAttestationService
         }
         else
         {
+            // Pre-flight health check (only for first attestation)
+
+            var isHealthy = await IsAgentHealthyAsync(vmId, ct);
+            if (!isHealthy)
+            {
+                _logger.LogDebug(
+                    "VM {VmId} agent not responding to health check - skipping attestation",
+                    vmId);
+
+                // Don't count as failure - agent just not ready yet
+                return new AttestationVerificationResult
+                {
+                    Errors = { "Agent not ready (health check failed)" }
+                };
+            }
+
             // First attestation or no calibration
             // Use generous timeout for cold start
             var vmAge = DateTime.UtcNow - (vm.StartedAt ?? vm.CreatedAt);
@@ -825,6 +841,30 @@ public class AttestationService : IAttestationService
                 LastAttestation = state.LastSuccessfulAttestation,
                 BillingPaused = state.BillingPaused
             });
+        }
+    }
+
+    private async Task<bool> IsAgentHealthyAsync(string vmId, CancellationToken ct)
+    {
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+            return false;
+
+        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+            return false;
+
+        var healthUrl = $"http://{vm.NetworkConfig?.PrivateIp}:9999/health";
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(2)); // Fast timeout
+
+            var response = await _httpClient.GetAsync(healthUrl, cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
         }
     }
 

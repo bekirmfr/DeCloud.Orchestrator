@@ -84,7 +84,7 @@ MONGODB_URI=""
 
 # Adaptive timeout configuration
 ATTESTATION_ENABLE_ADAPTIVE=true                # Enable adaptive timeout based on network RTT
-ATTESTATION_MIN_VM_AGE_SECONDS=90               # Wait 90s after VM starts before first attestation
+ATTESTATION_MIN_VM_AGE_SECONDS=300              # Wait 90s after VM starts before first attestation
 ATTESTATION_MAX_PROCESSING_MS=100               # Max processing time inside VM (SECURITY CRITICAL - DO NOT INCREASE)
 ATTESTATION_SAFETY_MARGIN_MS=20                 # Safety margin for network jitter
 ATTESTATION_ABSOLUTE_MAX_MS=500                 # Absolute maximum timeout (prevents abuse via fake high RTT)
