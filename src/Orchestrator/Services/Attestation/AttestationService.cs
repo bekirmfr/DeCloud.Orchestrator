@@ -61,11 +61,6 @@ public class AttestationService : IAttestationService
     private readonly HttpClient _httpClient;
     private readonly INetworkLatencyTracker _latencyTracker;
 
-    // Configuration for adaptive timeouts
-    private const double MAX_PROCESSING_TIME_MS = 50;
-    private const double SAFETY_MARGIN_MS = 20;
-    private const double ABSOLUTE_MAX_TIMEOUT_MS = 500;
-
     // Liveness state per VM
     private readonly Dictionary<string, VmLivenessState> _livenessStates = new();
     private readonly object _stateLock = new();
@@ -135,15 +130,15 @@ public class AttestationService : IAttestationService
         {
             // Calculate adaptive timeout based on measured RTT
             adaptiveTimeout = networkMetrics.CalculateAdaptiveTimeout(
-                MAX_PROCESSING_TIME_MS,
-                SAFETY_MARGIN_MS,
-                ABSOLUTE_MAX_TIMEOUT_MS);
+                _config.MaxProcessingTimeMs,
+                _config.SafetyMarginMs,
+                _config.AbsoluteMaxTimeoutMs);
 
             expectedNetworkRtt = networkMetrics.CurrentRttMs;
 
             _logger.LogDebug(
                 "VM {VmId} adaptive timeout: {Timeout:F1}ms (RTT: {Rtt:F1}ms, Processing: {Proc}ms, Safety: {Safety}ms)",
-                vmId, adaptiveTimeout, expectedNetworkRtt, MAX_PROCESSING_TIME_MS, SAFETY_MARGIN_MS);
+                vmId, adaptiveTimeout, expectedNetworkRtt, _config.MaxProcessingTimeMs, _config.SafetyMarginMs);
         }
         else
         {
@@ -446,10 +441,10 @@ public class AttestationService : IAttestationService
         // This is the KEY defense against key extraction attacks
         // Network RTT is accounted for, but processing time is fixed
         // =============================================
-        if (processingTimeMs > MAX_PROCESSING_TIME_MS)
+        if (processingTimeMs > _config.MaxProcessingTimeMs)
         {
             result.Errors.Add(
-                $"Processing time too slow: {processingTimeMs:F1}ms (max: {MAX_PROCESSING_TIME_MS}ms) " +
+                $"Processing time too slow: {processingTimeMs:F1}ms (max: {_config.MaxProcessingTimeMs}ms) " +
                 $"- possible key extraction attempt");
             result.TimingValid = false;
         }
