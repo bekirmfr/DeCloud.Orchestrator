@@ -149,7 +149,7 @@ public class AttestationService : IAttestationService
         {
             // Pre-flight health check (only for first attestation)
 
-            var isHealthy = await IsAgentHealthyAsync(vmId, ct);
+            var isHealthy = await IsAgentHealthyAsync(vmId, nodeAgentUrl, ct);
             if (!isHealthy)
             {
                 _logger.LogDebug(
@@ -844,7 +844,10 @@ public class AttestationService : IAttestationService
         }
     }
 
-    private async Task<bool> IsAgentHealthyAsync(string vmId, CancellationToken ct)
+    private async Task<bool> IsAgentHealthyAsync(
+        string vmId,
+        string nodeAgentUrl,
+        CancellationToken ct)
     {
         if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
             return false;
@@ -852,7 +855,7 @@ public class AttestationService : IAttestationService
         if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
             return false;
 
-        var healthUrl = $"http://{vm.NetworkConfig?.PrivateIp}:9999/health";
+        var healthUrl = $"{nodeAgentUrl}/api/vms/{vmId}/proxy/http/9999/health";
 
         try
         {
