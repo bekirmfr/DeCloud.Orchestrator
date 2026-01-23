@@ -100,7 +100,7 @@ ATTESTATION_RECOVERY_THRESHOLD=2                # Resume billing after 2 consecu
 
 # Memory verification (UPDATED: More lenient for hardware diversity)
 ATTESTATION_MAX_MEMORY_TOUCH_MS=100.0          # Total time for memory touch test (CHANGED from 50.0)
-ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=10.0      # Single page touch max (CHANGED from 5.0)
+ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=20.0      # Single page touch max (CHANGED from 10.0)
 
 # Network calibration (NEW)
 ATTESTATION_CALIBRATION_PINGS=5                 # Number of pings for baseline RTT calibration
