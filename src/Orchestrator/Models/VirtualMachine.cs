@@ -44,6 +44,10 @@ public class VirtualMachine
     public VmNetworkConfig NetworkConfig { get; set; } = new();
 
     public VmNetworkMetrics? NetworkMetrics { get; set; }
+    /// <summary>
+    /// Attestation statistics (persisted to MongoDB)
+    /// </summary>
+    public VmLivenessState? AttestationStats { get; set; }
 
     /// <summary>
     /// Ingress configuration for this VM (auto-subdomain and custom domains)

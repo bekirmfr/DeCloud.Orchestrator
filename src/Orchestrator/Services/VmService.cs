@@ -783,8 +783,6 @@ public class VmService : IVmService
 
                     _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
 
-                    // ✨ UPDATED: Pass vmId instead of IP address
-                    // NetworkLatencyTracker now determines the correct endpoint internally
                     var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id);
 
                     // Update VM with calibrated RTT

@@ -202,7 +202,7 @@ public class BillingService : BackgroundService
 
         var billingPeriod = now - currentPeriodStart;
 
-        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
+        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0 || attestationStatus == null;
 
         if (isVerified)
         {
@@ -250,18 +250,27 @@ public class BillingService : BackgroundService
             return;
         }
 
+        // Update billing info
+        vm.BillingInfo.TotalBilled += cost;
+        vm.BillingInfo.TotalRuntime += billingPeriod;
+        vm.BillingInfo.LastBillingAt = now;
+        vm.BillingInfo.CurrentPeriodStart = now;
+
         // ═══════════════════════════════════════════════════════════════════════
         // RECORD USAGE
         // ═══════════════════════════════════════════════════════════════════════
 
+        await _dataStore.SaveVmAsync(vm);
+
         var success = await _settlementService.RecordUsageAsync(
-            userId: vm.OwnerId,
+            userId: vm.OwnerId!,
             vmId: vm.Id,
-            nodeId: vm.NodeId ?? string.Empty,
+            nodeId: vm.NodeId!,
             amount: cost,
             periodStart: currentPeriodStart,
             periodEnd: now,
-            attestationVerified: attestationStatus?.ConsecutiveSuccesses > 0);
+            attestationVerified: isVerified
+        );
 
         if (!success)
         {
@@ -270,13 +279,6 @@ public class BillingService : BackgroundService
                 vm.Id);
             return;
         }
-
-        // Update billing info
-        vm.BillingInfo.LastBillingAt = now;
-        vm.BillingInfo.CurrentPeriodStart = now;
-        vm.BillingInfo.TotalBilled += cost;
-
-        await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
             "✓ Billed VM {VmId}: {Cost} USDC for {Duration}, trigger={Trigger}",

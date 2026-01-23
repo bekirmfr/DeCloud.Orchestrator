@@ -81,6 +81,30 @@ public class AttestationService : IAttestationService
 
         // HTTP client - timeout will be set dynamically per request
         _httpClient = new HttpClient();
+
+        LoadAttestationStatsFromDatabase();
+    }
+
+    private void LoadAttestationStatsFromDatabase()
+    {
+        var vmsWithStats = _dataStore.VirtualMachines.Values
+            .Where(vm => vm.AttestationStats != null)
+            .ToList();
+
+        lock (_stateLock)
+        {
+            foreach (var vm in vmsWithStats)
+            {
+                _livenessStates[vm.Id] = vm.AttestationStats!;
+            }
+        }
+
+        if (vmsWithStats.Count > 0)
+        {
+            _logger.LogInformation(
+                "Loaded attestation stats for {Count} VMs from database",
+                vmsWithStats.Count);
+        }
     }
 
     public async Task<AttestationVerificationResult> ChallengeVmAsync(
@@ -667,14 +691,24 @@ public class AttestationService : IAttestationService
         }
     }
 
-    private Task RecordSuccessAsync(string vmId, string bootId, string machineId)
+    private async Task RecordSuccessAsync(string vmId, string bootId, string machineId)
     {
         lock (_stateLock)
         {
             if (!_livenessStates.TryGetValue(vmId, out var state))
             {
-                state = new VmLivenessState { VmId = vmId };
-                _livenessStates[vmId] = state;
+                // Try to load from VM document first
+                if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm) &&
+                    vm.AttestationStats != null)
+                {
+                    state = vm.AttestationStats;
+                    _livenessStates[vmId] = state;
+                }
+                else
+                {
+                    state = new VmLivenessState { VmId = vmId };
+                    _livenessStates[vmId] = state;
+                }
             }
 
             state.LastBootId = bootId;
@@ -698,17 +732,27 @@ public class AttestationService : IAttestationService
             }
         }
 
-        return Task.CompletedTask;
+        await PersistAttestationStatsAsync(vmId);
     }
 
-    private Task RecordFailureAsync(string vmId, string reason)
+    private async Task RecordFailureAsync(string vmId, string reason)
     {
         lock (_stateLock)
         {
             if (!_livenessStates.TryGetValue(vmId, out var state))
             {
-                state = new VmLivenessState { VmId = vmId };
-                _livenessStates[vmId] = state;
+                // Try to load from VM document first
+                if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm) &&
+                    vm.AttestationStats != null)
+                {
+                    state = vm.AttestationStats;
+                    _livenessStates[vmId] = state;
+                }
+                else
+                {
+                    state = new VmLivenessState { VmId = vmId };
+                    _livenessStates[vmId] = state;
+                }
             }
 
             state.ConsecutiveFailures++;
@@ -728,7 +772,48 @@ public class AttestationService : IAttestationService
             }
         }
 
-        return Task.CompletedTask;
+        await PersistAttestationStatsAsync(vmId);
+    }
+
+    /// <summary>
+    /// Persist attestation stats to VM document in MongoDB
+    /// </summary>
+    private async Task PersistAttestationStatsAsync(string vmId)
+    {
+        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        {
+            _logger.LogWarning("Cannot persist attestation stats - VM {VmId} not found", vmId);
+            return;
+        }
+
+        VmLivenessState? statsSnapshot;
+        lock (_stateLock)
+        {
+            if (!_livenessStates.TryGetValue(vmId, out var stats))
+            {
+                return;
+            }
+            // Create snapshot outside lock
+            statsSnapshot = new VmLivenessState
+            {
+                VmId = stats.VmId,
+                LastBootId = stats.LastBootId,
+                LastMachineId = stats.LastMachineId,
+                LastSuccessfulAttestation = stats.LastSuccessfulAttestation,
+                ConsecutiveFailures = stats.ConsecutiveFailures,
+                ConsecutiveSuccesses = stats.ConsecutiveSuccesses,
+                TotalChallenges = stats.TotalChallenges,
+                TotalSuccesses = stats.TotalSuccesses,
+                BillingPaused = stats.BillingPaused,
+                PauseReason = stats.PauseReason,
+                PausedAt = stats.PausedAt
+            };
+        }
+
+        vm.AttestationStats = statsSnapshot;
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogDebug("Attestation stats persisted for VM {VmId}", vmId);
     }
 
     private async Task SaveAttestationRecordAsync(
