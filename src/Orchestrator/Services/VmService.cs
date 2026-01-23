@@ -756,7 +756,7 @@ public class VmService : IVmService
         );
 
         vm.ActiveCommandId = command.CommandId;
-        vm.ActiveCommandType = NodeCommandType.DeleteVm;
+        vm.ActiveCommandType = NodeCommandType.CreateVm;
         vm.ActiveCommandIssuedAt = DateTime.UtcNow;
 
         // Register in command registry (primary lookup mechanism)

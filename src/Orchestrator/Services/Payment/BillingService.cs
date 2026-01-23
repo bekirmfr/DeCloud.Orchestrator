@@ -213,9 +213,16 @@ public class BillingService : BackgroundService
             vm.BillingInfo.UnverifiedRuntime += billingPeriod;
         }
 
+        await _dataStore.SaveVmAsync(vm);
+
         // Don't bill if period < 1 minute (avoid spam)
         if (billingPeriod < TimeSpan.FromMinutes(1) && evt.Trigger != BillingTrigger.VmStop)
         {
+            _logger.LogDebug(
+                "VM {VmId}: Runtime tracked ({Verified}ms verified, {Unverified}ms unverified) but not billing (period < 1 min)",
+                vm.Id,
+                vm.BillingInfo.VerifiedRuntime.TotalMilliseconds,
+                vm.BillingInfo.UnverifiedRuntime.TotalMilliseconds);
             return;
         }
 
@@ -249,6 +256,16 @@ public class BillingService : BackgroundService
             await _dataStore.SaveVmAsync(vm);
             return;
         }
+
+        _logger.LogInformation(
+            "Billing VM {VmId}: Period={Period}, Cost={Cost}, IsVerified={Verified}, " +
+            "VerifiedRuntime={VerifiedMs}ms, UnverifiedRuntime={UnverifiedMs}ms",
+            vm.Id,
+            billingPeriod,
+            cost,
+            isVerified,
+            vm.BillingInfo.VerifiedRuntime.TotalMilliseconds,
+            vm.BillingInfo.UnverifiedRuntime.TotalMilliseconds);
 
         // Update billing info
         vm.BillingInfo.TotalBilled += cost;

@@ -304,7 +304,7 @@ public class AttestationService : IAttestationService
 
                 if (isFirstAttestation)
                 {
-                    _logger.LogDebug(
+                    _logger.LogWarning(
                         "VM {VmId} first attestation timeout (>{Timeout:F1}ms) - agent warming up, not counting as failure",
                         vmId, adaptiveTimeout);
 

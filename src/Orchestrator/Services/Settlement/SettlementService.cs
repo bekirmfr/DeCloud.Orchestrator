@@ -79,8 +79,12 @@ public class SettlementService : ISettlementService
         await _dataStore.SaveUsageRecordAsync(usageRecord);
 
         _logger.LogInformation(
-            "Usage recorded: {Amount} USDC for VM {VmId} by user {UserId}, node {NodeId}",
-            amount, vmId, userId, nodeId);
+            "Recorded usage: VM={VmId}, Amount={Amount}, Verified={Verified}, " +
+            "RecordId={RecordId}",
+            vmId,
+            amount,
+            attestationVerified,
+            usageRecord.Id);
 
         return true;
     }
