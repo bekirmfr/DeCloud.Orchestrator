@@ -69,6 +69,7 @@ public class BillingService : BackgroundService
         // Process billing events from queue
         await ProcessBillingQueueAsync(stoppingToken);
 
+
         _logger.LogInformation("Event-Driven Billing Service stopped");
     }
 
@@ -145,17 +146,20 @@ public class BillingService : BackgroundService
 
     private async Task ProcessBillingQueueAsync(CancellationToken ct)
     {
+        var totalProcessed = 0;
         await foreach (var evt in _billingQueue.Reader.ReadAllAsync(ct))
         {
             try
             {
                 await ProcessVmBillingAsync(evt, ct);
+                totalProcessed++;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing billing for VM {VmId}", evt.VmId);
             }
         }
+        _logger.LogInformation("Processed {Count} billing events", totalProcessed);
     }
 
     private async Task ProcessVmBillingAsync(BillingEvent evt, CancellationToken ct)
@@ -200,6 +204,7 @@ public class BillingService : BackgroundService
         var lastBillingAt = vm.BillingInfo.LastBillingAt ?? vm.StartedAt ?? now;
         var currentPeriodStart = vm.BillingInfo.CurrentPeriodStart ?? lastBillingAt;
 
+        // Track the period for this billing attempt
         var billingPeriod = now - currentPeriodStart;
 
         var isVerified = attestationStatus?.ConsecutiveSuccesses > 0 || attestationStatus == null;
@@ -213,20 +218,28 @@ public class BillingService : BackgroundService
             vm.BillingInfo.UnverifiedRuntime += billingPeriod;
         }
 
+        // Initialize CurrentPeriodStart if this is the first billing attempt
+        if (vm.BillingInfo.CurrentPeriodStart == null)
+        {
+            vm.BillingInfo.CurrentPeriodStart = vm.StartedAt ?? now;
+        }
+
         await _dataStore.SaveVmAsync(vm);
 
         // Don't bill if period < 1 minute (avoid spam)
         if (billingPeriod < TimeSpan.FromMinutes(1) && evt.Trigger != BillingTrigger.VmStop)
         {
             _logger.LogDebug(
-                "VM {VmId}: Runtime tracked ({Verified}ms verified, {Unverified}ms unverified) but not billing (period < 1 min)",
+                "VM {VmId}: Runtime tracked (verified={Verified:F2}min, unverified={Unverified:F2}min) " +
+                "but not billing (period={Period:F2}min < 1min threshold)",
                 vm.Id,
-                vm.BillingInfo.VerifiedRuntime.TotalMilliseconds,
-                vm.BillingInfo.UnverifiedRuntime.TotalMilliseconds);
+                vm.BillingInfo.VerifiedRuntime.TotalMinutes,
+                vm.BillingInfo.UnverifiedRuntime.TotalMinutes,
+                billingPeriod.TotalMinutes);
             return;
         }
 
-        // Calculate cost
+        // Calculate billing cost
         var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
         var cost = hourlyRate * (decimal)billingPeriod.TotalHours;
 
@@ -236,11 +249,9 @@ public class BillingService : BackgroundService
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // BALANCE CHECK - UPDATED to use BalanceService
+        // BALANCE CHECK
         // ═══════════════════════════════════════════════════════════════════════
 
-        // NEW: Use BalanceService instead of SettlementService.ValidateUserBalanceAsync()
-        // This breaks the circular dependency!
         var hasSufficientBalance = await _balanceService.HasSufficientBalanceAsync(vm.OwnerId, cost);
 
         if (!hasSufficientBalance)
@@ -274,7 +285,7 @@ public class BillingService : BackgroundService
         vm.BillingInfo.CurrentPeriodStart = now;
 
         // ═══════════════════════════════════════════════════════════════════════
-        // RECORD USAGE
+        // PERSIST BILLING UPDATE & RECORD USAGE
         // ═══════════════════════════════════════════════════════════════════════
 
         await _dataStore.SaveVmAsync(vm);
@@ -292,18 +303,22 @@ public class BillingService : BackgroundService
         if (!success)
         {
             _logger.LogWarning(
-                "⚠️ Failed to record usage for VM {VmId}",
-                vm.Id);
+                "⚠️ Failed to record usage for VM {VmId} - user was billed {Cost} USDC but usage not recorded!",
+                vm.Id, cost);
             return;
         }
 
         _logger.LogInformation(
-            "✓ Billed VM {VmId}: {Cost} USDC for {Duration}, trigger={Trigger}",
-            vm.Id, cost, billingPeriod, evt.Trigger);
+            "✓ Billed VM {VmId}: {Cost:F4} USDC for {Duration}, trigger={Trigger}, verified={Verified}, " +
+            "lifetime_verified={LifetimeVerified:F2}min, lifetime_unverified={LifetimeUnverified:F2}min, " +
+            "total_billed={TotalBilled:F4} USDC",
+            vm.Id,
+            cost,
+            billingPeriod,
+            evt.Trigger,
+            isVerified,
+            vm.BillingInfo.VerifiedRuntime.TotalMinutes,
+            vm.BillingInfo.UnverifiedRuntime.TotalMinutes,
+            vm.BillingInfo.TotalBilled);
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SUPPORTING TYPES
-// ═══════════════════════════════════════════════════════════════════════════
-

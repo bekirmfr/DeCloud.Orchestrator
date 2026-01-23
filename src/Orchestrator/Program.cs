@@ -136,7 +136,6 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddHostedService<NodeHealthMonitorService>();
 builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();
-builder.Services.AddHostedService<BillingService>();
 builder.Services.AddHostedService<CleanupService>();
 
 // Add MongoDB sync service if MongoDB is configured

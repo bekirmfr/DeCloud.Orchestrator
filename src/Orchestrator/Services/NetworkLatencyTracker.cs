@@ -236,7 +236,7 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
 
         try
         {
-            var reply = await ping.SendPingAsync(host, 5000);
+            var reply = await ping.SendPingAsync(host, 2000);
 
             if (reply.Status == IPStatus.Success)
             {
