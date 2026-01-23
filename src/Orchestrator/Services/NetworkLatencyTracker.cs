@@ -1,7 +1,8 @@
-﻿using System.Diagnostics;
-using System.Net.NetworkInformation;
-using Orchestrator.Models;
+﻿using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Diagnostics;
+using System.Net.NetworkInformation;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Orchestrator.Services;
 
@@ -147,62 +148,18 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         int targetPort;
         string targetDescription;
 
-        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
-        {
-            // =====================================================
-            // CGNAT NODE: VM is not directly reachable
-            // Measure RTT to NodeAgent via WireGuard tunnel
-            // =====================================================
-            targetHost = node.CgnatInfo.TunnelIp;
-            targetPort = node.AgentPort > 0 ? node.AgentPort : 5100;
-            targetDescription = $"NodeAgent via tunnel (CGNAT)";
-
-            _logger.LogDebug(
-                "Measuring RTT for CGNAT VM {VmId}: {TunnelIp}:{Port}",
-                vmId, targetHost, targetPort);
-        }
-        else
-        {
-            // =====================================================
-            // PUBLIC NODE: VM is directly reachable
-            // Measure RTT directly to VM's attestation agent
-            // =====================================================
-
-            // Try to get VM's IP address
-            var vmIp = vm.NetworkConfig.PublicIp ?? vm.NetworkConfig?.PrivateIp;
-
-            if (string.IsNullOrEmpty(vmIp))
-            {
-                _logger.LogWarning(
-                    "VM {VmId} has no IP address yet, falling back to NodeAgent",
-                    vmId);
-
-                targetHost = node.PublicIp;
-                targetPort = node.AgentPort > 0 ? node.AgentPort : 5100;
-                targetDescription = "NodeAgent (fallback)";
-            }
-            else
-            {
-                targetHost = vmIp;
-                targetPort = 9999; // Attestation agent port
-                targetDescription = "VM attestation agent (direct)";
-            }
-
-            _logger.LogDebug(
-                "Measuring RTT for public VM {VmId}: {Host}:{Port}",
-                vmId, targetHost, targetPort);
-        }
+        var nodeAgentUrl = GetNodeAgentUrl(node);
 
         // =====================================================
         // Measure RTT using HTTP health check
         // =====================================================
         try
         {
-            var rtt = await MeasureHttpRttAsync(targetHost, targetPort, ct);
+            var rtt = await MeasureHttpRttAsync(nodeAgentUrl, vm.Id, ct);
 
             _logger.LogDebug(
                 "RTT measured for VM {VmId} ({Target}): {Rtt:F1}ms",
-                vmId, targetDescription, rtt);
+                vmId, nodeAgentUrl, rtt);
 
             return rtt;
         }
@@ -210,7 +167,9 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         {
             _logger.LogDebug(
                 "HTTP RTT measurement failed for VM {VmId} ({Target}): {Error}, trying ICMP",
-                vmId, targetDescription, ex.Message);
+                vmId, nodeAgentUrl, ex.Message);
+
+            targetHost = node.CgnatInfo.TunnelIp ?? node.PublicIp;
 
             // Fallback to ICMP ping
             return await MeasureIcmpRttAsync(targetHost, ct);
@@ -218,16 +177,38 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     }
 
     /// <summary>
+    /// Get NodeAgent URL for proxying requests
+    /// </summary>
+    private string? GetNodeAgentUrl(Node node)
+    {
+        if (string.IsNullOrEmpty(node.PublicIp))
+        {
+            return null;
+        }
+
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+
+        // For CGNAT nodes, use tunnel IP if available
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+        {
+            return $"http://{node.CgnatInfo.TunnelIp}:{port}";
+        }
+
+        // Regular nodes: use public IP
+        return $"http://{node.PublicIp}:{port}";
+    }
+
+    /// <summary>
     /// Measure RTT using HTTP GET to health endpoint
     /// More realistic than ICMP as it includes TCP handshake
     /// </summary>
     private async Task<double> MeasureHttpRttAsync(
-        string host,
-        int port,
+        string nodeAgentUrl,
+        string vmId,
         CancellationToken ct)
     {
-        string healthPath = port == 5100 ? "/api/node/health" : "/health";
-        var url = $"http://{host}:{port}{healthPath}";
+
+        var url = $"{nodeAgentUrl}/api/vms/{vmId}/proxy/http/9999/health";
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -240,8 +221,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("HTTP RTT measurement failed for {Host}:{Port}: {Error}",
-                host, port, ex.Message);
+            _logger.LogDebug("HTTP RTT measurement failed for {HostUrl}:{VmId}: {Error}",
+                nodeAgentUrl, vmId, ex.Message);
             throw;
         }
     }
