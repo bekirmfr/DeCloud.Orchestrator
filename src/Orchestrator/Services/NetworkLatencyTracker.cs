@@ -203,11 +203,10 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// More realistic than ICMP as it includes TCP handshake
     /// </summary>
     private async Task<double> MeasureHttpRttAsync(
-        string nodeAgentUrl,
-        string vmId,
-        CancellationToken ct)
+    string nodeAgentUrl,
+    string vmId,
+    CancellationToken ct)
     {
-
         var url = $"{nodeAgentUrl}/api/vms/{vmId}/proxy/http/9999/health";
 
         var stopwatch = Stopwatch.StartNew();
@@ -217,12 +216,38 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
             var response = await _httpClient.GetAsync(url, ct);
             stopwatch.Stop();
 
+            if (!response.IsSuccessStatusCode)
+            {
+                var statusCode = (int)response.StatusCode;
+                var reasonPhrase = response.ReasonPhrase ?? "Unknown";
+
+                // 504 Gateway Timeout = NodeAgent proxy timeout (150ms is too short!)
+                if (statusCode == 504)
+                {
+                    _logger.LogWarning(
+                        "NodeAgent proxy timeout (504) for VM {VmId} - VM may be slow to respond or proxy timeout too short",
+                        vmId);
+                }
+
+                throw new HttpRequestException($"HTTP {statusCode} {reasonPhrase}");
+            }
+
             return stopwatch.Elapsed.TotalMilliseconds;
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            _logger.LogDebug(
+                "HTTP request timeout after {Elapsed}ms for VM {VmId} - HttpClient timeout exceeded",
+                stopwatch.Elapsed.TotalMilliseconds, vmId);
+            throw new Exception($"HTTP timeout after {stopwatch.Elapsed.TotalMilliseconds:F0}ms", ex);
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("HTTP RTT measurement failed for {HostUrl}:{VmId}: {Error}",
-                nodeAgentUrl, vmId, ex.Message);
+            stopwatch.Stop();
+            _logger.LogDebug(
+                "HTTP RTT measurement failed after {Elapsed}ms for {HostUrl}:{VmId}: {Error}",
+                stopwatch.Elapsed.TotalMilliseconds, nodeAgentUrl, vmId, ex.Message);
             throw;
         }
     }
