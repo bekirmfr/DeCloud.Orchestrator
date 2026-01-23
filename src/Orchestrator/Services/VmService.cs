@@ -770,50 +770,6 @@ public class VmService : IVmService
         _dataStore.AddPendingCommand(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
 
-        // After VM is successfully created and running
-        if (vm.Status == VmStatus.Running)
-        {
-            // Background task to calibrate network RTT
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Wait for VM to be fully ready
-                    await Task.Delay(TimeSpan.FromSeconds(15));
-
-                    _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
-
-                    var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id);
-
-                    // Update VM with calibrated RTT
-                    if (_dataStore.VirtualMachines.TryGetValue(vm.Id, out var currentVm))
-                    {
-                        if (currentVm.NetworkMetrics != null)
-                        {
-                            currentVm.NetworkMetrics.BaselineRttMs = baselineRtt;
-                            currentVm.NetworkMetrics.CurrentRttMs = baselineRtt;
-                            currentVm.NetworkMetrics.MinRttMs = baselineRtt;
-                            currentVm.NetworkMetrics.MaxRttMs = baselineRtt;
-                            currentVm.NetworkMetrics.LastCalibrationAt = DateTime.UtcNow;
-
-                            await _dataStore.SaveVmAsync(currentVm);
-
-                            _logger.LogInformation(
-                                "VM {VmId} baseline RTT calibrated: {Rtt:F1}ms",
-                                vm.Id, baselineRtt);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(
-                        ex,
-                        "Failed to calibrate baseline RTT for VM {VmId}, using defaults",
-                        vm.Id);
-                }
-            });
-        }
-
         _logger.LogInformation(
             "Relay VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
 

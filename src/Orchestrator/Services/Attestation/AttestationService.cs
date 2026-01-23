@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Options;
-using Nethereum.Contracts.QueryHandlers.MultiCall;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Diagnostics;
@@ -152,6 +151,17 @@ public class AttestationService : IAttestationService
 
         if (networkMetrics != null && networkMetrics.TotalMeasurements > 0)
         {
+            // Check if recalibration needed
+            if (networkMetrics != null && networkMetrics.NeedsRecalibration())
+            {
+                _logger.LogInformation(
+                    "VM {VmId} network metrics need recalibration (RTT changed or high variance)",
+                    vmId);
+
+                // Trigger recalibration in background
+                _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, ct));
+            }
+
             // Calculate adaptive timeout based on measured RTT
             adaptiveTimeout = networkMetrics.CalculateAdaptiveTimeout(
                 _config.MaxProcessingTimeMs,
@@ -180,6 +190,41 @@ public class AttestationService : IAttestationService
                 {
                     Errors = { "Agent not ready (health check failed)" }
                 };
+            }
+
+            // Measure RTT
+
+            try
+            {
+                _logger.LogInformation("Calibrating baseline RTT for VM {VmId}", vm.Id);
+
+                var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id, ct);
+
+                // Update VM with calibrated RTT
+                if (_dataStore.VirtualMachines.TryGetValue(vm.Id, out var currentVm))
+                {
+                    if (currentVm.NetworkMetrics != null)
+                    {
+                        currentVm.NetworkMetrics.BaselineRttMs = baselineRtt;
+                        currentVm.NetworkMetrics.CurrentRttMs = baselineRtt;
+                        currentVm.NetworkMetrics.MinRttMs = baselineRtt;
+                        currentVm.NetworkMetrics.MaxRttMs = baselineRtt;
+                        currentVm.NetworkMetrics.LastCalibrationAt = DateTime.UtcNow;
+
+                        await _dataStore.SaveVmAsync(currentVm);
+
+                        _logger.LogInformation(
+                            "VM {VmId} baseline RTT calibrated: {Rtt:F1}ms",
+                            vm.Id, baselineRtt);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to calibrate baseline RTT for VM {VmId}, using defaults",
+                    vm.Id);
             }
 
             // First attestation or no calibration
@@ -309,19 +354,6 @@ public class AttestationService : IAttestationService
                 currentNetworkRtt,
                 processingTimeMs,
                 result.Success);
-
-            // =====================================================
-            // STEP 6: Check if recalibration needed
-            // =====================================================
-            if (networkMetrics != null && networkMetrics.NeedsRecalibration())
-            {
-                _logger.LogInformation(
-                    "VM {VmId} network metrics need recalibration (RTT changed or high variance)",
-                    vmId);
-
-                // Trigger recalibration in background
-                _ = Task.Run(async () => await _latencyTracker.RecalibrateAsync(vmId, ct));  // ✅
-            }
 
             // Record result
             if (result.Success)
