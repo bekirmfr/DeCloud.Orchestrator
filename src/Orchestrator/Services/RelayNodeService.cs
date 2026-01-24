@@ -195,7 +195,7 @@ public class RelayNodeService : IRelayNodeService
                 MaxCapacity = vmSpec.MaxConnections,
                 CurrentLoad = 0,
                 Region = node.Region ?? "default",
-                Status = RelayStatus.Active,
+                Status = RelayStatus.Initializing,
                 LastHealthCheck = DateTime.UtcNow
             };
 
@@ -275,10 +275,11 @@ public class RelayNodeService : IRelayNodeService
         CancellationToken ct = default)
     {
         var relayNodes = _dataStore.Nodes.Values
-            .Where(n => n.Status == NodeStatus.Online &&
-                       n.RelayInfo != null &&
-                       n.RelayInfo.Status == RelayStatus.Active &&
-                       n.RelayInfo.CurrentLoad < n.RelayInfo.MaxCapacity)
+            .Where(n => 
+                n.Status == NodeStatus.Online &&
+                n.RelayInfo != null &&
+                n.RelayInfo.Status == RelayStatus.Active &&
+                n.RelayInfo.CurrentLoad < n.RelayInfo.MaxCapacity)
             .ToList();
 
         if (!relayNodes.Any())

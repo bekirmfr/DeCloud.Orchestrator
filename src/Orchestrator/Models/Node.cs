@@ -549,6 +549,7 @@ public class CgnatNodeInfo
 
 public enum RelayStatus
 {
+    Initializing,
     Active,
     Degraded,
     Offline,
@@ -557,8 +558,8 @@ public enum RelayStatus
 
 public enum TunnelStatus
 {
-    Disconnected,
     Connecting,
     Connected,
+    Disconnected,
     Error
 }

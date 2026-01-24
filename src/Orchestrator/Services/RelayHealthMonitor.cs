@@ -21,7 +21,7 @@ public class RelayHealthMonitor : BackgroundService
 
     // FIXED: Grace period for newly deployed relays to fully initialize
     // Relays need time for cloud-init, package installation, WireGuard setup, etc.
-    private static readonly TimeSpan RelayInitializationGracePeriod = TimeSpan.FromMinutes(7);
+    private static readonly TimeSpan RelayInitializationTimeout = TimeSpan.FromMinutes(10);
 
     // Timeout for individual health checks
     private static readonly TimeSpan HealthCheckTimeout = TimeSpan.FromSeconds(10);
@@ -65,7 +65,7 @@ public class RelayHealthMonitor : BackgroundService
     private async Task CheckAllRelaysAsync(CancellationToken ct)
     {
         var relayNodes = _dataStore.Nodes.Values
-            .Where(n => n.RelayInfo?.Status == RelayStatus.Active)
+            .Where(n => n.RelayInfo?.Status != RelayStatus.Initializing)
             .ToList();
 
         _logger.LogDebug("Checking health of {Count} relay nodes", relayNodes.Count);
@@ -84,23 +84,15 @@ public class RelayHealthMonitor : BackgroundService
             return;
         }
 
-        // FIXED: Skip health checks for newly deployed relays (grace period)
+        // Skip health checks for newly deployed relays (grace period)
         var relayAge = DateTime.UtcNow - relay.RegisteredAt;
-        if (relayAge < RelayInitializationGracePeriod)
+        if (relay.RelayInfo.Status == RelayStatus.Initializing)
         {
-            var remainingWait = RelayInitializationGracePeriod - relayAge;
+            var remainingTimeout = RelayInitializationTimeout - relayAge;
 
             _logger.LogDebug(
-                "Relay {RelayId} is initializing (age: {Age:mm\\:ss}, grace period: {Grace:mm\\:ss} remaining)",
-                relay.Id, relayAge, remainingWait);
-
-            // Keep status as Active during initialization
-            if (relay.RelayInfo.Status != RelayStatus.Active)
-            {
-                relay.RelayInfo.Status = RelayStatus.Active;
-                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                await _dataStore.SaveNodeAsync(relay);
-            }
+                "Relay {RelayId} is initializing (age: {Age:mm\\:ss}, timeout period: {Timeout:mm\\:ss} remaining)",
+                relay.Id, relayAge, remainingTimeout);
 
             return;
         }
