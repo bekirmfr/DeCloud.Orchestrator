@@ -40,24 +40,24 @@ public class RelayHealthMonitor : BackgroundService
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken ct)
     {
         _logger.LogInformation("Relay health monitor starting");
 
         // Wait for system to initialize
-        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+        await Task.Delay(TimeSpan.FromMinutes(1), ct);
 
-        while (!stoppingToken.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                await CheckAllRelaysAsync(stoppingToken);
-                await Task.Delay(HealthCheckInterval, stoppingToken);
+                await CheckAllRelaysAsync(ct);
+                await Task.Delay(HealthCheckInterval, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in relay health monitor");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromMinutes(5), ct);
             }
         }
     }
@@ -65,7 +65,8 @@ public class RelayHealthMonitor : BackgroundService
     private async Task CheckAllRelaysAsync(CancellationToken ct)
     {
         var relayNodes = _dataStore.Nodes.Values
-            .Where(n => n.RelayInfo?.Status != RelayStatus.Initializing)
+            .Where(n => n.RelayInfo != null && 
+                        n.RelayInfo.Status != RelayStatus.Initializing)
             .ToList();
 
         _logger.LogDebug("Checking health of {Count} relay nodes", relayNodes.Count);
