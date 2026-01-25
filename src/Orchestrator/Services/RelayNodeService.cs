@@ -1,6 +1,5 @@
-﻿using Orchestrator.Persistence;
-using Orchestrator.Models;
-using Microsoft.Extensions.Logging;
+﻿using Orchestrator.Models;
+using Orchestrator.Persistence;
 
 namespace Orchestrator.Services;
 
@@ -28,7 +27,17 @@ public interface IRelayNodeService
     /// <summary>
     /// Assign a CGNAT node to a relay
     /// </summary>
+    /// 
     Task<bool> AssignCgnatNodeToRelayAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default);
+
+    /// <summary>
+    /// Finds an available relay and assigns it to the specified node asynchronously.
+    /// </summary>
+    Task FindAndAssignNewRelayAsync(Node node, CancellationToken ct);
+    /// <summary>
+    /// Asynchronously removes the specified CGNAT node from the given relay node.
+    /// </summary>
+    Task<bool> RemoveCgnatNodeFromRelayAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -409,6 +418,37 @@ public class RelayNodeService : IRelayNodeService
     }
 
     /// <summary>
+    /// Find best available relay and assign node to it
+    /// </summary>
+    public async Task FindAndAssignNewRelayAsync(
+        Node node,
+        CancellationToken ct)
+    {
+        _logger.LogInformation(
+            "Finding new relay for CGNAT node {NodeId}",
+            node.Id);
+
+        var newRelay = await FindBestRelayForCgnatNodeAsync(node, ct);
+
+        if (newRelay == null)
+        {
+            _logger.LogWarning(
+                "No available relay found for CGNAT node {NodeId} - node will retry on next heartbeat",
+                node.Id);
+            return;
+        }
+
+        var success = await AssignCgnatNodeToRelayAsync(node, newRelay, ct);
+
+        if (!success)
+        {
+            _logger.LogWarning(
+                "Failed to assign CGNAT node {NodeId} to new relay {RelayId} - will retry on next heartbeat",
+                node.Id, newRelay.Id);
+        }
+    }
+
+    /// <summary>
     /// Allocate tunnel IP for CGNAT node within relay's subnet
     /// Format: 10.20.{relaySubnet}.{2-253}
     /// </summary>
@@ -697,6 +737,52 @@ PersistentKeepalive = 25";
         {
             _logger.LogError(ex,
                 "Error registering CGNAT node {NodeId} with relay {RelayId}",
+                cgnatNode.Id, relayNode.Id);
+            return false;
+        }
+    }
+    
+    public async Task<bool> RemoveCgnatNodeFromRelayAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default)
+    {
+        try
+        {
+            // Call relay VM's API to remove peer
+            // Use relay's actual tunnel IP from RelayInfo
+            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
+            var relayApiUrl = $"http://{relayTunnelIp}:8080/api/relay/remove-peer";
+
+            var payload = new
+            {
+                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+            };
+
+            _logger.LogInformation(
+                "Removing CGNAT node {NodeId} from relay {RelayId} at {ApiUrl}",
+                cgnatNode.Id, relayNode.Id, relayApiUrl);
+
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var response = await httpClient.PostAsync(relayApiUrl, content, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                throw new Exception(error);
+            }
+
+            _logger.LogInformation(
+                    "✓ CGNAT node {NodeId} removed from relay {RelayId}",
+                    cgnatNode.Id, relayNode.Id);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to remove CGNAT node {NodeId} from relay {RelayId} - continuing anyway",
                 cgnatNode.Id, relayNode.Id);
             return false;
         }

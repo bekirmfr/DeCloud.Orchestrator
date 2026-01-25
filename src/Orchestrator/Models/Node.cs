@@ -1,4 +1,5 @@
-﻿using Orchestrator.Services;
+﻿using Nethereum.Merkle.Patricia;
+using Orchestrator.Services;
 
 namespace Orchestrator.Models;
 
@@ -68,6 +69,7 @@ public class Node
     /// <summary>
     /// CGNAT node configuration (null if node has public IP)
     /// </summary>
+    public bool IsBehindCgnat => HardwareInventory.Network.NatType != NatType.None;
     public CgnatNodeInfo? CgnatInfo { get; set; }
 
     // Performance metrics
@@ -445,7 +447,7 @@ public class RelayNodeInfo
     /// <summary>
     /// VM ID of the relay VM running on this node
     /// </summary>
-    public string? RelayVmId { get; set; }
+    public string RelayVmId { get; set; } = string.Empty;
 
     /// <summary>
     /// WireGuard public endpoint (IP:Port)
@@ -465,7 +467,7 @@ public class RelayNodeInfo
     /// <summary>
     /// WireGuard tunnel IP of the relay VM (e.g., 10.20.1.254)
     /// </summary>
-    public string? TunnelIp { get; set; }
+    public string TunnelIp { get; set; } = string.Empty;
 
     /// <summary>
     /// Unique subnet number for this relay (1-254)
@@ -518,7 +520,7 @@ public class CgnatNodeInfo
     /// <summary>
     /// ID of the relay node serving this CGNAT node
     /// </summary>
-    public string? AssignedRelayNodeId { get; set; }
+    public string AssignedRelayNodeId { get; set; } = string.Empty;
 
     /// <summary>
     /// WireGuard tunnel IP assigned to this node

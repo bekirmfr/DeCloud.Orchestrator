@@ -5,6 +5,7 @@ using Orchestrator.Persistence;
 using Orchestrator.Services;
 using Orchestrator.Services.VmScheduling;
 using Org.BouncyCastle.Asn1.Ocsp;
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -62,6 +63,8 @@ public class NodeService : INodeService
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly IConfiguration _configuration;
+
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
 
     public NodeService(
         DataStore dataStore,
@@ -172,91 +175,10 @@ public class NodeService : INodeService
         _logger.LogInformation("Generated JWT token for node {NodeId}", nodeId);
 
         // =====================================================
-        // STEP 4: Check if Node Exists (Re-registration)
-        // =====================================================
-        var existingNode = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == nodeId);
-
-        if (existingNode != null)
-        {
-            // RE-REGISTRATION: Update existing node
-            _logger.LogInformation(
-                "Node re-registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
-                nodeId, request.MachineId, request.WalletAddress);
-
-            existingNode.Name = request.Name;
-            existingNode.PublicIp = request.PublicIp;
-            existingNode.AgentPort = request.AgentPort;
-            existingNode.HardwareInventory = request.HardwareInventory;
-            existingNode.AgentVersion = request.AgentVersion;
-            existingNode.SupportedImages = request.SupportedImages;
-            existingNode.Region = request.Region ?? "default";
-            existingNode.Zone = request.Zone ?? "default";
-            existingNode.Status = NodeStatus.Online;
-            existingNode.LastHeartbeat = DateTime.UtcNow;
-
-            // Re-evaluate performance (hardware may have changed)
-            var reregPerfLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-            var reregPerfEvaluator = new NodePerformanceEvaluator(reregPerfLogger, _configService);
-
-            existingNode.PerformanceEvaluation = await reregPerfEvaluator.EvaluateNodeAsync(existingNode, ct);
-
-            if (!existingNode.PerformanceEvaluation.IsAcceptable)
-            {
-                _logger.LogWarning(
-                    "Node {NodeId} rejected during re-registration: {Reason}",
-                    nodeId,
-                    existingNode.PerformanceEvaluation.RejectionReason);
-
-                throw new InvalidOperationException(
-                    $"Node performance below minimum requirements: {existingNode.PerformanceEvaluation.RejectionReason}");
-            }
-
-            // Recalculate total capacity
-            var reregCapLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-            var reregCapCalculator = new NodeCapacityCalculator(reregCapLogger, _configService);
-            var reregTotalCapacity = await reregCapCalculator.CalculateTotalCapacityAsync(existingNode, ct);
-
-            existingNode.TotalResources = new ResourceSnapshot
-            {
-                ComputePoints = reregTotalCapacity.TotalComputePoints,
-                MemoryBytes = reregTotalCapacity.TotalMemoryBytes,
-                StorageBytes = reregTotalCapacity.TotalStorageBytes
-            };
-
-            // Keep existing reserved resources (don't reset!)
-            // Reserved resources tracks actual VMs and should not be wiped on re-registration
-
-            _logger.LogInformation(
-                "Node {NodeId} re-evaluated: Highest tier={Tier}, Total capacity={Points} points",
-                nodeId,
-                existingNode.PerformanceEvaluation.HighestTier,
-                reregTotalCapacity.TotalComputePoints);
-
-            existingNode.ApiKeyHash = apiKeyHash;
-            existingNode.ApiKeyCreatedAt = DateTime.UtcNow;
-            existingNode.ApiKeyLastUsedAt = null;
-
-            await _dataStore.SaveNodeAsync(existingNode);
-
-            _logger.LogInformation(
-                "✓ Node re-registered successfully: {NodeId} Orchestrator WireGuard Public Key: {OrchestratorPublicKey}",
-                existingNode.Id,
-                orchestratorPublicKey);
-
-            return new NodeRegistrationResponse(
-                existingNode.Id,
-                existingNode.PerformanceEvaluation,
-                apiKey,
-                schedulingConfig,
-                orchestratorPublicKey,
-                TimeSpan.FromSeconds(15));
-        }
-
-        // =====================================================
-        // STEP 5: Create New Node
+        // STEP 4: Create Node
         // =====================================================
         _logger.LogInformation(
-            "New node registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
+            "Node registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
             nodeId, request.MachineId, request.WalletAddress);
 
         var node = new Node
@@ -281,7 +203,7 @@ public class NodeService : INodeService
         };
 
         // =====================================================
-        // STEP 6: Performance Evaluation & Capacity Calculation
+        // STEP 5: Performance Evaluation & Capacity Calculation
         // =====================================================
         var performanceLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
         var performanceEvaluator = new NodePerformanceEvaluator(
@@ -332,11 +254,11 @@ public class NodeService : INodeService
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
-            "✓ New node registered successfully: {NodeId}",
+            "✓ Node registered successfully: {NodeId}",
             node.Id);
 
         // =====================================================
-        // STEP 7: Relay Node Deployment & Assignment
+        // STEP 6: Relay Node Deployment & Assignment
         // =====================================================
         if (_relayNodeService.IsEligibleForRelay(node) && node.RelayInfo == null)
         {
@@ -369,24 +291,36 @@ public class NodeService : INodeService
         }
 
         // Check if node is behind CGNAT and needs relay assignment
-        if (node.HardwareInventory.Network.NatType != NatType.None &&
-            node.CgnatInfo == null)
+        if (node.HardwareInventory.Network.NatType != NatType.None)
         {
-            _logger.LogInformation(
+            if (node.CgnatInfo == null)
+            {
+                _logger.LogInformation(
                 "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
                 node.Id, node.HardwareInventory.Network.NatType);
 
-            var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+                var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
 
-            if (relay != null)
-            {
-                await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                if (relay != null)
+                {
+                    await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "No available relay found for CGNAT node {NodeId}",
+                        node.Id);
+                }
             }
             else
             {
-                _logger.LogWarning(
-                    "No available relay found for CGNAT node {NodeId}",
-                    node.Id);
+                _logger.LogInformation(
+                "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
+                node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
+
+                // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
+
+
             }
         }
 
@@ -451,8 +385,11 @@ public class NodeService : INodeService
         node.Status = NodeStatus.Online;
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
-        // Update CGNAT tunnel info from heartbeat (critical for attestation routing)
-        node.CgnatInfo = heartbeat.CgnatInfo;
+
+        if (node.IsBehindCgnat)
+        {
+            await SyncCgnatStateFromHeartbeatAsync(node, heartbeat.CgnatInfo, ct);
+        }
 
         // Log discrepancy between node-reported and orchestrator-tracked resources
         var nodeReportedFree = heartbeat.AvailableResources;
@@ -890,6 +827,346 @@ public class NodeService : INodeService
         _logger.LogInformation(
             "VM {VmId} deletion completed successfully - all resources freed",
             vm.Id);
+    }
+
+    /// <summary>
+    /// Synchronizes CGNAT node relay assignment between orchestrator state and node heartbeat.
+    /// Ensures CGNAT nodes maintain valid relay assignments by:
+    /// - Detecting and resolving relay assignment mismatches
+    /// - Validating relay node and VM health
+    /// - Triggering relay failover when assignments become invalid
+    /// - Preventing assignment thrashing via per-node locking
+    /// </summary>
+    /// <remarks>
+    /// Thread-safe: Uses per-node semaphore to prevent concurrent modifications.
+    /// Idempotent: Can be called multiple times safely without side effects.
+    /// </remarks>
+    private async Task SyncCgnatStateFromHeartbeatAsync(
+        Node node,
+        CgnatNodeInfo? heartbeatCgnatInfo,
+        CancellationToken ct = default)
+    {
+        // ========================================
+        // STEP 0: Validate Node Should Be Behind CGNAT
+        // ========================================
+        if (node.HardwareInventory.Network.NatType == NatType.None)
+        {
+            // Node is NOT behind CGNAT - should not have CgnatInfo
+            if (node.CgnatInfo != null)
+            {
+                _logger.LogWarning(
+                    "Node {NodeId} is not behind CGNAT (NAT type: None) but has CgnatInfo - clearing it",
+                    node.Id);
+                node.CgnatInfo = null;
+                await _dataStore.SaveNodeAsync(node);
+            }
+            return;
+        }
+
+        // ========================================
+        // STEP 1: Acquire Node-Specific Lock
+        // ========================================
+        // Prevent concurrent heartbeats from the same node from racing
+        var nodeLock = _cgnatSyncLocks.GetOrAdd(node.Id, _ => new SemaphoreSlim(1, 1));
+
+        if (!await nodeLock.WaitAsync(0, ct))
+        {
+            _logger.LogDebug(
+                "Skipping CGNAT sync for node {NodeId} - already in progress",
+                node.Id);
+            return;
+        }
+
+        try
+        {
+            // ========================================
+            // STEP 2: Safely Get Relay Node References
+            // ========================================
+            Node? trackedRelayNode = null;
+            Node? reportedRelayNode = null;
+
+            // Get tracked relay (what orchestrator thinks node is assigned to)
+            if (!string.IsNullOrEmpty(node.CgnatInfo?.AssignedRelayNodeId))
+            {
+                _dataStore.Nodes.TryGetValue(node.CgnatInfo.AssignedRelayNodeId, out trackedRelayNode);
+            }
+
+            // Get reported relay (what node reports in heartbeat)
+            if (!string.IsNullOrEmpty(heartbeatCgnatInfo?.AssignedRelayNodeId))
+            {
+                _dataStore.Nodes.TryGetValue(heartbeatCgnatInfo.AssignedRelayNodeId, out reportedRelayNode);
+            }
+
+            _logger.LogDebug(
+                "CGNAT sync for node {NodeId}: Tracked={TrackedId}, Reported={ReportedId}",
+                node.Id,
+                trackedRelayNode?.Id ?? "null",
+                reportedRelayNode?.Id ?? "null");
+
+            // ========================================
+            // STEP 3: Handle Edge Cases
+            // ========================================
+
+            // Case 1: Orchestrator has no record of relay assignment (error state)
+            if (node.CgnatInfo == null || trackedRelayNode == null)
+            {
+                await HandleMissingTrackedRelayAsync(
+                    node,
+                    reportedRelayNode,
+                    heartbeatCgnatInfo,
+                    ct);
+                return;
+            }
+
+            // Case 2: Node heartbeat has no relay info (error state)
+            if (heartbeatCgnatInfo == null || reportedRelayNode == null)
+            {
+                await HandleMissingReportedRelayAsync(
+                    node,
+                    trackedRelayNode,
+                    ct);
+                return;
+            }
+
+            // ========================================
+            // STEP 4: Check for Assignment Mismatch
+            // ========================================
+            if (trackedRelayNode.Id != reportedRelayNode.Id)
+            {
+                await HandleRelayMismatchAsync(
+                    node,
+                    trackedRelayNode,
+                    reportedRelayNode,
+                    heartbeatCgnatInfo,
+                    ct);
+                return;
+            }
+
+            // ========================================
+            // STEP 5: Verify Current Assignment is Still Valid
+            // ========================================
+            if (!IsRelayValid(trackedRelayNode.Id))
+            {
+                _logger.LogWarning(
+                    "Assigned relay {RelayId} for CGNAT node {NodeId} is no longer valid - finding replacement",
+                    trackedRelayNode.Id,
+                    node.Id);
+
+                await _relayNodeService.RemoveCgnatNodeFromRelayAsync(node, trackedRelayNode, ct);
+                await _relayNodeService.FindAndAssignNewRelayAsync(node, ct);
+                return;
+            }
+
+            // ========================================
+            // STEP 6: All Good - Assignment is Valid
+            // ========================================
+            _logger.LogDebug(
+                "CGNAT node {NodeId} relay assignment is valid: {RelayId}",
+                node.Id, trackedRelayNode.Id);
+        }
+        finally
+        {
+            nodeLock.Release();
+        }
+    }
+
+    // ============================================================================
+    // HELPER METHODS
+    // ============================================================================
+
+    /// <summary>
+    /// Handle case where orchestrator has no record of relay assignment
+    /// but node may be reporting one
+    /// </summary>
+    private async Task HandleMissingTrackedRelayAsync(
+        Node node,
+        Node? reportedRelayNode,
+        CgnatNodeInfo? heartbeatCgnatInfo,
+        CancellationToken ct)
+    {
+        _logger.LogError(
+            "Node {NodeId} is behind CGNAT but has no relay assignment in orchestrator records",
+            node.Id);
+
+        // Try to use what the node reports if valid
+        if (reportedRelayNode != null &&
+            heartbeatCgnatInfo != null &&
+            IsRelayValid(reportedRelayNode.Id) &&
+            await ValidateNodeIsKnownToRelay(node, reportedRelayNode))
+        {
+            _logger.LogInformation(
+                "Adopting reported relay {RelayId} for CGNAT node {NodeId}",
+                reportedRelayNode.Id, node.Id);
+
+            var success = await _relayNodeService.AssignCgnatNodeToRelayAsync(node, reportedRelayNode, ct);
+            if (success)
+                return;
+        }
+
+        // Reported relay not valid or assignment failed - find new one
+        await _relayNodeService.FindAndAssignNewRelayAsync(node, ct);
+    }
+
+    /// <summary>
+    /// Handle case where node heartbeat has no relay info
+    /// but orchestrator has a tracked assignment
+    /// </summary>
+    private async Task HandleMissingReportedRelayAsync(
+        Node node,
+        Node trackedRelayNode,
+        CancellationToken ct)
+    {
+        _logger.LogError(
+            "Node {NodeId} is behind CGNAT but did not report relay assignment in heartbeat",
+            node.Id);
+
+        // Verify tracked relay is still valid
+        if (IsRelayValid(trackedRelayNode.Id))
+        {
+            _logger.LogInformation(
+                "Re-assigning CGNAT node {NodeId} to tracked relay {RelayId}",
+                node.Id, trackedRelayNode.Id);
+
+            var success = await _relayNodeService.AssignCgnatNodeToRelayAsync(node, trackedRelayNode, ct);
+            if (success)
+                return;
+        }
+
+        // Tracked relay not valid or assignment failed - find new one
+        await _relayNodeService.FindAndAssignNewRelayAsync(node, ct);
+    }
+
+    /// <summary>
+    /// Handle case where node reports different relay than orchestrator has tracked
+    /// </summary>
+    private async Task HandleRelayMismatchAsync(
+        Node node,
+        Node trackedRelayNode,
+        Node reportedRelayNode,
+        CgnatNodeInfo heartbeatCgnatInfo,
+        CancellationToken ct)
+    {
+        _logger.LogWarning(
+            "Relay assignment mismatch for node {NodeId}: " +
+            "Orchestrator has {TrackedId}, node reports {ReportedId}",
+            node.Id,
+            trackedRelayNode.Id,
+            reportedRelayNode.Id);
+
+        // Remove from tracked relay (it's out of sync)
+        await _relayNodeService.RemoveCgnatNodeFromRelayAsync(node, trackedRelayNode, ct);
+
+        // Check if reported relay is valid and recognizes this node
+        if (IsRelayValid(reportedRelayNode.Id) &&
+            await ValidateNodeIsKnownToRelay(node, reportedRelayNode))
+        {
+            _logger.LogInformation(
+                "Reported relay {RelayId} is valid and recognizes node {NodeId} - adopting it",
+                reportedRelayNode.Id,
+                node.Id);
+
+            var success = await _relayNodeService.AssignCgnatNodeToRelayAsync(node, reportedRelayNode, ct);
+            if (success)
+                return; // ← CRITICAL: Early return on success
+        }
+        else
+        {
+            // Reported relay is invalid or doesn't recognize node
+            _logger.LogWarning(
+                "Reported relay {RelayId} is not valid or doesn't recognize node {NodeId} - finding new relay",
+                reportedRelayNode.Id,
+                node.Id);
+
+            // Clean up reported relay if it exists but is invalid
+            await _relayNodeService.RemoveCgnatNodeFromRelayAsync(node, reportedRelayNode, ct);
+        }
+
+        // Find a new relay as fallback
+        await _relayNodeService.FindAndAssignNewRelayAsync(node, ct);
+    }
+
+    /// <summary>
+    /// Validate that a relay node and its VM are healthy and online
+    /// </summary>
+    private bool IsRelayValid(string relayNodeId)
+    {
+        // Validate relay ID
+        if (string.IsNullOrEmpty(relayNodeId))
+        {
+            return false;
+        }
+
+        // Get relay node
+        if (!_dataStore.Nodes.TryGetValue(relayNodeId, out var relayNode) || relayNode == null)
+        {
+            return false;
+        }
+
+        // Check node status
+        if (relayNode.Status != NodeStatus.Online)
+        {
+            return false;
+        }
+
+        // Check relay info exists
+        if (relayNode.RelayInfo == null)
+        {
+            return false;
+        }
+
+        // Check relay status
+        if (relayNode.RelayInfo.Status != RelayStatus.Active)
+        {
+            return false;
+        }
+
+        // Check relay VM ID exists
+        if (string.IsNullOrEmpty(relayNode.RelayInfo.RelayVmId))
+        {
+            return false;
+        }
+
+        // Get relay VM
+        if (!_dataStore.VirtualMachines.TryGetValue(
+            relayNode.RelayInfo.RelayVmId,
+            out var relayVm) || relayVm == null)
+        {
+            return false;
+        }
+
+        // Check VM status
+        if (relayVm.Status != VmStatus.Running)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Validate that the relay node actually recognizes this CGNAT node
+    /// Prevents accepting fake relay assignments from malicious nodes
+    /// </summary>
+    private async Task<bool> ValidateNodeIsKnownToRelay(
+        Node cgnatNode,
+        Node relayNode)
+    {
+        if (relayNode.RelayInfo == null)
+        {
+            return false;
+        }
+
+        // Check if relay has this node in its connected list
+        var isKnown = relayNode.RelayInfo.ConnectedNodeIds?.Contains(cgnatNode.Id) ?? false;
+
+        if (!isKnown)
+        {
+            _logger.LogWarning(
+                "CGNAT node {NodeId} claims assignment to relay {RelayId} but relay doesn't recognize it",
+                cgnatNode.Id, relayNode.Id);
+        }
+
+        return isKnown;
     }
 
     /// <summary>
