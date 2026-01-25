@@ -741,24 +741,55 @@ PersistentKeepalive = 25";
             return false;
         }
     }
-    
-    public async Task<bool> RemoveCgnatNodeFromRelayAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default)
+
+    public async Task<bool> RemoveCgnatNodeFromRelayAsync(
+    Node cgnatNode,
+    Node relayNode,
+    CancellationToken ct = default)
     {
         try
         {
-            // Call relay VM's API to remove peer
-            // Use relay's actual tunnel IP from RelayInfo
+            // Extract WireGuard public key from CGNAT node's config
+            var wgConfig = cgnatNode.CgnatInfo?.WireGuardConfig;
+            if (string.IsNullOrEmpty(wgConfig))
+            {
+                _logger.LogError(
+                    "Cannot remove CGNAT node {NodeId}: No WireGuard config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            // Extract public key from config
+            var publicKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                wgConfig,
+                @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
+
+            if (!publicKeyMatch.Success)
+            {
+                _logger.LogError(
+                    "Cannot extract WireGuard key from CGNAT node {NodeId} config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            // Generate public key from private key
+            var privateKey = publicKeyMatch.Groups[1].Value.Trim();
+            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+
+            // Call relay VM API with public key
             var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
             var relayApiUrl = $"http://{relayTunnelIp}:8080/api/relay/remove-peer";
 
             var payload = new
             {
-                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+                public_key = publicKey,                        // ← PRIMARY IDENTIFIER
+                tunnel_ip = cgnatNode.CgnatInfo.TunnelIp,      // ← For validation
+                node_id = cgnatNode.Id                         // ← For logging
             };
 
             _logger.LogInformation(
-                "Removing CGNAT node {NodeId} from relay {RelayId} at {ApiUrl}",
-                cgnatNode.Id, relayNode.Id, relayApiUrl);
+                "Removing CGNAT node {NodeId} from relay {RelayId} (pubkey: {PubKey})",
+                cgnatNode.Id, relayNode.Id, publicKey.Substring(0, 16) + "...");
 
             var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var content = new StringContent(
@@ -768,21 +799,26 @@ PersistentKeepalive = 25";
 
             var response = await httpClient.PostAsync(relayApiUrl, content, ct);
 
-            if (!response.IsSuccessStatusCode)
+            if (response.IsSuccessStatusCode)
             {
-                var error = await response.Content.ReadAsStringAsync(ct);
-                throw new Exception(error);
-            }
-
-            _logger.LogInformation(
+                _logger.LogInformation(
                     "✓ CGNAT node {NodeId} removed from relay {RelayId}",
                     cgnatNode.Id, relayNode.Id);
-            return true;
+                return true;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Failed to remove CGNAT node {NodeId} from relay {RelayId}: {Error}",
+                    cgnatNode.Id, relayNode.Id, error);
+                return false;
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Failed to remove CGNAT node {NodeId} from relay {RelayId} - continuing anyway",
+                "Error removing CGNAT node {NodeId} from relay {RelayId}",
                 cgnatNode.Id, relayNode.Id);
             return false;
         }
