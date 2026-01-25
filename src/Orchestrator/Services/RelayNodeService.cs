@@ -38,6 +38,7 @@ public interface IRelayNodeService
     /// Asynchronously removes the specified CGNAT node from the given relay node.
     /// </summary>
     Task<bool> RemoveCgnatNodeFromRelayAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default);
+    Task<bool> EnsurePeerRegisteredAsync(Node cgnatNode, Node relayNode, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -819,6 +820,155 @@ PersistentKeepalive = 25";
         {
             _logger.LogError(ex,
                 "Error removing CGNAT node {NodeId} from relay {RelayId}",
+                cgnatNode.Id, relayNode.Id);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ensure CGNAT node peer is registered on relay VM (idempotent)
+    /// Uses existing tunnel IP and WireGuard config from orchestrator state
+    /// Does NOT create new assignment - just ensures peer exists on relay
+    /// </summary>
+    /// <remarks>
+    /// This method is idempotent and can be called multiple times safely.
+    /// It will:
+    /// 1. Check if peer already exists on relay (returns true immediately if found)
+    /// 2. If not found, register peer using EXISTING tunnel IP from node.CgnatInfo
+    /// 3. Never allocates new tunnel IP or generates new WireGuard config
+    /// </remarks>
+    /// <returns>True if peer is confirmed registered (either existed or just added)</returns>
+    public async Task<bool> EnsurePeerRegisteredAsync(
+        Node cgnatNode,
+        Node relayNode,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // ========================================
+            // VALIDATION: Check we have existing assignment
+            // ========================================
+            if (string.IsNullOrEmpty(cgnatNode.CgnatInfo?.TunnelIp) ||
+                string.IsNullOrEmpty(cgnatNode.CgnatInfo?.WireGuardConfig))
+            {
+                _logger.LogWarning(
+                    "Cannot ensure peer registration - node {NodeId} has no existing tunnel IP or config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            // ========================================
+            // EXTRACT: Get public key from existing WireGuard config
+            // ========================================
+            var wgConfig = cgnatNode.CgnatInfo.WireGuardConfig;
+            var publicKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                wgConfig,
+                @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
+
+            if (!publicKeyMatch.Success)
+            {
+                _logger.LogWarning(
+                    "Cannot extract WireGuard private key from node {NodeId} config",
+                    cgnatNode.Id);
+                return false;
+            }
+
+            var privateKey = publicKeyMatch.Groups[1].Value.Trim();
+            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+
+            // ========================================
+            // SETUP: Get relay API endpoint
+            // ========================================
+            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
+            var checkUrl = $"http://{relayTunnelIp}:8080/api/relay/wireguard";
+
+            // ========================================
+            // STEP 1: Check if peer already exists (idempotency)
+            // ========================================
+            try
+            {
+                var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var checkResponse = await httpClient.GetAsync(checkUrl, ct);
+
+                if (checkResponse.IsSuccessStatusCode)
+                {
+                    var peersJson = await checkResponse.Content.ReadAsStringAsync(ct);
+                    var peersDoc = System.Text.Json.JsonDocument.Parse(peersJson);
+
+                    if (peersDoc.RootElement.TryGetProperty("peers", out var peersArray))
+                    {
+                        foreach (var peer in peersArray.EnumerateArray())
+                        {
+                            if (peer.TryGetProperty("public_key", out var pubKeyProp))
+                            {
+                                var peerKey = pubKeyProp.GetString();
+
+                                // Found our peer - already registered!
+                                if (peerKey == publicKey)
+                                {
+                                    _logger.LogInformation(
+                                        "✓ Peer already exists for node {NodeId} on relay {RelayId} (Tunnel IP: {TunnelIp})",
+                                        cgnatNode.Id, relayNode.Id, cgnatNode.CgnatInfo.TunnelIp);
+                                    return true; // ✅ Peer exists, we're done
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex,
+                    "Could not check existing peers on relay {RelayId} - will attempt registration",
+                    relayNode.Id);
+                // Continue to registration step
+            }
+
+            // ========================================
+            // STEP 2: Peer doesn't exist - register it with EXISTING config
+            // ========================================
+            _logger.LogInformation(
+                "Peer not found - registering node {NodeId} with EXISTING config (Tunnel IP: {TunnelIp})",
+                cgnatNode.Id, cgnatNode.CgnatInfo.TunnelIp);
+
+            var addPeerUrl = $"http://{relayTunnelIp}:8080/api/relay/add-peer";
+            var payload = new
+            {
+                public_key = publicKey,
+                tunnel_ip = cgnatNode.CgnatInfo.TunnelIp,  // ✅ CRITICAL: Use EXISTING tunnel IP
+                allowed_ips = $"{cgnatNode.CgnatInfo.TunnelIp}/32",
+                persistent_keepalive = 25,
+                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+            };
+
+            var httpClient2 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(payload),
+                System.Text.Encoding.UTF8,
+                "application/json");
+
+            var response = await httpClient2.PostAsync(addPeerUrl, content, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation(
+                    "✓ Registered peer for node {NodeId} on relay {RelayId} (reused existing tunnel IP: {TunnelIp})",
+                    cgnatNode.Id, relayNode.Id, cgnatNode.CgnatInfo.TunnelIp);
+                return true;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Failed to register peer for node {NodeId} on relay {RelayId}: {Error}",
+                    cgnatNode.Id, relayNode.Id, error);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error ensuring peer registration for node {NodeId} on relay {RelayId}",
                 cgnatNode.Id, relayNode.Id);
             return false;
         }

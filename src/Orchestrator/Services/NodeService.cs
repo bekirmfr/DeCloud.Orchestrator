@@ -1020,19 +1020,53 @@ public class NodeService : INodeService
             "Node {NodeId} is behind CGNAT but did not report relay assignment in heartbeat",
             node.Id);
 
-        // Verify tracked relay is still valid
+        // ========================================
+        // GRACEFUL RECONCILIATION:
+        // Check if orchestrator already has valid assignment
+        // If yes, REUSE existing config instead of creating new one
+        // This prevents duplicate peer accumulation on relay VMs
+        // ========================================
+
         if (IsRelayValid(trackedRelayNode.Id))
         {
-            _logger.LogInformation(
-                "Re-assigning CGNAT node {NodeId} to tracked relay {RelayId}",
-                node.Id, trackedRelayNode.Id);
+            // Check if node has existing tunnel IP and config
+            if (!string.IsNullOrEmpty(node.CgnatInfo?.TunnelIp))
+            {
+                _logger.LogInformation(
+                    "Node {NodeId} has existing valid relay assignment to {RelayId} (Tunnel IP: {TunnelIp}) - reusing config",
+                    node.Id, trackedRelayNode.Id, node.CgnatInfo.TunnelIp);
 
-            var success = await _relayNodeService.AssignCgnatNodeToRelayAsync(node, trackedRelayNode, ct);
-            if (success)
+                // Optionally: Ensure peer is registered on relay (idempotent)
+                // This handles cases where relay VM was restarted and lost WireGuard config
+                await _relayNodeService.EnsurePeerRegisteredAsync(node, trackedRelayNode, ct);
+
+                // ✅ Early return - existing assignment is valid
+                // The heartbeat response will include this existing config from node.CgnatInfo
                 return;
+            }
+            else
+            {
+                // Node assigned to relay but has no tunnel IP - needs new config
+                _logger.LogWarning(
+                    "Node {NodeId} assigned to relay {RelayId} but has no tunnel IP - creating new assignment",
+                    node.Id, trackedRelayNode.Id);
+
+                var success = await _relayNodeService.AssignCgnatNodeToRelayAsync(node, trackedRelayNode, ct);
+                if (success)
+                    return;
+            }
         }
 
-        // Tracked relay not valid or assignment failed - find new one
+        // ========================================
+        // Only reach here if:
+        // - Tracked relay is invalid, OR
+        // - Node has no tunnel IP in CgnatInfo, OR
+        // - Assignment failed
+        // ========================================
+        _logger.LogWarning(
+            "No valid relay assignment exists for node {NodeId} - finding new relay",
+            node.Id);
+
         await _relayNodeService.FindAndAssignNewRelayAsync(node, ct);
     }
 
