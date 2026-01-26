@@ -33,6 +33,10 @@ public interface IWireGuardManager
     Task<bool> RegisterWithRelayAsync(Node relayNode, string cgnatNodeId, string tunnelIp, CancellationToken ct = default);
     Task<bool> HasRelayPeerAsync(Node relayNode, CancellationToken ct = default);
     Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct);
+    string? ExtractPrivateKeyFromConfig(string wgConfig);
+    Task<string?> ExtractPublicKeyFromConfigAsync(string wgConfig, CancellationToken ct = default);
+    Task<(string privateKey, string publicKey)> GenerateKeypairAsync(CancellationToken ct = default);
+    bool IsValidWireGuardKey(string key);
 }
 
 public class WireGuardManager : IWireGuardManager
@@ -351,10 +355,16 @@ public class WireGuardManager : IWireGuardManager
         }
     }
 
+    // Add these methods to src/Orchestrator/Services/WireGuardManager.cs
+
     /// <summary>
-    /// Helper method to derive public key from private key
+    /// Derive WireGuard public key from private key
+    /// Uses 'wg pubkey' command to perform Curve25519 key derivation
     /// </summary>
-    public async Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct)
+    /// <param name="privateKey">Base64-encoded WireGuard private key</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Base64-encoded WireGuard public key</returns>
+    public async Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct = default)
     {
         try
         {
@@ -373,14 +383,153 @@ public class WireGuardManager : IWireGuardManager
 
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync(ct);
+            var error = await process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to derive WireGuard public key: {error}");
+            }
 
             return output.Trim();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to derive public key");
+            _logger.LogError(ex, "Failed to derive WireGuard public key");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Extract private key from WireGuard configuration text
+    /// Searches for "PrivateKey = ..." line in config
+    /// </summary>
+    /// <param name="wgConfig">WireGuard configuration text</param>
+    /// <returns>Base64-encoded private key, or null if not found</returns>
+    public string? ExtractPrivateKeyFromConfig(string wgConfig)
+    {
+        if (string.IsNullOrEmpty(wgConfig))
+        {
+            return null;
+        }
+
+        var match = System.Text.RegularExpressions.Regex.Match(
+            wgConfig,
+            @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        if (match.Success)
+        {
+            return match.Groups[1].Value.Trim();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extract public key from WireGuard configuration by deriving it from private key
+    /// Convenience method that combines ExtractPrivateKeyFromConfig + DerivePublicKeyAsync
+    /// </summary>
+    /// <param name="wgConfig">WireGuard configuration text</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Base64-encoded public key, or null if private key not found in config</returns>
+    public async Task<string?> ExtractPublicKeyFromConfigAsync(string wgConfig, CancellationToken ct = default)
+    {
+        var privateKey = ExtractPrivateKeyFromConfig(wgConfig);
+
+        if (string.IsNullOrEmpty(privateKey))
+        {
+            _logger.LogWarning("Could not extract private key from WireGuard config");
+            return null;
+        }
+
+        try
+        {
+            return await DerivePublicKeyAsync(privateKey, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not derive public key from extracted private key");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Generate a new WireGuard keypair (private + public)
+    /// </summary>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Tuple of (privateKey, publicKey)</returns>
+    public async Task<(string privateKey, string publicKey)> GenerateKeypairAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            // Generate private key
+            var genProcess = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "wg",
+                    Arguments = "genkey",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            genProcess.Start();
+            var privateKey = await genProcess.StandardOutput.ReadToEndAsync(ct);
+            await genProcess.WaitForExitAsync(ct);
+
+            if (genProcess.ExitCode != 0)
+            {
+                throw new InvalidOperationException("Failed to generate WireGuard private key");
+            }
+
+            privateKey = privateKey.Trim();
+
+            // Derive public key from private key
+            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+
+            return (privateKey, publicKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate WireGuard keypair");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Validate that a string is a valid WireGuard key (base64, correct length)
+    /// WireGuard keys are 32-byte Curve25519 keys encoded as 44-character base64 strings
+    /// </summary>
+    /// <param name="key">Key to validate</param>
+    /// <returns>True if key format is valid</returns>
+    public bool IsValidWireGuardKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return false;
+        }
+
+        // WireGuard keys are base64-encoded 32-byte values
+        // Base64(32 bytes) = 44 characters (with padding)
+        if (key.Length != 44)
+        {
+            return false;
+        }
+
+        // Check if valid base64
+        try
+        {
+            var bytes = Convert.FromBase64String(key);
+            return bytes.Length == 32;
+        }
+        catch
+        {
+            return false;
         }
     }
 }

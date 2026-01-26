@@ -154,7 +154,7 @@ public class RelayNodeService : IRelayNodeService
                 node.Id);
 
             var relayPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
-            var relayPublicKey = await DerivePublicKeyAsync(relayPrivateKey, ct);
+            var relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
 
             _logger.LogInformation(
                 "Generated WireGuard keys for relay on node {NodeId} (public key: {PubKey})",
@@ -394,8 +394,11 @@ public class RelayNodeService : IRelayNodeService
             }
 
             // Update relay load
-            relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
-            relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+            if (!relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+            {
+                relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
+                relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+            }
 
             // Save both nodes
             await _dataStore.SaveNodeAsync(cgnatNode);
@@ -614,46 +617,6 @@ PersistentKeepalive = 25";
     }
 
     /// <summary>
-    /// Derive public key from private key
-    /// </summary>
-    private async Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct)
-    {
-        try
-        {
-            var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "sh",
-                    Arguments = $"-c \"echo '{privateKey}' | wg pubkey\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            var output = await process.StandardOutput.ReadToEndAsync(ct);
-            var error = await process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Failed to derive WireGuard public key: {error}");
-            }
-
-            return output.Trim();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to derive public key");
-            throw;
-        }
-    }
-
-    /// <summary>
     /// Register CGNAT node with relay VM's WireGuard server
     /// Calls the relay VM's API to add the node as a peer
     /// </summary>
@@ -690,7 +653,17 @@ PersistentKeepalive = 25";
 
             // Generate public key from private key
             var privateKey = publicKeyMatch.Groups[1].Value.Trim();
-            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+            var publicKey = await _wireGuardManager.ExtractPublicKeyFromConfigAsync(
+                wgConfig,
+                ct);  // ✅ Uses WireGuardManager
+
+            if (string.IsNullOrEmpty(publicKey))
+            {
+                _logger.LogError(
+                    "Cannot extract WireGuard public key from config for node {NodeId}",
+                    cgnatNode.Id);
+                return false;
+            }
 
             // Call relay VM's API to add peer
             // Use relay's actual tunnel IP from RelayInfo
@@ -775,7 +748,7 @@ PersistentKeepalive = 25";
 
             // Generate public key from private key
             var privateKey = publicKeyMatch.Groups[1].Value.Trim();
-            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+            var publicKey = await _wireGuardManager.DerivePublicKeyAsync(privateKey, ct);
 
             // Call relay VM API with public key
             var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
@@ -802,8 +775,12 @@ PersistentKeepalive = 25";
 
             if (response.IsSuccessStatusCode)
             {
-                relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
-                relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+                if (relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+                {
+                    relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
+                    relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+                }
+
                 _logger.LogInformation(
                     "✓ CGNAT node {NodeId} removed from relay {RelayId}",
                     cgnatNode.Id, relayNode.Id);
@@ -876,7 +853,17 @@ PersistentKeepalive = 25";
             }
 
             var privateKey = publicKeyMatch.Groups[1].Value.Trim();
-            var publicKey = await DerivePublicKeyAsync(privateKey, ct);
+            var publicKey = await _wireGuardManager.ExtractPublicKeyFromConfigAsync(
+                cgnatNode.CgnatInfo.WireGuardConfig,
+                ct);  // ✅ Uses WireGuardManager
+
+            if (string.IsNullOrEmpty(publicKey))
+            {
+                _logger.LogWarning(
+                    "Cannot extract public key from node {NodeId} config",
+                    cgnatNode.Id);
+                return false;
+            }
 
             // ========================================
             // SETUP: Get relay API endpoint

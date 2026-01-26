@@ -490,7 +490,7 @@ public class RelayNodeInfo
     /// CGNAT node IDs currently connected to this relay
     /// Uses HashSet to prevent duplicate entries
     /// </summary>
-    public HashSet<string> ConnectedNodeIds { get; set; } = new();
+    public List<string> ConnectedNodeIds { get; set; } = new();
 
     /// <summary>
     /// Relay service fee (USDC per hour per connected node)
