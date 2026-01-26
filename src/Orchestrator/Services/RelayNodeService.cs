@@ -394,8 +394,8 @@ public class RelayNodeService : IRelayNodeService
             }
 
             // Update relay load
-            relayNode.RelayInfo.CurrentLoad++;
             relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
+            relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
 
             // Save both nodes
             await _dataStore.SaveNodeAsync(cgnatNode);
@@ -802,6 +802,8 @@ PersistentKeepalive = 25";
 
             if (response.IsSuccessStatusCode)
             {
+                relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
+                relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
                 _logger.LogInformation(
                     "✓ CGNAT node {NodeId} removed from relay {RelayId}",
                     cgnatNode.Id, relayNode.Id);

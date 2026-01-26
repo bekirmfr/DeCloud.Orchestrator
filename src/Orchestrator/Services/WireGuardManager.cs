@@ -32,6 +32,7 @@ public interface IWireGuardManager
     /// </summary>
     Task<bool> RegisterWithRelayAsync(Node relayNode, string cgnatNodeId, string tunnelIp, CancellationToken ct = default);
     Task<bool> HasRelayPeerAsync(Node relayNode, CancellationToken ct = default);
+    Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct);
 }
 
 public class WireGuardManager : IWireGuardManager
@@ -347,6 +348,39 @@ public class WireGuardManager : IWireGuardManager
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to derive public key from private key
+    /// </summary>
+    public async Task<string> DerivePublicKeyAsync(string privateKey, CancellationToken ct)
+    {
+        try
+        {
+            var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "sh",
+                    Arguments = $"-c \"echo '{privateKey}' | wg pubkey\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+
+            return output.Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to derive public key");
+            throw;
         }
     }
 }

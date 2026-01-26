@@ -128,6 +128,7 @@ public class RelayHealthMonitor : BackgroundService
 
                 relay.RelayInfo.Status = RelayStatus.Active;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                await ReconcileRelayStateAsync(relay, ct);
                 await _dataStore.SaveNodeAsync(relay);
             }
             else
@@ -183,6 +184,167 @@ public class RelayHealthMonitor : BackgroundService
 
             // Trigger failover for affected CGNAT nodes
             await FailoverRelayAsync(relay, ct);
+        }
+    }
+
+    /// <summary>
+    /// Reconcile orchestrator's relay state with actual relay VM state
+    /// Queries relay API to get real peer list and syncs database
+    /// </summary>
+    private async Task ReconcileRelayStateAsync(Node relay, CancellationToken ct)
+    {
+        try
+        {
+            var relayTunnelIp = relay.RelayInfo?.TunnelIp ?? "10.20.0.254";
+            var apiUrl = $"http://{relayTunnelIp}:8080/api/relay/wireguard";
+
+            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var response = await httpClient.GetAsync(apiUrl, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Could not query relay {RelayId} for state reconciliation: {Status}",
+                    relay.Id, response.StatusCode);
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("peers", out var peersArray))
+            {
+                _logger.LogWarning("Relay API response missing 'peers' property");
+                return;
+            }
+
+            // ========================================
+            // STEP 1: Get actual peer public keys from relay
+            // ========================================
+            var actualPeerKeys = new HashSet<string>();
+
+            foreach (var peer in peersArray.EnumerateArray())
+            {
+                if (peer.TryGetProperty("public_key", out var pubKeyProp))
+                {
+                    var peerKey = pubKeyProp.GetString();
+                    if (!string.IsNullOrEmpty(peerKey))
+                    {
+                        actualPeerKeys.Add(peerKey);
+                    }
+                }
+            }
+
+            // Remove orchestrator's peer (always connected, not a CGNAT node)
+            var orchestratorPeerKey = "BL+cVFOmB/WCNgml...";  // Orchestrator's peer key
+            actualPeerKeys.Remove(orchestratorPeerKey);
+
+            _logger.LogInformation(
+                "Relay {RelayId} has {ActualCount} actual CGNAT peers (orchestrator shows {DbCount})",
+                relay.Id, actualPeerKeys.Count, relay.RelayInfo.ConnectedNodeIds.Count);
+
+            // ========================================
+            // STEP 2: Build map of node ID → WireGuard public key
+            // ========================================
+            var nodeKeyMap = new Dictionary<string, string>();
+
+            foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds.ToList())
+            {
+                if (_dataStore.Nodes.TryGetValue(nodeId, out var node))
+                {
+                    // Extract public key from WireGuard config
+                    if (!string.IsNullOrEmpty(node.CgnatInfo?.WireGuardConfig))
+                    {
+                        var privateKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                            node.CgnatInfo.WireGuardConfig,
+                            @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
+
+                        if (privateKeyMatch.Success)
+                        {
+                            try
+                            {
+                                var privateKey = privateKeyMatch.Groups[1].Value.Trim();
+                                var publicKey = await _wireGuardManager.DerivePublicKeyAsync(privateKey, ct);
+                                nodeKeyMap[nodeId] = publicKey;
+                            }
+                            catch
+                            {
+                                _logger.LogWarning(
+                                    "Could not derive public key for node {NodeId}",
+                                    nodeId);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ========================================
+            // STEP 3: Reconcile - find nodes that should be removed
+            // ========================================
+            var nodesToRemove = new List<string>();
+
+            foreach (var kvp in nodeKeyMap)
+            {
+                var nodeId = kvp.Key;
+                var publicKey = kvp.Value;
+
+                // Node is in database but NOT on relay VM → remove from database
+                if (!actualPeerKeys.Contains(publicKey))
+                {
+                    nodesToRemove.Add(nodeId);
+
+                    _logger.LogWarning(
+                        "Node {NodeId} in database but not on relay VM - removing from ConnectedNodeIds",
+                        nodeId);
+                }
+            }
+
+            // ========================================
+            // STEP 4: Apply fixes to database state
+            // ========================================
+            bool stateChanged = false;
+
+            // Remove nodes that aren't actually connected
+            foreach (var nodeId in nodesToRemove)
+            {
+                relay.RelayInfo.ConnectedNodeIds.Remove(nodeId);
+                stateChanged = true;
+            }
+
+            // Recalculate load based on actual connected nodes
+            var correctLoad = relay.RelayInfo.ConnectedNodeIds.Count;
+
+            if (relay.RelayInfo.CurrentLoad != correctLoad)
+            {
+                _logger.LogWarning(
+                    "Relay {RelayId} CurrentLoad mismatch: DB={DbLoad}, Actual={ActualLoad} - correcting",
+                    relay.Id, relay.RelayInfo.CurrentLoad, correctLoad);
+
+                relay.RelayInfo.CurrentLoad = correctLoad;
+                stateChanged = true;
+            }
+
+            // Save corrected state
+            if (stateChanged)
+            {
+                await _dataStore.SaveNodeAsync(relay);
+
+                _logger.LogInformation(
+                    "✓ Reconciled relay {RelayId} state: Removed {RemovedCount} ghost nodes, CurrentLoad corrected to {Load}",
+                    relay.Id, nodesToRemove.Count, correctLoad);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Relay {RelayId} state is consistent - no changes needed",
+                    relay.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to reconcile relay {RelayId} state",
+                relay.Id);
         }
     }
 

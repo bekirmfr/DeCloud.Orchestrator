@@ -487,9 +487,10 @@ public class RelayNodeInfo
     public int CurrentLoad { get; set; } = 0;
 
     /// <summary>
-    /// IDs of CGNAT nodes currently using this relay
+    /// CGNAT node IDs currently connected to this relay
+    /// Uses HashSet to prevent duplicate entries
     /// </summary>
-    public List<string> ConnectedNodeIds { get; set; } = new();
+    public HashSet<string> ConnectedNodeIds { get; set; } = new();
 
     /// <summary>
     /// Relay service fee (USDC per hour per connected node)
