@@ -44,7 +44,7 @@ public class NodePerformanceEvaluator
 
         // Single source of truth: points per core
         var pointsPerCore = (double)cappedScore / baselineBenchmark;
-        var totalPoints = pointsPerCore * node.HardwareInventory.Cpu.PhysicalCores; 
+        var totalPoints = (int) (pointsPerCore * node.HardwareInventory.Cpu.PhysicalCores * config.BaselineOvercommitRatio); 
 
         var evaluation = new NodePerformanceEvaluation
         {
