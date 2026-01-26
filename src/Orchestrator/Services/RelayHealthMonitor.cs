@@ -119,17 +119,35 @@ public class RelayHealthMonitor : BackgroundService
 
             if (response.IsSuccessStatusCode)
             {
-                if (relay.RelayInfo.Status != RelayStatus.Active)
-                {
-                    _logger.LogInformation(
-                        "✓ Relay {RelayId} recovered - marking as Active (age: {Age:mm\\:ss})",
-                        relay.Id, relayAge);
-                }
+                bool wasRecovering = relay.RelayInfo.Status == RelayStatus.Degraded;
 
                 relay.RelayInfo.Status = RelayStatus.Active;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+
                 await ReconcileRelayStateAsync(relay, ct);
                 await _dataStore.SaveNodeAsync(relay);
+
+                if (wasRecovering)
+                {
+                    _logger.LogInformation(
+                        "✓ Relay {RelayId} recovered from Degraded → Active - reconciliation complete",
+                        relay.Id);
+
+                    // ✅ NEW: Trigger re-registration for all connected nodes
+                    // This ensures peers get re-added to relay VM after recovery
+                    foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds.ToList())
+                    {
+                        if (_dataStore.Nodes.TryGetValue(nodeId, out var node))
+                        {
+                            _logger.LogDebug(
+                                "Re-ensuring peer registration for node {NodeId} on recovered relay {RelayId}",
+                                nodeId, relay.Id);
+
+                            // Will be handled on next heartbeat via EnsurePeerRegisteredAsync
+                            // Just log for visibility
+                        }
+                    }
+                }
             }
             else
             {

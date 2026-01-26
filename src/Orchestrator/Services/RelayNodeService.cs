@@ -716,83 +716,142 @@ PersistentKeepalive = 25";
         }
     }
 
+    /// <summary>
+    /// Remove CGNAT node from relay VM WireGuard peers
+    /// IMPROVED: Always update database, even if API call fails
+    /// Relay reconciliation will clean up the actual peer eventually
+    /// </summary>
     public async Task<bool> RemoveCgnatNodeFromRelayAsync(
-    Node cgnatNode,
-    Node relayNode,
-    CancellationToken ct = default)
+        Node cgnatNode,
+        Node relayNode,
+        CancellationToken ct)
     {
         try
         {
-            // Extract WireGuard public key from CGNAT node's config
-            var wgConfig = cgnatNode.CgnatInfo?.WireGuardConfig;
-            if (string.IsNullOrEmpty(wgConfig))
+            // =====================================================================
+            // STEP 1: Derive public key from node's WireGuard config
+            // =====================================================================
+            if (string.IsNullOrEmpty(cgnatNode.CgnatInfo?.WireGuardConfig))
             {
-                _logger.LogError(
-                    "Cannot remove CGNAT node {NodeId}: No WireGuard config",
-                    cgnatNode.Id);
+                _logger.LogWarning(
+                    "Cannot remove CGNAT node {NodeId} from relay {RelayId} - no WireGuard config",
+                    cgnatNode.Id, relayNode.Id);
+
+                // ✅ Still clean up database even without API call
+                await CleanupDatabaseState(cgnatNode, relayNode);
                 return false;
             }
 
-            // Extract public key from config
-            var publicKeyMatch = System.Text.RegularExpressions.Regex.Match(
-                wgConfig,
+            var privateKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                cgnatNode.CgnatInfo.WireGuardConfig,
                 @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
 
-            if (!publicKeyMatch.Success)
+            if (!privateKeyMatch.Success)
             {
-                _logger.LogError(
-                    "Cannot extract WireGuard key from CGNAT node {NodeId} config",
+                _logger.LogWarning(
+                    "Cannot derive public key for CGNAT node {NodeId} - cannot remove from relay",
                     cgnatNode.Id);
+
+                // ✅ Still clean up database even without API call
+                await CleanupDatabaseState(cgnatNode, relayNode);
                 return false;
             }
 
-            // Generate public key from private key
-            var privateKey = publicKeyMatch.Groups[1].Value.Trim();
+            var privateKey = privateKeyMatch.Groups[1].Value.Trim();
             var publicKey = await _wireGuardManager.DerivePublicKeyAsync(privateKey, ct);
 
-            // Call relay VM API with public key
-            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
+            // =====================================================================
+            // STEP 2: Try to remove via API (short timeout)
+            // =====================================================================
+            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp
+                ?? (relayNode.RelayInfo?.RelaySubnet > 0
+                    ? $"10.20.{relayNode.RelayInfo.RelaySubnet}.254"
+                    : "10.20.0.254");
+
             var relayApiUrl = $"http://{relayTunnelIp}:8080/api/relay/remove-peer";
 
             var payload = new
             {
-                public_key = publicKey,                        // ← PRIMARY IDENTIFIER
-                tunnel_ip = cgnatNode.CgnatInfo.TunnelIp,      // ← For validation
-                node_id = cgnatNode.Id                         // ← For logging
+                public_key = publicKey,
+                tunnel_ip = cgnatNode.CgnatInfo.TunnelIp,
+                node_id = cgnatNode.Id
             };
 
             _logger.LogInformation(
                 "Removing CGNAT node {NodeId} from relay {RelayId} (pubkey: {PubKey})",
                 cgnatNode.Id, relayNode.Id, publicKey.Substring(0, 16) + "...");
 
-            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            var content = new StringContent(
-                System.Text.Json.JsonSerializer.Serialize(payload),
-                System.Text.Encoding.UTF8,
-                "application/json");
+            bool apiSuccess = false;
+            string apiError = null;
 
-            var response = await httpClient.PostAsync(relayApiUrl, content, ct);
-
-            if (response.IsSuccessStatusCode)
+            try
             {
-                if (relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
-                {
-                    relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
-                    relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
-                }
+                // =====================================================================
+                // ✅ CRITICAL FIX: Short timeout (3s instead of 10s)
+                // =====================================================================
+                // Rationale:
+                // - If relay is unreachable, fail fast
+                // - Don't block heartbeat processing for 10+ seconds
+                // - Reconciliation will clean up the actual peer later
+                // =====================================================================
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(3));
 
+                var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                var content = new StringContent(
+                    System.Text.Json.JsonSerializer.Serialize(payload),
+                    System.Text.Encoding.UTF8,
+                    "application/json");
+
+                var response = await httpClient.PostAsync(relayApiUrl, content, cts.Token);
+                apiSuccess = response.IsSuccessStatusCode;
+
+                if (!apiSuccess)
+                {
+                    apiError = await response.Content.ReadAsStringAsync(ct);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                apiError = "Timeout after 3 seconds";
+                _logger.LogWarning(
+                    "Timeout removing CGNAT node {NodeId} from relay {RelayId} - relay may be unreachable",
+                    cgnatNode.Id, relayNode.Id);
+            }
+            catch (Exception ex)
+            {
+                apiError = ex.Message;
+                _logger.LogWarning(ex,
+                    "Error calling relay API to remove node {NodeId} from relay {RelayId}",
+                    cgnatNode.Id, relayNode.Id);
+            }
+
+            // =====================================================================
+            // STEP 3: ALWAYS update database (even if API failed)
+            // =====================================================================
+            // ✅ CRITICAL FIX: Don't let API failures block database cleanup
+            // =====================================================================
+            // Rationale:
+            // - Database is source of truth for orchestrator
+            // - Relay reconciliation will sync actual WireGuard state later
+            // - Failing to update DB causes nodes to get stuck
+            // =====================================================================
+            await CleanupDatabaseState(cgnatNode, relayNode);
+
+            if (apiSuccess)
+            {
                 _logger.LogInformation(
-                    "✓ CGNAT node {NodeId} removed from relay {RelayId}",
+                    "✓ CGNAT node {NodeId} removed from relay {RelayId} (API + Database)",
                     cgnatNode.Id, relayNode.Id);
                 return true;
             }
             else
             {
-                var error = await response.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning(
-                    "Failed to remove CGNAT node {NodeId} from relay {RelayId}: {Error}",
-                    cgnatNode.Id, relayNode.Id, error);
-                return false;
+                    "✓ CGNAT node {NodeId} removed from database (relay {RelayId}) but API call failed: {Error}. " +
+                    "Relay reconciliation will clean up the actual peer.",
+                    cgnatNode.Id, relayNode.Id, apiError);
+                return true; // ✅ Return true - database is updated
             }
         }
         catch (Exception ex)
@@ -800,7 +859,58 @@ PersistentKeepalive = 25";
             _logger.LogError(ex,
                 "Error removing CGNAT node {NodeId} from relay {RelayId}",
                 cgnatNode.Id, relayNode.Id);
+
+            // ✅ Try to clean up database even on exception
+            try
+            {
+                await CleanupDatabaseState(cgnatNode, relayNode);
+                _logger.LogInformation(
+                    "Database cleanup succeeded despite API error for node {NodeId}",
+                    cgnatNode.Id);
+            }
+            catch (Exception dbEx)
+            {
+                _logger.LogError(dbEx,
+                    "Failed to cleanup database after removal error for node {NodeId}",
+                    cgnatNode.Id);
+            }
+
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Helper: Clean up database state (remove from ConnectedNodeIds, update load)
+    /// Extracted to avoid duplication and ensure consistent cleanup
+    /// </summary>
+    private async Task CleanupDatabaseState(Node cgnatNode, Node relayNode)
+    {
+        if (relayNode.RelayInfo?.ConnectedNodeIds == null)
+        {
+            return;
+        }
+
+        bool needsSave = false;
+
+        if (relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+        {
+            relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
+            needsSave = true;
+        }
+
+        var correctLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+        if (relayNode.RelayInfo.CurrentLoad != correctLoad)
+        {
+            relayNode.RelayInfo.CurrentLoad = correctLoad;
+            needsSave = true;
+        }
+
+        if (needsSave)
+        {
+            await _dataStore.SaveNodeAsync(relayNode);
+            _logger.LogDebug(
+                "Database cleanup: Removed node {NodeId} from relay {RelayId}, CurrentLoad={Load}",
+                cgnatNode.Id, relayNode.Id, correctLoad);
         }
     }
 

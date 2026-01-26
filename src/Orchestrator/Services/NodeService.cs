@@ -960,9 +960,29 @@ public class NodeService : INodeService
             // ========================================
             // STEP 6: All Good - Assignment is Valid
             // ========================================
-            _logger.LogDebug(
-                "CGNAT node {NodeId} relay assignment is valid: {RelayId}",
-                node.Id, trackedRelayNode.Id);
+            // Self-healing - always ensure peer is registered
+            // This auto-recovers from:
+            // - Relay VM restart (WireGuard config lost)
+            // - Database corruption (ConnectedNodeIds empty)
+            // - Manual intervention (peer manually removed)
+
+            if (!string.IsNullOrEmpty(node.CgnatInfo?.TunnelIp))
+            {
+                _logger.LogDebug(
+                    "CGNAT node {NodeId} relay assignment is valid: {RelayId} - ensuring peer registered",
+                    node.Id, trackedRelayNode.Id);
+
+                // ✅ SELF-HEALING: Idempotent peer registration
+                // If peer exists on relay VM → no-op
+                // If peer missing → auto-register
+                await _relayNodeService.EnsurePeerRegisteredAsync(node, trackedRelayNode, ct);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "CGNAT node {NodeId} relay assignment is valid: {RelayId}",
+                    node.Id, trackedRelayNode.Id);
+            }
         }
         finally
         {
@@ -1120,59 +1140,40 @@ public class NodeService : INodeService
     }
 
     /// <summary>
-    /// Validate that a relay node and its VM are healthy and online
+    /// Validate that a relay node and its VM are in acceptable state
+    /// CHANGE: Accept Degraded status - it might just be tunnel issue
     /// </summary>
     private bool IsRelayValid(string relayNodeId)
     {
-        // Validate relay ID
         if (string.IsNullOrEmpty(relayNodeId))
-        {
             return false;
-        }
 
-        // Get relay node
         if (!_dataStore.Nodes.TryGetValue(relayNodeId, out var relayNode) || relayNode == null)
-        {
             return false;
-        }
 
-        // Check node status
         if (relayNode.Status != NodeStatus.Online)
-        {
             return false;
-        }
 
-        // Check relay info exists
         if (relayNode.RelayInfo == null)
+            return false;
+
+        // Degraded means "tunnel issues" not "relay broken"
+        // We'll try to heal the tunnel rather than abandon the relay
+        if (relayNode.RelayInfo.Status != RelayStatus.Active &&
+            relayNode.RelayInfo.Status != RelayStatus.Degraded)
         {
             return false;
         }
 
-        // Check relay status
-        if (relayNode.RelayInfo.Status != RelayStatus.Active)
-        {
-            return false;
-        }
-
-        // Check relay VM ID exists
         if (string.IsNullOrEmpty(relayNode.RelayInfo.RelayVmId))
-        {
             return false;
-        }
 
-        // Get relay VM
         if (!_dataStore.VirtualMachines.TryGetValue(
-            relayNode.RelayInfo.RelayVmId,
-            out var relayVm) || relayVm == null)
-        {
+            relayNode.RelayInfo.RelayVmId, out var relayVm) || relayVm == null)
             return false;
-        }
 
-        // Check VM status
         if (relayVm.Status != VmStatus.Running)
-        {
             return false;
-        }
 
         return true;
     }
