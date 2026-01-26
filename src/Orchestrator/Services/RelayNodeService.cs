@@ -918,13 +918,15 @@ PersistentKeepalive = 25";
     /// Ensure CGNAT node peer is registered on relay VM (idempotent)
     /// Uses existing tunnel IP and WireGuard config from orchestrator state
     /// Does NOT create new assignment - just ensures peer exists on relay
+    /// ✅ NOW UPDATES ConnectedNodeIds in MongoDB for consistency
     /// </summary>
     /// <remarks>
     /// This method is idempotent and can be called multiple times safely.
     /// It will:
     /// 1. Check if peer already exists on relay (returns true immediately if found)
     /// 2. If not found, register peer using EXISTING tunnel IP from node.CgnatInfo
-    /// 3. Never allocates new tunnel IP or generates new WireGuard config
+    /// 3. Update ConnectedNodeIds in MongoDB to keep DB in sync with relay VM state
+    /// 4. Never allocates new tunnel IP or generates new WireGuard config
     /// </remarks>
     /// <returns>True if peer is confirmed registered (either existed or just added)</returns>
     public async Task<bool> EnsurePeerRegisteredAsync(
@@ -965,7 +967,7 @@ PersistentKeepalive = 25";
             var privateKey = publicKeyMatch.Groups[1].Value.Trim();
             var publicKey = await _wireGuardManager.ExtractPublicKeyFromConfigAsync(
                 cgnatNode.CgnatInfo.WireGuardConfig,
-                ct);  // ✅ Uses WireGuardManager
+                ct);
 
             if (string.IsNullOrEmpty(publicKey))
             {
@@ -978,7 +980,10 @@ PersistentKeepalive = 25";
             // ========================================
             // SETUP: Get relay API endpoint
             // ========================================
-            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp ?? "10.20.0.254";
+            var relayTunnelIp = relayNode.RelayInfo?.TunnelIp
+                ?? (relayNode.RelayInfo?.RelaySubnet > 0
+                    ? $"10.20.{relayNode.RelayInfo.RelaySubnet}.254"
+                    : "10.20.0.254");
             var checkUrl = $"http://{relayTunnelIp}:8080/api/relay/wireguard";
 
             // ========================================
@@ -1005,10 +1010,29 @@ PersistentKeepalive = 25";
                                 // Found our peer - already registered!
                                 if (peerKey == publicKey)
                                 {
-                                    _logger.LogInformation(
+                                    _logger.LogDebug(
                                         "✓ Peer already exists for node {NodeId} on relay {RelayId} (Tunnel IP: {TunnelIp})",
                                         cgnatNode.Id, relayNode.Id, cgnatNode.CgnatInfo.TunnelIp);
-                                    return true; // ✅ Peer exists, we're done
+
+                                    // =====================================================================
+                                    // Even if peer exists on relay VM, ensure DB is synced
+                                    // =====================================================================
+                                    // This handles the case where reconciliation removed the node from
+                                    // ConnectedNodeIds but the peer still exists on the relay VM
+                                    // =====================================================================
+                                    if (!relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+                                    {
+                                        relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
+                                        relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+
+                                        await _dataStore.SaveNodeAsync(relayNode);
+
+                                        _logger.LogInformation(
+                                            "✓ Synced ConnectedNodeIds for relay {RelayId}: added {NodeId}, CurrentLoad={Load}",
+                                            relayNode.Id, cgnatNode.Id, relayNode.RelayInfo.CurrentLoad);
+                                    }
+
+                                    return true; // ✅ Peer exists and DB is synced
                                 }
                             }
                         }
@@ -1053,6 +1077,26 @@ PersistentKeepalive = 25";
                 _logger.LogInformation(
                     "✓ Registered peer for node {NodeId} on relay {RelayId} (reused existing tunnel IP: {TunnelIp})",
                     cgnatNode.Id, relayNode.Id, cgnatNode.CgnatInfo.TunnelIp);
+
+                // =====================================================================
+                // Update ConnectedNodeIds in MongoDB
+                // =====================================================================
+                // Without this, the peer exists on relay VM but orchestrator's
+                // ConnectedNodeIds stays empty, causing reconciliation mismatch
+                // and repeated peer registration attempts on every heartbeat
+                // =====================================================================
+                if (!relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+                {
+                    relayNode.RelayInfo.ConnectedNodeIds.Add(cgnatNode.Id);
+                    relayNode.RelayInfo.CurrentLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+
+                    await _dataStore.SaveNodeAsync(relayNode);
+
+                    _logger.LogInformation(
+                        "✓ Updated relay {RelayId} ConnectedNodeIds: added {NodeId}, CurrentLoad={Load}",
+                        relayNode.Id, cgnatNode.Id, relayNode.RelayInfo.CurrentLoad);
+                }
+
                 return true;
             }
             else
