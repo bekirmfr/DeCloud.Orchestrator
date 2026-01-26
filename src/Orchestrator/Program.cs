@@ -85,6 +85,8 @@ builder.Services.AddSingleton(sp =>
     return new DataStore(database, logger);
 });
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
+builder.Services.AddScoped<NodePerformanceEvaluator>();
+builder.Services.AddScoped<NodeCapacityCalculator>();
 builder.Services.AddSingleton<IVmSchedulingService, VmSchedulingService>();
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
