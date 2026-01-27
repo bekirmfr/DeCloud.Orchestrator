@@ -491,35 +491,41 @@ public class VmService : IVmService
         // FREE RESOURCES INCLUDING POINTS
         // ========================================
 
-        // Free reserved resources from node
-        var node = await _dataStore.GetNodeAsync(vm.NodeId);
-        if (!string.IsNullOrEmpty(vm.NodeId) &&
-            vm != null)
+        // Free reserved resources from nod
+        if (!string.IsNullOrEmpty(vm.NodeId))
         {
-            var cpuToFree = vm.Spec.VirtualCpuCores;
-            var memToFree = vm.Spec.MemoryBytes;
-            var storageToFree = vm.Spec.DiskBytes;
-            var pointsToFree = vm.Spec.ComputePointCost;
+            var node = await _dataStore.GetNodeAsync(vm.NodeId);
 
-            // Free resources
-            node.ReservedResources.ComputePoints = Math.Max(0,
-                node.ReservedResources.ComputePoints - pointsToFree);
-            node.ReservedResources.MemoryBytes = Math.Max(0,
-                node.ReservedResources.MemoryBytes - memToFree);
-            node.ReservedResources.StorageBytes = Math.Max(0,
-                node.ReservedResources.StorageBytes - storageToFree);
+            if (node == null)
+            {
+                var cpuToFree = vm.Spec.VirtualCpuCores;
+                var memToFree = vm.Spec.MemoryBytes;
+                var storageToFree = vm.Spec.DiskBytes;
+                var pointsToFree = vm.Spec.ComputePointCost;
 
-            await _dataStore.SaveNodeAsync(node);
+                // Free resources
+                node.ReservedResources.ComputePoints = Math.Max(0,
+                    node.ReservedResources.ComputePoints - pointsToFree);
+                node.ReservedResources.MemoryBytes = Math.Max(0,
+                    node.ReservedResources.MemoryBytes - memToFree);
+                node.ReservedResources.StorageBytes = Math.Max(0,
+                    node.ReservedResources.StorageBytes - storageToFree);
 
-            _logger.LogInformation(
-                "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
-                "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
-                vmId, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,
-                node.ReservedResources.ComputePoints,
-                node.TotalResources.ComputePoints,
-                (double)node.ReservedResources.ComputePoints /
-                Math.Max(1, node.TotalResources.ComputePoints) * 100);
+                await _dataStore.SaveNodeAsync(node);
+
+                _logger.LogInformation(
+                    "Released reserved resources for VM {VmId} on node {NodeId}: " +
+                    "{CpuCores}c, {MemoryMb}MB, {StorageGb}GB, {Points} points. " +
+                    "Node utilization: {PointsUsed}/{PointsTotal} points ({Percent:F1}%)",
+                    vmId, node.Id, cpuToFree, memToFree, storageToFree, pointsToFree,
+                    node.ReservedResources.ComputePoints,
+                    node.TotalResources.ComputePoints,
+                    (double)node.ReservedResources.ComputePoints /
+                    Math.Max(1, node.TotalResources.ComputePoints) * 100);
+            }
+            _logger.LogWarning(
+                    "Node {NodeId} not found when releasing resources for VM {VmId}",
+                    vm.NodeId, vmId);
         }
 
         // Update user quotas (unchanged)
