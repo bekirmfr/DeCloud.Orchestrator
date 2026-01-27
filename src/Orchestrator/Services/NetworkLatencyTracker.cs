@@ -95,8 +95,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed RTT measurement {Index}/{Total}",
-                    i + 1, INITIAL_CALIBRATION_PINGS);
+                _logger.LogWarning("Failed RTT measurement {Index}/{Total}: {ErrorMessage}",
+                    i + 1, INITIAL_CALIBRATION_PINGS, ex.Message);
             }
         }
 

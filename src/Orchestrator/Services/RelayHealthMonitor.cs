@@ -1,7 +1,5 @@
-﻿using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+﻿using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Models;
 
 namespace Orchestrator.Services;
 
@@ -16,8 +14,14 @@ public class RelayHealthMonitor : BackgroundService
     private readonly HttpClient _httpClient;
     private readonly ILogger<RelayHealthMonitor> _logger;
 
+    private readonly Dictionary<string, Dictionary<string, DateTime>> _peerRegistrationTimestamps = new();
+    private readonly object _timestampLock = new();
+
     // Health check interval
     private static readonly TimeSpan HealthCheckInterval = TimeSpan.FromMinutes(1);
+
+    // Prevents premature removal of peers that are still being configured on relay VM
+    private static readonly TimeSpan PeerRegistrationGracePeriod = TimeSpan.FromSeconds(30);
 
     // Grace period for newly deployed relays to fully initialize
     private static readonly TimeSpan RelayInitializationTimeout = TimeSpan.FromMinutes(10);
@@ -91,7 +95,7 @@ public class RelayHealthMonitor : BackgroundService
             var remainingTimeout = RelayInitializationTimeout - relayAge;
 
             _logger.LogDebug(
-                "Relay {RelayId} is initializing (age: {Age:mm\\:ss}, remaining: {Timeout:mm\\:ss})",
+                "Relay {RelayId} is initializing (age: {Age:mm\\:ss}, timeout period: {Timeout:mm\\:ss} remaining)",
                 relay.Id, relayAge, remainingTimeout);
 
             return;
@@ -102,13 +106,13 @@ public class RelayHealthMonitor : BackgroundService
             // Use relay VM's WireGuard tunnel IP
             var tunnelIp = relay.RelayInfo.TunnelIp
                 ?? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
-                ?? "10.20.0.254";  // Fallback for legacy relays
+                ?? "10.20.0.254";
 
             var healthUrl = $"http://{tunnelIp}/health";
 
             _logger.LogDebug(
-                "Checking relay {RelayId} health at {HealthUrl}",
-                relay.Id, healthUrl);
+                "Checking relay {RelayId} health at {HealthUrl} (subnet {Subnet}, age: {Age:mm\\:ss})",
+                relay.Id, healthUrl, relay.RelayInfo.RelaySubnet, relayAge);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(HealthCheckTimeout);
@@ -121,91 +125,18 @@ public class RelayHealthMonitor : BackgroundService
             if (response.IsSuccessStatusCode)
             {
                 bool wasRecovering = relay.RelayInfo.Status == RelayStatus.Degraded;
-                bool wasOffline = relay.RelayInfo.Status == RelayStatus.Offline;
 
                 relay.RelayInfo.Status = RelayStatus.Active;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
 
-                // ====================================================
-                // SELF-HEALING: Check if orchestrator has this relay as WireGuard peer
-                // ====================================================
-                var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
-
-                if (!hasPeer)
-                {
-                    // Relay is healthy but orchestrator doesn't have it as peer
-                    // This can happen after:
-                    // 1. Orchestrator restart
-                    // 2. WireGuard peer cleanup
-                    // 3. Manual wg configuration changes
-                    _logger.LogWarning(
-                        "🔧 SELF-HEAL: Relay {RelayId} is responding but missing from WireGuard peers - recovering",
-                        relay.Id);
-
-                    var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
-
-                    if (added)
-                    {
-                        _logger.LogInformation(
-                            "✅ SELF-HEAL: Successfully re-added relay {RelayId} as WireGuard peer",
-                            relay.Id);
-
-                        // Verify handshake was established
-                        await Task.Delay(TimeSpan.FromSeconds(2), ct); // Wait for handshake
-                        var handshakeEstablished = await VerifyHandshakeAsync(relay, ct);
-
-                        if (handshakeEstablished)
-                        {
-                            _logger.LogInformation(
-                                "✅ SELF-HEAL: WireGuard handshake established with relay {RelayId}",
-                                relay.Id);
-                        }
-                        else
-                        {
-                            _logger.LogWarning(
-                                "⚠️  SELF-HEAL: Peer added but handshake not yet established with relay {RelayId} " +
-                                "(may take a few moments)",
-                                relay.Id);
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogError(
-                            "❌ SELF-HEAL: Failed to re-add relay {RelayId} as WireGuard peer",
-                            relay.Id);
-
-                        // Mark as degraded since we can't communicate with it
-                        relay.RelayInfo.Status = RelayStatus.Degraded;
-                    }
-                }
-                else
-                {
-                    // Peer exists - verify handshake is active
-                    var handshakeEstablished = await VerifyHandshakeAsync(relay, ct);
-
-                    if (!handshakeEstablished && relay.RelayInfo.Status == RelayStatus.Active)
-                    {
-                        _logger.LogWarning(
-                            "⚠️  Relay {RelayId} peer exists but handshake is stale or not established",
-                            relay.Id);
-                    }
-                }
-
-                // Reconcile relay state (sync database with actual peers)
+                // ✅ FIXED: Pass relay ID to reconciliation for grace period tracking
                 await ReconcileRelayStateAsync(relay, ct);
                 await _dataStore.SaveNodeAsync(relay);
 
-                // Log recovery if applicable
                 if (wasRecovering)
                 {
                     _logger.LogInformation(
-                        "✓ Relay {RelayId} recovered: Degraded → Active",
-                        relay.Id);
-                }
-                else if (wasOffline)
-                {
-                    _logger.LogInformation(
-                        "✓ Relay {RelayId} recovered: Offline → Active - re-enabling CGNAT connections",
+                        "✓ Relay {RelayId} recovered from Degraded → Active - reconciliation complete",
                         relay.Id);
 
                     // Trigger re-registration for all connected nodes
@@ -217,7 +148,6 @@ public class RelayHealthMonitor : BackgroundService
                             _logger.LogDebug(
                                 "Re-ensuring peer registration for node {NodeId} on recovered relay {RelayId}",
                                 nodeId, relay.Id);
-                            // Will be handled on next heartbeat via EnsurePeerRegisteredAsync
                         }
                     }
                 }
@@ -233,104 +163,44 @@ public class RelayHealthMonitor : BackgroundService
 
                 relay.RelayInfo.Status = RelayStatus.Degraded;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                await _dataStore.SaveNodeAsync(relay);
+
+                // ====================================================
+                // SELF-HEALING: Check if orchestrator has this relay as WireGuard peer
+                // ====================================================
+                var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
+
+                if (!hasPeer && relay.RelayInfo?.Status == RelayStatus.Active)
+                {
+                    _logger.LogWarning(
+                        "Relay {RelayId} is active but not configured as peer - attempting to add",
+                        relay.Id);
+
+                    var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
+
+                    if (added)
+                    {
+                        _logger.LogInformation("✓ Recovered relay {RelayId} via health check", relay.Id);
+                    }
+
+                    await _dataStore.SaveNodeAsync(relay);
+                }
             }
         }
         catch (OperationCanceledException)
         {
             _logger.LogWarning(
-                "Relay {RelayId} health check timed out after {Timeout}s",
-                relay.Id, HealthCheckTimeout.TotalSeconds);
+                "Relay {RelayId} health check timed out after {Timeout}s (age: {Age:mm\\:ss})",
+                relay.Id, HealthCheckTimeout.TotalSeconds, relayAge);
 
             relay.RelayInfo.Status = RelayStatus.Degraded;
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(relay);
         }
-        catch (HttpRequestException ex) when (
-            ex.Message.Contains("No route to host") ||
-            ex.Message.Contains("Connection refused") ||
-            ex.Message.Contains("Network is unreachable"))
-        {
-            // ====================================================
-            // SELF-HEALING: Network errors often mean missing WireGuard peer
-            // ====================================================
-            _logger.LogWarning(
-                "Relay {RelayId} health check failed with network error: {Error}",
-                relay.Id, ex.Message);
-
-            // Check if this is a missing peer issue
-            var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
-
-            if (!hasPeer)
-            {
-                _logger.LogWarning(
-                    "🔧 SELF-HEAL: Relay {RelayId} unreachable due to missing WireGuard peer - recovering",
-                    relay.Id);
-
-                var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
-
-                if (added)
-                {
-                    _logger.LogInformation(
-                        "✅ SELF-HEAL: Successfully restored relay {RelayId} WireGuard peer",
-                        relay.Id);
-
-                    // Mark as Degraded, not Offline - give it a chance to recover
-                    relay.RelayInfo.Status = RelayStatus.Degraded;
-                    relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                    await _dataStore.SaveNodeAsync(relay);
-
-                    // Verify handshake after a brief delay
-                    await Task.Delay(TimeSpan.FromSeconds(3), ct);
-                    var handshakeEstablished = await VerifyHandshakeAsync(relay, ct);
-
-                    if (handshakeEstablished)
-                    {
-                        _logger.LogInformation(
-                            "✅ SELF-HEAL: WireGuard handshake established with relay {RelayId} - should recover on next check",
-                            relay.Id);
-                    }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "⚠️  SELF-HEAL: Peer restored but handshake not yet established with relay {RelayId}",
-                            relay.Id);
-                    }
-                }
-                else
-                {
-                    _logger.LogError(
-                        "❌ SELF-HEAL: Failed to restore relay {RelayId} WireGuard peer - marking offline",
-                        relay.Id);
-
-                    relay.RelayInfo.Status = RelayStatus.Offline;
-                    relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                    await _dataStore.SaveNodeAsync(relay);
-
-                    // Trigger failover only if peer restoration failed
-                    await FailoverRelayAsync(relay, ct);
-                }
-            }
-            else
-            {
-                // Peer exists but relay is still unreachable - genuine connectivity issue
-                _logger.LogError(
-                    "Relay {RelayId} has WireGuard peer but is unreachable - marking offline",
-                    relay.Id);
-
-                relay.RelayInfo.Status = RelayStatus.Offline;
-                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                await _dataStore.SaveNodeAsync(relay);
-
-                // Trigger failover for affected CGNAT nodes
-                await FailoverRelayAsync(relay, ct);
-            }
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Relay {RelayId} health check failed with unexpected error - marking offline",
-                relay.Id);
+                "Relay {RelayId} health check failed - marking offline (age: {Age:mm\\:ss})",
+                relay.Id, relayAge);
 
             relay.RelayInfo.Status = RelayStatus.Offline;
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
@@ -427,8 +297,10 @@ public class RelayHealthMonitor : BackgroundService
         try
         {
             var relayTunnelIp = relay.RelayInfo?.TunnelIp
-                ?? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
-                ?? "10.20.0.254";
+                ?? (relay.RelayInfo?.RelaySubnet > 0
+                    ? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
+                    : "10.20.0.254");
+
             var apiUrl = $"http://{relayTunnelIp}:8080/api/relay/wireguard";
 
             var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -451,7 +323,9 @@ public class RelayHealthMonitor : BackgroundService
                 return;
             }
 
-            // Get actual peer public keys from relay
+            // ========================================
+            // STEP 1: Get actual peer public keys from relay VM
+            // ========================================
             var actualPeerKeys = new HashSet<string>();
 
             foreach (var peer in peersArray.EnumerateArray())
@@ -466,48 +340,135 @@ public class RelayHealthMonitor : BackgroundService
                 }
             }
 
-            _logger.LogDebug(
-                "Relay {RelayId} reconciliation: {ActualCount} actual peers, {DbCount} in database",
+            // Remove orchestrator's peer (always connected, not a CGNAT node)
+            // Note: You may need to load this from config
+            var orchestratorConfig = actualPeerKeys.FirstOrDefault(k =>
+                k.StartsWith("BL+") || k.Length > 40); // Adjust based on your setup
+            if (orchestratorConfig != null)
+            {
+                actualPeerKeys.Remove(orchestratorConfig);
+            }
+
+            _logger.LogInformation(
+                "Relay {RelayId} has {ActualCount} actual CGNAT peers (orchestrator shows {DbCount})",
                 relay.Id, actualPeerKeys.Count, relay.RelayInfo.ConnectedNodeIds.Count);
 
-            // Find nodes that are in database but not on relay VM
-            var nodesToRemove = new List<string>();
+            // ========================================
+            // STEP 2: Build map of node ID → WireGuard public key
+            // ========================================
+            var nodeKeyMap = new Dictionary<string, string>();
 
             foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds.ToList())
             {
                 var node = await _dataStore.GetNodeAsync(nodeId);
-                if (node == null)
+                if (node != null && !string.IsNullOrEmpty(node.CgnatInfo?.WireGuardConfig))
                 {
-                    nodesToRemove.Add(nodeId);
-                    _logger.LogWarning(
-                        "Node {NodeId} in relay ConnectedNodeIds but not in database - removing",
-                        nodeId);
-                    continue;
-                }
+                    var privateKeyMatch = System.Text.RegularExpressions.Regex.Match(
+                        node.CgnatInfo.WireGuardConfig,
+                        @"PrivateKey\s*=\s*([A-Za-z0-9+/=]+)");
 
-                var publicKey = await _wireGuardManager.ExtractPublicKeyFromConfigAsync(
-                    node.CgnatInfo?.WireGuardConfig ?? "",
-                    ct);
-
-                if (string.IsNullOrEmpty(publicKey))
-                {
-                    continue;
-                }
-
-                // Node is in database but NOT on relay VM → remove from database
-                if (!actualPeerKeys.Contains(publicKey))
-                {
-                    nodesToRemove.Add(nodeId);
-
-                    _logger.LogWarning(
-                        "Node {NodeId} in database but not on relay VM - removing from ConnectedNodeIds",
-                        nodeId);
+                    if (privateKeyMatch.Success)
+                    {
+                        try
+                        {
+                            var privateKey = privateKeyMatch.Groups[1].Value.Trim();
+                            var publicKey = await _wireGuardManager.DerivePublicKeyAsync(privateKey, ct);
+                            nodeKeyMap[nodeId] = publicKey;
+                        }
+                        catch
+                        {
+                            _logger.LogWarning("Could not derive public key for node {NodeId}", nodeId);
+                        }
+                    }
                 }
             }
 
-            // Apply fixes to database state
+            // ========================================
+            // STEP 3 - Track registration timestamps and apply grace period
+            // ========================================
+            var now = DateTime.UtcNow;
+            var nodesToRemove = new List<string>();
+
+            lock (_timestampLock)
+            {
+                // Initialize tracking for this relay if not exists
+                if (!_peerRegistrationTimestamps.ContainsKey(relay.Id))
+                {
+                    _peerRegistrationTimestamps[relay.Id] = new Dictionary<string, DateTime>();
+                }
+
+                var relayTimestamps = _peerRegistrationTimestamps[relay.Id];
+
+                // Update timestamps for all currently connected nodes
+                foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds)
+                {
+                    if (!relayTimestamps.ContainsKey(nodeId))
+                    {
+                        // New node - record registration time
+                        relayTimestamps[nodeId] = now;
+                        _logger.LogDebug(
+                            "Recording registration timestamp for node {NodeId} on relay {RelayId}",
+                            nodeId, relay.Id);
+                    }
+                }
+
+                // Check each node for removal, respecting grace period
+                foreach (var kvp in nodeKeyMap)
+                {
+                    var nodeId = kvp.Key;
+                    var publicKey = kvp.Value;
+
+                    // Check if peer exists on relay VM
+                    if (!actualPeerKeys.Contains(publicKey))
+                    {
+                        // Check if node is within grace period
+                        if (relayTimestamps.TryGetValue(nodeId, out var registeredAt))
+                        {
+                            var age = now - registeredAt;
+
+                            if (age < PeerRegistrationGracePeriod)
+                            {
+                                _logger.LogDebug(
+                                    "Node {NodeId} not found on relay VM but within grace period " +
+                                    "(age: {Age:F1}s / {Grace:F1}s) - skipping removal",
+                                    nodeId, age.TotalSeconds, PeerRegistrationGracePeriod.TotalSeconds);
+                                continue; // ✅ Skip removal - still within grace period
+                            }
+                        }
+
+                        // Node is missing and past grace period (or no timestamp) - mark for removal
+                        nodesToRemove.Add(nodeId);
+
+                        _logger.LogWarning(
+                            "Node {NodeId} in database but not on relay VM (past grace period) - " +
+                            "removing from ConnectedNodeIds",
+                            nodeId);
+                    }
+                }
+
+                // Clean up timestamps for removed nodes
+                foreach (var nodeId in nodesToRemove)
+                {
+                    relayTimestamps.Remove(nodeId);
+                }
+
+                // Clean up timestamps for nodes no longer in ConnectedNodeIds
+                var staleTimestamps = relayTimestamps.Keys
+                    .Where(nodeId => !relay.RelayInfo.ConnectedNodeIds.Contains(nodeId))
+                    .ToList();
+
+                foreach (var nodeId in staleTimestamps)
+                {
+                    relayTimestamps.Remove(nodeId);
+                }
+            }
+
+            // ========================================
+            // STEP 4: Apply fixes to database state
+            // ========================================
             bool stateChanged = false;
 
+            // Remove nodes that aren't actually connected (and past grace period)
             foreach (var nodeId in nodesToRemove)
             {
                 relay.RelayInfo.ConnectedNodeIds.Remove(nodeId);
@@ -519,8 +480,8 @@ public class RelayHealthMonitor : BackgroundService
 
             if (relay.RelayInfo.CurrentLoad != correctLoad)
             {
-                _logger.LogDebug(
-                    "Relay {RelayId} CurrentLoad corrected: {OldLoad} → {NewLoad}",
+                _logger.LogWarning(
+                    "Relay {RelayId} CurrentLoad mismatch: DB={DbLoad}, Actual={ActualLoad} - correcting",
                     relay.Id, relay.RelayInfo.CurrentLoad, correctLoad);
 
                 relay.RelayInfo.CurrentLoad = correctLoad;
@@ -536,12 +497,14 @@ public class RelayHealthMonitor : BackgroundService
                     "✓ Reconciled relay {RelayId}: Removed {RemovedCount} ghost nodes, CurrentLoad={Load}",
                     relay.Id, nodesToRemove.Count, correctLoad);
             }
+            else
+            {
+                _logger.LogDebug("Relay {RelayId} state is consistent - no changes needed", relay.Id);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "Failed to reconcile relay {RelayId} state",
-                relay.Id);
+            _logger.LogError(ex, "Failed to reconcile relay {RelayId} state", relay.Id);
         }
     }
 
@@ -573,9 +536,7 @@ public class RelayHealthMonitor : BackgroundService
             try
             {
                 // Find alternative relay
-                var newRelay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(
-                    node,
-                    ct);
+                var newRelay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node, ct);
 
                 if (newRelay != null)
                 {
