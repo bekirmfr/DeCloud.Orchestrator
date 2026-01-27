@@ -29,8 +29,8 @@ public class SystemController : ControllerBase
         {
             ["datastore"] = new ComponentHealth("healthy", null, new Dictionary<string, object>
             {
-                ["nodes"] = _dataStore.Nodes.Count,
-                ["vms"] = _dataStore.VirtualMachines.Count,
+                ["nodes"] = _dataStore.GetActiveNodes().Count(),
+                ["vms"] = _dataStore.GetActiveVMs().Count(),
                 ["users"] = _dataStore.Users.Count
             }),
             ["scheduler"] = new ComponentHealth("healthy", null, null)
@@ -134,7 +134,7 @@ public class SystemController : ControllerBase
     public ActionResult<ApiResponse<List<RegionInfo>>> GetRegions()
     {
         // Aggregate regions from nodes
-        var regions = _dataStore.Nodes.Values
+        var regions = _dataStore.GetActiveNodes()
             .GroupBy(n => n.Region)
             .Select(g => new RegionInfo(
                 g.Key,

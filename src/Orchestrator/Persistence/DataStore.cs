@@ -1,6 +1,7 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
+using System.Collections;
 using System.Collections.Concurrent;
 
 namespace Orchestrator.Persistence;
@@ -16,11 +17,17 @@ public class DataStore
     private readonly ILogger<DataStore> _logger;
     private readonly bool _useMongoDB;
 
+    // ════════════════════════════════════════════════════════════════════════
+    // Configuration Constants
+    // ════════════════════════════════════════════════════════════════════════
+
+    private static readonly TimeSpan NodeOnlineThreshold = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RecentUsageThreshold = TimeSpan.FromDays(30);
+
     // Thread-safe in-memory collections for fast access
-    public ConcurrentDictionary<string, Node> Nodes { get; } = new();
-    public ConcurrentDictionary<string, VirtualMachine> VirtualMachines { get; } = new();
+    public ConcurrentDictionary<string, Node> ActiveNodes { get; } = new();
+    public ConcurrentDictionary<string, VirtualMachine> ActiveVMs { get; } = new();
     // Pending commands for nodes (nodeId -> commands)
-    public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingNodeCommands { get; } = new();
     /// <summary>
     /// Command registry for reliable command→VM tracking.
     /// Key: commandId, Value: CommandRegistration
@@ -28,15 +35,12 @@ public class DataStore
     /// independent of the VM's StatusMessage field.
     /// </summary>
     public ConcurrentDictionary<string, CommandRegistration> CommandRegistry { get; } = new();
-    // Add tracking dictionary
+    public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingCommands { get; } = new();
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
-    public ConcurrentDictionary<string, UsageRecord> UsageRecords { get; } = new();
+    public ConcurrentDictionary<string, UsageRecord> UnsettledUsage { get; } = new();
     public ConcurrentDictionary<string, VmImage> Images { get; } = new();
     public ConcurrentDictionary<string, VmPricingTier> PricingTiers { get; } = new();
-
-    // User sessions (refresh token hash -> user id)
-    public ConcurrentDictionary<string, string> UserSessions { get; } = new();
 
     // Event history (for debugging/auditing)
     public ConcurrentQueue<OrchestratorEvent> EventHistory { get; } = new();
@@ -231,11 +235,15 @@ public class DataStore
 
         try
         {
-            // Load Nodes
-            var nodes = await NodesCollection!.Find(_ => true).ToListAsync();
+            // Load ONLY online nodes (heartbeat within last 5 minutes)
+            var onlineNodesCutoff = DateTime.UtcNow - NodeOnlineThreshold;
+            var nodes = await NodesCollection!
+                .Find(n => n.LastHeartbeat > onlineNodesCutoff)
+                .ToListAsync();
+
             foreach (var node in nodes)
             {
-                Nodes.TryAdd(node.Id, node);
+                ActiveNodes.TryAdd(node.Id, node);
             }
 
             // Load VMs (exclude deleted)
@@ -244,7 +252,18 @@ public class DataStore
                 .ToListAsync();
             foreach (var vm in vms)
             {
-                VirtualMachines.TryAdd(vm.Id, vm);
+                ActiveVMs.TryAdd(vm.Id, vm);
+            }
+
+            var recentUsageCutoff = DateTime.UtcNow - RecentUsageThreshold;
+            var usageRecords = await UsageRecordsCollection!
+                .Find(u => !u.SettledOnChain && 
+                            u.CreatedAt > recentUsageCutoff)
+                .ToListAsync();
+
+            foreach (var record in usageRecords)
+            {
+                UnsettledUsage.TryAdd(record.Id, record);
             }
 
             // Load Users
@@ -269,9 +288,19 @@ public class DataStore
             }
 
             var elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
             _logger.LogInformation(
-                "✓ State loaded from MongoDB in {Elapsed}ms: {Nodes} nodes, {VMs} VMs, {Users} users",
-                elapsed, nodes.Count, vms.Count, users.Count);
+                "✓ Active state loaded in {Elapsed}ms: {Nodes} online nodes, {VMs} active VMs, " +
+                "{Users} users, {Usage} recent usage, {Images} images, {Tiers} pricing tiers",
+                elapsed, nodes.Count, vms.Count, users.Count, usageRecords.Count,
+                images.Count, tiers.Count);
+
+            // Log memory estimate
+            var estimatedMemoryMB = (nodes.Count * 5 + vms.Count * 10 +
+                                    usageRecords.Count * 2 + users.Count * 2) / 1024;
+            _logger.LogInformation(
+                "📊 Estimated memory usage: ~{Memory}MB (hot data only)",
+                estimatedMemoryMB);
         }
         catch (Exception ex)
         {
@@ -280,13 +309,94 @@ public class DataStore
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // NODE METHODS
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get node by ID - checks hot cache first, then queries MongoDB
+    /// </summary>
+    public async Task<Node?> GetNodeAsync(string nodeId)
+    {
+        // Try hot cache first (fast path)
+        if (ActiveNodes.TryGetValue(nodeId, out var cachedNode))
+        {
+            return cachedNode;
+        }
+
+        // Not in cache - query MongoDB (cold path)
+        if (!_useMongoDB) return null;
+
+        var node = await NodesCollection!
+            .Find(n => n.Id == nodeId)
+            .FirstOrDefaultAsync();
+
+        return node;
+    }
+
+    /// <summary>
+    /// Get all online nodes - returns in-memory collection (fast)
+    /// </summary>
+    public IEnumerable<Node> GetActiveNodes()
+    {
+        return ActiveNodes.Values;
+    }
+
+    /// <summary>
+    /// Get all nodes (including offline) - queries MongoDB
+    /// </summary>
+    public async Task<List<Node>> GetAllNodesAsync(NodeStatus? statusFilter = null)
+    {
+        if (!_useMongoDB) return ActiveNodes.Values.ToList();
+
+        var filter = statusFilter.HasValue
+            ? Builders<Node>.Filter.Eq(n => n.Status, statusFilter.Value)
+            : Builders<Node>.Filter.Empty;
+
+        return await NodesCollection!
+            .Find(filter)
+            .ToListAsync();
+    }
+
+    public async Task<List<Node>?> GetNodesByUser(string userId)
+    {
+        if (string.IsNullOrEmpty(userId)) return null;
+
+        if (!Users.TryGetValue(userId, out var user))
+        {
+            user = UsersCollection.Find(u => u.Id == userId).FirstOrDefault();
+        }
+
+        if (user == null) return null;
+
+        return ActiveNodes.Values
+            .Where(vm => vm.WalletAddress == user?.WalletAddress)
+            .ToList();
+    }
+
     /// <summary>
     /// Save or update a node (write-through to MongoDB with retry)
     /// </summary>
+    /// <summary>
+    /// Save node - writes to MongoDB and updates hot cache if online
+    /// </summary>
     public async Task SaveNodeAsync(Node node)
     {
-        Nodes[node.Id] = node;
+        // Determine if node is "hot" (online)
+        var isOnline = (DateTime.UtcNow - node.LastHeartbeat) < NodeOnlineThreshold;
 
+        if (isOnline)
+        {
+            // Hot node - keep in memory
+            ActiveNodes[node.Id] = node;
+        }
+        else
+        {
+            // Cold node - remove from memory if present
+            ActiveNodes.TryRemove(node.Id, out _);
+        }
+
+        // Always persist to MongoDB
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
@@ -304,7 +414,7 @@ public class DataStore
     /// </summary>
     public async Task DeleteNodeAsync(string nodeId)
     {
-        Nodes.TryRemove(nodeId, out _);
+        ActiveNodes.TryRemove(nodeId, out _);
 
         if (_useMongoDB)
         {
@@ -315,14 +425,102 @@ public class DataStore
         }
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // VM OPERATIONS - Hot/Cold Separation
+    // ════════════════════════════════════════════════════════════════════════
+
     /// <summary>
-    /// Save or update a VM (write-through to MongoDB with retry)
+    /// Get VM by ID - checks hot cache first, then queries MongoDB
+    /// </summary>
+    public async Task<VirtualMachine?> GetVmAsync(string vmId)
+    {
+        // Try hot cache first (active VMs)
+        if (ActiveVMs.TryGetValue(vmId, out var cachedVm))
+        {
+            return cachedVm;
+        }
+
+        // Not in cache - query MongoDB (stopped/deleted VMs)
+        if (!_useMongoDB) return null;
+
+        var vm = await VmsCollection!
+            .Find(v => v.Id == vmId)
+            .FirstOrDefaultAsync();
+
+        return vm;
+    }
+
+    public async Task<List<VirtualMachine>> GetAllVMsAsync()
+    {
+        if (!_useMongoDB) return ActiveVMs.Values.ToList();
+
+        return await VmsCollection!
+            .Find(_ => true)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Get all active VMs - returns in-memory collection (fast)
+    /// </summary>
+    public IEnumerable<VirtualMachine> GetActiveVMs()
+    {
+        return ActiveVMs.Values;
+    }
+
+    /// <summary>
+    /// Get VMs by owner - queries in-memory collection (fast)
+    /// </summary>
+    public async Task<List<VirtualMachine>> GetVmsByUserAsync(string ownerId)
+    {
+        return ActiveVMs.Values
+            .Where(vm => vm.OwnerId == ownerId)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Get VMs by owner - queries MongoDB (may include stopped VMs)
+    /// </summary>
+    public async Task<List<VirtualMachine>> GetVmsByUserAsync(string ownerId, VmStatus statusFilter)
+    {
+        return await VmsCollection!
+            .Find(vm => vm.OwnerId == ownerId && vm.Status == statusFilter)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Get all VMs by node, excluding deleted.
+    /// </summary>
+
+    public async Task<List<VirtualMachine>> GetVmsByNodeAsync(string nodeId)
+    {
+        return await VmsCollection!
+            .Find(vm => vm.NodeId == nodeId && vm.Status != VmStatus.Deleted)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Save VM - writes to MongoDB and updates hot cache if active
     /// </summary>
     public async Task SaveVmAsync(VirtualMachine vm)
     {
-        vm.UpdatedAt = DateTime.UtcNow;
-        VirtualMachines[vm.Id] = vm;
+        // Determine if VM is "hot" (active)
+        var isActive = vm.Status == VmStatus.Running ||
+                      vm.Status == VmStatus.Scheduling ||
+                      vm.Status == VmStatus.Provisioning ||
+                      vm.Status == VmStatus.Stopping;
 
+        if (isActive)
+        {
+            // Hot VM - keep in memory
+            ActiveVMs[vm.Id] = vm;
+        }
+        else
+        {
+            // Cold VM (Stopped/Deleted) - remove from memory
+            ActiveVMs.TryRemove(vm.Id, out _);
+        }
+
+        // Always persist to MongoDB
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
@@ -333,50 +531,6 @@ public class DataStore
                     new ReplaceOptions { IsUpsert = true });
             }, $"persist VM {vm.Id}");
         }
-    }
-
-    /// <summary>
-    /// Marks a VM state as Deleted (write-through to MongoDB)
-    /// </summary>
-    public async Task DeleteVmAsync(string vmId)
-    {
-        if (VirtualMachines.TryGetValue(vmId, out var vm))
-        {
-            vm.Status = VmStatus.Deleted;
-            vm.UpdatedAt = DateTime.UtcNow;
-
-            if (_useMongoDB)
-            {
-                await RetryMongoOperationAsync(async () =>
-                {
-                    await VmsCollection!.ReplaceOneAsync(
-                        v => v.Id == vmId,
-                        vm,
-                        new ReplaceOptions { IsUpsert = true });
-                }, $"mark VM {vmId} as deleted");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Asynchronously and permanently removes the virtual machine identified by the specified ID from the database and
-    /// in-memory cache.
-    /// </summary>
-    /// <remarks>This method deletes the virtual machine from both persistent storage and the in-memory cache.
-    /// Once removed, the virtual machine cannot be recovered through this API.</remarks>
-    /// <param name="vmId">The unique identifier of the virtual machine to remove. Cannot be null or empty.</param>
-    /// <returns>A task that represents the asynchronous remove operation.</returns>
-    public async Task RemoveVmAsync(string vmId)
-    {
-        var filter = Builders<VirtualMachine>.Filter.Eq(v => v.Id, vmId);
-        var result = await VmsCollection!.DeleteOneAsync(filter);
-
-        // Remove from in-memory cache
-        VirtualMachines.TryRemove(vmId, out _);
-
-        _logger.LogInformation(
-            "VM {VmId} permanently removed from database (DeletedCount: {Count})",
-            vmId, result.DeletedCount);
     }
 
     /// <summary>
@@ -466,15 +620,102 @@ public class DataStore
             .ToListAsync();
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // USAGE RECORDS - Database-First Queries
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get unpaid usage for user - queries MongoDB directly (scalable)
+    /// Uses MongoDB aggregation for optimal performance
+    /// </summary>
+    public async Task<decimal> GetUnpaidUsageAsync(string userId)
+    {
+        if (!_useMongoDB)
+        {
+            // Fallback to in-memory for development
+            return UnsettledUsage.Values
+                .Where(u => u.UserId == userId && !u.SettledOnChain)
+                .Sum(u => u.TotalCost);
+        }
+
+        // MongoDB aggregation (scales to millions of records)
+        var filter = Builders<UsageRecord>.Filter;
+        var query = filter.And(
+            filter.Eq(u => u.UserId, userId),
+            filter.Eq(u => u.SettledOnChain, false)
+        );
+
+        var result = await UsageRecordsCollection!
+            .Aggregate()
+            .Match(query)
+            .Group(new BsonDocument {
+                { "_id", BsonNull.Value },
+                { "total", new BsonDocument("$sum", "$TotalCost") }
+            })
+            .FirstOrDefaultAsync();
+
+        return result?["total"].AsDecimal ?? 0;
+    }
+
+    /// <summary>
+    /// Get usage history for user - queries MongoDB with pagination
+    /// </summary>
+    public async Task<List<UsageRecord>> GetUsageHistoryAsync(
+        string userId,
+        DateTime? fromDate = null,
+        DateTime? toDate = null,
+        int skip = 0,
+        int take = 100)
+    {
+        if (!_useMongoDB)
+        {
+            var query = UnsettledUsage.Values.Where(u => u.UserId == userId);
+            if (fromDate.HasValue) query = query.Where(u => u.CreatedAt >= fromDate.Value);
+            if (toDate.HasValue) query = query.Where(u => u.CreatedAt <= toDate.Value);
+            return query.OrderByDescending(u => u.CreatedAt).Skip(skip).Take(take).ToList();
+        }
+
+        // MongoDB query with proper indexes
+        var filterBuilder = Builders<UsageRecord>.Filter;
+        var filters = new List<FilterDefinition<UsageRecord>>
+        {
+            filterBuilder.Eq(u => u.UserId, userId)
+        };
+
+        if (fromDate.HasValue)
+            filters.Add(filterBuilder.Gte(u => u.CreatedAt, fromDate.Value));
+        if (toDate.HasValue)
+            filters.Add(filterBuilder.Lte(u => u.CreatedAt, toDate.Value));
+
+        var combinedFilter = filterBuilder.And(filters);
+
+        return await UsageRecordsCollection!
+            .Find(combinedFilter)
+            .SortByDescending(u => u.CreatedAt)
+            .Skip(skip)
+            .Limit(take)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Save usage record - always to MongoDB, optionally cache if recent
+    /// </summary>
     public async Task SaveUsageRecordAsync(UsageRecord record)
     {
-        UsageRecords[record.Id] = record;
+        // Cache recent unsettled usage in memory
+        if (!record.SettledOnChain &&
+            (DateTime.UtcNow - record.CreatedAt) < RecentUsageThreshold)
+        {
+            UnsettledUsage[record.Id] = record;
+        }
+
+        // Always persist to MongoDB
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
             {
                 await UsageRecordsCollection!.InsertOneAsync(record);
-            }, $"persist usage record {record.Id}", maxRetries: 2);
+            }, $"persist usage record {record.Id}");
         }
     }
 
@@ -502,7 +743,7 @@ public class DataStore
             // Sync nodes - bulk operation is safe here
             try
             {
-                var nodeUpdates = Nodes.Values.Select(node =>
+                var nodeUpdates = ActiveNodes.Values.Select(node =>
                     new ReplaceOneModel<Node>(
                         Builders<Node>.Filter.Eq(n => n.Id, node.Id),
                         node)
@@ -527,7 +768,7 @@ public class DataStore
             // Sync VMs - bulk operation is safe here
             try
             {
-                var vmUpdates = VirtualMachines.Values.Select(vm =>
+                var vmUpdates = ActiveVMs.Values.Select(vm =>
                     new ReplaceOneModel<VirtualMachine>(
                         Builders<VirtualMachine>.Filter.Eq(v => v.Id, vm.Id),
                         vm)
@@ -608,8 +849,8 @@ public class DataStore
                     "Full sync completed with errors in {Elapsed}ms. " +
                     "Nodes: {NodesOk}/{NodesTotal} | VMs: {VmsOk}/{VmsTotal} | Users: {UsersOk}/{UsersTotal}",
                     elapsed,
-                    syncResults.NodesSuccess, Nodes.Count,
-                    syncResults.VmsSuccess, VirtualMachines.Count,
+                    syncResults.NodesSuccess, ActiveNodes.Count,
+                    syncResults.VmsSuccess, ActiveVMs.Count,
                     syncResults.UsersSuccess, Users.Count);
             }
             else
@@ -631,22 +872,14 @@ public class DataStore
     }
 
     /// <summary>
-    /// Add an event to history (alias for SaveEventAsync for backwards compatibility)
-    /// </summary>
-    public async Task AddEvent(OrchestratorEvent evt)
-    {
-        await SaveEventAsync(evt);
-    }
-
-    /// <summary>
     /// Get system statistics
     /// </summary>
 
     public async Task<SystemStats> GetSystemStatsAsync()
     {
-        var nodes = Nodes.Values.ToList();
+        var nodes = ActiveNodes.Values.ToList();
         var onlineNodes = nodes.Where(n => n.Status == NodeStatus.Online).ToList();
-        var vms = VirtualMachines.Values.ToList();
+        var vms = GetActiveVMs().ToList();
 
         // ========================================
         // CALCULATE ACTUAL RESOURCE USAGE FROM VMs
@@ -719,35 +952,26 @@ public class DataStore
         string operationName,
         int maxRetries = 3)
     {
-        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        for (int i = 0; i < maxRetries; i++)
         {
             try
             {
                 await operation();
                 return;
             }
-            catch (MongoException ex) when (attempt < maxRetries)
-            {
-                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1));
-                _logger.LogWarning(ex,
-                    "MongoDB operation '{Operation}' failed (attempt {Attempt}/{Max}) - retrying in {Delay}ms",
-                    operationName, attempt, maxRetries, delay.TotalMilliseconds);
-
-                await Task.Delay(delay);
-            }
             catch (Exception ex)
             {
-                _logger.LogError(ex,
-                    "Failed to {Operation} to MongoDB (attempt {Attempt}/{Max})",
-                    operationName, attempt, maxRetries);
-
-                if (attempt == maxRetries)
+                if (i == maxRetries - 1)
                 {
-                    // Log but don't throw - in-memory update succeeded
-                    _logger.LogWarning(
-                        "MongoDB persistence failed for {Operation} - continuing with in-memory state only",
-                        operationName);
+                    _logger.LogError(ex, "Failed to {Operation} after {Retries} retries",
+                        operationName, maxRetries);
+                    throw;
                 }
+
+                var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, i));
+                _logger.LogWarning(ex, "Failed to {Operation}, retrying in {Delay}ms...",
+                    operationName, delay.TotalMilliseconds);
+                await Task.Delay(delay);
             }
         }
     }
@@ -762,10 +986,10 @@ public class DataStore
     /// </summary>
     public void AddPendingCommand(string nodeId, NodeCommand command)
     {
-        if (!PendingNodeCommands.TryGetValue(nodeId, out var queue))
+        if (!PendingCommands.TryGetValue(nodeId, out var queue))
         {
             queue = new ConcurrentQueue<NodeCommand>();
-            PendingNodeCommands[nodeId] = queue;
+            PendingCommands[nodeId] = queue;
         }
 
         queue.Enqueue(command);
@@ -785,15 +1009,6 @@ public class DataStore
                 "Command {CommandId} requires ack but has no TargetResourceId - cannot track!",
                 command.CommandId);
         }
-    }
-
-    // <summary>
-    /// Complete command acknowledgment and return the command
-    /// </summary>
-    public NodeCommand? CompleteCommandAck(string commandId)
-    {
-        PendingCommandAcks.TryRemove(commandId, out var command);
-        return command;
     }
 
     /// <summary>
@@ -843,48 +1058,9 @@ public class DataStore
         return result;
     }
 
-    /// <summary>
-    /// Get all stale commands (older than specified timeout).
-    /// </summary>
-    public List<CommandRegistration> GetStaleCommands(TimeSpan timeout)
-    {
-        var cutoff = DateTime.UtcNow - timeout;
-
-        return CommandRegistry.Values
-            .Where(r => r.IssuedAt < cutoff)
-            .ToList();
-    }
-
-    /// <summary>
-    /// Remove stale command registrations.
-    /// Returns the count of removed registrations.
-    /// </summary>
-    public int CleanupStaleCommands(TimeSpan timeout)
-    {
-        var cutoff = DateTime.UtcNow - timeout;
-        var staleIds = CommandRegistry
-            .Where(kvp => kvp.Value.IssuedAt < cutoff)
-            .Select(kvp => kvp.Key)
-            .ToList();
-
-        foreach (var id in staleIds)
-        {
-            CommandRegistry.TryRemove(id, out _);
-        }
-
-        if (staleIds.Count > 0)
-        {
-            _logger.LogWarning(
-                "Cleaned up {Count} stale command registrations (timeout: {Timeout})",
-                staleIds.Count, timeout);
-        }
-
-        return staleIds.Count;
-    }
-
     public List<NodeCommand> GetAndClearPendingCommands(string nodeId)
     {
-        if (!PendingNodeCommands.TryRemove(nodeId, out var queue))
+        if (!PendingCommands.TryRemove(nodeId, out var queue))
         {
             return new List<NodeCommand>();
         }

@@ -1,9 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Orchestrator.Persistence;
 using Orchestrator.Models;
-using Orchestrator.Services;
-using System.Net.Http.Json;
+using Orchestrator.Persistence;
 using System.Text.Json;
 
 namespace Orchestrator.Controllers;
@@ -52,9 +50,7 @@ public class IngressController : ControllerBase
         try
         {
             // Get user's VMs
-            var userVms = _dataStore.VirtualMachines.Values
-                .Where(vm => vm.OwnerId == userId || vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var userVms = await _dataStore.GetVmsByUserAsync(userId);
 
             if (userVms.Count == 0)
             {
@@ -70,7 +66,8 @@ public class IngressController : ControllerBase
             foreach (var nodeGroup in nodeVmMap)
             {
                 var nodeId = nodeGroup.Key;
-                if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+                var node = await _dataStore.GetNodeAsync(nodeId);
+                if (node == null)
                     continue;
 
                 var vmIds = nodeGroup.Select(vm => vm.Id).ToHashSet();
@@ -128,7 +125,8 @@ public class IngressController : ControllerBase
         }
 
         // Find VM and verify ownership
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<IngressListResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -144,7 +142,8 @@ public class IngressController : ControllerBase
         }
 
         // Get node and fetch ingress rules
-        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
         {
             return NotFound(ApiResponse<IngressListResponse>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
@@ -194,7 +193,8 @@ public class IngressController : ControllerBase
         }
 
         // Search across nodes for this ingress rule
-        foreach (var node in _dataStore.Nodes.Values.Where(n => n.Status == NodeStatus.Online))
+        var nodes = _dataStore.GetActiveNodes();
+        foreach (var node in nodes)
         {
             try
             {
@@ -207,7 +207,8 @@ public class IngressController : ControllerBase
                     if (ingress != null)
                     {
                         // Verify ownership via VM
-                        if (_dataStore.VirtualMachines.TryGetValue(ingress.VmId, out var vm))
+                        var vm = await _dataStore.GetVmAsync(ingress.VmId);
+                        if (vm != null)
                         {
                             if (vm.OwnerId != userId && !vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
                             {
@@ -249,7 +250,8 @@ public class IngressController : ControllerBase
         }
 
         // Find VM and verify ownership
-        if (!_dataStore.VirtualMachines.TryGetValue(request.VmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(request.VmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -272,7 +274,8 @@ public class IngressController : ControllerBase
         }
 
         // Get node
-        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
@@ -349,7 +352,8 @@ public class IngressController : ControllerBase
         }
 
         // Find VM to get node
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -358,8 +362,8 @@ public class IngressController : ControllerBase
         {
             return Forbid();
         }
-
-        if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
@@ -412,7 +416,8 @@ public class IngressController : ControllerBase
         }
 
         // Find VM to get node
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -422,7 +427,8 @@ public class IngressController : ControllerBase
             return Forbid();
         }
 
-        if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             return NotFound(ApiResponse<IngressOperationResult>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
@@ -463,14 +469,16 @@ public class IngressController : ControllerBase
     /// </summary>
     [HttpGet("dns-instructions")]
     [Authorize]
-    public ActionResult<ApiResponse<object>> GetDnsInstructions([FromQuery] string vmId)
+    public async Task<ActionResult<ApiResponse<object>>> GetDnsInstructions([FromQuery] string vmId)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<object>.Fail("VM_NOT_FOUND", "VM not found"));
         }
 
-        if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             return NotFound(ApiResponse<object>.Fail("NODE_NOT_FOUND", "VM is not assigned to a node"));
         }

@@ -69,7 +69,7 @@ public class AttestationSchedulerService : BackgroundService
         var latencyTracker = scope.ServiceProvider.GetRequiredService<INetworkLatencyTracker>();
 
         // Get all running VMs
-        var runningVms = dataStore.VirtualMachines.Values
+        var runningVms = dataStore.GetActiveVMs()
             .Where(vm => vm.Status == VmStatus.Running)
             .ToList();
 

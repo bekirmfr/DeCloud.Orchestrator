@@ -71,7 +71,7 @@ public class PaymentController : ControllerBase
             var balanceInfo = await _balanceService.GetBalanceInfoAsync(userId);
 
             // Get recent usage for display
-            var recentUsage = _dataStore.UsageRecords.Values
+            var recentUsage = _dataStore.UnsettledUsage.Values
                 .Where(u => u.UserId == userId)
                 .OrderByDescending(u => u.CreatedAt)
                 .Take(10)
@@ -123,7 +123,7 @@ public class PaymentController : ControllerBase
     {
         var userId = GetUserId();
 
-        var query = _dataStore.UsageRecords.Values
+        var query = _dataStore.UnsettledUsage.Values
             .Where(u => u.UserId == userId);
 
         if (!string.IsNullOrEmpty(vmId))

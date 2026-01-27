@@ -139,6 +139,7 @@ builder.Services.AddHostedService<NodeHealthMonitorService>();
 builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();
 builder.Services.AddHostedService<CleanupService>();
+builder.Services.AddHostedService<StatePruningService>();
 
 // Add MongoDB sync service if MongoDB is configured
 if (mongoDatabase != null)
@@ -345,7 +346,7 @@ if (mongoDatabase != null)
             {
                 logger.LogInformation("🔄 Initializing CentralIngress for running VMs...");
 
-                var runningVms = dataStore.VirtualMachines.Values
+                var runningVms = dataStore.GetActiveVMs()
                     .Where(vm => vm.Status == VmStatus.Running)
                     .ToList();
 

@@ -47,13 +47,14 @@ public class NodeSelfController : ControllerBase
     [ProducesResponseType(typeof(NodeSummaryResponse), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
-    public ActionResult<NodeSummaryResponse> GetSummary()
+    public async Task<ActionResult<NodeSummaryResponse>> GetSummary()
     {
         var nodeId = GetNodeIdFromToken();
         if (string.IsNullOrEmpty(nodeId))
             return Unauthorized("Invalid node token");
 
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
             return NotFound("Node not registered");
 
         return Ok(new NodeSummaryResponse
@@ -92,13 +93,14 @@ public class NodeSelfController : ControllerBase
     [ProducesResponseType(typeof(NodePerformanceEvaluation), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
-    public ActionResult<NodePerformanceEvaluation> GetEvaluation()
+    public async Task<ActionResult<NodePerformanceEvaluation>> GetEvaluation()
     {
         var nodeId = GetNodeIdFromToken();
         if (string.IsNullOrEmpty(nodeId))
             return Unauthorized("Invalid node token");
 
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
             return NotFound("Node not registered");
 
         if (node.PerformanceEvaluation == null)
@@ -120,16 +122,15 @@ public class NodeSelfController : ControllerBase
         if (string.IsNullOrEmpty(nodeId))
             return Unauthorized("Invalid node token");
 
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
             return NotFound("Node not registered");
 
         // Calculate capacity
         var capacity = await _capacityCalculator.CalculateTotalCapacityAsync(node, ct);
 
         // Get VMs allocated to this node
-        var vms = _dataStore.VirtualMachines.Values
-            .Where(v => v.NodeId == nodeId)
-            .ToList();
+        var vms = await _dataStore.GetVmsByNodeAsync(nodeId);
 
         var runningVms = vms.Where(v => v.Status == VmStatus.Running).ToList();
 
@@ -187,7 +188,8 @@ public class NodeSelfController : ControllerBase
         if (string.IsNullOrEmpty(nodeId))
             return Unauthorized("Invalid node token");
 
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
             return NotFound("Node not registered");
 
         _logger.LogInformation("Node {NodeId} requested re-evaluation", nodeId);

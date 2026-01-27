@@ -64,7 +64,7 @@ public class RelayHealthMonitor : BackgroundService
 
     private async Task CheckAllRelaysAsync(CancellationToken ct)
     {
-        var relayNodes = _dataStore.Nodes.Values
+        var relayNodes = _dataStore.GetActiveNodes()
             .Where(n => n.RelayInfo != null && 
                         n.RelayInfo.Status != RelayStatus.Initializing)
             .ToList();
@@ -137,7 +137,8 @@ public class RelayHealthMonitor : BackgroundService
                     // This ensures peers get re-added to relay VM after recovery
                     foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds.ToList())
                     {
-                        if (_dataStore.Nodes.TryGetValue(nodeId, out var node))
+                        var node = await _dataStore.GetNodeAsync(nodeId);
+                        if (node != null)
                         {
                             _logger.LogDebug(
                                 "Re-ensuring peer registration for node {NodeId} on recovered relay {RelayId}",
@@ -268,7 +269,8 @@ public class RelayHealthMonitor : BackgroundService
 
             foreach (var nodeId in relay.RelayInfo.ConnectedNodeIds.ToList())
             {
-                if (_dataStore.Nodes.TryGetValue(nodeId, out var node))
+                var node = await _dataStore.GetNodeAsync(nodeId);
+                if (node != null)
                 {
                     // Extract public key from WireGuard config
                     if (!string.IsNullOrEmpty(node.CgnatInfo?.WireGuardConfig))
@@ -373,7 +375,7 @@ public class RelayHealthMonitor : BackgroundService
             return;
         }
 
-        var affectedNodes = _dataStore.Nodes.Values
+        var affectedNodes = (await _dataStore.GetAllNodesAsync())
             .Where(n => n.CgnatInfo?.AssignedRelayNodeId == failedRelay.Id)
             .ToList();
 

@@ -20,7 +20,7 @@ public interface INetworkLatencyTracker
     /// <summary>
     /// Get network metrics for a VM
     /// </summary>
-    VmNetworkMetrics? GetMetrics(string vmId);
+    Task<VmNetworkMetrics?> GetMetricsAsync(string vmId);
 
     /// <summary>
     /// Update metrics after an attestation
@@ -68,7 +68,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// </summary>
     public async Task<double> CalibrateBaselineRttAsync(string vmId, CancellationToken ct = default)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("VM {VmId} not found for RTT calibration", vmId);
             return DEFAULT_RTT_MS;
@@ -125,7 +126,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// </summary>
     public async Task<double> MeasureRttAsync(string vmId, CancellationToken ct = default)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             throw new InvalidOperationException($"VM {vmId} not found");
         }
@@ -135,7 +137,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
             throw new InvalidOperationException($"VM {vmId} has no assigned node");
         }
 
-        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
         {
             throw new InvalidOperationException($"Node {vm.NodeId} not found");
         }
@@ -280,9 +283,10 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     /// <summary>
     /// Get network metrics for a VM
     /// </summary>
-    public VmNetworkMetrics? GetMetrics(string vmId)
+    public async Task<VmNetworkMetrics?> GetMetricsAsync(string vmId)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return null;
         }
@@ -299,7 +303,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
         double processingTimeMs,
         bool success)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("VM {VmId} not found, cannot update network metrics", vmId);
             return;
@@ -363,7 +368,8 @@ public class NetworkLatencyTracker : INetworkLatencyTracker
     {
         _logger.LogInformation("Re-calibrating baseline RTT for VM {VmId}", vmId);
 
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("VM {VmId} not found, cannot recalibrate", vmId);
             return;

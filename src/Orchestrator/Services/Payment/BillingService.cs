@@ -104,7 +104,7 @@ public class BillingService : BackgroundService
     /// </summary>
     public async Task EnqueueAllRunningVmsAsync()
     {
-        var runningVms = _dataStore.VirtualMachines.Values
+        var runningVms = _dataStore.GetActiveVMs()
             .Where(vm => vm.Status == VmStatus.Running)
             .ToList();
 
@@ -164,7 +164,8 @@ public class BillingService : BackgroundService
 
     private async Task ProcessVmBillingAsync(BillingEvent evt, CancellationToken ct)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(evt.VmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(evt.VmId);
+        if (vm == null)
         {
             _logger.LogWarning("VM {VmId} not found for billing", evt.VmId);
             return;

@@ -171,7 +171,9 @@ public class CentralIngressService : ICentralIngressService
         }
 
         // Get VM
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+
+        if (vm == null)
         {
             _logger.LogWarning("Cannot register route: VM {VmId} not found", vmId);
             return null;
@@ -191,7 +193,8 @@ public class CentralIngressService : ICentralIngressService
         }
 
         // Get node info
-        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
         {
             _logger.LogWarning("Node {NodeId} not found for VM {VmId}", vm.NodeId, vmId);
             return null;
@@ -250,7 +253,8 @@ public class CentralIngressService : ICentralIngressService
             _logger.LogInformation("Unregistered central ingress for VM {VmId}", vmId);
 
             // Update VM record
-            if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+            var vm = await _dataStore.GetVmAsync(vmId);
+            if (vm != null)
             {
                 if (vm.IngressConfig != null)
                 {
@@ -278,7 +282,8 @@ public class CentralIngressService : ICentralIngressService
         route.UpdatedAt = DateTime.UtcNow;
 
         // Update VM record
-        if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm) && vm.IngressConfig != null)
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm != null && vm.IngressConfig != null)
         {
             vm.IngressConfig.DefaultPort = port;
             await _dataStore.SaveVmAsync(vm);
@@ -377,7 +382,8 @@ public class CentralIngressService : ICentralIngressService
         if (!_routes.ContainsKey(vmId))
         {
             // Check if VM had ingress enabled before
-            if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+            var vm = await _dataStore.GetVmAsync(vmId);
+            if (vm != null)
             {
                 if (vm.IngressConfig?.DefaultSubdomainEnabled != false)
                 {

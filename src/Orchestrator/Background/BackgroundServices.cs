@@ -119,7 +119,6 @@ public class CleanupService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var dataStore = scope.ServiceProvider.GetRequiredService<Persistence.DataStore>();
                 
-                await CleanupDeletedVmsAsync(dataStore);
                 await TrimEventHistoryAsync(dataStore);
                 await CleanupStaleCommandAcks(dataStore);
                 await CleanupExpiredCommands(dataStore);
@@ -152,8 +151,9 @@ public class CleanupService : BackgroundService
                 command.CommandId, command.Type, command.TargetResourceId, command.Age.TotalSeconds);
 
             // Mark associated VM as error if it exists and is in a waiting state
+            var vm = await dataStore.GetVmAsync(command.TargetResourceId);
             if (!string.IsNullOrEmpty(command.TargetResourceId) &&
-                dataStore.VirtualMachines.TryGetValue(command.TargetResourceId, out var vm))
+                vm != null)
             {
                 if (vm.Status == VmStatus.Provisioning || vm.Status == VmStatus.Deleting)
                 {
@@ -185,7 +185,7 @@ public class CleanupService : BackgroundService
         var staleCommands = dataStore.PendingCommandAcks.Values
         .Where(cmd =>
             !string.IsNullOrEmpty(cmd.TargetResourceId) &&
-            !dataStore.VirtualMachines.ContainsKey(cmd.TargetResourceId))
+            !dataStore.GetActiveVMs().Select(v => v.Id).Contains(cmd.TargetResourceId))
         .Select(cmd => cmd.CommandId)
         .ToList();
 
@@ -199,25 +199,6 @@ public class CleanupService : BackgroundService
             _logger.LogInformation(
                 "Cleaned up {Count} stale command acknowledgment entries",
                 staleCommands.Count);
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private Task CleanupDeletedVmsAsync(Persistence.DataStore dataStore)
-    {
-        var cutoff = DateTime.UtcNow - _deletedRetention;
-        var toRemove = dataStore.VirtualMachines.Values
-            .Where(v => v.Status == Models.VmStatus.Deleted && v.UpdatedAt < cutoff)
-            .Select(v => v.Id)
-            .ToList();
-
-        foreach (var vmId in toRemove)
-        {
-            if (dataStore.VirtualMachines.TryRemove(vmId, out _))
-            {
-                _logger.LogInformation("Cleaned up deleted VM: {VmId}", vmId);
-            }
         }
 
         return Task.CompletedTask;

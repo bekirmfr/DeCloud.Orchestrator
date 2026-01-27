@@ -122,7 +122,7 @@ public class OrchestratorHub : Hub
     /// </summary>
     public async Task OpenTerminal(string vmId, string terminalType = "ssh")
     {
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null || string.IsNullOrEmpty(vm.NodeId))
         {
             await Clients.Caller.SendAsync("TerminalError", new { Message = "VM not found or not running" });
@@ -311,7 +311,7 @@ public class OrchestratorHub : Hub
     /// </summary>
     public async Task ReportVmAccessInfo(string vmId, VmAccessInfo accessInfo)
     {
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm != null)
         {
             vm.AccessInfo = accessInfo;

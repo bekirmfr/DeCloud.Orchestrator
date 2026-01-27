@@ -43,12 +43,14 @@ public class AttestationController : ControllerBase
         var userId = GetUserId();
 
         // Verify user owns this VM
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<AttestationStatusResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
 
-        if(!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
         {
             return NotFound(ApiResponse<AttestationStatusResponse>.Fail("NODE_NOT_FOUND", "Node not found"));
         }
@@ -90,7 +92,8 @@ public class AttestationController : ControllerBase
         var userId = GetUserId();
 
         // Verify user owns this VM
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<List<AttestationRecordResponse>>.Fail("NOT_FOUND", "VM not found"));
         }
@@ -127,7 +130,8 @@ public class AttestationController : ControllerBase
         var userId = GetUserId();
 
         // Verify user owns this VM
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<AttestationVerificationResult>.Fail("NOT_FOUND", "VM not found"));
         }
@@ -161,7 +165,7 @@ public class AttestationController : ControllerBase
     {
         var userId = GetUserId();
 
-        var userVms = _dataStore.VirtualMachines.Values
+        var userVms = _dataStore.GetActiveVMs()
             .Where(vm => vm.OwnerId == userId && vm.VmType != VmType.Relay)
             .ToList();
 

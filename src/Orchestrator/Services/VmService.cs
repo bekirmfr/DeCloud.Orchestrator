@@ -14,9 +14,7 @@ namespace Orchestrator.Services;
 public interface IVmService
 {
     Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null);
-    Task<VirtualMachine?> GetVmAsync(string vmId);
     Task<List<VirtualMachine>> GetVmsByUserAsync(string userId, VmStatus? statusFilter = null);
-    Task<List<VirtualMachine>> GetVmsByNodeAsync(string nodeId);
     Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams);
     Task<bool> PerformVmActionAsync(string vmId, VmAction action, string? userId = null);
 
@@ -158,7 +156,8 @@ public class VmService : IVmService
 
     public async Task<bool> SecurePasswordAsync(string vmId, string userId, string encryptedPassword)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
             return false;
 
         if (vm.OwnerId != userId)
@@ -172,36 +171,20 @@ public class VmService : IVmService
         return true;
     }
 
-    public Task<VirtualMachine?> GetVmAsync(string vmId)
+    public async Task<List<VirtualMachine>> GetVmsByUserAsync(string userId, VmStatus? statusFilter = null)
     {
-        _dataStore.VirtualMachines.TryGetValue(vmId, out var vm);
-        return Task.FromResult(vm);
-    }
-
-    public Task<List<VirtualMachine>> GetVmsByUserAsync(string userId, VmStatus? statusFilter = null)
-    {
-        var vms = _dataStore.VirtualMachines.Values
-            .Where(v => v.OwnerId == userId)
+        var userVms = await _dataStore.GetVmsByUserAsync(userId);
+        var vms = userVms
             .Where(v => !statusFilter.HasValue || v.Status == statusFilter.Value)
             .OrderByDescending(v => v.CreatedAt)
-            .ToList();
+            .ToList() ?? [];
 
-        return Task.FromResult(vms);
+        return vms;
     }
 
-    public Task<List<VirtualMachine>> GetVmsByNodeAsync(string nodeId)
+    public async Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams)
     {
-        var vms = _dataStore.VirtualMachines.Values
-            .Where(v => v.NodeId == nodeId)
-            .Where(v => v.Status != VmStatus.Deleted)
-            .ToList();
-
-        return Task.FromResult(vms);
-    }
-
-    public Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams)
-    {
-        var query = _dataStore.VirtualMachines.Values.AsEnumerable();
+        var query = (await _dataStore.GetAllVMsAsync()).AsEnumerable();
 
         if (!string.IsNullOrEmpty(userId))
         {
@@ -245,10 +228,10 @@ public class VmService : IVmService
         // This keeps all network information properly organized in one object
         // ========================================================================
 
-        var items = vmsWithPagination.Select(v =>
+        var itemTasks = vmsWithPagination.Select(async v =>
         {
             // Clone the existing network config to avoid modifying the original
-            var enrichedNetworkConfig = new VmNetworkConfig
+            var networkConfig = new VmNetworkConfig
             {
                 IsIpAssigned = v.NetworkConfig.IsIpAssigned,
                 PrivateIp = v.NetworkConfig.PrivateIp,
@@ -267,28 +250,27 @@ public class VmService : IVmService
             // Populate node connection details if VM is assigned to a node
             if (!string.IsNullOrEmpty(v.NodeId))
             {
-                if (_dataStore.Nodes.TryGetValue(v.NodeId, out var node))
+                var node = await _dataStore.GetNodeAsync(v.NodeId);
+                if (node != null)
                 {
                     // ============================================================
                     // SECURITY: Only expose what's needed for connection
                     // ============================================================
-                    enrichedNetworkConfig.SshJumpHost = node.PublicIp;
-                    enrichedNetworkConfig.SshJumpPort = 2222; // Standard SSH port
-                    enrichedNetworkConfig.NodeAgentHost = node.PublicIp;
-                    enrichedNetworkConfig.NodeAgentPort = node.AgentPort > 0 ? node.AgentPort : 5100;
+                    networkConfig.SshJumpHost = node.PublicIp;
+                    networkConfig.SshJumpPort = 2222; // Standard SSH port
+                    networkConfig.NodeAgentHost = node.PublicIp;
+                    networkConfig.NodeAgentPort = node.AgentPort > 0 ? node.AgentPort : 5100;
 
                     _logger.LogDebug(
                         "VM {VmId} on node {NodeId}: SSH={SshHost}:{SshPort}, Agent={AgentHost}:{AgentPort}",
                         v.Id, v.NodeId,
-                        enrichedNetworkConfig.SshJumpHost, enrichedNetworkConfig.SshJumpPort,
-                        enrichedNetworkConfig.NodeAgentHost, enrichedNetworkConfig.NodeAgentPort);
+                        networkConfig.SshJumpHost, networkConfig.SshJumpPort,
+                        networkConfig.NodeAgentHost, networkConfig.NodeAgentPort);
                 }
-                else
-                {
-                    _logger.LogWarning(
+
+                _logger.LogWarning(
                         "VM {VmId} references non-existent node {NodeId} - connection details unavailable",
                         v.Id, v.NodeId);
-                }
             }
 
             return new VmSummary(
@@ -297,27 +279,30 @@ public class VmService : IVmService
                 Status: v.Status,
                 PowerState: v.PowerState,
                 NodeId: v.NodeId,
-                NodePublicIp: enrichedNetworkConfig.SshJumpHost,
-                NodeAgentPort: enrichedNetworkConfig.NodeAgentPort,
+                NodePublicIp: networkConfig.SshJumpHost,
+                NodeAgentPort: networkConfig.NodeAgentPort,
                 Spec: v.Spec,
-                NetworkConfig: enrichedNetworkConfig,  // <-- Enhanced with node connection details
+                NetworkConfig: networkConfig,
                 CreatedAt: v.CreatedAt,
                 UpdatedAt: v.UpdatedAt
             );
-        }).ToList();
+        });
 
-        return Task.FromResult(new PagedResult<VmSummary>
+        var items = await Task.WhenAll(itemTasks);
+
+        return new PagedResult<VmSummary>
         {
-            Items = items,
+            Items = items.ToList(),
             TotalCount = totalCount,
             Page = queryParams.Page,
             PageSize = queryParams.PageSize
-        });
+        };
     }
 
     public async Task<bool> PerformVmActionAsync(string vmId, VmAction action, string? userId = null)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
             return false;
 
         if (userId != null && vm.OwnerId != userId)
@@ -377,7 +362,8 @@ public class VmService : IVmService
 
     public async Task<bool> DeleteVmAsync(string vmId, string? userId = null)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("DeleteVm called for non-existent VM {VmId}", vmId);
             return false;
@@ -483,7 +469,8 @@ public class VmService : IVmService
     /// </summary>
     private async Task CompleteVmDeletionAsync(string vmId)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("VM {VmId} not found for deletion", vmId);
             return;
@@ -505,8 +492,9 @@ public class VmService : IVmService
         // ========================================
 
         // Free reserved resources from node
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
         if (!string.IsNullOrEmpty(vm.NodeId) &&
-            _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+            vm != null)
         {
             var cpuToFree = vm.Spec.VirtualCpuCores;
             var memToFree = vm.Spec.MemoryBytes;
@@ -570,7 +558,8 @@ public class VmService : IVmService
 
     public async Task<bool> UpdateVmStatusAsync(string vmId, VmStatus status, string? message = null)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
             return false;
 
         var oldStatus = vm.Status;
@@ -598,7 +587,8 @@ public class VmService : IVmService
 
     public async Task<bool> UpdateVmMetricsAsync(string vmId, VmMetrics metrics)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
             return false;
 
         vm.LatestMetrics = metrics;
@@ -649,7 +639,7 @@ public class VmService : IVmService
         if (!string.IsNullOrEmpty(targetNodeId))
         {
             // Use specified node (for relay VMs)
-            selectedNode = await _nodeService.GetNodeAsync(targetNodeId);
+            selectedNode = await _dataStore.GetNodeAsync(targetNodeId);
             _logger.LogInformation(
                 "Using target node {NodeId} for VM {VmId} (relay deployment)",
                 targetNodeId, vm.Id);

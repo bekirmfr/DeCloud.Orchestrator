@@ -86,7 +86,7 @@ public class AttestationService : IAttestationService
 
     private void LoadAttestationStatsFromDatabase()
     {
-        var vmsWithStats = _dataStore.VirtualMachines.Values
+        var vmsWithStats = _dataStore.GetActiveVMs()
             .Where(vm => vm.AttestationStats != null)
             .ToList();
 
@@ -113,7 +113,8 @@ public class AttestationService : IAttestationService
         var result = new AttestationVerificationResult();
 
         // Get VM details
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             result.Errors.Add("VM not found");
             return result;
@@ -126,7 +127,8 @@ public class AttestationService : IAttestationService
         }
 
         // Get node
-        if (string.IsNullOrEmpty(vm.NodeId) || !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             result.Errors.Add("Node not found");
             return result;
@@ -144,7 +146,7 @@ public class AttestationService : IAttestationService
         // =====================================================
 
         // Get network metrics for this VM
-        var networkMetrics = _latencyTracker.GetMetrics(vmId);
+        var networkMetrics = await _latencyTracker.GetMetricsAsync(vmId);
 
         double adaptiveTimeout;
         double expectedNetworkRtt;
@@ -190,7 +192,8 @@ public class AttestationService : IAttestationService
                 var baselineRtt = await _latencyTracker.CalibrateBaselineRttAsync(vm.Id, ct);
 
                 // Update VM with calibrated RTT
-                if (_dataStore.VirtualMachines.TryGetValue(vm.Id, out var currentVm))
+                var currentVm = await _dataStore.GetVmAsync(vm.Id);
+                if (currentVm != null)
                 {
                     if (currentVm.NetworkMetrics != null)
                     {
@@ -714,12 +717,13 @@ public class AttestationService : IAttestationService
 
     private async Task RecordSuccessAsync(string vmId, string bootId, string machineId)
     {
+        var vm = await _dataStore.GetVmAsync(vmId);
         lock (_stateLock)
         {
             if (!_livenessStates.TryGetValue(vmId, out var state))
             {
                 // Try to load from VM document first
-                if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm) &&
+                if (vm != null &&
                     vm.AttestationStats != null)
                 {
                     state = vm.AttestationStats;
@@ -758,12 +762,13 @@ public class AttestationService : IAttestationService
 
     private async Task RecordFailureAsync(string vmId, string reason)
     {
+        var vm = await _dataStore.GetVmAsync(vmId);
         lock (_stateLock)
         {
             if (!_livenessStates.TryGetValue(vmId, out var state))
             {
                 // Try to load from VM document first
-                if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm) &&
+                if (vm != null &&
                     vm.AttestationStats != null)
                 {
                     state = vm.AttestationStats;
@@ -801,7 +806,8 @@ public class AttestationService : IAttestationService
     /// </summary>
     private async Task PersistAttestationStatsAsync(string vmId)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             _logger.LogWarning("Cannot persist attestation stats - VM {VmId} not found", vmId);
             return;
@@ -859,14 +865,15 @@ public class AttestationService : IAttestationService
         await _dataStore.SaveAttestationAsync(record);
     }
 
-    private string? GetVmAttestationAddress(VirtualMachine vm)
+    private async Task<string?> GetVmAttestationAddress(VirtualMachine vm)
     {
         // Try direct IP first
         if (!string.IsNullOrEmpty(vm.NetworkConfig?.PrivateIp))
         {
             // If VM is on a CGNAT node, we need to go through the node
+            var node = await _dataStore.GetNodeAsync(vm.NodeId);
             if (!string.IsNullOrEmpty(vm.NodeId) &&
-                _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+                node != null)
             {
                 // Use node's public IP to reach the VM via port forwarding
                 if (!string.IsNullOrEmpty(node.PublicIp))
@@ -950,10 +957,13 @@ public class AttestationService : IAttestationService
         string nodeAgentUrl,
         CancellationToken ct)
     {
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+
+        if (vm == null)
             return false;
 
-        if (!_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
             return false;
 
         var healthUrl = $"{nodeAgentUrl}/api/vms/{vmId}/proxy/http/9999/health";

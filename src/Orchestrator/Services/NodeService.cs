@@ -10,6 +10,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Orchestrator.Services;
 
@@ -24,11 +25,8 @@ public interface INodeService
         string nodeId,
         string commandId,
         CommandAcknowledgment ack);
-    Task<Node?> GetNodeAsync(string nodeId);
-    Task<List<Node>> GetAllNodesAsync(NodeStatus? statusFilter = null);
 
     Task<bool> UpdateNodeStatusAsync(string nodeId, NodeStatus status);
-    Task<bool> RemoveNodeAsync(string nodeId);
     Task CheckNodeHealthAsync();
     /// <summary>
     /// Request node to sign an SSH certificate using its CA
@@ -374,7 +372,8 @@ public class NodeService : INodeService
     public async Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat,
     CancellationToken ct = default)
     {
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
         {
             return new NodeHeartbeatResponse(false, null, null, null);
         }
@@ -494,7 +493,8 @@ public class NodeService : INodeService
         // Strategy 1: Command Registry (most reliable)
         if (_dataStore.TryCompleteCommand(commandId, out registration))
         {
-            if (_dataStore.VirtualMachines.TryGetValue(registration!.VmId, out affectedVm))
+            var affectedm = await _dataStore.GetVmAsync(registration!.VmId);
+            if (affectedVm != null)
             {
                 lookupMethod = "command_registry";
                 _logger.LogDebug(
@@ -512,9 +512,8 @@ public class NodeService : INodeService
         // Strategy 2: VM's ActiveCommandId field (backup)
         if (affectedVm == null)
         {
-            affectedVm = _dataStore.VirtualMachines.Values
-                .FirstOrDefault(vm =>
-                    vm.NodeId == nodeId &&
+            var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+            affectedVm = nodeVms.FirstOrDefault(vm =>
                     vm.ActiveCommandId == commandId);
 
             if (affectedVm != null)
@@ -529,9 +528,9 @@ public class NodeService : INodeService
         // Strategy 3: StatusMessage contains commandId (legacy fallback)
         if (affectedVm == null)
         {
-            affectedVm = _dataStore.VirtualMachines.Values
+            var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+            affectedVm = nodeVms
                 .FirstOrDefault(vm =>
-                    vm.NodeId == nodeId &&
                     vm.StatusMessage != null &&
                     vm.StatusMessage.Contains(commandId));
 
@@ -548,9 +547,8 @@ public class NodeService : INodeService
         // Strategy 4: For DeleteVm commands, try to find VM in Deleting status on this node
         if (affectedVm == null && registration?.CommandType == NodeCommandType.DeleteVm)
         {
-            affectedVm = _dataStore.VirtualMachines.Values
-                .FirstOrDefault(vm =>
-                    vm.NodeId == nodeId &&
+            var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+            affectedVm = nodeVms.FirstOrDefault(vm =>
                     vm.Status == VmStatus.Deleting);
 
             if (affectedVm != null)
@@ -754,8 +752,9 @@ public class NodeService : INodeService
         await _dataStore.SaveVmAsync(vm);
 
         // Step 2: Free reserved resources from node
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
         if (!string.IsNullOrEmpty(vm.NodeId) &&
-            _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+            node != null)
         {
             var computePointsToFree = vm.Spec.ComputePointCost;
             var memToFree = vm.Spec.MemoryBytes;
@@ -888,13 +887,13 @@ public class NodeService : INodeService
             // Get tracked relay (what orchestrator thinks node is assigned to)
             if (!string.IsNullOrEmpty(node.CgnatInfo?.AssignedRelayNodeId))
             {
-                _dataStore.Nodes.TryGetValue(node.CgnatInfo.AssignedRelayNodeId, out trackedRelayNode);
+                trackedRelayNode = await _dataStore.GetNodeAsync(node.CgnatInfo.AssignedRelayNodeId);
             }
 
             // Get reported relay (what node reports in heartbeat)
             if (!string.IsNullOrEmpty(heartbeatCgnatInfo?.AssignedRelayNodeId))
             {
-                _dataStore.Nodes.TryGetValue(heartbeatCgnatInfo.AssignedRelayNodeId, out reportedRelayNode);
+                reportedRelayNode = await _dataStore.GetNodeAsync(heartbeatCgnatInfo.AssignedRelayNodeId);
             }
 
             _logger.LogDebug(
@@ -945,7 +944,7 @@ public class NodeService : INodeService
             // ========================================
             // STEP 5: Verify Current Assignment is Still Valid
             // ========================================
-            if (!IsRelayValid(trackedRelayNode.Id))
+            if (!await IsRelayValidAsync(trackedRelayNode.Id))
             {
                 _logger.LogWarning(
                     "Assigned relay {RelayId} for CGNAT node {NodeId} is no longer valid - finding replacement",
@@ -1011,7 +1010,7 @@ public class NodeService : INodeService
         // Try to use what the node reports if valid
         if (reportedRelayNode != null &&
             heartbeatCgnatInfo != null &&
-            IsRelayValid(reportedRelayNode.Id) &&
+            await IsRelayValidAsync(reportedRelayNode.Id) &&
             await ValidateNodeIsKnownToRelay(node, reportedRelayNode))
         {
             _logger.LogInformation(
@@ -1047,7 +1046,7 @@ public class NodeService : INodeService
         // This prevents duplicate peer accumulation on relay VMs
         // ========================================
 
-        if (IsRelayValid(trackedRelayNode.Id))
+        if (await IsRelayValidAsync(trackedRelayNode.Id))
         {
             // Check if node has existing tunnel IP and config
             if (!string.IsNullOrEmpty(node.CgnatInfo?.TunnelIp))
@@ -1111,7 +1110,7 @@ public class NodeService : INodeService
         await _relayNodeService.RemoveCgnatNodeFromRelayAsync(node, trackedRelayNode, ct);
 
         // Check if reported relay is valid and recognizes this node
-        if (IsRelayValid(reportedRelayNode.Id) &&
+        if (await IsRelayValidAsync(reportedRelayNode.Id) &&
             await ValidateNodeIsKnownToRelay(node, reportedRelayNode))
         {
             _logger.LogInformation(
@@ -1143,12 +1142,13 @@ public class NodeService : INodeService
     /// Validate that a relay node and its VM are in acceptable state
     /// CHANGE: Accept Degraded status - it might just be tunnel issue
     /// </summary>
-    private bool IsRelayValid(string relayNodeId)
+    private async Task<bool> IsRelayValidAsync(string relayNodeId)
     {
         if (string.IsNullOrEmpty(relayNodeId))
             return false;
 
-        if (!_dataStore.Nodes.TryGetValue(relayNodeId, out var relayNode) || relayNode == null)
+        var relayNode = await _dataStore.GetNodeAsync(relayNodeId);
+        if (relayNode == null)
             return false;
 
         if (relayNode.Status != NodeStatus.Online)
@@ -1168,8 +1168,8 @@ public class NodeService : INodeService
         if (string.IsNullOrEmpty(relayNode.RelayInfo.RelayVmId))
             return false;
 
-        if (!_dataStore.VirtualMachines.TryGetValue(
-            relayNode.RelayInfo.RelayVmId, out var relayVm) || relayVm == null)
+        var relayVm = await _dataStore.GetVmAsync(relayNode.RelayInfo.RelayVmId);
+        if (relayVm == null)
             return false;
 
         if (relayVm.Status != VmStatus.Running)
@@ -1213,18 +1213,17 @@ public class NodeService : INodeService
         if (heartbeat.ActiveVms == null || !heartbeat.ActiveVms.Any())
             return;
 
-        var knownVmIds = _dataStore.VirtualMachines.Values
-            .Where(v => v.NodeId == nodeId)
-            .Select(v => v.Id)
-            .ToHashSet();
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        var knownVmIds = nodeVms.Select(v => v.Id).ToHashSet();
 
-        var node = await GetNodeAsync(nodeId);
+        var node = await _dataStore.GetNodeAsync(nodeId);
 
         foreach (var reported in heartbeat.ActiveVms)
         {
             var vmId = reported.VmId;
 
-            if (_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+            var vm = await _dataStore.GetVmAsync(vmId);
+            if (vm != null)
             {
                 // Update existing VM state
                 var newStatus = ParseVmStatus(reported.State);
@@ -1409,7 +1408,7 @@ public class NodeService : INodeService
     {
         try
         {
-            var node = await GetNodeAsync(nodeId);
+            var node = await _dataStore.GetNodeAsync(nodeId);
             if (node == null)
             {
                 _logger.LogWarning("Node {NodeId} not found for certificate signing", nodeId);
@@ -1487,7 +1486,7 @@ public class NodeService : INodeService
     {
         try
         {
-            var node = await GetNodeAsync(nodeId);
+            var node = await _dataStore.GetNodeAsync(nodeId);
             if (node == null)
             {
                 _logger.LogWarning("Node {NodeId} not found for SSH key injection", nodeId);
@@ -1538,39 +1537,15 @@ public class NodeService : INodeService
     // Simple Getters
     // ============================================================================
 
-    public Task<Node?> GetNodeAsync(string nodeId)
-    {
-        _dataStore.Nodes.TryGetValue(nodeId, out var node);
-        return Task.FromResult(node);
-    }
-
-    public Task<List<Node>> GetAllNodesAsync(NodeStatus? statusFilter = null)
-    {
-        var nodes = _dataStore.Nodes.Values
-            .Where(n => !statusFilter.HasValue || n.Status == statusFilter.Value)
-            .OrderBy(n => n.Name)
-            .ToList();
-
-        return Task.FromResult(nodes);
-    }
 
     public async Task<bool> UpdateNodeStatusAsync(string nodeId, NodeStatus status)
     {
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
             return false;
 
         node.Status = status;
         await _dataStore.SaveNodeAsync(node);
-        return true;
-    }
-
-    public async Task<bool> RemoveNodeAsync(string nodeId)
-    {
-        if (!_dataStore.Nodes.TryGetValue(nodeId, out var node))
-            return false;
-
-        await _dataStore.DeleteNodeAsync(nodeId);
-        _logger.LogInformation("Node removed: {NodeId} ({Name})", nodeId, node.Name);
         return true;
     }
 
@@ -1583,7 +1558,7 @@ public class NodeService : INodeService
         var heartbeatTimeout = TimeSpan.FromMinutes(2);
         var now = DateTime.UtcNow;
 
-        var onlineNodes = _dataStore.Nodes.Values
+        var onlineNodes = _dataStore.GetActiveNodes()
             .Where(n => n.Status == NodeStatus.Online)
             .ToList();
 
@@ -1619,8 +1594,9 @@ public class NodeService : INodeService
 
     private async Task MarkNodeVmsAsErrorAsync(string nodeId)
     {
-        var nodeVms = _dataStore.VirtualMachines.Values
-            .Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        
+        nodeVms = nodeVms.Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
             .ToList();
 
         foreach (var vm in nodeVms)

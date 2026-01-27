@@ -159,9 +159,7 @@ public class VmSchedulingService : IVmSchedulingService
         string? requiredArchitecture = null,
         CancellationToken ct = default)
     {
-        var allNodes = _dataStore.Nodes.Values
-            .Where(n => n.Status == NodeStatus.Online)
-            .ToList();
+        var allNodes = await _dataStore.GetAllNodesAsync(NodeStatus.Online);
 
         _logger.LogInformation("Scoring {Count} online nodes", allNodes.Count);
 

@@ -49,7 +49,8 @@ public class CentralIngressController : ControllerBase
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
 
         // Get VM and verify ownership
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<VmIngressResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -63,7 +64,8 @@ public class CentralIngressController : ControllerBase
         var route = await _ingressService.GetRouteAsync(vmId);
         string? nodePublicIp = null;
 
-        if (!string.IsNullOrEmpty(vm.NodeId) && _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (!string.IsNullOrEmpty(vm.NodeId) && node != null)
         {
             nodePublicIp = node.PublicIp;
         }
@@ -93,7 +95,8 @@ public class CentralIngressController : ControllerBase
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
 
         // Validate
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<VmIngressResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -126,7 +129,8 @@ public class CentralIngressController : ControllerBase
         }
 
         string? nodePublicIp = null;
-        if (!string.IsNullOrEmpty(vm.NodeId) && _dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (!string.IsNullOrEmpty(vm.NodeId) && node != null)
         {
             nodePublicIp = node.PublicIp;
         }
@@ -153,7 +157,8 @@ public class CentralIngressController : ControllerBase
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
 
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<VmIngressResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -191,7 +196,8 @@ public class CentralIngressController : ControllerBase
     {
         var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
 
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<VmIngressResponse>.Fail("VM_NOT_FOUND", "VM not found"));
         }
@@ -271,14 +277,15 @@ public class CentralIngressController : ControllerBase
     /// </summary>
     [HttpGet("preview/{vmId}")]
     [Authorize]
-    public ActionResult<ApiResponse<object>> PreviewSubdomain(string vmId)
+    public async Task<ActionResult<ApiResponse<object>>> PreviewSubdomain(string vmId)
     {
         if (!_ingressService.IsEnabled)
         {
             return BadRequest(ApiResponse<object>.Fail("INGRESS_DISABLED", "Central ingress not enabled"));
         }
 
-        if (!_dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             return NotFound(ApiResponse<object>.Fail("VM_NOT_FOUND", "VM not found"));
         }

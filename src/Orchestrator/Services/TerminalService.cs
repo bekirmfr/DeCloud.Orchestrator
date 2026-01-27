@@ -66,7 +66,7 @@ public class TerminalService : ITerminalService
             vmId, userId);
 
         // Validate VM
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null)
         {
             return TerminalAccessResult.Fail("VM not found");
@@ -88,8 +88,9 @@ public class TerminalService : ITerminalService
         }
 
         // Get the node
+        var node = await _dataStore.GetNodeAsync(vmId);
         if (string.IsNullOrEmpty(vm.NodeId) ||
-            !_dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+            node == null)
         {
             return TerminalAccessResult.Fail("Node not available");
         }
@@ -219,7 +220,8 @@ public class TerminalService : ITerminalService
         // Try to remove the ephemeral key from the VM
         try
         {
-            if (!_dataStore.Nodes.TryGetValue(session.NodeId, out var node))
+            var node = await _dataStore.GetNodeAsync(session.NodeId);
+            if (node == null)
             {
                 return true; // Session removed, but can't cleanup key
             }

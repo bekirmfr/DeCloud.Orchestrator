@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
 using Orchestrator.Services;
 
 namespace Orchestrator.Controllers;
@@ -13,15 +14,18 @@ public class VmsController : ControllerBase
 {
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
+    private readonly DataStore _dataStore;
     private readonly ILogger<VmsController> _logger;
 
     public VmsController(
         IVmService vmService,
         INodeService nodeService,
+        DataStore dataStore,
         ILogger<VmsController> logger)
     {
         _vmService = vmService;
         _nodeService = nodeService;
+        _dataStore = dataStore;
         _logger = logger;
     }
 
@@ -87,7 +91,7 @@ public class VmsController : ControllerBase
     public async Task<ActionResult<ApiResponse<VmDetailResponse>>> Get(string vmId)
     {
         var userId = GetUserId();
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
 
         if (vm == null)
         {
@@ -117,7 +121,7 @@ public class VmsController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> Action(string vmId, [FromBody] VmActionRequest request)
     {
         var userId = GetUserId();
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
 
         if (vm == null)
         {
@@ -164,7 +168,7 @@ public class VmsController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> Delete(string vmId)
     {
         var userId = GetUserId();
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
 
         if (vm == null)
         {
@@ -192,7 +196,7 @@ public class VmsController : ControllerBase
     public async Task<ActionResult<ApiResponse<VmMetrics>>> GetMetrics(string vmId)
     {
         var userId = GetUserId();
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
 
         if (vm == null)
         {
@@ -219,7 +223,7 @@ public class VmsController : ControllerBase
     public async Task<ActionResult<ApiResponse<VmConsoleResponse>>> GetConsole(string vmId)
     {
         var userId = GetUserId();
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
 
         if (vm == null)
         {
@@ -280,7 +284,7 @@ public class VmsController : ControllerBase
         if (string.IsNullOrEmpty(userId))
             return Unauthorized();
 
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null || vm.OwnerId != userId)
             return NotFound();
 

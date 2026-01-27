@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
 using Orchestrator.Services;
 
 namespace Orchestrator.Controllers;
@@ -17,6 +18,7 @@ public class SshCertificateController : ControllerBase
     private readonly ISshCertificateService _certificateService;
     private readonly IVmService _vmService;
     private readonly IUserService _userService;
+    private readonly DataStore _dataStore;
     private readonly IWalletSshKeyService _walletSshKeyService;
     private readonly INodeService _nodeService;
     private readonly ILogger<SshCertificateController> _logger;
@@ -25,6 +27,7 @@ public class SshCertificateController : ControllerBase
         ISshCertificateService certificateService,
         IVmService vmService,
         IUserService userService,
+        DataStore dataStore,
         IWalletSshKeyService walletSshKeyService,
         INodeService nodeService,
         ILogger<SshCertificateController> logger)
@@ -32,6 +35,7 @@ public class SshCertificateController : ControllerBase
         _certificateService = certificateService;
         _vmService = vmService;
         _userService = userService;
+        _dataStore = dataStore;
         _walletSshKeyService = walletSshKeyService;
         _nodeService = nodeService;
         _logger = logger;
@@ -69,7 +73,7 @@ public class SshCertificateController : ControllerBase
                     "USER_NOT_FOUND", "User not found"));
             }
 
-            var vm = await _vmService.GetVmAsync(vmId);
+            var vm = await _dataStore.GetVmAsync(vmId);
             if (vm == null)
             {
                 return NotFound(ApiResponse<SshCertificateResponse>.Fail(
@@ -120,7 +124,7 @@ public class SshCertificateController : ControllerBase
             var nodeIp = "";
             if (!string.IsNullOrEmpty(vm.NodeId))
             {
-                var node = await _nodeService.GetNodeAsync(vm.NodeId);
+                var node = await _dataStore.GetNodeAsync(vm.NodeId);
                 nodeIp = node?.PublicIp ?? "";
             }
 
@@ -198,7 +202,7 @@ public class SshCertificateController : ControllerBase
             return Unauthorized();
         }
 
-        var vm = await _vmService.GetVmAsync(vmId);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null || vm.OwnerId != userId)
         {
             return NotFound();
@@ -211,7 +215,7 @@ public class SshCertificateController : ControllerBase
         var nodeIp = "";
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
-            var node = await _nodeService.GetNodeAsync(vm.NodeId);
+            var node = await _dataStore.GetNodeAsync(vm.NodeId);
             nodeIp = node?.PublicIp ?? "";
         }
 

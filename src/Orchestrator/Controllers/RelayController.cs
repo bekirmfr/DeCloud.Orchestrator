@@ -41,7 +41,7 @@ public class RelayController : ControllerBase
         // =====================================================
         // STEP 1: Verify relay VM exists
         // =====================================================
-        var node = await _nodeService.GetNodeAsync(notification.NodeId);
+        var node = await _dataStore.GetNodeAsync(notification.NodeId);
 
         if (node?.RelayInfo?.RelayVmId != notification.RelayVmId)
         {
@@ -141,7 +141,8 @@ public class RelayController : ControllerBase
         var routes = new List<VmRouteInfo>();
 
         // Find all CGNAT nodes assigned to this relay
-        var cgnatNodes = _dataStore.Nodes.Values
+        var allNodes = await _dataStore.GetAllNodesAsync();
+        var cgnatNodes = allNodes
             .Where(n => n.CgnatInfo != null &&
                         n.CgnatInfo.AssignedRelayNodeId == relayId &&
                         n.CgnatInfo.TunnelStatus == TunnelStatus.Connected)
@@ -150,9 +151,8 @@ public class RelayController : ControllerBase
         foreach (var cgnatNode in cgnatNodes)
         {
             // Find all VMs on this CGNAT node
-            var vms = _dataStore.VirtualMachines.Values
-                .Where(vm => vm.NodeId == cgnatNode.Id &&
-                             vm.Status == VmStatus.Running &&
+            var vms =  (await _dataStore.GetVmsByNodeAsync(cgnatNode.Id))
+                .Where(vm => vm.Status == VmStatus.Running &&
                              vm.IngressConfig?.DefaultSubdomainEnabled == true)
                 .ToList();
 
@@ -208,8 +208,9 @@ public class RelayController : ControllerBase
             return false;
         }
 
+        var relayNode = await _dataStore.GetNodeAsync(relayId);
         // Get the relay node
-        if (!_dataStore.Nodes.TryGetValue(relayId, out var relayNode))
+        if (relayNode == null)
         {
             _logger.LogWarning("Relay token validation failed: Node {RelayId} not found", relayId);
             return false;

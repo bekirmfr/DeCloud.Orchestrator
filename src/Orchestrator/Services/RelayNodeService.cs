@@ -139,7 +139,7 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
             // STEP 0: Allocate unique subnet for this relay
             // ========================================
-            var relaySubnet = AllocateRelaySubnet();
+            var relaySubnet = await AllocateRelaySubnetAsync();
             var relayTunnelIp = $"10.20.{relaySubnet}.254";
 
             _logger.LogInformation(
@@ -231,10 +231,10 @@ public class RelayNodeService : IRelayNodeService
     /// Allocate next available relay subnet (1-254)
     /// Each relay gets a unique /24 subnet within 10.20.0.0/16
     /// </summary>
-    private int AllocateRelaySubnet()
+    private async Task<int> AllocateRelaySubnetAsync()
     {
         // Get all existing relay subnets
-        var usedSubnets = _dataStore.Nodes.Values
+        var usedSubnets = (await _dataStore.GetAllNodesAsync())
             .Where(n => n.RelayInfo?.Status == RelayStatus.Active)
             .Select(n => n.RelayInfo?.RelaySubnet)
             .Where(s => s > 0)  // Filter out uninitialized (0)
@@ -284,7 +284,7 @@ public class RelayNodeService : IRelayNodeService
         Node cgnatNode,
         CancellationToken ct = default)
     {
-        var relayNodes = _dataStore.Nodes.Values
+        var relayNodes = _dataStore.GetActiveNodes()
             .Where(n => 
                 n.Status == NodeStatus.Online &&
                 n.RelayInfo != null &&

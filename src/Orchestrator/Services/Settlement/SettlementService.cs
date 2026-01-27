@@ -127,7 +127,7 @@ public class SettlementService : ISettlementService
     /// </summary>
     public Task<decimal> GetUnpaidUsageAsync(string userId)
     {
-        var unpaidUsage = _dataStore.UsageRecords.Values
+        var unpaidUsage = _dataStore.UnsettledUsage.Values
             .Where(u => u.UserId == userId && !u.SettledOnChain)
             .Sum(u => u.TotalCost);
 
@@ -139,7 +139,7 @@ public class SettlementService : ISettlementService
     /// </summary>
     public Task<List<UsageRecord>> GetUnpaidUsageRecordsAsync(string userId)
     {
-        var records = _dataStore.UsageRecords.Values
+        var records = _dataStore.UnsettledUsage.Values
             .Where(u => u.UserId == userId && !u.SettledOnChain)
             .OrderByDescending(u => u.CreatedAt)
             .ToList();
@@ -157,7 +157,7 @@ public class SettlementService : ISettlementService
         int skip = 0,
         int take = 100)
     {
-        var query = _dataStore.UsageRecords.Values
+        var query = _dataStore.UnsettledUsage.Values
             .Where(u => u.UserId == userId);
 
         if (fromDate.HasValue)
@@ -180,7 +180,7 @@ public class SettlementService : ISettlementService
     /// </summary>
     public Task<decimal> GetVmUnpaidUsageAsync(string vmId)
     {
-        var unpaidUsage = _dataStore.UsageRecords.Values
+        var unpaidUsage = _dataStore.UnsettledUsage.Values
             .Where(u => u.VmId == vmId && !u.SettledOnChain)
             .Sum(u => u.TotalCost);
 
@@ -198,7 +198,7 @@ public class SettlementService : ISettlementService
     {
         foreach (var usageRecordId in usageRecordIds)
         {
-            var usageRecord = _dataStore.UsageRecords.Values
+            var usageRecord = _dataStore.UnsettledUsage.Values
                 .FirstOrDefault(u => u.Id == usageRecordId);
 
             if (usageRecord != null)
@@ -221,7 +221,7 @@ public class SettlementService : ISettlementService
     public async Task<List<SettlementBatch>> GetPendingSettlementsAsync(decimal minAmount = 1.0m)
     {
         // Get all unpaid usage records
-        var unpaidRecords = _dataStore.UsageRecords.Values
+        var unpaidRecords = _dataStore.UnsettledUsage.Values
             .Where(u => !u.SettledOnChain)
             .ToList();
 
@@ -248,7 +248,7 @@ public class SettlementService : ISettlementService
         {
             // Get user and node wallets
             var user = await _userService.GetUserByIdAsync(group.UserId);
-            var node = _dataStore.Nodes.Values.FirstOrDefault(n => n.Id == group.NodeId);
+            var node = await _dataStore.GetNodeAsync(group.NodeId);
 
             if (user == null || node == null)
             {
@@ -290,7 +290,7 @@ public class SettlementService : ISettlementService
     /// </summary>
     public Task<decimal> GetNodePendingPayoutAsync(string nodeId)
     {
-        var pendingPayout = _dataStore.UsageRecords.Values
+        var pendingPayout = _dataStore.UnsettledUsage.Values
             .Where(u => u.NodeId == nodeId && u.SettledOnChain)
             .Sum(u => u.NodeShare);
 
@@ -307,7 +307,7 @@ public class SettlementService : ISettlementService
         DateTime? fromDate = null,
         DateTime? toDate = null)
     {
-        var query = _dataStore.UsageRecords.Values
+        var query = _dataStore.UnsettledUsage.Values
             .Where(u => u.NodeId == nodeId && u.SettledOnChain);
 
         if (fromDate.HasValue)

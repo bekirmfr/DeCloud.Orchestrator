@@ -69,7 +69,8 @@ public class WebSocketProxyMiddleware
         _logger.LogInformation("{Endpoint} proxy request for VM {VmId}", nodeEndpoint, vmId);
 
         // Look up VM to get node info
-        if (!dataStore.VirtualMachines.TryGetValue(vmId, out var vm))
+        var vm = await dataStore.GetVmAsync(vmId);
+        if (vm == null)
         {
             context.Response.StatusCode = 404;
             await context.Response.WriteAsync("VM not found");
@@ -83,7 +84,8 @@ public class WebSocketProxyMiddleware
             return;
         }
 
-        if (string.IsNullOrEmpty(vm.NodeId) || !dataStore.Nodes.TryGetValue(vm.NodeId, out var node))
+        var node = await dataStore.GetNodeAsync(vmId);
+        if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             context.Response.StatusCode = 503;
             await context.Response.WriteAsync("Node not available");
