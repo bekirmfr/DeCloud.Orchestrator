@@ -84,7 +84,7 @@ public class WebSocketProxyMiddleware
             return;
         }
 
-        var node = await dataStore.GetNodeAsync(vmId);
+        var node = await dataStore.GetNodeAsync(vm.NodeId);
         if (string.IsNullOrEmpty(vm.NodeId) || node == null)
         {
             context.Response.StatusCode = 503;

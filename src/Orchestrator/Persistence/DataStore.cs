@@ -318,6 +318,9 @@ public class DataStore
     /// </summary>
     public async Task<Node?> GetNodeAsync(string nodeId)
     {
+        if (string.IsNullOrWhiteSpace(nodeId))
+            return null;
+
         // Try hot cache first (fast path)
         if (ActiveNodes.TryGetValue(nodeId, out var cachedNode))
         {
