@@ -287,19 +287,28 @@ public class BlockchainService : IBlockchainService
             // Prepare arrays for batch settlement
             var userWallets = settlements.Select(s => s.UserWallet).ToArray();
             var nodeWallets = settlements.Select(s => s.NodeWallet).ToArray();
-            var amounts = settlements.Select(s => Web3.Convert.ToWei(s.Amount, 6)).ToArray();
+            var amountsWei = settlements.Select(s => Web3.Convert.ToWei(s.Amount, 6)).ToArray();
             var vmIds = settlements.Select(s => s.VmId ?? "").ToArray();
+
+            var gas = await batchSettleFunction.EstimateGasAsync(
+				from: account.Address,
+				gas: null,
+				value: null,
+				userWallets,
+				nodeWallets,
+				amountsWei,
+				vmIds);
 
             // Execute batch settlement
             var receipt = await batchSettleFunction.SendTransactionAndWaitForReceiptAsync(
                 from: account.Address,
-                gas: null,
+                gas: gas,
                 gasPrice: null,
                 value: null,
                 receiptRequestCancellationToken: null,
                 userWallets,  // address[] users
 				nodeWallets,  // address[] nodes
-				amounts,      // uint256[] amounts
+				amountsWei,      // uint256[] amounts
 				vmIds);       // string[] vmIds
 
             if (receipt.Status?.Value != 1)
