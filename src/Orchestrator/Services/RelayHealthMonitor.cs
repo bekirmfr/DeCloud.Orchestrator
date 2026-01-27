@@ -7,7 +7,6 @@ namespace Orchestrator.Services;
 
 /// <summary>
 /// Background service that monitors relay node health and performs failover
-/// ENHANCED: Self-healing WireGuard peer recovery when relay responds but peer is missing
 /// </summary>
 public class RelayHealthMonitor : BackgroundService
 {
@@ -247,10 +246,90 @@ public class RelayHealthMonitor : BackgroundService
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(relay);
         }
+        catch (HttpRequestException ex) when (
+            ex.Message.Contains("No route to host") ||
+            ex.Message.Contains("Connection refused") ||
+            ex.Message.Contains("Network is unreachable"))
+        {
+            // ====================================================
+            // SELF-HEALING: Network errors often mean missing WireGuard peer
+            // ====================================================
+            _logger.LogWarning(
+                "Relay {RelayId} health check failed with network error: {Error}",
+                relay.Id, ex.Message);
+
+            // Check if this is a missing peer issue
+            var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
+
+            if (!hasPeer)
+            {
+                _logger.LogWarning(
+                    "🔧 SELF-HEAL: Relay {RelayId} unreachable due to missing WireGuard peer - recovering",
+                    relay.Id);
+
+                var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
+
+                if (added)
+                {
+                    _logger.LogInformation(
+                        "✅ SELF-HEAL: Successfully restored relay {RelayId} WireGuard peer",
+                        relay.Id);
+
+                    // Mark as Degraded, not Offline - give it a chance to recover
+                    relay.RelayInfo.Status = RelayStatus.Degraded;
+                    relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                    await _dataStore.SaveNodeAsync(relay);
+
+                    // Verify handshake after a brief delay
+                    await Task.Delay(TimeSpan.FromSeconds(3), ct);
+                    var handshakeEstablished = await VerifyHandshakeAsync(relay, ct);
+
+                    if (handshakeEstablished)
+                    {
+                        _logger.LogInformation(
+                            "✅ SELF-HEAL: WireGuard handshake established with relay {RelayId} - should recover on next check",
+                            relay.Id);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "⚠️  SELF-HEAL: Peer restored but handshake not yet established with relay {RelayId}",
+                            relay.Id);
+                    }
+                }
+                else
+                {
+                    _logger.LogError(
+                        "❌ SELF-HEAL: Failed to restore relay {RelayId} WireGuard peer - marking offline",
+                        relay.Id);
+
+                    relay.RelayInfo.Status = RelayStatus.Offline;
+                    relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                    await _dataStore.SaveNodeAsync(relay);
+
+                    // Trigger failover only if peer restoration failed
+                    await FailoverRelayAsync(relay, ct);
+                }
+            }
+            else
+            {
+                // Peer exists but relay is still unreachable - genuine connectivity issue
+                _logger.LogError(
+                    "Relay {RelayId} has WireGuard peer but is unreachable - marking offline",
+                    relay.Id);
+
+                relay.RelayInfo.Status = RelayStatus.Offline;
+                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                await _dataStore.SaveNodeAsync(relay);
+
+                // Trigger failover for affected CGNAT nodes
+                await FailoverRelayAsync(relay, ct);
+            }
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Relay {RelayId} health check failed - marking offline",
+                "Relay {RelayId} health check failed with unexpected error - marking offline",
                 relay.Id);
 
             relay.RelayInfo.Status = RelayStatus.Offline;
