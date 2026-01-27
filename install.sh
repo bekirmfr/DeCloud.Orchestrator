@@ -104,7 +104,7 @@ ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=20.0      # Single page touch max (CHANGED 
 
 # Network calibration (NEW)
 ATTESTATION_CALIBRATION_PINGS=5                 # Number of pings for baseline RTT calibration
-ATTESTATION_RECALIBRATION_HOURS=24              # How often to recalibrate baseline (hours)
+ATTESTATION_RECALIBRATION_HOURS=4               # How often to recalibrate baseline (hours)
 ATTESTATION_RTT_CHANGE_THRESHOLD=0.3            # Trigger recalibration if RTT changes by 30%
 ATTESTATION_MAX_STDDEV_RATIO=0.5                # Trigger recalibration if variance is high
 ATTESTATION_SMOOTHING_FACTOR=0.3                # Exponential smoothing factor for moving average
@@ -126,9 +126,9 @@ ORCHESTRATOR_PRIVATE_KEY=""         # NEVER logged or committed - stored in env 
 
 # Payment settings
 REQUIRED_CONFIRMATIONS=12           # Block confirmations (12 for testnet, 20+ for mainnet)
-MIN_SETTLEMENT_AMOUNT=10.0          # Minimum $ to trigger settlement
-SETTLEMENT_INTERVAL_HOURS=24        # How often to settle (24h = daily)
-PLATFORM_FEE_PERCENT=15.0           # Platform fee (15%)
+MIN_SETTLEMENT_AMOUNT=1.0           # Minimum $ to trigger settlement
+SETTLEMENT_INTERVAL_HOURS=1         # How often to settle (every hour)
+PLATFORM_FEE_PERCENT=5.0            # Platform fee (5%)
 
 # JWT Secret
 JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
