@@ -24,7 +24,7 @@
 # - Requires typing "REMOVE" to confirm destructive action
 # - Always creates backup before making changes
 
-set -euo pipefail
+set -eo pipefail  # Exit on error and pipeline failure, but allow unset variables
 
 # Configuration
 INTERFACE="${1:-wg-relay-client}"
@@ -88,13 +88,21 @@ PEERS_TO_REMOVE=()
 PROTECTED_COUNT=0
 TOTAL_PEERS=0
 
+# Get dump output and check if it's valid
+DUMP_OUTPUT=$(wg show "$INTERFACE" dump 2>&1)
+if [ $? -ne 0 ]; then
+    log_error "Failed to get WireGuard interface dump: $DUMP_OUTPUT"
+    exit 1
+fi
+
+# Process each peer line
 while IFS=$'\t' read -r pubkey psk endpoint allowed_ips handshake rx tx keepalive; do
-    # Skip the interface line
+    # Skip the interface line or empty lines
     if [[ "$pubkey" == "$INTERFACE" ]] || [[ -z "$pubkey" ]]; then
         continue
     fi
     
-    ((TOTAL_PEERS++))
+    TOTAL_PEERS=$((TOTAL_PEERS + 1))
     SHORT_PEER="${pubkey:0:16}...${pubkey: -8}"
     
     # ========================================
@@ -107,7 +115,7 @@ while IFS=$'\t' read -r pubkey psk endpoint allowed_ips handshake rx tx keepaliv
     if [[ "$allowed_ips" =~ 10\.20\.[0-9]+\.0/24 ]]; then
         IS_RELAY_PEER=true
         log_protected "Relay subnet detected: $SHORT_PEER (AllowedIPs: $allowed_ips)"
-        ((PROTECTED_COUNT++))
+        PROTECTED_COUNT=$((PROTECTED_COUNT + 1))
         
         # Still check handshake age for monitoring purposes
         if [[ -n "$handshake" ]] && [[ "$handshake" != "0" ]]; then
@@ -194,7 +202,7 @@ while IFS=$'\t' read -r pubkey psk endpoint allowed_ips handshake rx tx keepaliv
         fi
     fi
     
-done < <(wg show "$INTERFACE" dump 2>/dev/null | tail -n +2)
+done <<< "$(echo "$DUMP_OUTPUT" | tail -n +2)"
 
 # ==================== Display results ====================
 echo ""
