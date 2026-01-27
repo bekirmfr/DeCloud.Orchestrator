@@ -110,7 +110,7 @@ public class NodesController : ControllerBase
                 System.Text.Encoding.UTF8.GetBytes(apiKey)));
 
         // Get node
-        var node = await _nodeService.GetNodeAsync(nodeId);
+        var node = await _dataStore.GetNodeAsync(nodeId);
 
         if (node == null || node.ApiKeyHash != keyHash)
         {
@@ -164,7 +164,7 @@ public class NodesController : ControllerBase
             statusFilter = parsedStatus;
         }
 
-        var nodes = await _nodeService.GetAllNodesAsync(statusFilter);
+        var nodes = await _dataStore.GetAllNodesAsync(statusFilter);
         return Ok(ApiResponse<List<Node>>.Ok(nodes));
     }
 
@@ -175,7 +175,7 @@ public class NodesController : ControllerBase
     [Authorize]
     public async Task<ActionResult<ApiResponse<Node>>> Get(string nodeId)
     {
-        var node = await _nodeService.GetNodeAsync(nodeId);
+        var node = await _dataStore.GetNodeAsync(nodeId);
 
         if (node == null)
         {
@@ -192,13 +192,15 @@ public class NodesController : ControllerBase
     [Authorize(Roles = "admin")]
     public async Task<ActionResult<ApiResponse<bool>>> Remove(string nodeId)
     {
-        var result = await _nodeService.RemoveNodeAsync(nodeId);
-
-        if (!result)
+        try
         {
+            await _dataStore.DeleteNodeAsync(nodeId);
+            return Ok(ApiResponse<bool>.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Attempted to delete non-existent node {NodeId}: {ErrorMessage}", nodeId, ex.Message);
             return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "Node not found"));
         }
-
-        return Ok(ApiResponse<bool>.Ok(true));
     }
 }

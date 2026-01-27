@@ -108,7 +108,7 @@ public class VmsController : ControllerBase
         Node? hostNode = null;
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
-            hostNode = await _nodeService.GetNodeAsync(vm.NodeId);
+            hostNode = await _dataStore.GetNodeAsync(vm.NodeId);
         }
 
         return Ok(ApiResponse<VmDetailResponse>.Ok(new VmDetailResponse(vm, hostNode)));

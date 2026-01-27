@@ -414,7 +414,8 @@ public class DataStore
     /// </summary>
     public async Task DeleteNodeAsync(string nodeId)
     {
-        ActiveNodes.TryRemove(nodeId, out _);
+        if (!ActiveNodes.TryRemove(nodeId, out _))
+            throw new Exception($"Node {nodeId} not found in active nodes");
 
         if (_useMongoDB)
         {
