@@ -1,9 +1,8 @@
 ﻿using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
-using Orchestrator.Services.Settlement;
 
-namespace Orchestrator.Services;
+namespace Orchestrator.Services.Settlement;
 
 /// <summary>
 /// Automated settlement background service
