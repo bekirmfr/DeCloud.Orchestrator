@@ -282,7 +282,7 @@ public class BlockchainService : IBlockchainService
             var web3 = new Web3(account, _config.RpcUrl);
 
             var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
-            var batchSettleFunction = contract.GetFunction("batchSettle");
+            var batchSettleFunction = contract.GetFunction("batchReportUsage");
 
             // Prepare arrays for batch settlement
             var userWallets = settlements.Select(s => s.UserWallet).ToArray();
