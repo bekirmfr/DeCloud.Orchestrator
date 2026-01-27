@@ -709,13 +709,20 @@ public class DataStore
         {
             UnsettledUsage[record.Id] = record;
         }
+        else
+        {
+            UnsettledUsage.TryRemove(record.Id, out _);
+        }
 
         // Always persist to MongoDB
         if (_useMongoDB)
         {
             await RetryMongoOperationAsync(async () =>
             {
-                await UsageRecordsCollection!.InsertOneAsync(record);
+                await UsageRecordsCollection!.ReplaceOneAsync(
+                    u => u.Id == record.Id,
+                    record,
+                    new ReplaceOptions { IsUpsert = true });
             }, $"persist usage record {record.Id}");
         }
     }
