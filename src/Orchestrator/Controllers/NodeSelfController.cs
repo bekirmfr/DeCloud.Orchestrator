@@ -182,7 +182,8 @@ public class NodeSelfController : ControllerBase
     [ProducesResponseType(typeof(NodePerformanceEvaluation), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
-    public async Task<ActionResult<NodePerformanceEvaluation>> ForceEvaluation(CancellationToken ct)
+    public async Task<ActionResult<NodePerformanceEvaluation>> ForceEvaluation(CancellationToken ct,
+        [FromBody] HardwareInventory inventory)
     {
         var nodeId = GetNodeIdFromToken();
         if (string.IsNullOrEmpty(nodeId))
@@ -194,8 +195,16 @@ public class NodeSelfController : ControllerBase
 
         _logger.LogInformation("Node {NodeId} requested re-evaluation", nodeId);
 
+        inventory.NodeId = nodeId;
+
         // Re-run evaluation
-        var evaluation = await _evaluator.EvaluateNodeAsync(node, ct);
+        var evaluation = await _evaluator.EvaluateNodeAsync(inventory, ct);
+
+        if (evaluation == null)
+        {
+            return StatusCode(500, "Failed to evaluate node performance");
+        }
+
         node.PerformanceEvaluation = evaluation;
 
         // Persist updated node

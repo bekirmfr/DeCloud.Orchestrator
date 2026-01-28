@@ -208,7 +208,7 @@ public class NodeService : INodeService
             performanceLogger,
             _configService); // Pass config service
 
-        node.PerformanceEvaluation = await performanceEvaluator.EvaluateNodeAsync(node, ct);
+        node.PerformanceEvaluation = await performanceEvaluator.EvaluateNodeAsync(request.HardwareInventory, ct);
 
         if (!node.PerformanceEvaluation.IsAcceptable)
         {

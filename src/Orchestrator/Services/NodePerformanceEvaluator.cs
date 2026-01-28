@@ -27,14 +27,14 @@ public class NodePerformanceEvaluator
     /// Now uses dynamic configuration from database
     /// </summary>
     public async Task<NodePerformanceEvaluation> EvaluateNodeAsync(
-        Node node,
+        HardwareInventory inventory,
         CancellationToken ct = default)
     {
         // Load current configuration
         var config = await _configService.GetConfigAsync(ct);
 
-        var benchmarkScore = node.HardwareInventory.Cpu.BenchmarkScore;
-        var cpuModel = node.HardwareInventory.Cpu.Model;
+        var benchmarkScore = inventory.Cpu.BenchmarkScore;
+        var cpuModel = inventory.Cpu.Model;
         var baselineBenchmark = config.BaselineBenchmark;
 
         // Apply performance cap if configured
@@ -44,15 +44,15 @@ public class NodePerformanceEvaluator
 
         // Single source of truth: points per core
         var pointsPerCore = (double)cappedScore / baselineBenchmark;
-        var totalPoints = (int) (pointsPerCore * node.HardwareInventory.Cpu.PhysicalCores * config.BaselineOvercommitRatio); 
+        var totalPoints = (int) (pointsPerCore * inventory.Cpu.PhysicalCores * config.BaselineOvercommitRatio); 
 
         var evaluation = new NodePerformanceEvaluation
         {
-            NodeId = node.Id,
+            NodeId = inventory.NodeId,
             CpuModel = cpuModel,
             BenchmarkScore = benchmarkScore,
             CappedBenchmarkScore = cappedScore,
-            PhysicalCores = node.HardwareInventory.Cpu.PhysicalCores,
+            PhysicalCores = inventory.Cpu.PhysicalCores,
             BaselineBenchmark = baselineBenchmark,
             PointsPerCore = pointsPerCore,
             TotalComputePoints = totalPoints,
