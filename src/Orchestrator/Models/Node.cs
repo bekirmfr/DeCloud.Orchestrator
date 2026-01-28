@@ -104,6 +104,29 @@ public class Node
     /// Automatically disabled after multiple consecutive push failures
     /// </summary>
     public bool PushEnabled { get; set; } = true;
+
+    // ============================================================================
+    // Marketplace & Discovery
+    // ============================================================================
+    
+    /// <summary>
+    /// Operator-provided description for marketplace display
+    /// Example: "High-end gaming GPUs, EU datacenter, 24/7 uptime"
+    /// </summary>
+    public string? Description { get; set; }
+    
+    /// <summary>
+    /// Searchable tags for node discovery
+    /// Examples: "gpu", "nvme", "high-memory", "eu-gdpr", "gaming"
+    /// </summary>
+    public List<string> Tags { get; set; } = new();
+    
+    /// <summary>
+    /// Base pricing in USDC per compute point per hour
+    /// Default: 0.01 USDC/point/hour
+    /// Operators can charge premiums for specialized hardware
+    /// </summary>
+    public decimal BasePrice { get; set; } = 0.01m;
 }
 
 /// <summary>

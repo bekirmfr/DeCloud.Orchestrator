@@ -108,6 +108,8 @@ builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
 builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
+// Node Marketplace Service (for node discovery and search)
+builder.Services.AddSingleton<INodeMarketplaceService, NodeMarketplaceService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
