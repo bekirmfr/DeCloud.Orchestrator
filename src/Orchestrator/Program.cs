@@ -93,6 +93,15 @@ builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
 builder.Services.AddSingleton<IVmService, VmService>();
+// Command delivery service (hybrid push-pull)
+builder.Services.AddSingleton<INodeCommandService, NodeCommandService>();
+
+// HttpClient for push commands
+builder.Services.AddHttpClient<NodeCommandService>()
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(5);  // Fast timeout for push attempts
+    });
 // UserService needs IWebHostEnvironment for dev mode signature validation
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddSingleton<IEventService, EventService>();

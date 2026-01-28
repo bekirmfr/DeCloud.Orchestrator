@@ -54,7 +54,7 @@ public class Node
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
-    public DateTime LastHeartbeat { get; set; } = DateTime.UtcNow;
+    public DateTime? LastHeartbeat { get; set; } = null;
     public string AgentVersion { get; set; } = string.Empty;
 
     // Capabilities
@@ -83,6 +83,27 @@ public class Node
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
+    public DateTime? LastSeenAt { get; set; } = null;
+    /// <summary>
+    /// Last time a command was successfully pushed to this node
+    /// </summary>
+    public DateTime? LastCommandPushedAt { get; set; }
+
+    /// <summary>
+    /// Consecutive successful push deliveries (for reliability tracking)
+    /// </summary>
+    public int ConsecutivePushSuccesses { get; set; } = 0;
+
+    /// <summary>
+    /// Consecutive failed push deliveries (triggers fallback to pull-only)
+    /// </summary>
+    public int ConsecutivePushFailures { get; set; } = 0;
+
+    /// <summary>
+    /// If true, node can receive pushed commands
+    /// Automatically disabled after multiple consecutive push failures
+    /// </summary>
+    public bool PushEnabled { get; set; } = true;
 }
 
 /// <summary>

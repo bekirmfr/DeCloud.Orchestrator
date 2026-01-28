@@ -1,13 +1,9 @@
-﻿using DeCloud.Shared.Models;
+﻿using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
-using Orchestrator.Exceptions;
-using Orchestrator.Models;
-using Org.BouncyCastle.Asn1.Ocsp;
+using Orchestrator.Services.VmScheduling;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Orchestrator.Services.VmScheduling;
-using Orchestrator.Services;
-using Orchestrator.Models.Payment;
 
 namespace Orchestrator.Services;
 
@@ -28,7 +24,7 @@ public interface IVmService
 public class VmService : IVmService
 {
     private readonly DataStore _dataStore;
-    private readonly INodeService _nodeService;
+    private readonly INodeCommandService _commandService;
     private readonly IVmSchedulingService _schedulingService;
     private readonly ISchedulingConfigService _configService;
     private readonly IEventService _eventService;
@@ -38,7 +34,7 @@ public class VmService : IVmService
 
     public VmService(
         DataStore dataStore,
-        INodeService nodeService,
+        INodeCommandService commandService,
         IVmSchedulingService schedulingService,
         ISchedulingConfigService configService,
         IEventService eventService,
@@ -47,7 +43,7 @@ public class VmService : IVmService
         ILogger<VmService> logger)
     {
         _dataStore = dataStore;
-        _nodeService = nodeService;
+        _commandService = commandService;
         _schedulingService = schedulingService;
         _configService = configService;
         _eventService = eventService;
@@ -340,7 +336,7 @@ public class VmService : IVmService
         vm.ActiveCommandType = commandType.Value;
         vm.ActiveCommandIssuedAt = DateTime.UtcNow;
 
-        _dataStore.AddPendingCommand(vm.NodeId, command);
+        await _commandService.DeliverCommandAsync(vm.NodeId, command);
 
         vm.Status = action switch
         {
@@ -424,7 +420,7 @@ public class VmService : IVmService
             vm.ActiveCommandIssuedAt = DateTime.UtcNow;
 
             // Queue command for node
-            _dataStore.AddPendingCommand(vm.NodeId, command);
+            await _commandService.DeliverCommandAsync(vm.NodeId, command);
 
             _logger.LogInformation(
                 "DeleteVm command {CommandId} queued for VM {VmId} on node {NodeId}",
@@ -763,7 +759,7 @@ public class VmService : IVmService
             NodeCommandType.DeleteVm
         );
 
-        _dataStore.AddPendingCommand(selectedNode.Id, command);
+        await _commandService.DeliverCommandAsync(selectedNode.Id, command);
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(

@@ -1069,6 +1069,15 @@ public class DataStore
         return result;
     }
 
+    /// <summary>
+    /// Check if node has pending commands without removing them
+    /// Used by hybrid push-pull to determine if queue is empty
+    /// </summary>
+    public bool HasPendingCommands(string nodeId)
+    {
+        return PendingCommands.TryGetValue(nodeId, out var queue) && !queue.IsEmpty;
+    }
+
     public List<NodeCommand> GetAndClearPendingCommands(string nodeId)
     {
         if (!PendingCommands.TryRemove(nodeId, out var queue))

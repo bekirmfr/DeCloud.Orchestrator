@@ -83,6 +83,55 @@ public class NodesController : ControllerBase
     }
 
     /// <summary>
+    /// Get pending commands for this node.
+    /// Commands are cleared from queue upon retrieval (atomic).
+    /// Part of hybrid push-pull command delivery system.
+    /// Authenticated via wallet signature (stateless).
+    /// </summary>
+    [HttpGet("{nodeId}/commands")]
+    [ProducesResponseType(typeof(ApiResponse<List<NodeCommand>>), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<ApiResponse<List<NodeCommand>>>> GetPendingCommands(
+        string nodeId)
+    {
+        // Get node_id from JWT claims (already validated by middleware!)
+        var claimNodeId = User.FindFirst("node_id")?.Value;
+
+        if (claimNodeId != nodeId)
+        {
+            return Unauthorized(ApiResponse<List<NodeCommand>>.Fail(
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
+        }
+
+        // Get node
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+        {
+            return NotFound(ApiResponse<List<NodeCommand>>.Fail(
+                "NODE_NOT_FOUND",
+                "Node not registered"));
+        }
+
+        // Update last seen
+        node.LastSeenAt = DateTime.UtcNow;
+        await _dataStore.SaveNodeAsync(node);
+
+        // Get and clear pending commands (atomic operation)
+        var commands = _dataStore.GetAndClearPendingCommands(nodeId);
+
+        if (commands.Count > 0)
+        {
+            _logger.LogInformation(
+                "Node {NodeId} retrieved {Count} pending command(s) via pull",
+                nodeId, commands.Count);
+        }
+
+        return Ok(ApiResponse<List<NodeCommand>>.Ok(commands));
+    }
+
+    /// <summary>
     /// Node acknowledges command completion.
     /// Authenticated via wallet signature (stateless!)
     /// </summary>

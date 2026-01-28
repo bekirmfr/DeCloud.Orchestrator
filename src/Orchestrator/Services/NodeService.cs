@@ -197,7 +197,7 @@ public class NodeService : INodeService
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
             RegisteredAt = request.RegisteredAt,
-            LastHeartbeat = DateTime.UtcNow
+            LastSeenAt = DateTime.UtcNow
         };
 
         // =====================================================
@@ -384,6 +384,7 @@ public class NodeService : INodeService
         node.Status = NodeStatus.Online;
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
+        node.LastSeenAt = DateTime.UtcNow;
 
         if (node.IsBehindCgnat)
         {
@@ -1564,13 +1565,13 @@ public class NodeService : INodeService
 
         foreach (var node in onlineNodes)
         {
-            var timeSinceLastHeartbeat = now - node.LastHeartbeat;
+            var timeSinceLastHeartbeat = now - node.LastSeenAt;
 
             if (timeSinceLastHeartbeat > heartbeatTimeout)
             {
                 _logger.LogWarning(
                     "Node {NodeId} ({Name}) marked as offline - no heartbeat for {Minutes:F1} minutes",
-                    node.Id, node.Name, timeSinceLastHeartbeat.TotalMinutes);
+                    node.Id, node.Name, timeSinceLastHeartbeat?.TotalMinutes ?? 0);
 
                 node.Status = NodeStatus.Offline;
                 await _dataStore.SaveNodeAsync(node);
@@ -1583,7 +1584,7 @@ public class NodeService : INodeService
                     Payload = new Dictionary<string, object>
                     {
                         ["lastHeartbeat"] = node.LastHeartbeat,
-                        ["timeoutMinutes"] = timeSinceLastHeartbeat.TotalMinutes
+                        ["timeoutMinutes"] = timeSinceLastHeartbeat?.TotalMinutes ?? 0
                     }
                 });
 
