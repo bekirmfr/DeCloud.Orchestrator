@@ -231,7 +231,7 @@ public class NodeSelfController : ControllerBase
         public string? Region { get; set; }
         public string? PublicIp { get; set; }
         public DateTime RegisteredAt { get; set; }
-        public DateTime LastHeartbeat { get; set; }
+        public DateTime? LastHeartbeat { get; set; }
         public string AgentVersion { get; set; } = string.Empty;
         public int? SchedulingConfigVersion { get; set; }
     }
