@@ -118,7 +118,7 @@ public class MarketplaceController : ControllerBase
     /// Requires node authentication (X-Node-Token header)
     /// </remarks>
     [HttpPatch("nodes/{nodeId}/profile")]
-    [Authorize(AuthenticationSchemes = "ApiKey")]
+    [Authorize] // Uses default Bearer scheme - nodes send JWT tokens
     public async Task<IActionResult> UpdateNodeProfile(
         string nodeId,
         [FromBody] NodeProfileUpdate update)
