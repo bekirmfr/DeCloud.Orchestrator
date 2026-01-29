@@ -124,7 +124,7 @@ public class MarketplaceController : ControllerBase
         [FromBody] NodeProfileUpdate update)
     {
         // Verify the authenticated node matches the nodeId
-        var authenticatedNodeId = User.FindFirst("nodeId")?.Value;
+        var authenticatedNodeId = User.FindFirst("node_id")?.Value;
         if (authenticatedNodeId != nodeId)
         {
             return Forbid("You can only update your own node profile");
