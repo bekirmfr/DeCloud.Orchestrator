@@ -118,7 +118,7 @@ public class MarketplaceController : ControllerBase
     /// Requires node authentication (X-Node-Token header)
     /// </remarks>
     [HttpPatch("nodes/{nodeId}/profile")]
-    [Authorize(AuthenticationSchemes = "NodeApiKey")]
+    [Authorize(AuthenticationSchemes = "ApiKey")]
     public async Task<IActionResult> UpdateNodeProfile(
         string nodeId,
         [FromBody] NodeProfileUpdate update)
