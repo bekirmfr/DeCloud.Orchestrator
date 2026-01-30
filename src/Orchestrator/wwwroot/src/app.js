@@ -23,6 +23,13 @@ import {
     refreshBalanceDisplay,
     isInitialized as isPaymentInitialized
 } from './payment.js';
+import {
+    initializeMarketplace,
+    loadMarketplace,
+    searchMarketplace,
+    clearMarketplaceFilters,
+    openNodeDetail
+} from './marketplace.js';
 
 // ============================================
 // CONFIGURATION
@@ -109,6 +116,10 @@ let appKitUnsubscribers = [];
 // ============================================
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[App] Initializing DeCloud v' + __APP_VERSION__);
+
+    // Initialize marketplace module with config
+    initializeMarketplace(CONFIG.orchestratorUrl, escapeHtml);
+
     const sessionRestored = await restoreSession();
     if (!sessionRestored) {
         showLogin();
@@ -910,6 +921,8 @@ function showPage(pageName) {
         refreshData();
     } else if (pageName === 'nodes') {
         loadNodes();
+    } else if (pageName === 'marketplace') {
+        loadMarketplace();
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     }
@@ -2058,6 +2071,7 @@ function saveSettings() {
     if (orchestratorUrl && orchestratorUrl !== CONFIG.orchestratorUrl) {
         CONFIG.orchestratorUrl = orchestratorUrl;
         localStorage.setItem('orchestratorUrl', orchestratorUrl);
+        initializeMarketplace(orchestratorUrl, escapeHtml);
         showToast('Settings saved. Please reconnect your wallet.', 'success');
         setTimeout(() => disconnect(), 2000);
     } else {
@@ -2200,3 +2214,7 @@ window.showToast = showToast;
 window.ethersSigner = () => ethersSigner;
 window.handleDepositClick = handleDepositClick;
 window.loadUserBalance = loadUserBalance;
+window.loadMarketplace = loadMarketplace;
+window.searchMarketplace = searchMarketplace;
+window.clearMarketplaceFilters = clearMarketplaceFilters;
+window.openNodeDetail = openNodeDetail;

@@ -98,6 +98,14 @@
                     </svg>
                     Nodes
                 </a>
+                <a class="nav-item" data-page="marketplace" onclick="showPage('marketplace')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="21" r="1" />
+                        <circle cx="20" cy="21" r="1" />
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                    </svg>
+                    Marketplace
+                </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Settings</div>
                 <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
@@ -311,6 +319,99 @@
                 </div>
             </div>
 
+            <!-- Marketplace Page -->
+            <div id="page-marketplace" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Marketplace</h1>
+                        <p class="page-subtitle">Discover and compare compute nodes across the network</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-secondary" onclick="loadMarketplace()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6M1 20v-6h6" />
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Search & Filters -->
+                <div class="marketplace-filters card">
+                    <div class="card-body">
+                        <div class="filter-row">
+                            <div class="filter-group filter-group-wide">
+                                <label class="form-label">Search Tags</label>
+                                <input type="text" class="form-input" id="mp-filter-tags" placeholder="e.g. gpu, high-memory, nvme (comma-separated)">
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Region</label>
+                                <input type="text" class="form-input" id="mp-filter-region" placeholder="e.g. us-east">
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Sort By</label>
+                                <select class="form-input" id="mp-filter-sort">
+                                    <option value="uptime">Uptime</option>
+                                    <option value="price">Price</option>
+                                    <option value="capacity">Capacity</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label class="form-label">Max Price (USDC/point/hr)</label>
+                                <input type="number" class="form-input" id="mp-filter-price" placeholder="e.g. 0.05" step="0.001" min="0">
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Min Uptime %</label>
+                                <input type="number" class="form-input" id="mp-filter-uptime" placeholder="e.g. 95" min="0" max="100">
+                            </div>
+                            <div class="filter-group">
+                                <label class="form-label">Min Compute Points</label>
+                                <input type="number" class="form-input" id="mp-filter-capacity" placeholder="e.g. 10" min="0">
+                            </div>
+                            <div class="filter-group filter-checkbox-group">
+                                <label class="filter-checkbox-label">
+                                    <input type="checkbox" id="mp-filter-gpu"> Requires GPU
+                                </label>
+                                <label class="filter-checkbox-label">
+                                    <input type="checkbox" id="mp-filter-online" checked> Online Only
+                                </label>
+                            </div>
+                            <div class="filter-group filter-actions">
+                                <button class="btn btn-primary" onclick="searchMarketplace()">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8" />
+                                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                    </svg>
+                                    Search
+                                </button>
+                                <button class="btn btn-secondary" onclick="clearMarketplaceFilters()">Clear</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Featured Nodes -->
+                <div id="mp-featured-section">
+                    <h3 class="mp-section-title">Featured Nodes</h3>
+                    <div class="mp-nodes-grid" id="mp-featured-nodes">
+                        <p style="text-align: center; color: #6b7280; padding: 40px; grid-column: 1 / -1;">Loading featured nodes...</p>
+                    </div>
+                </div>
+
+                <!-- Search Results -->
+                <div id="mp-results-section" style="display: none;">
+                    <div class="mp-results-header">
+                        <h3 class="mp-section-title">Search Results</h3>
+                        <span class="mp-results-count" id="mp-results-count"></span>
+                    </div>
+                    <div class="mp-nodes-grid" id="mp-search-results">
+                    </div>
+                </div>
+            </div>
+
             <!-- SSH Keys Page -->
             <div id="page-ssh-keys" class="page">
                 <header class="page-header">
@@ -498,6 +599,27 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
                 <button class="btn btn-primary" onclick="addSSHKey()">Add Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Node Detail Modal -->
+    <div class="modal-overlay" id="node-detail-modal">
+        <div class="modal" style="max-width: 680px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="node-detail-title">Node Details</h2>
+                <button class="modal-close" onclick="closeModal('node-detail-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="node-detail-body">
+                <p style="text-align: center; color: #6b7280; padding: 20px;">Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('node-detail-modal')">Close</button>
             </div>
         </div>
     </div>
