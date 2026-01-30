@@ -1,4 +1,4 @@
-﻿using DeCloud.Shared;
+using DeCloud.Shared;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
@@ -424,6 +424,24 @@ public class NodeService : INodeService
         }
 
         await _dataStore.SaveNodeAsync(node);
+
+        // Update node reputation metrics (uptime tracking)
+        // Note: We use IServiceProvider to avoid circular dependency
+        var reputationService = _serviceProvider.GetService<INodeReputationService>();
+        if (reputationService != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await reputationService.UpdateUptimeAsync(nodeId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update uptime for node {NodeId}", nodeId);
+                }
+            });
+        }
 
         if (wasOffline)
         {

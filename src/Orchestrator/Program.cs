@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
+using Orchestrator.Background;
 using Orchestrator.Services;
 using Orchestrator.Extensions;
 using Orchestrator.Hubs;
@@ -110,6 +111,8 @@ builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
 builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
 // Node Marketplace Service (for node discovery and search)
 builder.Services.AddSingleton<INodeMarketplaceService, NodeMarketplaceService>();
+// Node Reputation Service (for uptime tracking and VM metrics)
+builder.Services.AddSingleton<INodeReputationService, NodeReputationService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
@@ -151,6 +154,7 @@ builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();
 builder.Services.AddHostedService<CleanupService>();
 builder.Services.AddHostedService<StatePruningService>();
+builder.Services.AddHostedService<NodeReputationMaintenanceService>();
 
 // Add MongoDB sync service if MongoDB is configured
 if (mongoDatabase != null)

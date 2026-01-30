@@ -1,4 +1,4 @@
-﻿using Orchestrator.Models;
+using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.VmScheduling;
@@ -31,6 +31,7 @@ public class VmService : IVmService
     private readonly ICentralIngressService _ingressService;
     private readonly INetworkLatencyTracker _latencyTracker;
     private readonly ILogger<VmService> _logger;
+    private readonly IServiceProvider _serviceProvider;
 
     public VmService(
         DataStore dataStore,
@@ -40,7 +41,8 @@ public class VmService : IVmService
         IEventService eventService,
         ICentralIngressService ingressService,
         INetworkLatencyTracker latencyTracker,
-        ILogger<VmService> logger)
+        ILogger<VmService> logger,
+        IServiceProvider serviceProvider)
     {
         _dataStore = dataStore;
         _commandService = commandService;
@@ -50,6 +52,7 @@ public class VmService : IVmService
         _ingressService = ingressService;
         _latencyTracker = latencyTracker;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
@@ -483,6 +486,26 @@ public class VmService : IVmService
         vm.UpdatedAt = DateTime.UtcNow;
         await _dataStore.SaveVmAsync(vm);
 
+        // Track successful completion in node reputation
+        if (!string.IsNullOrEmpty(vm.NodeId))
+        {
+            var reputationService = _serviceProvider.GetService<INodeReputationService>();
+            if (reputationService != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await reputationService.IncrementSuccessfulCompletionsAsync(vm.NodeId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to increment completions for node {NodeId}", vm.NodeId);
+                    }
+                });
+            }
+        }
+
         // ========================================
         // FREE RESOURCES INCLUDING POINTS
         // ========================================
@@ -691,6 +714,23 @@ public class VmService : IVmService
         vm.NodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
+
+        // Track VM hosting in node reputation
+        var reputationService = _serviceProvider.GetService<INodeReputationService>();
+        if (reputationService != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await reputationService.IncrementVmsHostedAsync(selectedNode.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to increment VMs hosted for node {NodeId}", selectedNode.Id);
+                }
+            });
+        }
 
         // ========================================
         // STEP 5: Get SSH public key
