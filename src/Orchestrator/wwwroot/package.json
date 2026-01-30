@@ -14,6 +14,7 @@
     "start": "npm run dev:full"
   },
   "dependencies": {
+    "@phosphor-icons/webcomponents": "^2.1.5",
     "@reown/appkit": "^1.5.2",
     "@reown/appkit-adapter-ethers": "^1.5.2",
     "ethers": "^6.13.0"

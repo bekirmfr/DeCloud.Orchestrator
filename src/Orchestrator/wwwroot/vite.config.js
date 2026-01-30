@@ -1,4 +1,4 @@
-﻿import { defineConfig } from 'vite';
+import { defineConfig } from 'vite';
 import path from 'path';
 import { resolve } from 'path';
 
@@ -28,7 +28,8 @@ export default defineConfig({
                 manualChunks: {
                     // Vendor chunk for dependencies
                     'vendor-ethers': ['ethers'],
-                    'vendor-appkit': ['@reown/appkit', '@reown/appkit-adapter-ethers']
+                    'vendor-appkit': ['@reown/appkit', '@reown/appkit-adapter-ethers'],
+                    'vendor-icons': ['@phosphor-icons/webcomponents']
                 }
             }
         },
@@ -92,7 +93,12 @@ export default defineConfig({
 
     // Optimize dependencies
     optimizeDeps: {
-        include: ['ethers', '@reown/appkit', '@reown/appkit-adapter-ethers']
+        include: [
+            'ethers',
+            '@reown/appkit',
+            '@reown/appkit-adapter-ethers',
+            '@phosphor-icons/webcomponents'
+        ]
     },
 
     // Define global constants
