@@ -1292,25 +1292,36 @@ async function createVM() {
     const imageId = document.getElementById('vm-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     
+    // Get target node ID if user selected a specific node from marketplace
+    const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
+    
     if (!name) {
         showToast('Please enter a VM name', 'error');
         return;
     }
     
     try {
+        const requestBody = {
+            name: name,
+            spec: {
+                virtualCpuCores: cpuCores,
+                memoryBytes: memoryMb * (1024 * 1024),
+                diskBytes: diskGb * (1024 * 1024 * 1024),
+                imageId: imageId,
+                qualityTier: qualityTier
+            }
+        };
+        
+        // Add nodeId if user selected a specific node
+        if (targetNodeId) {
+            requestBody.nodeId = targetNodeId;
+            console.log('[CreateVM] Deploying to selected node:', targetNodeId);
+        }
+        
         const response = await api('/api/vms', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: name,
-                spec: {
-                    virtualCpuCores: cpuCores,
-                    memoryBytes: memoryMb * (1024 * 1024),
-                    diskBytes: diskGb * (1024 * 1024 * 1024),
-                    imageId: imageId,
-                    qualityTier: qualityTier
-                }
-            })
+            body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();

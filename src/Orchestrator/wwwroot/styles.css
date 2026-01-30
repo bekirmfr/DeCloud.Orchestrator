@@ -2297,6 +2297,58 @@ body {
     color: var(--accent-danger);
 }
 
+/* Card Actions */
+.mp-card-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 12px;
+    margin-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.mp-btn-primary,
+.mp-btn-secondary {
+    flex: 1;
+    padding: 10px 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.mp-btn-primary {
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: var(--bg-deep);
+    box-shadow: 0 2px 8px var(--glow-primary);
+}
+
+.mp-btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px var(--glow-primary);
+}
+
+.mp-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mp-btn-secondary {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+}
+
+.mp-btn-secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-secondary);
+}
+
 /* Node Detail Modal Content */
 .node-detail-grid {
     display: grid;

@@ -457,6 +457,12 @@
                 </button>
             </div>
             <div class="modal-body">
+                <!-- Hidden field for targeted node deployment -->
+                <input type="hidden" id="vm-target-node-id" value="">
+                
+                <!-- Selected node banner (dynamically shown/hidden) -->
+                <div id="selected-node-banner" style="display: none;"></div>
+                
                 <div class="form-group">
                     <label class="form-label">VM Name</label>
                     <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">

@@ -45,7 +45,8 @@ public class VmsController : ControllerBase
 
         try
         {
-            var response = await _vmService.CreateVmAsync(userId, request);
+            // Support targeted node deployment (user can select specific node from marketplace)
+            var response = await _vmService.CreateVmAsync(userId, request, request.NodeId);
 
             if (string.IsNullOrEmpty(response.VmId))
             {

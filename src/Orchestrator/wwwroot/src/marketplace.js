@@ -24,11 +24,23 @@ export function initializeMarketplace(baseUrl, escapeHtml) {
  */
 function setupNodeCardDelegation() {
     document.addEventListener('click', (e) => {
+        // Don't open detail if clicking buttons
+        if (e.target.closest('button')) {
+            return;
+        }
+        
         const card = e.target.closest('.mp-node-card[data-node-id]');
         if (card) {
             openNodeDetail(card.dataset.nodeId);
         }
     });
+    
+    // Expose functions globally for inline onclick handlers
+    window.nodeMarketplace = {
+        openNodeDetail,
+        deployToNode,
+        clearNodeSelection
+    };
 }
 
 /**
@@ -248,6 +260,15 @@ function renderNodeCards(container, nodes) {
                         <span class="mp-uptime-label">Uptime (${node.totalVmsHosted || 0} VMs hosted)</span>
                     </div>
                 </div>
+
+                <div class="mp-card-actions">
+                    <button class="mp-btn-primary" onclick="window.nodeMarketplace.deployToNode('${escapeHtmlFn(node.nodeId)}', '${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}')" ${!node.isOnline ? 'disabled' : ''}>
+                        🚀 Deploy VM
+                    </button>
+                    <button class="mp-btn-secondary" onclick="window.nodeMarketplace.openNodeDetail('${escapeHtmlFn(node.nodeId)}')">
+                        📊 Details
+                    </button>
+                </div>
             </div>
         `;
     }).join('');
@@ -391,5 +412,95 @@ export async function openNodeDetail(nodeId) {
     } catch (error) {
         console.error('[Nodes] Failed to load node detail:', error);
         body.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 20px;">Failed to load node details</p>';
+    }
+}
+
+/**
+ * Deploy VM to specific node
+ * Pre-populates VM creation form with selected node
+ */
+export function deployToNode(nodeId, nodeName) {
+    console.log('[Marketplace] Deploying to node:', nodeId, nodeName);
+    
+    // Pre-populate node selection
+    const nodeIdInput = document.getElementById('vm-target-node-id');
+    if (nodeIdInput) {
+        nodeIdInput.value = nodeId;
+    }
+    
+    // Open VM creation modal
+    if (window.openCreateVMModal) {
+        window.openCreateVMModal();
+        
+        // Small delay to ensure modal is open before showing banner
+        setTimeout(() => {
+            // Show node info banner
+            showSelectedNodeBanner(nodeId, nodeName);
+            
+            // Focus on VM name input
+            const vmNameInput = document.getElementById('vm-name');
+            if (vmNameInput) {
+                vmNameInput.focus();
+            }
+        }, 100);
+    }
+}
+
+/**
+ * Show banner indicating selected node
+ */
+function showSelectedNodeBanner(nodeId, nodeName) {
+    // Banner is already in the modal HTML, just update it
+    const banner = document.getElementById('selected-node-banner');
+    if (!banner) return;
+    
+    banner.innerHTML = `
+        <div>
+            <strong>🎯 Deploying to:</strong> ${escapeHtmlFn(nodeName)}
+            <span style="opacity: 0.8; font-size: 12px; margin-left: 8px;">(${escapeHtmlFn(nodeId.substring(0, 12))}...)</span>
+        </div>
+        <button onclick="window.nodeMarketplace.clearNodeSelection()" style="
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        ">
+            Choose Different Node
+        </button>
+    `;
+    
+    banner.style.cssText = `
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    `;
+}
+
+/**
+ * Clear node selection
+ */
+export function clearNodeSelection() {
+    if (window.app && window.app.state) {
+        window.app.state.selectedNodeId = null;
+        window.app.state.selectedNodeName = null;
+    }
+    
+    const nodeIdInput = document.getElementById('vm-target-node-id');
+    if (nodeIdInput) {
+        nodeIdInput.value = '';
+    }
+    
+    const banner = document.getElementById('selected-node-banner');
+    if (banner) {
+        banner.style.display = 'none';
     }
 }

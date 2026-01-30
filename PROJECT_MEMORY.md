@@ -1,6 +1,6 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-01-29  
+**Last Updated:** 2026-01-30  
 **Status:** Active Development - Phase 1 (Marketplace Foundation) In Progress
 
 ---
@@ -105,8 +105,11 @@ CPU points calculated via sysbench benchmarking, normalized against baseline per
 ✅ WebSocket terminal access  
 ✅ Automated deployment via install.sh scripts  
 ✅ ARM architecture support (Raspberry Pi)  
+✅ Node marketplace with search and filtering  
+✅ Real-time node reputation tracking (uptime, reliability)  
 
 ### Recent Achievements (2026-01-30)
+
 🎉 **Goal 1 Complete: Node Marketplace (Backend + Frontend)**
 
 **Backend Implementation (2026-01-29):**
@@ -161,6 +164,81 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
 
 # Frontend: Navigate to Nodes → Use filters → Click any card for details
 ```
+
+---
+
+🎯 **Node Reputation Tracking System (2026-01-30)**
+
+**Core Innovation:** Real-time failure tracking integrated with existing health monitoring
+
+**Implementation Details:**
+- **Failed Heartbeat Tracking by Day:**
+  - Added `FailedHeartbeatsByDay` dictionary to Node model (date string → count)
+  - Stores failed heartbeats per day in format `{"2026-01-30": 245}`
+  - Auto-cleanup removes data older than 30 days (rolling window)
+  
+- **Real-Time Detection (Every 30 seconds):**
+  - Integrated with existing `NodeHealthMonitorService`
+  - Leverages proven "marked as offline" mechanism (2-minute timeout)
+  - Records failures every 30 seconds for all offline nodes
+  - `LastFailedHeartbeatCheckAt` prevents double-counting
+  
+- **Accurate Uptime Calculation:**
+  - Expected heartbeats: Total seconds / 15 (heartbeat interval)
+  - Failed heartbeats: Sum of all values in last 30 days
+  - Uptime %: (Expected - Failed) / Expected × 100
+  - Historical accuracy preserved (no "amnesia" after recovery)
+  
+- **Services Created:**
+  - `NodeReputationService`: Core reputation logic
+  - `NodeReputationMaintenanceService`: Hourly cleanup and recalculation
+  
+- **Integration Points:**
+  - `NodeService.CheckNodeHealthAsync()`: Records failures for offline nodes
+  - `NodeService.ProcessHeartbeatAsync()`: Updates uptime when online
+  - `VmService.CreateVmAsync()`: Increments `TotalVmsHosted`
+  - `VmService.DeleteVmAsync()`: Increments `SuccessfulVmCompletions`
+
+**Metrics Tracked:**
+1. **Uptime Percentage** - 30-day rolling window, precise to 15-second intervals
+2. **Total VMs Hosted** - Lifetime counter, increments on VM assignment
+3. **Successful Completions** - Tracks cleanly terminated VMs
+
+**Key Benefits:**
+- ✅ Uses existing health check infrastructure (no new monitoring needed)
+- ✅ Real-time accuracy (30-second detection vs hourly)
+- ✅ Historical data preserved (doesn't reset to 100% after recovery)
+- ✅ Minimal storage overhead (~300 bytes per node for 30 days)
+- ✅ Automatic cleanup (maintains 30-day window)
+- ✅ No double-counting (timestamp-based prevention)
+
+**Status:** ✅ **Production-ready** - Fully integrated and tested
+
+**Documentation:**
+- `UPTIME_TRACKING_EXPLAINED.md` - Complete system explanation
+- `REPUTATION_TRACKING_IMPLEMENTATION.md` - Implementation guide
+
+---
+
+### Strategic Decision: Optional Premium Staking (2026-01-30)
+
+**Decision:** Defer mandatory staking, implement **optional premium tier** in Phase 4
+
+**Rationale:**
+- ✅ **Preserves core principle:** "Universal participation" - anyone can run a node
+- ✅ **Growth focus:** Phase 1-3 prioritize adoption over gatekeeping
+- ✅ **Data-driven:** Need 3+ months of marketplace data before adding premium features
+- ✅ **Reputation first:** Existing uptime/reliability system handles quality organically
+- ✅ **Token timing:** XDE token not yet launched
+- ✅ **Problem validation:** No evidence of spam/quality issues requiring barriers
+
+**Future Implementation (Phase 4, Months 6-9):**
+- Free tier remains forever available (no participation barrier)
+- Premium tier requires earned reputation PLUS optional XDE stake
+- Benefits: Featured placement, custom branding, priority support
+- Stake is lockable security deposit, not slashable punishment
+
+**Key Insight:** Optional staking creates differentiation for serious operators without contradicting the "permissionless participation" mission. Similar to GitHub's free vs. premium tiers.
 
 ---
 
@@ -306,12 +384,74 @@ Already implemented via marketplace backend.
 
 ---
 
+### Phase 4: Monetization & Premium Features (Months 6-9)
+
+**Pre-requisites:**
+- 50+ active nodes with proven reputation data
+- 3+ months of marketplace operation
+- XDE token launched and liquid
+- Evidence of quality/spam problems (if applicable)
+
+#### Priority 4.1: Optional Premium Node Staking ⭐⭐⭐
+- **Impact:** 🎯 MEDIUM - Differentiation for serious operators
+- **Effort:** 🔴 HIGH (4-6 weeks, includes smart contracts)
+
+**What:** **Optional** XDE staking for premium node differentiation
+- **Free Tier (Always Available):**
+  - Basic marketplace listing
+  - All core functionality
+  - Merit-based verification badges (earned via uptime/reputation)
+  
+- **Premium Tier (Optional Staking):**
+  - Requires earned Tier 2 status (95%+ uptime, 10+ completions)
+  - XDE stake amount TBD based on market conditions
+  - Benefits:
+    - Premium badge & featured placement
+    - Priority in search results
+    - Custom marketplace page (branding, extended description)
+    - Early access to new features
+    - Enhanced support priority
+  - Stake is **lockable, not slashable** (security deposit model)
+  
+**Key Principles:**
+- ✅ Preserves "universal participation" - free tier always available
+- ✅ Staking is **optional differentiation**, not requirement
+- ✅ Must earn reputation first (can't buy quality)
+- ✅ Creates natural premium tier without gatekeeping
+- ❌ Never makes staking mandatory for basic participation
+
+**Decision Criteria Before Implementation:**
+```python
+if (
+    active_nodes > 50 and
+    marketplace_age_months > 3 and
+    reputation_system_proven and
+    xde_token_launched and
+    community_requests_premium_tier
+):
+    implement_optional_staking()
+else:
+    continue_free_model()
+```
+
+#### Priority 4.2: Advanced Analytics Dashboard ⭐⭐
+- **Impact:** 🎯 MEDIUM - Professional operator tools
+- **Effort:** 🟡 MEDIUM (2-3 weeks)
+
+**What:** Deep metrics for premium node operators
+- Historical uptime trends
+- Earnings projections
+- Competitive benchmarking
+- Resource utilization analytics
+
+---
+
 ## What NOT to Do (Anti-Priorities)
 
-Based on strategic analysis, these should be **deferred**:
+Based on strategic analysis, these should be **deferred or rejected**:
 
 ❌ **Custom VM Images Upload** - Security risk, complex, low ROI  
-❌ **Staking System** - Premature optimization  
+❌ **Mandatory Staking System** - Contradicts "universal participation" principle  
 ❌ **Live Migration** - Technically hard, low user demand  
 ❌ **Team Workspaces** - Niche until user base grows  
 ❌ **DHT-based Discovery** - Centralized marketplace works for MVP, can add DHT layer later  
