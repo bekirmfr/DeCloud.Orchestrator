@@ -64,7 +64,7 @@ public class MarketplaceController : ControllerBase
             "Marketplace search returned {Count} nodes (tags={Tags}, gpu={Gpu}, region={Region})",
             nodes.Count, tags ?? "none", requiresGpu, region ?? "any");
 
-        return Ok(nodes);
+        return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
     }
 
     /// <summary>
@@ -85,7 +85,7 @@ public class MarketplaceController : ControllerBase
 
         _logger.LogInformation("Returning {Count} featured nodes", featuredNodes.Count);
 
-        return Ok(featuredNodes);
+        return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(featuredNodes));
     }
 
     /// <summary>
@@ -99,10 +99,10 @@ public class MarketplaceController : ControllerBase
 
         if (advertisement == null)
         {
-            return NotFound(new { Error = "Node not found" });
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Node not found"));
         }
 
-        return Ok(advertisement);
+        return Ok(ApiResponse<NodeAdvertisement>.Ok(advertisement));
     }
 
     /// <summary>
