@@ -27,8 +27,7 @@ import {
     initializeMarketplace,
     loadNodes as loadNodesFromMarketplace,
     searchNodes,
-    clearNodeFilters,
-    openNodeDetail
+    clearNodeFilters
 } from './marketplace.js';
 
 // ============================================
@@ -2163,4 +2162,3 @@ window.loadUserBalance = loadUserBalance;
 window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;
 window.clearNodeFilters = clearNodeFilters;
-window.openNodeDetail = openNodeDetail;

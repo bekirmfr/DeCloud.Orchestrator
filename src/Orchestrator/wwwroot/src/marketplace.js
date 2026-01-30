@@ -15,6 +15,20 @@ let escapeHtmlFn = (text) => text;
 export function initializeMarketplace(baseUrl, escapeHtml) {
     orchestratorUrl = baseUrl;
     escapeHtmlFn = escapeHtml;
+    setupNodeCardDelegation();
+}
+
+/**
+ * Set up delegated click handlers for node cards.
+ * Listens on the grid containers so we don't need inline onclick handlers.
+ */
+function setupNodeCardDelegation() {
+    document.addEventListener('click', (e) => {
+        const card = e.target.closest('.mp-node-card[data-node-id]');
+        if (card) {
+            openNodeDetail(card.dataset.nodeId);
+        }
+    });
 }
 
 /**
@@ -173,7 +187,7 @@ function renderNodeCards(container, nodes) {
             : '<span style="color: var(--text-muted); font-style: italic;">No description provided</span>';
 
         return `
-            <div class="mp-node-card" onclick="openNodeDetail('${escapeHtmlFn(node.nodeId)}')">
+            <div class="mp-node-card" data-node-id="${escapeHtmlFn(node.nodeId)}">
                 <div class="mp-card-header">
                     <div>
                         <div class="mp-node-name">${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}</div>
