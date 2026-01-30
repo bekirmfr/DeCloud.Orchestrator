@@ -41,7 +41,7 @@ public class NodeMarketplaceService : INodeMarketplaceService
 
     public async Task<List<NodeAdvertisement>> SearchNodesAsync(NodeSearchCriteria criteria)
     {
-        var nodes = _dataStore.ActiveNodes.Values.AsEnumerable();
+        var nodes = (await _dataStore.GetAllNodesAsync()).AsEnumerable();
 
         // Filter by online status
         if (criteria.OnlineOnly)
