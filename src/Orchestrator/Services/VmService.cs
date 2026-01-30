@@ -266,10 +266,12 @@ public class VmService : IVmService
                         networkConfig.SshJumpHost, networkConfig.SshJumpPort,
                         networkConfig.NodeAgentHost, networkConfig.NodeAgentPort);
                 }
-
-                _logger.LogWarning(
+                else
+                {
+                    _logger.LogWarning(
                         "VM {VmId} references non-existent node {NodeId} - connection details unavailable",
                         v.Id, v.NodeId);
+                }
             }
 
             return new VmSummary(
