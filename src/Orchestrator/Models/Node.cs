@@ -1,4 +1,4 @@
-﻿using Nethereum.Merkle.Patricia;
+using Nethereum.Merkle.Patricia;
 using Orchestrator.Services;
 
 namespace Orchestrator.Models;
@@ -79,6 +79,18 @@ public class Node
     public double UptimePercentage { get; set; } = 100.0;
     public int TotalVmsHosted { get; set; }
     public int SuccessfulVmCompletions { get; set; }
+    
+    /// <summary>
+    /// Failed heartbeats tracked by day (date string -> count)
+    /// Key format: "yyyy-MM-dd" (e.g., "2026-01-30")
+    /// Used to calculate uptime percentage over 30-day rolling window
+    /// </summary>
+    public Dictionary<string, int> FailedHeartbeatsByDay { get; set; } = new();
+    
+    /// <summary>
+    /// Last time we checked for failed heartbeats (to avoid double-counting)
+    /// </summary>
+    public DateTime? LastFailedHeartbeatCheckAt { get; set; }
 
     // Region/Location for scheduling
     public string Region { get; set; } = "default";

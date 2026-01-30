@@ -15,6 +15,12 @@ public interface INodeReputationService
     Task UpdateUptimeAsync(string nodeId);
 
     /// <summary>
+    /// Record a failed heartbeat for tracking downtime
+    /// Called when a heartbeat is expected but not received
+    /// </summary>
+    Task RecordFailedHeartbeatAsync(string nodeId);
+
+    /// <summary>
     /// Increment VMs hosted count when a VM is assigned to a node
     /// </summary>
     Task IncrementVmsHostedAsync(string nodeId);
@@ -26,6 +32,7 @@ public interface INodeReputationService
 
     /// <summary>
     /// Calculate uptime for all nodes (background task)
+    /// Also detects and records failed heartbeats
     /// </summary>
     Task RecalculateAllUptimesAsync();
 }
@@ -81,7 +88,8 @@ public class NodeReputationService : INodeReputationService
     }
 
     /// <summary>
-    /// Calculate uptime based on heartbeat history
+    /// Calculate uptime based on failed heartbeat history
+    /// Uses last 30 days of failed heartbeat counts
     /// </summary>
     private double CalculateUptime(Node node)
     {
@@ -101,44 +109,120 @@ public class NodeReputationService : INodeReputationService
             return 100.0;
         }
 
-        // Calculate expected heartbeats
+        // Calculate expected heartbeats in the time window
         var expectedHeartbeats = (int)(totalTime / ExpectedHeartbeatInterval.TotalSeconds);
 
-        // Calculate downtime windows
-        var downtimeSeconds = CalculateDowntime(node, effectiveStart, now);
+        // Sum failed heartbeats from last 30 days
+        var failedHeartbeats = CountFailedHeartbeatsInWindow(node, effectiveStart, now);
 
-        // Uptime = (total time - downtime) / total time
-        var uptimeSeconds = Math.Max(0, totalTime - downtimeSeconds);
-        var uptimePercentage = (uptimeSeconds / totalTime) * 100.0;
+        // Calculate successful heartbeats
+        var successfulHeartbeats = Math.Max(0, expectedHeartbeats - failedHeartbeats);
+
+        // Uptime = successful / expected × 100
+        var uptimePercentage = expectedHeartbeats > 0
+            ? (successfulHeartbeats / (double)expectedHeartbeats) * 100.0
+            : 100.0;
 
         // Clamp between 0 and 100
         return Math.Clamp(uptimePercentage, 0.0, 100.0);
     }
 
     /// <summary>
-    /// Calculate total downtime in seconds based on missed heartbeats
-    /// Simplified approach: if last heartbeat is older than tolerance, count it as down
+    /// Count failed heartbeats within the time window
     /// </summary>
-    private double CalculateDowntime(Node node, DateTime start, DateTime end)
+    private int CountFailedHeartbeatsInWindow(Node node, DateTime start, DateTime end)
     {
-        // If node is currently offline, count time since last heartbeat as downtime
-        if (node.Status == NodeStatus.Offline && node.LastHeartbeat.HasValue)
+        if (node.FailedHeartbeatsByDay == null || node.FailedHeartbeatsByDay.Count == 0)
         {
-            var timeSinceLastHeartbeat = end - node.LastHeartbeat.Value;
-            if (timeSinceLastHeartbeat > HeartbeatTolerance)
-            {
-                // Node is down right now
-                var downSince = node.LastHeartbeat.Value + HeartbeatTolerance;
-                if (downSince < start)
-                    downSince = start;
+            return 0;
+        }
 
-                return (end - downSince).TotalSeconds;
+        var failedCount = 0;
+
+        // Iterate through each day in the window
+        for (var date = start.Date; date <= end.Date; date = date.AddDays(1))
+        {
+            var dateKey = date.ToString("yyyy-MM-dd");
+            if (node.FailedHeartbeatsByDay.TryGetValue(dateKey, out var count))
+            {
+                failedCount += count;
             }
         }
 
-        // TODO: For more accurate tracking, implement heartbeat history storage
-        // For now, assume if node is online, it's been mostly online
-        return 0;
+        return failedCount;
+    }
+
+    /// <summary>
+    /// Track a failed heartbeat for the current day
+    /// Called when a heartbeat is expected but not received
+    /// </summary>
+    public async Task RecordFailedHeartbeatAsync(string nodeId)
+    {
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+
+            // Initialize dictionary if null
+            node.FailedHeartbeatsByDay ??= new Dictionary<string, int>();
+
+            // Increment counter for today
+            if (node.FailedHeartbeatsByDay.ContainsKey(today))
+            {
+                node.FailedHeartbeatsByDay[today]++;
+            }
+            else
+            {
+                node.FailedHeartbeatsByDay[today] = 1;
+            }
+
+            // Clean up old entries (older than 30 days)
+            CleanupOldHeartbeatData(node);
+
+            await _dataStore.SaveNodeAsync(node);
+
+            _logger.LogDebug(
+                "Recorded failed heartbeat for node {NodeId} on {Date}: {Count}",
+                nodeId, today, node.FailedHeartbeatsByDay[today]);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to record failed heartbeat for node {NodeId}", nodeId);
+        }
+    }
+
+    /// <summary>
+    /// Remove heartbeat data older than 30 days to keep dictionary size manageable
+    /// </summary>
+    private void CleanupOldHeartbeatData(Node node)
+    {
+        if (node.FailedHeartbeatsByDay == null || node.FailedHeartbeatsByDay.Count == 0)
+        {
+            return;
+        }
+
+        var cutoffDate = DateTime.UtcNow.AddDays(-30).ToString("yyyy-MM-dd");
+
+        var oldKeys = node.FailedHeartbeatsByDay.Keys
+            .Where(k => string.Compare(k, cutoffDate, StringComparison.Ordinal) < 0)
+            .ToList();
+
+        foreach (var key in oldKeys)
+        {
+            node.FailedHeartbeatsByDay.Remove(key);
+        }
+
+        if (oldKeys.Count > 0)
+        {
+            _logger.LogDebug(
+                "Cleaned up {Count} old heartbeat entries for node {NodeId}",
+                oldKeys.Count, node.Id);
+        }
     }
 
     /// <summary>
@@ -199,6 +283,7 @@ public class NodeReputationService : INodeReputationService
 
     /// <summary>
     /// Recalculate uptime for all nodes
+    /// Also detects and records failed heartbeats for offline nodes
     /// Should be run periodically (e.g., every hour)
     /// </summary>
     public async Task RecalculateAllUptimesAsync()
@@ -211,6 +296,10 @@ public class NodeReputationService : INodeReputationService
 
             foreach (var node in nodes)
             {
+                // Detect and record failed heartbeats for offline nodes
+                await DetectAndRecordFailedHeartbeatsAsync(node);
+
+                // Update uptime calculation
                 await UpdateUptimeAsync(node.Id);
             }
 
@@ -220,5 +309,101 @@ public class NodeReputationService : INodeReputationService
         {
             _logger.LogError(ex, "Failed to recalculate all uptimes");
         }
+    }
+
+    /// <summary>
+    /// Detect failed heartbeats for a node and record them by day
+    /// Only records for currently offline nodes, tracks since last check to avoid double-counting
+    /// </summary>
+    private async Task DetectAndRecordFailedHeartbeatsAsync(Node node)
+    {
+        // Only check offline nodes
+        if (node.Status != NodeStatus.Offline || !node.LastHeartbeat.HasValue)
+        {
+            // If node is online, update last check time
+            if (node.Status == NodeStatus.Online)
+            {
+                node.LastFailedHeartbeatCheckAt = DateTime.UtcNow;
+            }
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var timeSinceLastHeartbeat = now - node.LastHeartbeat.Value;
+
+        // If heartbeat is recent (within tolerance), no failures
+        if (timeSinceLastHeartbeat <= HeartbeatTolerance)
+        {
+            return;
+        }
+
+        // Calculate when downtime started (last heartbeat + tolerance)
+        var downtimeStart = node.LastHeartbeat.Value + HeartbeatTolerance;
+
+        // If we've already checked recently, only count new failures
+        if (node.LastFailedHeartbeatCheckAt.HasValue && node.LastFailedHeartbeatCheckAt.Value > downtimeStart)
+        {
+            downtimeStart = node.LastFailedHeartbeatCheckAt.Value;
+        }
+
+        // Calculate total missed heartbeats since last check
+        var missedDuration = now - downtimeStart;
+        var totalMissedHeartbeats = (int)(missedDuration.TotalSeconds / ExpectedHeartbeatInterval.TotalSeconds);
+
+        if (totalMissedHeartbeats <= 0)
+        {
+            // Update check time even if no new failures
+            node.LastFailedHeartbeatCheckAt = now;
+            return;
+        }
+
+        // Initialize dictionary if null
+        node.FailedHeartbeatsByDay ??= new Dictionary<string, int>();
+
+        // Distribute missed heartbeats across days
+        var currentDate = downtimeStart.Date;
+        var endDate = now.Date;
+        var remainingMissed = totalMissedHeartbeats;
+
+        while (currentDate <= endDate && remainingMissed > 0)
+        {
+            var dateKey = currentDate.ToString("yyyy-MM-dd");
+
+            // Calculate how much of this day was in the downtime window
+            var dayStart = currentDate;
+            var dayEnd = currentDate.AddDays(1);
+
+            // Clamp to actual downtime window
+            if (dayStart < downtimeStart) dayStart = downtimeStart;
+            if (dayEnd > now) dayEnd = now;
+
+            var secondsInDay = (dayEnd - dayStart).TotalSeconds;
+            var missedInDay = (int)(secondsInDay / ExpectedHeartbeatInterval.TotalSeconds);
+
+            if (missedInDay > 0)
+            {
+                // Add to existing count for this day
+                if (!node.FailedHeartbeatsByDay.ContainsKey(dateKey))
+                {
+                    node.FailedHeartbeatsByDay[dateKey] = 0;
+                }
+
+                node.FailedHeartbeatsByDay[dateKey] += missedInDay;
+                remainingMissed -= missedInDay;
+
+                _logger.LogDebug(
+                    "Recorded {Count} failed heartbeats for node {NodeId} on {Date}",
+                    missedInDay, node.Id, dateKey);
+            }
+
+            currentDate = currentDate.AddDays(1);
+        }
+
+        // Update last check time
+        node.LastFailedHeartbeatCheckAt = now;
+
+        // Clean up old data and save
+        CleanupOldHeartbeatData(node);
+        await _dataStore.SaveNodeAsync(node);
     }
 }
