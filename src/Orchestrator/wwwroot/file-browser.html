@@ -6,23 +6,9 @@
     <title>DeCloud File Browser</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/design-tokens.css">
     <style>
-        :root {
-            --bg-primary: #0a0b0f;
-            --bg-secondary: #12141a;
-            --bg-tertiary: #1a1d26;
-            --bg-elevated: #22252f;
-            --accent-primary: #00d4aa;
-            --accent-secondary: #00a8ff;
-            --accent-warning: #f59e0b;
-            --accent-danger: #ef4444;
-            --text-primary: #f0f2f5;
-            --text-secondary: #a0a4ab;
-            --text-muted: #6b7280;
-            --border-color: #2a2d36;
-            --border-hover: #3a3d46;
-        }
 
         * {
             margin: 0;
@@ -31,8 +17,8 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-primary);
+            font-family: var(--font-display);
+            background: var(--bg-deep);
             color: var(--text-primary);
             min-height: 100vh;
             display: flex;
@@ -290,7 +276,7 @@
         .file-permissions {
             font-size: 13px;
             color: var(--text-secondary);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
         }
 
         /* Empty State */
@@ -551,12 +537,12 @@
         .form-input {
             width: 100%;
             padding: 10px 12px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
             color: var(--text-primary);
             font-size: 14px;
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
         }
 
             .form-input:focus {

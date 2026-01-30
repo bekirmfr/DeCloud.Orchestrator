@@ -1,3 +1,11 @@
+/**
+ * DeCloud Orchestrator - Main Styles
+ * Design tokens are defined in design-tokens.css
+ * This file extends the base design system with page-specific styles
+ */
+
+/* Note: Design tokens are already defined in design-tokens.css which is imported in index.html */
+/* Keeping these for backwards compatibility and as fallbacks */
 :root {
     --bg-deep: #0a0b0f;
     --bg-primary: #12141a;
@@ -25,20 +33,6 @@
     --transition-fast: 150ms ease;
     --transition-normal: 250ms ease;
     --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-body {
-    font-family: var(--font-display);
-    background: var(--bg-deep);
-    color: var(--text-primary);
-    min-height: 100vh;
-    overflow-x: hidden;
 }
 
 /* Background Effects */

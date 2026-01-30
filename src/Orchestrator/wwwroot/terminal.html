@@ -6,25 +6,13 @@
     <title>DeCloud Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/design-tokens.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
     <style>
-        :root {
-            --bg-deep: #0a0b0f;
-            --bg-primary: #12141a;
-            --bg-secondary: #1a1d26;
-            --bg-elevated: #22262f;
-            --accent-primary: #00d4aa;
-            --accent-secondary: #00a8ff;
-            --text-primary: #f0f2f5;
-            --text-secondary: #9ca3af;
-            --text-muted: #6b7280;
-            --border-subtle: rgba(255,255,255,0.06);
-            --border-default: rgba(255,255,255,0.1);
-        }
 
         * {
             margin: 0;
@@ -33,7 +21,7 @@
         }
 
         body {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             background: var(--bg-deep);
             color: var(--text-primary);
             height: 100vh;

@@ -4,60 +4,100 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeCloud Node Authorization</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Design System -->
+    <link rel="stylesheet" href="/design-tokens.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /* Background Effects */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), 
+                              linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.4;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-glow-1 {
+            top: -200px;
+            right: -100px;
+            background: var(--accent-primary);
+            opacity: 0.15;
+        }
+
+        .bg-glow-2 {
+            bottom: -300px;
+            left: -200px;
+            background: var(--accent-secondary);
+            opacity: 0.1;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: var(--space-xl);
+            position: relative;
         }
 
         .container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            background: var(--bg-primary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-xl);
             max-width: 600px;
             width: 100%;
-            padding: 40px;
+            padding: var(--space-4xl);
+            position: relative;
+            z-index: 1;
         }
 
         .logo {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: var(--space-3xl);
         }
 
             .logo h1 {
-                color: #667eea;
-                font-size: 32px;
-                margin-bottom: 10px;
+                color: var(--text-primary);
+                font-size: var(--font-5xl);
+                margin-bottom: var(--space-md);
+                font-weight: var(--font-bold);
             }
 
             .logo p {
-                color: #666;
-                font-size: 14px;
+                color: var(--text-secondary);
+                font-size: var(--font-md);
             }
 
         .status {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: var(--space-xl);
+            margin-bottom: var(--space-xl);
         }
 
         .status-item {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #e0e0e0;
+            padding: var(--space-md) 0;
+            border-bottom: 1px solid var(--border-subtle);
         }
 
             .status-item:last-child {
@@ -65,26 +105,28 @@
             }
 
         .status-label {
-            color: #666;
-            font-weight: 500;
+            color: var(--text-secondary);
+            font-weight: var(--font-medium);
         }
 
         .status-value {
-            color: #333;
-            font-weight: 600;
+            color: var(--text-primary);
+            font-weight: var(--font-semibold);
+            font-family: var(--font-mono);
             word-break: break-all;
             text-align: right;
             max-width: 60%;
         }
 
         .message-box {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 20px 0;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            color: #333;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: var(--space-xl);
+            margin: var(--space-xl) 0;
+            font-family: var(--font-mono);
+            font-size: var(--font-sm);
+            color: var(--text-primary);
             max-height: 200px;
             overflow-y: auto;
             white-space: pre-wrap;
@@ -93,153 +135,158 @@
 
         .button {
             width: 100%;
-            padding: 16px;
+            padding: var(--space-lg);
             border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
+            border-radius: var(--radius-md);
+            font-size: var(--font-lg);
+            font-weight: var(--font-semibold);
             cursor: pointer;
-            transition: all 0.3s;
-            margin: 10px 0;
+            transition: all var(--transition-fast);
+            margin: var(--space-md) 0;
+            font-family: var(--font-display);
         }
 
         .button-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: linear-gradient(135deg, var(--accent-primary), #00b894);
+            color: var(--bg-deep);
+            box-shadow: 0 4px 20px var(--glow-primary);
         }
 
-            .button-primary:hover {
+            .button-primary:hover:not(:disabled) {
                 transform: translateY(-2px);
-                box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+                box-shadow: 0 6px 30px var(--glow-primary);
             }
 
             .button-primary:disabled {
-                background: #ccc;
+                opacity: 0.5;
                 cursor: not-allowed;
                 transform: none;
             }
 
         .button-secondary {
-            background: white;
-            color: #667eea;
-            border: 2px solid #667eea;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-default);
         }
 
-            .button-secondary:hover {
-                background: #667eea;
-                color: white;
+            .button-secondary:hover:not(:disabled) {
+                background: var(--bg-hover);
+                border-color: var(--accent-primary);
             }
 
         .signature-result {
-            background: #e8f5e9;
-            border: 2px solid #4caf50;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 20px 0;
+            background: rgba(16, 185, 129, 0.1);
+            border: 2px solid var(--accent-success);
+            border-radius: var(--radius-md);
+            padding: var(--space-xl);
+            margin: var(--space-xl) 0;
         }
 
             .signature-result h3 {
-                color: #2e7d32;
-                margin-bottom: 10px;
+                color: var(--accent-success);
+                margin-bottom: var(--space-md);
+                font-weight: var(--font-semibold);
             }
 
         .signature-text {
-            background: white;
-            padding: 15px;
-            border-radius: 5px;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
+            background: var(--bg-deep);
+            padding: var(--space-lg);
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: var(--font-sm);
             word-break: break-all;
-            margin: 10px 0;
+            margin: var(--space-md) 0;
+            color: var(--accent-primary);
         }
 
         .warning {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 5px;
+            background: rgba(245, 158, 11, 0.1);
+            border-left: 4px solid var(--accent-warning);
+            padding: var(--space-lg);
+            margin: var(--space-xl) 0;
+            border-radius: var(--radius-sm);
         }
 
             .warning h4 {
-                color: #856404;
-                margin-bottom: 5px;
+                color: var(--accent-warning);
+                margin-bottom: var(--space-sm);
+                font-weight: var(--font-semibold);
             }
 
             .warning p {
-                color: #856404;
-                font-size: 14px;
+                color: var(--text-secondary);
+                font-size: var(--font-md);
             }
 
         .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+            border: 3px solid var(--border-default);
+            border-top: 3px solid var(--accent-primary);
             border-radius: 50%;
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
-            margin: 20px auto;
+            margin: var(--space-xl) auto;
         }
 
         @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
+            to { transform: rotate(360deg); }
         }
 
         .error {
-            background: #ffebee;
-            border-left: 4px solid #f44336;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 5px;
-            color: #c62828;
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 4px solid var(--accent-danger);
+            padding: var(--space-lg);
+            margin: var(--space-xl) 0;
+            border-radius: var(--radius-sm);
+            color: var(--accent-danger);
         }
 
         .success {
             text-align: center;
-            color: #4caf50;
-            font-size: 48px;
-            margin: 20px 0;
+            color: var(--accent-success);
+            font-size: var(--font-5xl);
+            margin: var(--space-xl) 0;
         }
 
         .instructions {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 5px;
+            background: rgba(0, 168, 255, 0.1);
+            border-left: 4px solid var(--accent-secondary);
+            padding: var(--space-lg);
+            margin: var(--space-xl) 0;
+            border-radius: var(--radius-sm);
         }
 
             .instructions h4 {
-                color: #1565c0;
-                margin-bottom: 10px;
+                color: var(--accent-secondary);
+                margin-bottom: var(--space-md);
+                font-weight: var(--font-semibold);
             }
 
             .instructions ol {
-                margin-left: 20px;
-                color: #1565c0;
+                margin-left: var(--space-xl);
+                color: var(--text-secondary);
             }
 
             .instructions li {
-                margin: 5px 0;
+                margin: var(--space-sm) 0;
             }
 
         .info-box {
-            background: #e3f2fd;
-            padding: 15px;
-            border-radius: 10px;
-            margin: 20px 0;
+            background: rgba(0, 168, 255, 0.1);
+            border: 1px solid rgba(0, 168, 255, 0.2);
+            padding: var(--space-lg);
+            border-radius: var(--radius-md);
+            margin: var(--space-xl) 0;
         }
 
             .info-box p {
-                color: #1565c0;
-                font-size: 14px;
+                color: var(--text-secondary);
+                font-size: var(--font-md);
                 line-height: 1.6;
+            }
+
+            .info-box strong {
+                color: var(--text-primary);
             }
 
         /* Mobile responsive */
@@ -270,8 +317,8 @@
             left: 0;
             width: 100%;
             height: 3px;
-            background: rgba(102, 126, 234, 0.1);
-            z-index: 9999;
+            background: var(--bg-secondary);
+            z-index: var(--z-toast);
             display: none;
         }
 
@@ -281,13 +328,18 @@
 
         .sdk-loading-bar-progress {
             height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
             transition: width 0.3s ease;
             width: 0%;
         }
     </style>
 </head>
 <body>
+    <!-- Background Effects -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
     <!-- SDK Loading Progress Bar -->
     <div class="sdk-loading-bar" id="sdk-loading-bar">
         <div class="sdk-loading-bar-progress" id="sdk-loading-progress"></div>
