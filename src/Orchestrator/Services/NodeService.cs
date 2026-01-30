@@ -423,6 +423,12 @@ public class NodeService : INodeService
             // For now, we just log the discrepancy and update the node based on the ehartbeat
         }
 
+        // If node was offline and is now back online, reset downtime tracking
+        if (wasOffline)
+        {
+            node.LastFailedHeartbeatCheckAt = null; // Reset for next potential downtime
+        }
+
         await _dataStore.SaveNodeAsync(node);
 
         // Update node reputation metrics (uptime tracking)
@@ -1607,6 +1613,50 @@ public class NodeService : INodeService
                 });
 
                 await MarkNodeVmsAsErrorAsync(node.Id);
+
+                // Start tracking downtime for reputation
+                // Record the moment node went offline
+                var reputationService = _serviceProvider.GetService<INodeReputationService>();
+                if (reputationService != null)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Mark when downtime started (for tracking purposes)
+                            node.LastFailedHeartbeatCheckAt = node.LastSeenAt;
+                            await _dataStore.SaveNodeAsync(node);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to initialize downtime tracking for node {NodeId}", node.Id);
+                        }
+                    });
+                }
+            }
+        }
+
+        // For all offline nodes, record ongoing failures
+        var offlineNodes = _dataStore.GetActiveNodes()
+            .Where(n => n.Status == NodeStatus.Offline)
+            .ToList();
+
+        foreach (var node in offlineNodes)
+        {
+            var reputationService = _serviceProvider.GetService<INodeReputationService>();
+            if (reputationService != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await reputationService.RecordFailedHeartbeatsSinceLastCheckAsync(node.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to record failed heartbeats for node {NodeId}", node.Id);
+                    }
+                });
             }
         }
     }
