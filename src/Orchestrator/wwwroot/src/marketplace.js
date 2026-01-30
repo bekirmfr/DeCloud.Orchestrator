@@ -1,6 +1,7 @@
 // ============================================
 // MARKETPLACE MODULE
 // Node discovery, search, and detail views
+// Uses /api/marketplace endpoints for rich node data
 // ============================================
 
 let orchestratorUrl = '';
@@ -14,12 +15,26 @@ let escapeHtmlFn = (text) => text;
 export function initializeMarketplace(baseUrl, escapeHtml) {
     orchestratorUrl = baseUrl;
     escapeHtmlFn = escapeHtml;
+    setupNodeCardDelegation();
 }
 
 /**
- * Load the marketplace page (featured nodes by default)
+ * Set up delegated click handlers for node cards.
+ * Listens on the grid containers so we don't need inline onclick handlers.
  */
-export async function loadMarketplace() {
+function setupNodeCardDelegation() {
+    document.addEventListener('click', (e) => {
+        const card = e.target.closest('.mp-node-card[data-node-id]');
+        if (card) {
+            openNodeDetail(card.dataset.nodeId);
+        }
+    });
+}
+
+/**
+ * Load the Nodes page - fetches featured nodes by default
+ */
+export async function loadNodes() {
     await loadFeaturedNodes();
 }
 
@@ -38,22 +53,21 @@ async function loadFeaturedNodes() {
 
         if (data.success && data.data) {
             renderNodeCards(container, data.data);
-            // Show featured section, hide results
             document.getElementById('mp-featured-section').style.display = '';
             document.getElementById('mp-results-section').style.display = 'none';
         } else {
             container.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 40px; grid-column: 1 / -1;">No featured nodes available</p>';
         }
     } catch (error) {
-        console.error('[Marketplace] Failed to load featured nodes:', error);
+        console.error('[Nodes] Failed to load featured nodes:', error);
         container.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 40px; grid-column: 1 / -1;">Failed to load featured nodes. Please try again.</p>';
     }
 }
 
 /**
- * Search marketplace nodes with current filter values
+ * Search nodes with current filter values
  */
-export async function searchMarketplace() {
+export async function searchNodes() {
     const resultsContainer = document.getElementById('mp-search-results');
     const resultsSection = document.getElementById('mp-results-section');
     const resultsCount = document.getElementById('mp-results-count');
@@ -112,15 +126,15 @@ export async function searchMarketplace() {
             resultsContainer.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 40px; grid-column: 1 / -1;">Search failed. Please try again.</p>';
         }
     } catch (error) {
-        console.error('[Marketplace] Search failed:', error);
+        console.error('[Nodes] Search failed:', error);
         resultsContainer.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 40px; grid-column: 1 / -1;">Search failed. Please try again.</p>';
     }
 }
 
 /**
- * Clear all marketplace filters and show featured nodes
+ * Clear all node filters and show featured nodes
  */
-export function clearMarketplaceFilters() {
+export function clearNodeFilters() {
     document.getElementById('mp-filter-tags').value = '';
     document.getElementById('mp-filter-region').value = '';
     document.getElementById('mp-filter-sort').value = 'uptime';
@@ -173,7 +187,7 @@ function renderNodeCards(container, nodes) {
             : '<span style="color: var(--text-muted); font-style: italic;">No description provided</span>';
 
         return `
-            <div class="mp-node-card" onclick="openNodeDetail('${escapeHtmlFn(node.nodeId)}')">
+            <div class="mp-node-card" data-node-id="${escapeHtmlFn(node.nodeId)}">
                 <div class="mp-card-header">
                     <div>
                         <div class="mp-node-name">${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}</div>
@@ -375,7 +389,7 @@ export async function openNodeDetail(nodeId) {
             body.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 20px;">Node not found</p>';
         }
     } catch (error) {
-        console.error('[Marketplace] Failed to load node detail:', error);
+        console.error('[Nodes] Failed to load node detail:', error);
         body.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 20px;">Failed to load node details</p>';
     }
 }

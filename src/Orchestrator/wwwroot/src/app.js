@@ -25,10 +25,9 @@ import {
 } from './payment.js';
 import {
     initializeMarketplace,
-    loadMarketplace,
-    searchMarketplace,
-    clearMarketplaceFilters,
-    openNodeDetail
+    loadNodes as loadNodesFromMarketplace,
+    searchNodes,
+    clearNodeFilters
 } from './marketplace.js';
 
 // ============================================
@@ -921,8 +920,6 @@ function showPage(pageName) {
         refreshData();
     } else if (pageName === 'nodes') {
         loadNodes();
-    } else if (pageName === 'marketplace') {
-        loadMarketplace();
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     }
@@ -1227,59 +1224,7 @@ function renderDashboardVMs(vms) {
 }
 
 async function loadNodes() {
-    try {
-        const response = await api('/api/nodes');
-        const data = await response.json();
-
-        if (data.success) {
-            const nodes = data.data;
-
-            nodes.forEach(node => {
-                nodesCache[node.id] = node.name;
-            });
-
-            renderNodesTable(nodes);
-        }
-    } catch (error) {
-        console.error('[Nodes] Failed to load:', error);
-        showToast('Failed to load nodes', 'error');
-    }
-}
-
-function renderNodesTable(nodes) {
-    const tbody = document.getElementById('nodes-table-body');
-    if (!tbody) return;
-
-    if (!nodes || nodes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No nodes registered</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = nodes.map(node => {
-        const lastSeen = node.lastHeartbeat ? new Date(node.lastHeartbeat).toLocaleString() : 'Never';
-        const isOnline = node.status === 'online';
-
-        return `
-        <tr>
-            <td>
-                <div class="vm-name">
-                    <div class="vm-status ${isOnline ? 'running' : 'stopped'}"></div>
-                    ${node.name}
-                </div>
-            </td>
-            <td>${node.publicIp || 'N/A'}</td>
-            <td>${node.hardwareInventory.cpu.physicalCores || 0} cores</td>
-            <td>${((node.totalResources?.memoryBytes / (1024^2) || 0) / 1024).toFixed(1)} MB</td>
-            <td>${((node.totalResources?.storageBytes / (1024^3) || 0) / 1024).toFixed(1)} GB</td>
-            <td>${node.activeVMs || 0}</td>
-            <td>${lastSeen}</td>
-            <td>
-                <span class="status-badge status-${isOnline ? 'running' : 'stopped'}">
-                    ${node.status}
-                </span>
-            </td>
-        </tr>
-    `}).join('');
+    await loadNodesFromMarketplace();
 }
 
 async function loadSSHKeys() {
@@ -2214,7 +2159,6 @@ window.showToast = showToast;
 window.ethersSigner = () => ethersSigner;
 window.handleDepositClick = handleDepositClick;
 window.loadUserBalance = loadUserBalance;
-window.loadMarketplace = loadMarketplace;
-window.searchMarketplace = searchMarketplace;
-window.clearMarketplaceFilters = clearMarketplaceFilters;
-window.openNodeDetail = openNodeDetail;
+window.loadNodes = loadNodes;
+window.searchNodes = searchNodes;
+window.clearNodeFilters = clearNodeFilters;

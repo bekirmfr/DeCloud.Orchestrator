@@ -98,14 +98,6 @@
                     </svg>
                     Nodes
                 </a>
-                <a class="nav-item" data-page="marketplace" onclick="showPage('marketplace')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="9" cy="21" r="1" />
-                        <circle cx="20" cy="21" r="1" />
-                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-                    </svg>
-                    Marketplace
-                </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Settings</div>
                 <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
@@ -288,46 +280,10 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Nodes</h1>
-                        <p class="page-subtitle">Network infrastructure providers</p>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>IP Address</th>
-                                    <th>CPU</th>
-                                    <th>Memory</th>
-                                    <th>Storage</th>
-                                    <th>Active VMs</th>
-                                    <th>Last Seen</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="nodes-table-body">
-                                <tr>
-                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
-                                        Loading nodes...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Marketplace Page -->
-            <div id="page-marketplace" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Marketplace</h1>
                         <p class="page-subtitle">Discover and compare compute nodes across the network</p>
                     </div>
                     <div class="header-actions">
-                        <button class="btn btn-secondary" onclick="loadMarketplace()">
+                        <button class="btn btn-secondary" onclick="loadNodes()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M23 4v6h-6M1 20v-6h6" />
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
@@ -380,14 +336,14 @@
                                 </label>
                             </div>
                             <div class="filter-group filter-actions">
-                                <button class="btn btn-primary" onclick="searchMarketplace()">
+                                <button class="btn btn-primary" onclick="searchNodes()">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="11" cy="11" r="8" />
                                         <line x1="21" y1="21" x2="16.65" y2="16.65" />
                                     </svg>
                                     Search
                                 </button>
-                                <button class="btn btn-secondary" onclick="clearMarketplaceFilters()">Clear</button>
+                                <button class="btn btn-secondary" onclick="clearNodeFilters()">Clear</button>
                             </div>
                         </div>
                     </div>
