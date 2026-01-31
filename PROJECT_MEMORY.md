@@ -107,6 +107,7 @@ CPU points calculated via sysbench benchmarking, normalized against baseline per
 ✅ ARM architecture support (Raspberry Pi)  
 ✅ Node marketplace with search and filtering  
 ✅ Real-time node reputation tracking (uptime, reliability)  
+✅ Actionable marketplace with one-click VM deployment to specific nodes  
 
 ### Recent Achievements (2026-01-30)
 
@@ -217,6 +218,69 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
 **Documentation:**
 - `UPTIME_TRACKING_EXPLAINED.md` - Complete system explanation
 - `REPUTATION_TRACKING_IMPLEMENTATION.md` - Implementation guide
+
+---
+
+🎯 **Actionable Node Marketplace - "Minecraft Server List" Experience (2026-01-30)**
+
+**Mission:** Transform the node marketplace from a passive directory into an **actionable deployment interface** where users can browse nodes and deploy VMs directly—just like clicking "Join" on a Minecraft server.
+
+**Core Innovation:** One-click targeted VM deployment from marketplace
+
+**Implementation Details:**
+
+- **Frontend Enhancements:**
+  - Added "🚀 Deploy VM" and "📊 Details" action buttons to every node card
+  - Buttons automatically disabled for offline nodes
+  - Gradient primary button with glow effects for visual hierarchy
+  - Click handling that doesn't conflict with card detail navigation
+  
+- **VM Creation Flow:**
+  - "Deploy VM" button pre-populates hidden `vm-target-node-id` field
+  - Opens VM creation modal immediately
+  - Beautiful purple gradient banner shows: "🎯 Deploying to: [NodeName]"
+  - User can clear selection and choose different node
+  - Banner persists throughout VM configuration
+  
+- **Backend Integration (1-line change):**
+  ```csharp
+  // VmsController.cs
+  var response = await _vmService.CreateVmAsync(userId, request, request.NodeId);
+  ```
+  - Passes `nodeId` from frontend to existing `CreateVmAsync` method
+  - Scheduler uses target node if provided, otherwise auto-selects
+  - No breaking changes to existing auto-selection behavior
+
+**User Experience - 3-Click Deployment:**
+```
+1. Browse nodes → Filter by GPU, region, price, uptime
+2. Click "🚀 Deploy VM" on perfect node → Modal opens with banner
+3. Configure VM specs → Click "Create VM" → Deployed!
+```
+
+**Files Modified:**
+- `VmsController.cs` (1 line) - Pass nodeId to service
+- `marketplace.js` (+120 lines) - Deploy buttons, banner, state management
+- `app.js` (+20 lines) - Include nodeId in VM creation request
+- `styles.css` (+60 lines) - Action button styles with gradients
+- `index.html` (+5 lines) - Hidden input field and banner container
+
+**Production Testing (2026-01-30):**
+- ✅ Node listing displays correctly
+- ✅ "Deploy VM" button opens modal with selected node
+- ✅ VM creation deploys to targeted node
+- ✅ SSH access works (password-based and key-based)
+- ✅ SFTP access functional
+- ✅ Ingress domain routing operational
+- ✅ Full end-to-end workflow verified
+
+**Impact:**
+- **Dramatically reduced friction** - From "browse & remember" to "browse & click"
+- **User empowerment** - Direct control over node selection
+- **Trust building** - Users can verify specific nodes before committing
+- **Competitive advantage** - No other decentralized platform has this UX
+
+**Status:** ✅ **Production-ready and tested** - Full end-to-end verification complete
 
 ---
 
