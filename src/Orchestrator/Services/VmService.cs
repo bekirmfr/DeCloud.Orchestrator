@@ -114,9 +114,26 @@ public class VmService : IVmService
         };
 
         // ════════════════════════════════════════════════════════════════════════
-        // Process Template Deployment (if applicable)
+        // Cloud-Init Processing (Priority: Custom > Template > None)
         // ════════════════════════════════════════════════════════════════════════
-        if (!string.IsNullOrEmpty(request.TemplateId))
+        
+        // Phase 2: Custom cloud-init (overrides template)
+        if (!string.IsNullOrEmpty(request.CustomCloudInit))
+        {
+            vm.Spec.UserData = request.CustomCloudInit;
+            
+            // Store environment variables for substitution
+            if (request.EnvironmentVariables != null && request.EnvironmentVariables.Any())
+            {
+                vm.Labels["custom:cloud-init-vars"] = JsonSerializer.Serialize(request.EnvironmentVariables);
+            }
+            
+            _logger.LogInformation(
+                "VM {VmId} created with custom cloud-init ({Length} bytes)",
+                vm.Id, request.CustomCloudInit.Length);
+        }
+        // Phase 1: Template-based cloud-init (current)
+        else if (!string.IsNullOrEmpty(request.TemplateId))
         {
             var template = await _templateService.GetTemplateByIdAsync(request.TemplateId);
             if (template != null)
@@ -154,6 +171,7 @@ public class VmService : IVmService
                 _logger.LogWarning("Template {TemplateId} not found for VM creation", request.TemplateId);
             }
         }
+        // No cloud-init (bare VM with just base image)
 
         // Save to DataStore with persistence
         await _dataStore.SaveVmAsync(vm);
@@ -799,10 +817,10 @@ public class VmService : IVmService
         string? imageUrl = GetImageUrl(vm.Spec.ImageId);
 
         // ========================================
-        // STEP 6.5: Process cloud-init template (for template deployments)
+        // STEP 6.5: Process cloud-init with variable substitution
         // ========================================
         string? processedUserData = vm.Spec.UserData;
-        if (!string.IsNullOrEmpty(vm.TemplateId) && !string.IsNullOrEmpty(vm.Spec.UserData))
+        if (!string.IsNullOrEmpty(vm.Spec.UserData))
         {
             try
             {
@@ -815,12 +833,23 @@ public class VmService : IVmService
                     variables["DECLOUD_PASSWORD"] = password;
                 }
                 
-                // Merge with template-specific environment variables (from Labels)
-                if (vm.Labels.TryGetValue("template:cloud-init-vars", out var envVarsJson))
+                // Merge with environment variables (from template or custom)
+                // Priority: custom > template
+                string? envVarsLabel = null;
+                if (vm.Labels.TryGetValue("custom:cloud-init-vars", out var customVars))
+                {
+                    envVarsLabel = customVars;
+                }
+                else if (vm.Labels.TryGetValue("template:cloud-init-vars", out var templateVars))
+                {
+                    envVarsLabel = templateVars;
+                }
+                
+                if (!string.IsNullOrEmpty(envVarsLabel))
                 {
                     try
                     {
-                        var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsJson);
+                        var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsLabel);
                         if (envVars != null)
                         {
                             foreach (var kvp in envVars)
@@ -831,21 +860,22 @@ public class VmService : IVmService
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to parse template environment variables for VM {VmId}", vm.Id);
+                        _logger.LogWarning(ex, "Failed to parse cloud-init environment variables for VM {VmId}", vm.Id);
                     }
                 }
                 
-                // Substitute variables in cloud-init template
+                // Substitute variables in cloud-init
                 processedUserData = _templateService.SubstituteCloudInitVariables(vm.Spec.UserData, variables);
                 
+                var source = !string.IsNullOrEmpty(vm.TemplateId) ? $"template {vm.TemplateName}" : "custom cloud-init";
                 _logger.LogInformation(
-                    "Processed cloud-init template for VM {VmId} from template {TemplateName}",
-                    vm.Id, vm.TemplateName);
+                    "Processed cloud-init for VM {VmId} from {Source}",
+                    vm.Id, source);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process cloud-init template for VM {VmId}", vm.Id);
-                // Continue with unprocessed template as fallback
+                _logger.LogError(ex, "Failed to process cloud-init for VM {VmId}", vm.Id);
+                // Continue with unprocessed cloud-init as fallback
             }
         }
 

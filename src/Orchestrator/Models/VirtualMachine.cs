@@ -304,7 +304,9 @@ public record CreateVmRequest(
     string? NodeId = null,
     Dictionary<string, string>? Labels = null,
     string? TemplateId = null,
-    Dictionary<string, string>? EnvironmentVariables = null
+    Dictionary<string, string>? EnvironmentVariables = null,
+    // Phase 2: Custom cloud-init support (optional, overrides template)
+    string? CustomCloudInit = null
 );
 
 public record CreateVmResponse(
