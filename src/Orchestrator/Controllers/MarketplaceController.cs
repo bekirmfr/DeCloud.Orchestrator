@@ -15,15 +15,18 @@ public class MarketplaceController : ControllerBase
 {
     private readonly ITemplateService _templateService;
     private readonly IVmService _vmService;
+    private readonly TemplateSeederService _seederService;
     private readonly ILogger<MarketplaceController> _logger;
 
     public MarketplaceController(
         ITemplateService templateService,
         IVmService vmService,
+        TemplateSeederService seederService,
         ILogger<MarketplaceController> logger)
     {
         _templateService = templateService;
         _vmService = vmService;
+        _seederService = seederService;
         _logger = logger;
     }
 
@@ -363,6 +366,40 @@ public class MarketplaceController : ControllerBase
         {
             _logger.LogError(ex, "Failed to update template: {TemplateId}", templateId);
             return StatusCode(500, new { error = "Failed to update template" });
+        }
+    }
+
+    /// <summary>
+    /// Seed initial templates and categories (admin only)
+    /// </summary>
+    [HttpPost("seed")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> SeedTemplates([FromQuery] bool force = false)
+    {
+        try
+        {
+            await _seederService.SeedAsync(force);
+
+            var templates = await _templateService.GetTemplatesAsync(new TemplateQuery());
+            var categories = await _templateService.GetCategoriesAsync();
+
+            _logger.LogInformation(
+                "Template seeding completed: {TemplateCount} templates, {CategoryCount} categories",
+                templates.Count, categories.Count);
+
+            return Ok(new
+            {
+                message = "Templates seeded successfully",
+                templateCount = templates.Count,
+                categoryCount = categories.Count,
+                templates = templates.Select(t => new { t.Id, t.Name, t.Slug, t.Category }).ToList(),
+                categories = categories.Select(c => new { c.Id, c.Name, c.Slug }).ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to seed templates");
+            return StatusCode(500, new { error = "Failed to seed templates", details = ex.Message });
         }
     }
 }
