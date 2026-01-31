@@ -222,7 +222,7 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpGet("search")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<NodeAdvertisement>>> SearchNodes(
+    public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> SearchNodes(
         [FromQuery] string? tags = null,
         [FromQuery] string? region = null,
         [FromQuery] bool? requiresGpu = null,
@@ -252,7 +252,7 @@ public class NodesController : ControllerBase
                 "Searched nodes: found {Count} (region: {Region}, gpu: {Gpu}, onlineOnly: {OnlineOnly}, sortBy: {SortBy})",
                 nodes.Count, region ?? "all", requiresGpu?.ToString() ?? "any", onlineOnly, sortBy);
 
-            return Ok(nodes);
+            return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
         {
@@ -266,7 +266,7 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpGet("featured")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<NodeAdvertisement>>> GetFeaturedNodes()
+    public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> GetFeaturedNodes()
     {
         try
         {
@@ -274,7 +274,7 @@ public class NodesController : ControllerBase
 
             _logger.LogInformation("Retrieved {Count} featured nodes", nodes.Count);
 
-            return Ok(nodes);
+            return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
         {

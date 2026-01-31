@@ -164,7 +164,7 @@ public class MarketplaceController : ControllerBase
     /// <param name="maxPrice">Maximum price per compute point per hour</param>
     [HttpGet("nodes")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<NodeAdvertisement>>> SearchNodes(
+    public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> SearchNodes(
         [FromQuery] string? tags = null,
         [FromQuery] string? region = null,
         [FromQuery] bool? requiresGpu = null,
@@ -194,7 +194,7 @@ public class MarketplaceController : ControllerBase
                 "Searched nodes: found {Count} (region: {Region}, gpu: {Gpu}, onlineOnly: {OnlineOnly}, sortBy: {SortBy})",
                 nodes.Count, region ?? "all", requiresGpu?.ToString() ?? "any", onlineOnly, sortBy);
 
-            return Ok(nodes);
+            return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
         {
@@ -208,7 +208,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("nodes/featured")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<NodeAdvertisement>>> GetFeaturedNodes()
+    public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> GetFeaturedNodes()
     {
         try
         {
@@ -216,7 +216,7 @@ public class MarketplaceController : ControllerBase
 
             _logger.LogInformation("Retrieved {Count} featured nodes", nodes.Count);
 
-            return Ok(nodes);
+            return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
         {
@@ -230,7 +230,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("nodes/{nodeId}")]
     [AllowAnonymous]
-    public async Task<ActionResult<NodeAdvertisement>> GetNodeDetails(string nodeId)
+    public async Task<ActionResult<ApiResponse<NodeAdvertisement>>> GetNodeDetails(string nodeId)
     {
         try
         {
@@ -244,7 +244,7 @@ public class MarketplaceController : ControllerBase
 
             _logger.LogInformation("Retrieved node details: {NodeId}", nodeId);
 
-            return Ok(node);
+            return Ok(ApiResponse<NodeAdvertisement>.Ok(node));
         }
         catch (Exception ex)
         {
