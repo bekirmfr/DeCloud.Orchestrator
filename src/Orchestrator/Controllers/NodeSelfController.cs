@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Services;
 using Orchestrator.Models;
@@ -74,16 +74,16 @@ public class NodeSelfController : ControllerBase
     /// Get current scheduling configuration
     /// </summary>
     [HttpGet("config")]
-    [ProducesResponseType(typeof(AgentSchedulingConfig), 200)]
+    [ProducesResponseType(typeof(DeCloud.Shared.Models.SchedulingConfig), 200)]
     [ProducesResponseType(401)]
-    public async Task<ActionResult<AgentSchedulingConfig>> GetConfig(CancellationToken ct)
+    public async Task<ActionResult<DeCloud.Shared.Models.SchedulingConfig>> GetConfig(CancellationToken ct)
     {
         var nodeId = GetNodeIdFromToken();
         if (string.IsNullOrEmpty(nodeId))
             return Unauthorized("Invalid node token");
 
         var config = await _configService.GetConfigAsync(ct);
-        return Ok(MapToAgentConfig(config));
+        return Ok(config.ToSharedConfig());
     }
 
     /// <summary>
@@ -213,21 +213,7 @@ public class NodeSelfController : ControllerBase
         return Ok(evaluation);
     }
 
-    /// <summary>
-    /// Convert full SchedulingConfig to lightweight AgentSchedulingConfig
-    /// </summary>
-    private AgentSchedulingConfig MapToAgentConfig(SchedulingConfig config)
-    {
-        return new AgentSchedulingConfig
-        {
-            Version = config.Version,
-            BaselineBenchmark = config.BaselineBenchmark,
-            BaselineOvercommitRatio = config.Tiers[QualityTier.Burstable].CpuOvercommitRatio,
-            MaxPerformanceMultiplier = config.MaxPerformanceMultiplier,
-            Tiers = config.Tiers,
-            UpdatedAt = config.UpdatedAt
-        };
-    }
+    // Removed MapToAgentConfig - now using ToSharedConfig() from SchedulingConfig model
 
     // ============================================================
     // Response DTOs

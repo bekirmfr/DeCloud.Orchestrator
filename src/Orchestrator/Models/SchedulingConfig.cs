@@ -1,6 +1,10 @@
-﻿using MongoDB.Bson;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Options;
+using DeCloud.Shared.Models;
+using SharedSchedulingConfig = DeCloud.Shared.Models.SchedulingConfig;
+using SharedTierConfiguration = DeCloud.Shared.Models.TierConfiguration;
+using SharedQualityTier = DeCloud.Shared.Models.QualityTier;
 
 namespace Orchestrator.Models;
 
@@ -88,7 +92,7 @@ public class SchedulingConfig
     public ScoringWeightsConfig Weights { get; set; } = new();
 
     /// <summary>
-    /// Convert full SchedulingConfig to lightweight AgentSchedulingConfig
+    /// Convert full SchedulingConfig to shared lightweight version for Node Agents
     /// Only includes fields that Node Agent actually needs for CPU quota calculations
     /// 
     /// What's included:
@@ -96,23 +100,39 @@ public class SchedulingConfig
     /// - BaselineOvercommitRatio: From Burstable tier for quota calculations
     /// - MaxPerformanceMultiplier: Cap on performance advantage
     /// - Version: For change tracking
+    /// - Tiers: For CPU shares calculation
     /// 
     /// What's excluded (not needed by agents):
-    /// - Full tier configurations (Standard, Balanced, Guaranteed)
+    /// - MongoDB metadata (Id, CreatedAt, UpdatedBy)
     /// - Scheduling limits (MaxUtilization, MinFreeMem, MaxLoad)
     /// - Scoring weights (Capacity, Load, Reputation, Locality)
-    /// - Price multipliers
-    /// - Descriptions and target use cases
     /// </summary>
-    public AgentSchedulingConfig MapToAgentConfig()
+    public SharedSchedulingConfig ToSharedConfig()
     {
-        return new AgentSchedulingConfig
+        // Convert Orchestrator's Dictionary<QualityTier, TierConfiguration>
+        // to Shared's Dictionary<QualityTier, TierConfiguration>
+        var sharedTiers = new Dictionary<SharedQualityTier, SharedTierConfiguration>();
+        
+        foreach (var (tier, config) in Tiers)
+        {
+            sharedTiers[(SharedQualityTier)(int)tier] = new SharedTierConfiguration
+            {
+                MinimumBenchmark = config.MinimumBenchmark,
+                CpuOvercommitRatio = config.CpuOvercommitRatio,
+                StorageOvercommitRatio = config.StorageOvercommitRatio,
+                PriceMultiplier = config.PriceMultiplier,
+                Description = config.Description,
+                TargetUseCase = config.TargetUseCase
+            };
+        }
+        
+        return new SharedSchedulingConfig
         {
             Version = Version,
             BaselineBenchmark = BaselineBenchmark,
             BaselineOvercommitRatio = BaselineOvercommitRatio,
             MaxPerformanceMultiplier = MaxPerformanceMultiplier,
-            Tiers = Tiers,
+            Tiers = sharedTiers,
             UpdatedAt = UpdatedAt
         };
     }
@@ -256,71 +276,11 @@ public static class SchedulingConfigExtensions
     }
 }
 
-/// <summary>
-/// Represents configuration settings for agent scheduling, including versioning, benchmarking, and performance
-/// parameters.
-/// </summary>
-public class AgentSchedulingConfig
-{
-    /// <summary>
-    /// Configuration version for tracking changes
-    /// Node compares this to detect when config needs updating
-    /// </summary>
-    public int Version { get; set; }
-    /// <summary>
-    /// Baseline benchmark score (e.g., 1000 for Intel i3-10100)
-    /// Used for calculating nodePointsPerCore = BenchmarkScore / BaselineBenchmark
-    /// </summary>
-    public int BaselineBenchmark { get; set; } = 1000;
+// AgentSchedulingConfig removed - now using DeCloud.Shared.Models.SchedulingConfig
+// QualityTier removed - now using DeCloud.Shared.Models.QualityTier
 
-    /// <summary>
-    /// Burstable tier overcommit ratio (e.g., 4.0)
-    /// Used for calculating CPU quotas with burstable VMs
-    /// </summary>
-    public double BaselineOvercommitRatio { get; set; } = 4.0;
-
-    /// <summary>
-    /// Maximum performance multiplier cap
-    /// Prevents nodes with extremely high benchmarks from dominating
-    /// </summary>
-    public double MaxPerformanceMultiplier { get; set; } = 20.0;
-
-    /// <summary>
-    /// Configuration for each quality tier
-    /// </summary>
-    public Dictionary<QualityTier, TierConfiguration> Tiers { get; set; } = new();
-
-    /// <summary>
-    /// Last update timestamp (for debugging/logging)
-    /// </summary>
-    public DateTime UpdatedAt { get; set; }
-}
-    public enum QualityTier
-{
-    /// <summary>
-    /// Dedicated resources, guaranteed performance
-    /// Requires highest-performance nodes (4000+ benchmark)
-    /// </summary>
-    Guaranteed = 0,
-
-    /// <summary>
-    /// High performance for demanding applications
-    /// Requires high-end nodes (2500+ benchmark)
-    /// </summary>
-    Standard = 1,
-
-    /// <summary>
-    /// Balanced performance for production workloads
-    /// Requires mid-range nodes (1500+ benchmark)
-    /// </summary>
-    Balanced = 2,
-
-    /// <summary>
-    /// Best-effort, lowest cost
-    /// Minimum acceptable performance (1000+ benchmark)
-    /// </summary>
-    Burstable = 3
-}
+// For backward compatibility in this file, alias the shared enum
+using QualityTier = DeCloud.Shared.Models.QualityTier;
 
 /// <summary>
 /// Calculated resource availability for a node considering overcommit and points
