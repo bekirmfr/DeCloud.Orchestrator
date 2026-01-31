@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Services;
 using Orchestrator.Models;
@@ -201,7 +201,7 @@ public class NodesController : ControllerBase
     }
 
     /// <summary>
-    /// List all nodes
+    /// List all nodes (admin/authenticated - full details)
     /// </summary>
     [HttpGet]
     [Authorize]
@@ -215,6 +215,72 @@ public class NodesController : ControllerBase
 
         var nodes = await _dataStore.GetAllNodesAsync(statusFilter);
         return Ok(ApiResponse<List<Node>>.Ok(nodes));
+    }
+
+    /// <summary>
+    /// Search available compute nodes (public marketplace view)
+    /// </summary>
+    [HttpGet("search")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<NodeAdvertisement>>> SearchNodes(
+        [FromQuery] string? tags = null,
+        [FromQuery] string? region = null,
+        [FromQuery] bool? requiresGpu = null,
+        [FromQuery] bool onlineOnly = false,
+        [FromQuery] string sortBy = "uptime",
+        [FromQuery] bool sortDescending = true,
+        [FromQuery] double? minUptime = null,
+        [FromQuery] decimal? maxPrice = null)
+    {
+        try
+        {
+            var criteria = new NodeSearchCriteria
+            {
+                Tags = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Region = region,
+                RequiresGpu = requiresGpu,
+                OnlineOnly = onlineOnly,
+                SortBy = sortBy,
+                SortDescending = sortDescending,
+                MinUptimePercent = minUptime,
+                MaxPricePerPoint = maxPrice
+            };
+
+            var nodes = await _nodeService.SearchNodesAsync(criteria);
+
+            _logger.LogInformation(
+                "Searched nodes: found {Count} (region: {Region}, gpu: {Gpu}, onlineOnly: {OnlineOnly}, sortBy: {SortBy})",
+                nodes.Count, region ?? "all", requiresGpu?.ToString() ?? "any", onlineOnly, sortBy);
+
+            return Ok(nodes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search nodes");
+            return StatusCode(500, new { error = "Failed to search nodes" });
+        }
+    }
+
+    /// <summary>
+    /// Get featured compute nodes (high uptime, good capacity, curated)
+    /// </summary>
+    [HttpGet("featured")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<NodeAdvertisement>>> GetFeaturedNodes()
+    {
+        try
+        {
+            var nodes = await _nodeService.GetFeaturedNodesAsync();
+
+            _logger.LogInformation("Retrieved {Count} featured nodes", nodes.Count);
+
+            return Ok(nodes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get featured nodes");
+            return StatusCode(500, new { error = "Failed to retrieve featured nodes" });
+        }
     }
 
     /// <summary>

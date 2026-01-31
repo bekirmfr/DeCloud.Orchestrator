@@ -7,7 +7,9 @@ using System.Security.Claims;
 namespace Orchestrator.Controllers;
 
 /// <summary>
-/// API endpoints for the VM Template Marketplace
+/// API endpoints for the Marketplace (Templates and Node browsing)
+/// Note: Node endpoints here proxy to NodeService for frontend convenience.
+/// Canonical node search API is in NodesController.
 /// </summary>
 [ApiController]
 [Route("api/marketplace")]
@@ -16,17 +18,20 @@ public class MarketplaceController : ControllerBase
     private readonly ITemplateService _templateService;
     private readonly IVmService _vmService;
     private readonly TemplateSeederService _seederService;
+    private readonly INodeService _nodeService;
     private readonly ILogger<MarketplaceController> _logger;
 
     public MarketplaceController(
         ITemplateService templateService,
         IVmService vmService,
         TemplateSeederService seederService,
+        INodeService nodeService,
         ILogger<MarketplaceController> logger)
     {
         _templateService = templateService;
         _vmService = vmService;
         _seederService = seederService;
+        _nodeService = nodeService;
         _logger = logger;
     }
 
@@ -138,6 +143,113 @@ public class MarketplaceController : ControllerBase
         {
             _logger.LogError(ex, "Failed to get template: {SlugOrId}", slugOrId);
             return StatusCode(500, new { error = "Failed to retrieve template details" });
+        }
+    }
+
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Node Discovery & Browsing
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Search available compute nodes in the marketplace
+    /// </summary>
+    /// <param name="tags">Filter by tags (comma-separated)</param>
+    /// <param name="region">Filter by region</param>
+    /// <param name="requiresGpu">Filter by GPU requirement</param>
+    /// <param name="onlineOnly">Show only online nodes (default: false)</param>
+    /// <param name="sortBy">Sort by: price, uptime, capacity</param>
+    /// <param name="sortDescending">Sort in descending order (default: false)</param>
+    /// <param name="minUptime">Minimum uptime percentage (0-100)</param>
+    /// <param name="maxPrice">Maximum price per compute point per hour</param>
+    [HttpGet("nodes")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<NodeAdvertisement>>> SearchNodes(
+        [FromQuery] string? tags = null,
+        [FromQuery] string? region = null,
+        [FromQuery] bool? requiresGpu = null,
+        [FromQuery] bool onlineOnly = false,
+        [FromQuery] string sortBy = "uptime",
+        [FromQuery] bool sortDescending = true,
+        [FromQuery] double? minUptime = null,
+        [FromQuery] decimal? maxPrice = null)
+    {
+        try
+        {
+            var criteria = new NodeSearchCriteria
+            {
+                Tags = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Region = region,
+                RequiresGpu = requiresGpu,
+                OnlineOnly = onlineOnly,
+                SortBy = sortBy,
+                SortDescending = sortDescending,
+                MinUptimePercent = minUptime,
+                MaxPricePerPoint = maxPrice
+            };
+
+            var nodes = await _nodeService.SearchNodesAsync(criteria);
+
+            _logger.LogInformation(
+                "Searched nodes: found {Count} (region: {Region}, gpu: {Gpu}, onlineOnly: {OnlineOnly}, sortBy: {SortBy})",
+                nodes.Count, region ?? "all", requiresGpu?.ToString() ?? "any", onlineOnly, sortBy);
+
+            return Ok(nodes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search nodes");
+            return StatusCode(500, new { error = "Failed to search nodes" });
+        }
+    }
+
+    /// <summary>
+    /// Get featured compute nodes (high uptime, good capacity, curated)
+    /// </summary>
+    [HttpGet("nodes/featured")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<NodeAdvertisement>>> GetFeaturedNodes()
+    {
+        try
+        {
+            var nodes = await _nodeService.GetFeaturedNodesAsync();
+
+            _logger.LogInformation("Retrieved {Count} featured nodes", nodes.Count);
+
+            return Ok(nodes);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get featured nodes");
+            return StatusCode(500, new { error = "Failed to retrieve featured nodes" });
+        }
+    }
+
+    /// <summary>
+    /// Get detailed information about a specific node
+    /// </summary>
+    [HttpGet("nodes/{nodeId}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<NodeAdvertisement>> GetNodeDetails(string nodeId)
+    {
+        try
+        {
+            var node = await _nodeService.GetNodeAdvertisementAsync(nodeId);
+
+            if (node == null)
+            {
+                _logger.LogWarning("Node not found: {NodeId}", nodeId);
+                return NotFound(new { error = $"Node '{nodeId}' not found" });
+            }
+
+            _logger.LogInformation("Retrieved node details: {NodeId}", nodeId);
+
+            return Ok(node);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get node details: {NodeId}", nodeId);
+            return StatusCode(500, new { error = "Failed to retrieve node details" });
         }
     }
 
