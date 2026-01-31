@@ -152,6 +152,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // =====================================================
 // Background Services
 // =====================================================
+builder.Services.AddHostedService<AdminUserInitializer>(); // Must run first!
 builder.Services.AddHostedService<NodeHealthMonitorService>();
 builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();

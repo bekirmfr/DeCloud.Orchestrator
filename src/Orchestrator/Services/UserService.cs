@@ -483,6 +483,12 @@ public class UserService : IUserService
             new Claim("user_status", user.Status.ToString())
         };
 
+        // Add role claims
+        foreach (var role in user.Roles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+
         if (!string.IsNullOrEmpty(user.Email))
         {
             claims.Add(new Claim(JwtRegisteredClaimNames.Email, user.Email));

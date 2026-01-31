@@ -1217,6 +1217,10 @@ create_configuration() {
     "RefreshTokenExpirationDays": 30
   },
   
+  "Admin": {
+    "WalletAddress": "${ORCHESTRATOR_WALLET_ADDRESS}"
+  },
+  
   "CentralIngress": {
     "Enabled": ${ENABLE_INGRESS},
     "BaseDomain": "${INGRESS_DOMAIN}",
@@ -1581,13 +1585,28 @@ print_summary() {
     fi
     
     echo "  ─────────────────────────────────────────────────────────────"
+    echo "  ${GREEN}Admin User & Marketplace:${NC}"
+    echo "  ─────────────────────────────────────────────────────────────"
+    echo "    Admin Wallet:    ${ORCHESTRATOR_WALLET_ADDRESS}"
+    echo ""
+    echo "    ${GREEN}✓ Admin user auto-created on startup${NC}"
+    echo "    ${GREEN}✓ VM Template Marketplace enabled${NC}"
+    echo ""
+    echo "    ${CYAN}To seed marketplace templates:${NC}"
+    echo "    1. Connect with admin wallet: ${ORCHESTRATOR_WALLET_ADDRESS}"
+    echo "    2. Call: POST http://localhost:${API_PORT}/api/marketplace/seed"
+    echo "    3. Browse marketplace: http://${public_ip}:${API_PORT}/#marketplace-templates"
+    echo ""
+    
+    echo "  ─────────────────────────────────────────────────────────────"
     echo "  Next Steps:"
     echo "  ─────────────────────────────────────────────────────────────"
     echo "    1. Open dashboard: http://${public_ip}:${API_PORT}/"
     echo "    2. Connect wallet to start using DeCloud"
-    echo "    3. Monitor logs for any errors"
-    echo "    4. Test deposit flow with small amount"
-    echo "    5. Verify attestation system is working"
+    echo "    3. Seed marketplace templates (admin only)"
+    echo "    4. Monitor logs for any errors"
+    echo "    5. Test deposit flow with small amount"
+    echo "    6. Verify attestation system is working"
     echo ""
     
     if [ -n "$BLOCKCHAIN_CHAIN_ID" ] && [ "$BLOCKCHAIN_CHAIN_ID" == "137" ]; then

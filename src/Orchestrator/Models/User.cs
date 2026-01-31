@@ -27,6 +27,9 @@ public class User
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginAt { get; set; } = DateTime.UtcNow;
 
+    // Roles (Admin, User, etc.)
+    public List<string> Roles { get; set; } = new() { "User" };
+
     // SSH Keys for VMs
     public List<SshKey> SshKeys { get; set; } = new();
 
