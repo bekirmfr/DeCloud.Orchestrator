@@ -85,6 +85,14 @@
                 </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Resources</div>
+                <a class="nav-item" data-page="marketplace-templates" onclick="showPage('marketplace-templates')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                        <line x1="12" y1="22.08" x2="12" y2="12" />
+                    </svg>
+                    Template Marketplace
+                </a>
                 <a class="nav-item" data-page="virtual-machines" onclick="showPage('virtual-machines')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2" />
@@ -444,6 +452,61 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Marketplace Templates Page -->
+            <div id="page-marketplace-templates" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">VM Templates</h1>
+                        <p class="page-subtitle">Browse and deploy pre-configured virtual machines</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <div class="search-box">
+                            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                            <input 
+                                type="text" 
+                                class="search-input" 
+                                id="template-search" 
+                                placeholder="Search templates..."
+                            >
+                        </div>
+                    </div>
+                </header>
+
+                <!-- Filters Section -->
+                <div class="marketplace-filters">
+                    <div class="filters-row">
+                        <div class="filter-group">
+                            <label class="filter-label">
+                                <input type="checkbox" id="filter-gpu">
+                                <span>GPU Required</span>
+                            </label>
+                        </div>
+                        <div class="filter-group">
+                            <label class="form-label">Sort by:</label>
+                            <select id="template-sort" class="form-select">
+                                <option value="popular">Most Popular</option>
+                                <option value="newest">Newest</option>
+                                <option value="name">Name (A-Z)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Tabs -->
+                <div class="marketplace-categories" id="marketplace-categories">
+                    <!-- Populated by JavaScript -->
+                </div>
+
+                <!-- Templates Grid -->
+                <div class="templates-grid" id="templates-grid">
+                    <!-- Populated by JavaScript -->
+                    <div class="loading-spinner">Loading templates...</div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -585,6 +648,119 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('node-detail-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template Detail Modal -->
+    <div class="modal-overlay" id="template-detail-modal">
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h2 class="modal-title">Template Details</h2>
+                <button class="modal-close" onclick="window.templateDetail.closeTemplateDetail()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="template-detail-content">
+                <!-- Content populated by JavaScript -->
+                <div class="loading-spinner">Loading template details...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="window.templateDetail.closeTemplateDetail()">Close</button>
+                <button class="btn btn-primary" id="template-deploy-btn">
+                    🚀 Deploy This Template
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deploy Template Modal -->
+    <div class="modal-overlay" id="deploy-template-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Deploy Template</h2>
+                <button class="modal-close" onclick="window.templateDetail.closeDeployTemplateModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="deploy-template-id" value="">
+                
+                <div class="deploy-template-banner">
+                    <div class="banner-icon">📦</div>
+                    <div class="banner-content">
+                        <strong>Deploying:</strong> <span id="deploy-template-name-display">Template</span>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">VM Name</label>
+                    <input type="text" class="form-input" id="deploy-vm-name" placeholder="my-awesome-vm">
+                    <p class="form-help">Choose a unique name for your VM</p>
+                </div>
+                
+                <div class="form-section">
+                    <h3 class="form-section-title">💻 Customize Specifications</h3>
+                    <p class="form-help">Adjust resources based on your needs (pre-filled with recommended values)</p>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">CPU Cores</label>
+                            <input 
+                                type="number" 
+                                class="form-input" 
+                                id="deploy-cpu" 
+                                value="2" 
+                                min="1" 
+                                max="32"
+                                onchange="window.templateDetail.updateDeployCostEstimate()"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Memory (MB)</label>
+                            <input 
+                                type="number" 
+                                class="form-input" 
+                                id="deploy-memory" 
+                                value="2048" 
+                                min="512" 
+                                step="512"
+                                onchange="window.templateDetail.updateDeployCostEstimate()"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Disk (GB)</label>
+                            <input 
+                                type="number" 
+                                class="form-input" 
+                                id="deploy-disk" 
+                                value="20" 
+                                min="10"
+                                onchange="window.templateDetail.updateDeployCostEstimate()"
+                            >
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="cost-estimate-box">
+                    <div class="cost-row">
+                        <span>Estimated Cost:</span>
+                        <strong id="deploy-cost-estimate">$0.00/hr</strong>
+                    </div>
+                    <p class="cost-note">Actual cost may vary based on node pricing</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="window.templateDetail.closeDeployTemplateModal()">Cancel</button>
+                <button class="btn btn-primary" id="deploy-template-btn-submit" onclick="window.templateDetail.deployFromTemplate()">
+                    🚀 Deploy Now
+                </button>
             </div>
         </div>
     </div>

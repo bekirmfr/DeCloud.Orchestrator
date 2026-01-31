@@ -29,6 +29,10 @@ import {
     searchNodes,
     clearNodeFilters
 } from './marketplace.js';
+import {
+    initMarketplaceTemplates
+} from './marketplace-templates.js';
+import './template-detail.js';
 
 // ============================================
 // CONFIGURATION
@@ -920,6 +924,8 @@ function showPage(pageName) {
         refreshData();
     } else if (pageName === 'nodes') {
         loadNodes();
+    } else if (pageName === 'marketplace-templates') {
+        initMarketplaceTemplates();
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     }
