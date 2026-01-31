@@ -30,6 +30,7 @@ public class VmService : IVmService
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly INetworkLatencyTracker _latencyTracker;
+    private readonly ITemplateService _templateService;
     private readonly ILogger<VmService> _logger;
     private readonly IServiceProvider _serviceProvider;
 
@@ -41,6 +42,7 @@ public class VmService : IVmService
         IEventService eventService,
         ICentralIngressService ingressService,
         INetworkLatencyTracker latencyTracker,
+        ITemplateService templateService,
         ILogger<VmService> logger,
         IServiceProvider serviceProvider)
     {
@@ -51,6 +53,7 @@ public class VmService : IVmService
         _eventService = eventService;
         _ingressService = ingressService;
         _latencyTracker = latencyTracker;
+        _templateService = templateService;
         _logger = logger;
         _serviceProvider = serviceProvider;
     }
@@ -109,6 +112,48 @@ public class VmService : IVmService
             },
             NetworkMetrics = VmNetworkMetrics.CreateDefault(),
         };
+
+        // ════════════════════════════════════════════════════════════════════════
+        // Process Template Deployment (if applicable)
+        // ════════════════════════════════════════════════════════════════════════
+        if (!string.IsNullOrEmpty(request.TemplateId))
+        {
+            var template = await _templateService.GetTemplateByIdAsync(request.TemplateId);
+            if (template != null)
+            {
+                // Store template metadata
+                vm.TemplateId = template.Id;
+                vm.TemplateName = template.Name;
+                vm.TemplateVersion = template.Version;
+
+                // Merge environment variables (template defaults + request overrides)
+                var mergedEnvVars = new Dictionary<string, string>(template.DefaultEnvironmentVariables);
+                if (request.EnvironmentVariables != null)
+                {
+                    foreach (var kvp in request.EnvironmentVariables)
+                    {
+                        mergedEnvVars[kvp.Key] = kvp.Value;
+                    }
+                }
+
+                // Process cloud-init with variable substitution
+                // Note: We'll do final substitution after node assignment when we have all variables
+                if (!string.IsNullOrEmpty(template.CloudInitTemplate))
+                {
+                    // Store raw template and variables for later processing
+                    vm.Spec.UserData = template.CloudInitTemplate;
+                    vm.Labels["template:cloud-init-vars"] = JsonSerializer.Serialize(mergedEnvVars);
+                }
+
+                _logger.LogInformation(
+                    "VM {VmId} created from template {TemplateName} (v{Version})",
+                    vm.Id, template.Name, template.Version);
+            }
+            else
+            {
+                _logger.LogWarning("Template {TemplateId} not found for VM creation", request.TemplateId);
+            }
+        }
 
         // Save to DataStore with persistence
         await _dataStore.SaveVmAsync(vm);
@@ -754,6 +799,57 @@ public class VmService : IVmService
         string? imageUrl = GetImageUrl(vm.Spec.ImageId);
 
         // ========================================
+        // STEP 6.5: Process cloud-init template (for template deployments)
+        // ========================================
+        string? processedUserData = vm.Spec.UserData;
+        if (!string.IsNullOrEmpty(vm.TemplateId) && !string.IsNullOrEmpty(vm.Spec.UserData))
+        {
+            try
+            {
+                // Get all available variables
+                var variables = _templateService.GetAvailableVariables(vm, selectedNode);
+                
+                // Add password to variables (if available)
+                if (!string.IsNullOrEmpty(password))
+                {
+                    variables["DECLOUD_PASSWORD"] = password;
+                }
+                
+                // Merge with template-specific environment variables (from Labels)
+                if (vm.Labels.TryGetValue("template:cloud-init-vars", out var envVarsJson))
+                {
+                    try
+                    {
+                        var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsJson);
+                        if (envVars != null)
+                        {
+                            foreach (var kvp in envVars)
+                            {
+                                variables[kvp.Key] = kvp.Value;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse template environment variables for VM {VmId}", vm.Id);
+                    }
+                }
+                
+                // Substitute variables in cloud-init template
+                processedUserData = _templateService.SubstituteCloudInitVariables(vm.Spec.UserData, variables);
+                
+                _logger.LogInformation(
+                    "Processed cloud-init template for VM {VmId} from template {TemplateName}",
+                    vm.Id, vm.TemplateName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process cloud-init template for VM {VmId}", vm.Id);
+                // Continue with unprocessed template as fallback
+            }
+        }
+
+        // ========================================
         // STEP 7: Create command with ALL required fields
         // ========================================
 
@@ -783,6 +879,7 @@ public class VmService : IVmService
                     AllowedPorts = new List<int>()
                 },
                 Password = password,
+                UserData = processedUserData, // Cloud-init template (with variables substituted)
                 Labels = vm.Labels
             }),
             RequiresAck: true,
