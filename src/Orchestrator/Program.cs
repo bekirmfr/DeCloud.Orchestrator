@@ -113,6 +113,8 @@ builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
 builder.Services.AddSingleton<INodeMarketplaceService, NodeMarketplaceService>();
 // Node Reputation Service (for uptime tracking and VM metrics)
 builder.Services.AddSingleton<INodeReputationService, NodeReputationService>();
+// Template Service (for marketplace VM templates)
+builder.Services.AddSingleton<ITemplateService, TemplateService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();

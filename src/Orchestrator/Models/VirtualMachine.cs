@@ -300,9 +300,11 @@ public enum VmType
 public record CreateVmRequest(
     string Name,
     VmSpec Spec,
-    VmType VmType=VmType.General,
+    VmType VmType = VmType.General,
     string? NodeId = null,
-    Dictionary<string, string>? Labels = null
+    Dictionary<string, string>? Labels = null,
+    string? TemplateId = null,
+    Dictionary<string, string>? EnvironmentVariables = null
 );
 
 public record CreateVmResponse(
