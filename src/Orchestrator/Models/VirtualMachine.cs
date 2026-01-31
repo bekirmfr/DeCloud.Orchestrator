@@ -67,6 +67,25 @@ public class VirtualMachine
     public Dictionary<string, string> Labels { get; set; } = new();
 
     // =========================================================================
+    // Template Tracking (for marketplace deployments)
+    // =========================================================================
+    
+    /// <summary>
+    /// Template ID if deployed from marketplace template
+    /// </summary>
+    public string? TemplateId { get; set; }
+    
+    /// <summary>
+    /// Template name (cached for display)
+    /// </summary>
+    public string? TemplateName { get; set; }
+    
+    /// <summary>
+    /// Template version used for deployment
+    /// </summary>
+    public string? TemplateVersion { get; set; }
+
+    // =========================================================================
     // Command Tracking (for reliable acknowledgement processing)
     // =========================================================================
 

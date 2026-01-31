@@ -1,4 +1,4 @@
-﻿using MongoDB.Bson;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
 using System.Collections;
@@ -63,6 +63,10 @@ public class DataStore
         _database?.GetCollection<Attestation>("attestations");
     private IMongoCollection<UsageRecord>? UsageRecordsCollection =>
         _database?.GetCollection<UsageRecord>("usageRecords");
+    private IMongoCollection<VmTemplate>? TemplatesCollection =>
+        _database?.GetCollection<VmTemplate>("vmTemplates");
+    private IMongoCollection<TemplateCategory>? CategoriesCollection =>
+        _database?.GetCollection<TemplateCategory>("templateCategories");
 
     public DataStore(
         IMongoDatabase? database,
@@ -208,6 +212,42 @@ public class DataStore
                 new CreateIndexOptions { Name = "idx_vm" })
         };
             TryCreateIndexesAsync(UsageRecordsCollection!, "usageRecords", usageIndexes).Wait();
+
+            // Template indexes
+            var templateIndexes = new[]
+            {
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.Slug),
+                new CreateIndexOptions { Name = "idx_slug", Unique = true }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.Category),
+                new CreateIndexOptions { Name = "idx_category" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.Status),
+                new CreateIndexOptions { Name = "idx_status" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Descending(t => t.DeploymentCount),
+                new CreateIndexOptions { Name = "idx_deployment_count" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.IsFeatured),
+                new CreateIndexOptions { Name = "idx_featured" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Descending(t => t.CreatedAt),
+                new CreateIndexOptions { Name = "idx_created" })
+        };
+            TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Wait();
+
+            // Category indexes
+            var categoryIndexes = new[]
+            {
+            new CreateIndexModel<TemplateCategory>(
+                Builders<TemplateCategory>.IndexKeys.Ascending(c => c.Slug),
+                new CreateIndexOptions { Name = "idx_slug", Unique = true }),
+            new CreateIndexModel<TemplateCategory>(
+                Builders<TemplateCategory>.IndexKeys.Ascending(c => c.DisplayOrder),
+                new CreateIndexOptions { Name = "idx_display_order" })
+        };
+            TryCreateIndexesAsync(CategoriesCollection!, "templateCategories", categoryIndexes).Wait();
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
         }
@@ -1277,6 +1317,234 @@ public class DataStore
         {
             _logger.LogError(ex, "Failed to create indexes for collection {Collection}", collectionName);
             return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Template Operations (Marketplace)
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<VmTemplate?> GetTemplateByIdAsync(string templateId)
+    {
+        if (!_useMongoDB) return null;
+        
+        try
+        {
+            return await TemplatesCollection!
+                .Find(t => t.Id == templateId)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get template by ID: {TemplateId}", templateId);
+            return null;
+        }
+    }
+
+    public async Task<VmTemplate?> GetTemplateBySlugAsync(string slug)
+    {
+        if (!_useMongoDB) return null;
+        
+        try
+        {
+            return await TemplatesCollection!
+                .Find(t => t.Slug == slug && t.Status == TemplateStatus.Published)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get template by slug: {Slug}", slug);
+            return null;
+        }
+    }
+
+    public async Task<List<VmTemplate>> GetTemplatesAsync(
+        string? category = null,
+        bool? requiresGpu = null,
+        List<string>? tags = null,
+        bool featuredOnly = false,
+        string sortBy = "popular")
+    {
+        if (!_useMongoDB) return new List<VmTemplate>();
+        
+        try
+        {
+            // Build filter
+            var filterBuilder = Builders<VmTemplate>.Filter;
+            var filters = new List<FilterDefinition<VmTemplate>>
+            {
+                filterBuilder.Eq(t => t.Status, TemplateStatus.Published)
+            };
+
+            if (!string.IsNullOrEmpty(category))
+                filters.Add(filterBuilder.Eq(t => t.Category, category));
+            
+            if (requiresGpu.HasValue)
+                filters.Add(filterBuilder.Eq(t => t.RequiresGpu, requiresGpu.Value));
+            
+            if (featuredOnly)
+                filters.Add(filterBuilder.Eq(t => t.IsFeatured, true));
+            
+            if (tags != null && tags.Count > 0)
+                filters.Add(filterBuilder.AnyIn(t => t.Tags, tags));
+
+            var filter = filterBuilder.And(filters);
+
+            // Build sort
+            SortDefinition<VmTemplate> sort = sortBy.ToLower() switch
+            {
+                "popular" => Builders<VmTemplate>.Sort.Descending(t => t.DeploymentCount),
+                "newest" => Builders<VmTemplate>.Sort.Descending(t => t.CreatedAt),
+                "name" => Builders<VmTemplate>.Sort.Ascending(t => t.Name),
+                _ => Builders<VmTemplate>.Sort.Descending(t => t.DeploymentCount)
+            };
+
+            return await TemplatesCollection!
+                .Find(filter)
+                .Sort(sort)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get templates");
+            return new List<VmTemplate>();
+        }
+    }
+
+    public async Task<VmTemplate> SaveTemplateAsync(VmTemplate template)
+    {
+        if (!_useMongoDB)
+        {
+            _logger.LogWarning("Cannot save template - MongoDB not configured");
+            return template;
+        }
+        
+        try
+        {
+            template.UpdatedAt = DateTime.UtcNow;
+            
+            await TemplatesCollection!.ReplaceOneAsync(
+                t => t.Id == template.Id,
+                template,
+                new ReplaceOptions { IsUpsert = true });
+            
+            _logger.LogInformation("Saved template: {TemplateName} ({TemplateId})", 
+                template.Name, template.Id);
+            
+            return template;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save template: {TemplateName}", template.Name);
+            throw;
+        }
+    }
+
+    public async Task<bool> IncrementTemplateDeploymentCountAsync(string templateId)
+    {
+        if (!_useMongoDB) return false;
+        
+        try
+        {
+            var update = Builders<VmTemplate>.Update
+                .Inc(t => t.DeploymentCount, 1)
+                .Set(t => t.LastDeployedAt, DateTime.UtcNow)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+
+            var result = await TemplatesCollection!.UpdateOneAsync(
+                t => t.Id == templateId,
+                update);
+
+            return result.ModifiedCount > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to increment deployment count for template: {TemplateId}", 
+                templateId);
+            return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Template Category Operations
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<List<TemplateCategory>> GetCategoriesAsync()
+    {
+        if (!_useMongoDB) return new List<TemplateCategory>();
+        
+        try
+        {
+            return await CategoriesCollection!
+                .Find(_ => true)
+                .SortBy(c => c.DisplayOrder)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get categories");
+            return new List<TemplateCategory>();
+        }
+    }
+
+    public async Task<TemplateCategory> SaveCategoryAsync(TemplateCategory category)
+    {
+        if (!_useMongoDB)
+        {
+            _logger.LogWarning("Cannot save category - MongoDB not configured");
+            return category;
+        }
+        
+        try
+        {
+            category.UpdatedAt = DateTime.UtcNow;
+            
+            await CategoriesCollection!.ReplaceOneAsync(
+                c => c.Id == category.Id,
+                category,
+                new ReplaceOptions { IsUpsert = true });
+            
+            _logger.LogInformation("Saved category: {CategoryName} ({CategoryId})", 
+                category.Name, category.Id);
+            
+            return category;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save category: {CategoryName}", category.Name);
+            throw;
+        }
+    }
+
+    public async Task UpdateCategoryCountsAsync()
+    {
+        if (!_useMongoDB) return;
+        
+        try
+        {
+            var categories = await GetCategoriesAsync();
+            
+            foreach (var category in categories)
+            {
+                var count = await TemplatesCollection!
+                    .CountDocumentsAsync(t => 
+                        t.Category == category.Slug && 
+                        t.Status == TemplateStatus.Published);
+                
+                category.TemplateCount = (int)count;
+                category.UpdatedAt = DateTime.UtcNow;
+                
+                await CategoriesCollection!.ReplaceOneAsync(
+                    c => c.Id == category.Id,
+                    category);
+            }
+            
+            _logger.LogInformation("Updated template counts for {Count} categories", 
+                categories.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update category counts");
         }
     }
 }
