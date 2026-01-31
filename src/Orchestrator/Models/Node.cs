@@ -400,7 +400,7 @@ public class HeartbeatVmInfo
 public record NodeHeartbeatResponse(
     bool Acknowledged,
     List<NodeCommand>? PendingCommands,
-    DeCloud.Shared.Models.SchedulingConfig? SchedulingConfig,
+    AgentSchedulingConfig? SchedulingConfig,
     /// <summary>
     /// Relay configuration if node is behind CGNAT
     /// </summary>

@@ -463,12 +463,12 @@ public class NodeService : INodeService
         // Synchronize VM state from heartbeat
         await SyncVmStateFromHeartbeatAsync(nodeId, heartbeat);
 
-        DeCloud.Shared.Models.SchedulingConfig? agentSchedulingConfig = null;
+        AgentSchedulingConfig? agentSchedulingConfig = null;
 
         if (heartbeat.SchedulingConfigVersion == 0 ||
         heartbeat.SchedulingConfigVersion != currentConfig.Version)
         {
-            agentSchedulingConfig = currentConfig.ToSharedConfig();
+            agentSchedulingConfig = currentConfig.MapToAgentConfig();
 
             _logger.LogInformation(
                 "Node {NodeId} has outdated config (node: v{NodeVersion}, current: v{CurrentVersion}), " +
