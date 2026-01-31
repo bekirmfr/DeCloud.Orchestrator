@@ -2203,6 +2203,60 @@
     font-family: var(--font-mono);
 }
 
+/* GPU Highlight Section */
+.mp-gpu-highlight {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(102, 126, 234, 0.08) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+}
+
+.mp-gpu-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: rgba(139, 92, 246, 0.15);
+    border-radius: 8px;
+    color: var(--accent-tertiary);
+}
+
+.mp-gpu-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mp-gpu-model {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-tertiary);
+}
+
+.mp-gpu-memory {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.mp-gpu-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: rgba(139, 92, 246, 0.15);
+    border-radius: 4px;
+    color: var(--accent-tertiary);
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
 /* Tags */
 .mp-tags {
     display: flex;

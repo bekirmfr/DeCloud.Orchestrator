@@ -42,6 +42,7 @@ public class NodeCapabilities
     public bool HasGpu { get; set; }
     public string? GpuModel { get; set; }
     public int? GpuCount { get; set; }
+    public long? GpuMemoryBytes { get; set; }
     public bool HasNvmeStorage { get; set; }
     public bool HighBandwidth { get; set; } // >1Gbps
     public string CpuModel { get; set; } = string.Empty;

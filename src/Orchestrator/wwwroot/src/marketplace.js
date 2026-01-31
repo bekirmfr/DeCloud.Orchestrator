@@ -194,6 +194,16 @@ function renderNodeCards(container, nodes) {
             ? `<span class="mp-tag gpu">${escapeHtmlFn(caps.gpuModel || 'GPU')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}</span>`
             : '';
 
+        // GPU status icon for card header
+        const gpuIcon = caps.hasGpu
+            ? `<span class="mp-gpu-indicator" title="${escapeHtmlFn(caps.gpuModel || 'GPU Available')}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="7" width="20" height="14" rx="2" />
+                    <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
+                </svg>
+               </span>`
+            : '';
+
         const description = node.description
             ? escapeHtmlFn(node.description)
             : '<span style="color: var(--text-muted); font-style: italic;">No description provided</span>';
@@ -202,7 +212,10 @@ function renderNodeCards(container, nodes) {
             <div class="mp-node-card" data-node-id="${escapeHtmlFn(node.nodeId)}">
                 <div class="mp-card-header">
                     <div>
-                        <div class="mp-node-name">${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}</div>
+                        <div class="mp-node-name">
+                            ${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}
+                            ${gpuIcon}
+                        </div>
                         <div class="mp-node-region">${escapeHtmlFn(node.region || 'Unknown')}${node.zone ? ' / ' + escapeHtmlFn(node.zone) : ''}</div>
                     </div>
                     <span class="mp-node-status ${node.isOnline ? 'online' : 'offline'}">
@@ -223,8 +236,8 @@ function renderNodeCards(container, nodes) {
                         <span class="mp-spec-value">${memoryGB} GB</span>
                     </div>
                     <div class="mp-spec">
-                        <span class="mp-spec-label">Storage</span>
-                        <span class="mp-spec-value">${storageGB} GB</span>
+                        <span class="mp-spec-label">${caps.hasGpu ? 'GPU' : 'Storage'}</span>
+                        <span class="mp-spec-value">${caps.hasGpu ? escapeHtmlFn(caps.gpuModel?.split(' ').slice(-1)[0] || 'Yes') : storageGB + ' GB'}</span>
                     </div>
                 </div>
 
@@ -243,8 +256,22 @@ function renderNodeCards(container, nodes) {
                     </div>
                 </div>
 
+                ${caps.hasGpu ? `
+                <div class="mp-gpu-highlight">
+                    <div class="mp-gpu-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="7" width="20" height="14" rx="2" />
+                            <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
+                        </svg>
+                    </div>
+                    <div class="mp-gpu-info">
+                        <div class="mp-gpu-model">${escapeHtmlFn(caps.gpuModel || 'GPU Available')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}</div>
+                        ${caps.gpuMemoryBytes ? `<div class="mp-gpu-memory">${((caps.gpuMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(0)} GB VRAM</div>` : ''}
+                    </div>
+                </div>
+                ` : ''}
+
                 <div class="mp-tags">
-                    ${gpuBadge}
                     ${caps.hasNvmeStorage ? '<span class="mp-tag nvme">NVMe</span>' : ''}
                     ${caps.highBandwidth ? '<span class="mp-tag">High BW</span>' : ''}
                     ${tagsHtml}
@@ -327,9 +354,18 @@ export async function openNodeDetail(nodeId) {
                             <span class="node-detail-value">${storageGB} GB${caps.hasNvmeStorage ? ' (NVMe)' : ''}</span>
                         </div>
                         ${caps.hasGpu ? `
-                        <div class="node-detail-row">
-                            <span class="node-detail-label">GPU</span>
-                            <span class="node-detail-value">${escapeHtmlFn(caps.gpuModel || 'Yes')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}</span>
+                        <div class="node-detail-row" style="background: rgba(102, 126, 234, 0.08); margin: 8px -12px; padding: 8px 12px; border-radius: 6px;">
+                            <span class="node-detail-label" style="color: var(--accent-primary); font-weight: 600;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                                    <rect x="2" y="7" width="20" height="14" rx="2" />
+                                    <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
+                                </svg>
+                                GPU
+                            </span>
+                            <span class="node-detail-value" style="font-weight: 600;">
+                                ${escapeHtmlFn(caps.gpuModel || 'Available')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}
+                                ${caps.gpuMemoryBytes ? `<span style="color: var(--text-muted); font-weight: 400; font-size: 13px;"> • ${((caps.gpuMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(0)} GB VRAM</span>` : ''}
+                            </span>
                         </div>` : ''}
                         <div class="node-detail-row">
                             <span class="node-detail-label">Bandwidth</span>

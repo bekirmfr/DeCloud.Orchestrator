@@ -200,7 +200,8 @@ public class NodeMarketplaceService : INodeMarketplaceService
             {
                 HasGpu = node.HardwareInventory.SupportsGpu,
                 GpuModel = node.HardwareInventory.Gpus.FirstOrDefault()?.Model,
-                GpuCount = node.HardwareInventory.Gpus.Count,
+                GpuCount = node.HardwareInventory.Gpus.Count > 0 ? node.HardwareInventory.Gpus.Count : null,
+                GpuMemoryBytes = node.HardwareInventory.Gpus.FirstOrDefault()?.MemoryBytes,
                 HasNvmeStorage = node.HardwareInventory.Storage
                     .Any(s => s.Type == StorageType.NVMe),
                 HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) 
