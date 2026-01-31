@@ -205,6 +205,7 @@ public class NodeSelfController : ControllerBase
             return StatusCode(500, "Failed to evaluate node performance");
         }
 
+        node.HardwareInventory = inventory;
         node.PerformanceEvaluation = evaluation;
 
         // Persist updated node
