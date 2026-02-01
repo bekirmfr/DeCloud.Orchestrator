@@ -172,7 +172,8 @@ public class VmService : IVmService
 
                     if (primaryPort != null)
                     {
-                        var subdomain = $"{SanitizeHostname(vm.Name)}.vms.stackfi.tech";
+                        // Use central ingress service to generate subdomain (respects configured base domain)
+                        var subdomain = _ingressService.GenerateSubdomain(vm);
                         
                         vm.IngressConfig = new VmIngressConfig
                         {

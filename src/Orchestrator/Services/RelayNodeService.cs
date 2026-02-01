@@ -1,4 +1,4 @@
-﻿using Orchestrator.Models;
+using Orchestrator.Models;
 using Orchestrator.Persistence;
 
 namespace Orchestrator.Services;
@@ -49,6 +49,7 @@ public class RelayNodeService : IRelayNodeService
     private readonly DataStore _dataStore;
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
+    private readonly ICentralIngressService _ingressService;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
@@ -60,11 +61,13 @@ public class RelayNodeService : IRelayNodeService
         DataStore dataStore,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
+        ICentralIngressService ingressService,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
+        _ingressService = ingressService;
         _logger = logger;
     }
 
@@ -373,12 +376,13 @@ public class RelayNodeService : IRelayNodeService
             var wgConfig = await GenerateWireGuardConfigAsync(cgnatNode, relayNode, tunnelIp, ct);
 
             // Initialize CGNAT info
+            var baseDomain = _ingressService.BaseDomain ?? "vms.decloud.app";
             cgnatNode.CgnatInfo = new CgnatNodeInfo
             {
                 AssignedRelayNodeId = relayNode.Id,
                 TunnelIp = tunnelIp,
                 WireGuardConfig = wgConfig,
-                PublicEndpoint = $"https://relay-{relayNode.Region}-{relayNode.Id[..8]}.vms.stackfi.tech",
+                PublicEndpoint = $"https://relay-{relayNode.Region}-{relayNode.Id[..8]}.{baseDomain}",
                 TunnelStatus = TunnelStatus.Connecting,
                 LastHandshake = null
             };

@@ -10,6 +10,7 @@ namespace Orchestrator.Services;
 public class TemplateService : ITemplateService
 {
     private readonly DataStore _dataStore;
+    private readonly ICentralIngressService _ingressService;
     private readonly ILogger<TemplateService> _logger;
     
     // Cloud-init variable pattern: ${VARIABLE_NAME}
@@ -17,9 +18,11 @@ public class TemplateService : ITemplateService
     
     public TemplateService(
         DataStore dataStore,
+        ICentralIngressService ingressService,
         ILogger<TemplateService> logger)
     {
         _dataStore = dataStore;
+        _ingressService = ingressService;
         _logger = logger;
     }
     
@@ -433,11 +436,15 @@ public class TemplateService : ITemplateService
     
     public Dictionary<string, string> GetAvailableVariables(VirtualMachine vm, Node? node = null)
     {
+        // Get base domain from central ingress config or fallback
+        var baseDomain = _ingressService.BaseDomain ?? "vms.decloud.app";
+        var defaultSubdomain = vm.IngressConfig?.DefaultSubdomain ?? $"{vm.Id}.{baseDomain}";
+        
         var variables = new Dictionary<string, string>
         {
             ["DECLOUD_VM_ID"] = vm.Id,
             ["DECLOUD_VM_NAME"] = vm.Name,
-            ["DECLOUD_DOMAIN"] = $"{vm.Id}.decloud.app",
+            ["DECLOUD_DOMAIN"] = defaultSubdomain,
             ["DECLOUD_VM_CREATED_AT"] = vm.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             ["DECLOUD_OWNER_ID"] = vm.OwnerId ?? "unknown"
         };
