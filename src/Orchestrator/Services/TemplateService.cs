@@ -288,11 +288,9 @@ public class TemplateService : ITemplateService
             // Check for suspicious commands
             var suspiciousPatterns = new[]
             {
-                @"rm\s+-rf\s+/",
-                @"dd\s+if=/dev/zero",
-                @":\(\)\s*\{\s*:\|\:&\s*\};\s*:",  // Fork bomb
-                @"wget.*\|.*sh",  // Download and execute
-                @"curl.*\|.*bash"
+                @"rm\s+-rf\s+/",                   // Dangerous: Delete root filesystem
+                @"dd\s+if=/dev/zero",              // Dangerous: Wipe disk
+                @":\(\)\s*\{\s*:\|\:&\s*\};\s*:",  // Dangerous: Fork bomb
             };
             
             foreach (var pattern in suspiciousPatterns)
@@ -300,6 +298,39 @@ public class TemplateService : ITemplateService
                 if (Regex.IsMatch(template.CloudInitTemplate, pattern, RegexOptions.IgnoreCase))
                 {
                     errors.Add($"Cloud-init contains potentially dangerous command matching pattern: {pattern}");
+                }
+            }
+            
+            // Check for curl/wget pipe to shell, but allow trusted domains
+            var trustedDomains = new[]
+            {
+                "deb.nodesource.com",              // Node.js official
+                "get.docker.com",                   // Docker official
+                "code-server.dev",                  // code-server official
+                "github.com/nvm-sh/nvm",           // nvm official
+                "sh.rustup.rs",                     // Rust official
+                "nixos.org",                        // Nix official
+                "raw.githubusercontent.com",        // GitHub raw content
+                "dl.k8s.io",                        // Kubernetes official
+                "get.helm.sh"                       // Helm official
+            };
+            
+            // Find all curl|bash and wget|sh patterns
+            var pipeToShellMatches = Regex.Matches(
+                template.CloudInitTemplate, 
+                @"(curl|wget)\s+.*?\|\s*(bash|sh)", 
+                RegexOptions.IgnoreCase);
+            
+            foreach (Match match in pipeToShellMatches)
+            {
+                var command = match.Value;
+                var isTrusted = trustedDomains.Any(domain => 
+                    command.Contains(domain, StringComparison.OrdinalIgnoreCase));
+                
+                if (!isTrusted)
+                {
+                    errors.Add($"Cloud-init contains untrusted download-and-execute command: {command}. " +
+                              $"Only commands from trusted domains are allowed.");
                 }
             }
         }
