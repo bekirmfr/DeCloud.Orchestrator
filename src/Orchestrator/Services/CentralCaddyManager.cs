@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using System.Text;
 using System.Text.Json;
@@ -394,8 +394,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                     transport = new
                     {
                         protocol = "http",
-                        read_buffer_size = 4096,
-                        versions = new[] { "1.1" }  // Force HTTP/1.1 to backend (fixes HTTP/2 stream errors)
+                        read_buffer_size = 4096
                     },
                     flush_interval = -1
                 }
