@@ -83,18 +83,53 @@ public class TemplateSeederService
             if (existing == null)
             {
                 var created = await _templateService.CreateTemplateAsync(template);
-                _logger.LogInformation("Created template: {Name} ({Slug})", created.Name, created.Slug);
+                _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}", 
+                    created.Name, created.Slug, created.Version);
             }
-            else if (force)
+            else if (force || IsNewerVersion(template.Version, existing.Version))
             {
                 template.Id = existing.Id;
                 var updated = await _templateService.UpdateTemplateAsync(template);
-                _logger.LogInformation("Updated template: {Name} ({Slug})", updated.Name, updated.Slug);
+                _logger.LogInformation("✓ Updated template: {Name} ({Slug}) v{OldVersion} → v{NewVersion}", 
+                    updated.Name, updated.Slug, existing.Version, updated.Version);
             }
             else
             {
-                _logger.LogDebug("Template already exists: {Name} ({Slug})", template.Name, template.Slug);
+                _logger.LogDebug("Template up-to-date: {Name} ({Slug}) v{Version}", 
+                    template.Name, template.Slug, template.Version);
             }
+        }
+    }
+    
+    /// <summary>
+    /// Compare semantic versions (e.g., "1.0.0" vs "1.1.0")
+    /// Returns true if newVersion > currentVersion
+    /// </summary>
+    private bool IsNewerVersion(string newVersion, string currentVersion)
+    {
+        try
+        {
+            var newParts = newVersion.Split('.').Select(int.Parse).ToArray();
+            var currentParts = currentVersion.Split('.').Select(int.Parse).ToArray();
+            
+            // Compare major, minor, patch
+            for (int i = 0; i < Math.Max(newParts.Length, currentParts.Length); i++)
+            {
+                var newPart = i < newParts.Length ? newParts[i] : 0;
+                var currentPart = i < currentParts.Length ? currentParts[i] : 0;
+                
+                if (newPart > currentPart) return true;
+                if (newPart < currentPart) return false;
+            }
+            
+            return false; // Versions are equal
+        }
+        catch
+        {
+            // If version parsing fails, treat as equal (don't update)
+            _logger.LogWarning("Failed to parse versions: new={New}, current={Current}", 
+                newVersion, currentVersion);
+            return false;
         }
     }
 
@@ -501,7 +536,7 @@ final_message: |
         {
             Name = "VS Code Server",
             Slug = "code-server",
-            Version = "1.0.0",
+            Version = "2.0.0",  // Updated: Fixed auth config & code-server installation
             Category = "dev-tools",
             Description = "Visual Studio Code in your browser. Full-featured development environment accessible from anywhere.",
             LongDescription = @"## Features
@@ -552,7 +587,7 @@ final_message: |
             CloudInitTemplate = @"#cloud-config
 
 # VS Code Server - Browser-based IDE
-# DeCloud Template v1.0.0
+# DeCloud Template v2.0.0 - Fixed auth & installation
 
 packages:
   - curl

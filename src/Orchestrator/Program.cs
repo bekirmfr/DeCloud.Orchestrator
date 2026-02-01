@@ -428,6 +428,28 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// ==================== Auto-Seed Marketplace Templates ====================
+using (var scope = app.Services.CreateScope())
+{
+    var seederService = scope.ServiceProvider.GetRequiredService<TemplateSeederService>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        logger.LogInformation("⏳ Auto-seeding marketplace templates...");
+        
+        // force=false means only create new or update if version is newer
+        await seederService.SeedAsync(force: false);
+        
+        logger.LogInformation("✓ Marketplace templates seeded successfully");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to seed marketplace templates on startup");
+        // Don't fail startup - templates can be manually seeded via API
+    }
+}
+
 // =====================================================
 // Middleware Pipeline
 // =====================================================
