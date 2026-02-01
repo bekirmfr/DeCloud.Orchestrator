@@ -399,7 +399,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                         read_buffer_size = 4096,
                         versions = new[] { "1.1" }  // Force HTTP/1.1 to backend
                     },
-                    flush_interval = 0  // Enable streaming
+                    flush_interval = 0  // Enable streaming (chunked encoding now fixed in NodeAgent)
                 }
             },
             terminal = true
