@@ -397,9 +397,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                         read_buffer_size = 4096,
                         versions = new[] { "1.1" }  // Force HTTP/1.1 to backend for reliability
                     },
-                    flush_interval = 0,      // Enable streaming (0 = flush immediately)
-                    buffer_requests = false,  // Don't buffer requests (better for WebSocket upgrades)
-                    buffer_responses = false  // Don't buffer responses (enable streaming)
+                    flush_interval = 0  // Enable streaming (0 = flush immediately)
                 }
             },
             terminal = true
