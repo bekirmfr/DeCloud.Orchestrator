@@ -660,6 +660,44 @@ public class NodeService : INodeService
             // Handle failure based on VM status
             if (affectedVm.Status == VmStatus.Deleting)
             {
+                // ====================================================================
+                // RECONCILIATION: If VM doesn't exist on node, treat as success
+                // VM might have been manually deleted or cleaned up previously
+                // ====================================================================
+                var errorMessage = ack.ErrorMessage ?? "";
+                bool vmNotFound = errorMessage.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+                                  errorMessage.Contains("NOT_FOUND", StringComparison.Ordinal);
+
+                if (vmNotFound)
+                {
+                    _logger.LogInformation(
+                        "✓ VM {VmId} deletion reported as 'not found' by node {NodeId}. " +
+                        "Treating as successful deletion (reconciliation). " +
+                        "VM was likely already deleted.",
+                        affectedVm.Id, nodeId);
+
+                    // Complete deletion as if it succeeded
+                    await CompleteVmDeletionAsync(affectedVm);
+                    
+                    await _eventService.EmitAsync(new OrchestratorEvent
+                    {
+                        Type = EventType.VmDeleted,
+                        ResourceType = "vm",
+                        ResourceId = affectedVm.Id,
+                        NodeId = nodeId,
+                        UserId = affectedVm.OwnerId,
+                        Payload = new Dictionary<string, object>
+                        {
+                            ["CommandId"] = commandId,
+                            ["Reconciled"] = true,
+                            ["Reason"] = "VM not found on node - already deleted"
+                        }
+                    });
+
+                    return true;
+                }
+
+                // Real deletion failure - not a "not found" case
                 affectedVm.Status = VmStatus.Error;
                 affectedVm.StatusMessage = $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}";
                 affectedVm.UpdatedAt = DateTime.UtcNow;
