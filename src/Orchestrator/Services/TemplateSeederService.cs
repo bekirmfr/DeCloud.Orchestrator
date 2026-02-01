@@ -572,8 +572,10 @@ runcmd:
   - curl -fsSL https://get.docker.com | sh
   - usermod -aG docker ubuntu
   
-  # Install code-server
-  - curl -fsSL https://code-server.dev/install.sh | sh
+  # Install code-server (with explicit error handling)
+  - export HOME=/root
+  - curl -fsSL https://code-server.dev/install.sh -o /tmp/code-server-install.sh
+  - bash /tmp/code-server-install.sh --method=standalone --prefix=/usr/local
   
   # Configure code-server
   - mkdir -p /home/ubuntu/.config/code-server
@@ -610,11 +612,14 @@ runcmd:
   - systemctl enable code-server
   - systemctl start code-server
   
-  # Install common VS Code extensions
-  - sleep 10
-  - sudo -u ubuntu code-server --install-extension ms-python.python
-  - sudo -u ubuntu code-server --install-extension dbaeumer.vscode-eslint
-  - sudo -u ubuntu code-server --install-extension esbenp.prettier-vscode
+  # Wait for code-server to be ready and install extensions
+  - sleep 15
+  - |
+    if command -v code-server >/dev/null 2>&1; then
+      sudo -u ubuntu -H bash -c 'code-server --install-extension ms-python.python || true'
+      sudo -u ubuntu -H bash -c 'code-server --install-extension dbaeumer.vscode-eslint || true'
+      sudo -u ubuntu -H bash -c 'code-server --install-extension esbenp.prettier-vscode || true'
+    fi
   
   # Create welcome workspace
   - mkdir -p /home/ubuntu/workspace
