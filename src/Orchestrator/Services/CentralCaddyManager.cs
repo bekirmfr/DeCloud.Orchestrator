@@ -357,13 +357,21 @@ public class CentralCaddyManager : ICentralCaddyManager
             ? route.Subdomain
             : $"{route.Subdomain}.{_options.BaseDomain}";
 
-        return new
+        // Ports that need HTTP/1.1 for compatibility (code-server, VS Code, Jupyter, etc.)
+        // These services have issues with HTTP/2 body streaming through proxy chains
+        var needsHttp1 = route.TargetPort == 8080 || 
+                        route.TargetPort == 3000 || 
+                        route.TargetPort == 8443 ||
+                        route.TargetPort == 8888;  // Jupyter
+
+        // Build base route config
+        var baseConfig = new Dictionary<string, object>
         {
-            match = new[]
+            ["match"] = new[]
             {
-            new { host = new[] { subdomain } }
-        },
-            handle = new object[]
+                new { host = new[] { subdomain } }
+            },
+            ["handle"] = new object[]
             {
                 new
                 {
@@ -395,13 +403,24 @@ public class CentralCaddyManager : ICentralCaddyManager
                     {
                         protocol = "http",
                         read_buffer_size = 4096,
-                        versions = new[] { "1.1" }  // Force HTTP/1.1 to backend for reliability
+                        versions = new[] { "1.1" }  // Force HTTP/1.1 to backend
                     },
-                    flush_interval = 0  // Enable streaming (0 = flush immediately)
+                    flush_interval = 0  // Enable streaming
                 }
             },
-            terminal = true
+            ["terminal"] = true
         };
+
+        // Add HTTP/1.1-only protocol constraint for services that need it
+        if (needsHttp1)
+        {
+            baseConfig["protocols"] = new[] { "h1" };
+            _logger.LogDebug(
+                "Route {Subdomain} configured with HTTP/1.1 only (port {Port} requires compatibility mode)",
+                subdomain, route.TargetPort);
+        }
+
+        return baseConfig;
     }
 
     /// <summary>
