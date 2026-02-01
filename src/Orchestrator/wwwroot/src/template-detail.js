@@ -24,7 +24,10 @@ export async function showTemplateDetail(templateIdOrSlug) {
     try {
         // Load template details
         const response = await api(`/api/marketplace/templates/${templateIdOrSlug}`);
-        currentTemplate = response.data;
+        const data = await response.json();
+        
+        // API may return direct object or wrapped in data/success
+        currentTemplate = data.data || data;
         
         // Render detail modal
         renderTemplateDetail(currentTemplate);
@@ -318,8 +321,10 @@ export async function deployFromTemplate() {
             })
         });
         
-        if (response.success) {
-            console.log('[Template Detail] Deployment successful:', response.data);
+        const data = await response.json();
+        
+        if (data.success || response.ok) {
+            console.log('[Template Detail] Deployment successful:', data.data || data);
             
             // Close modal
             closeDeployTemplateModal();
@@ -332,7 +337,7 @@ export async function deployFromTemplate() {
                 window.showPage('virtual-machines');
             }, 1000);
         } else {
-            throw new Error(response.error || 'Deployment failed');
+            throw new Error(data.error || 'Deployment failed');
         }
     } catch (error) {
         console.error('[Template Detail] Deployment failed:', error);

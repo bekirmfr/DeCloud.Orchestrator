@@ -44,7 +44,11 @@ export async function initMarketplaceTemplates() {
 async function loadCategories() {
     try {
         const response = await api('/api/marketplace/categories');
-        allCategories = response.data || [];
+        const data = await response.json();
+        console.log('[Marketplace Templates] Categories data:', data);
+        
+        // API returns array directly or wrapped in success object
+        allCategories = Array.isArray(data) ? data : (data.data || []);
         console.log(`[Marketplace Templates] Loaded ${allCategories.length} categories`);
     } catch (error) {
         console.error('[Marketplace Templates] Failed to load categories:', error);
@@ -68,8 +72,11 @@ async function loadTemplates(options = {}) {
         
         const url = `/api/marketplace/templates?${params.toString()}`;
         const response = await api(url);
+        const data = await response.json();
+        console.log('[Marketplace Templates] Templates data:', data);
         
-        allTemplates = response.data || [];
+        // API returns array directly or wrapped in success object
+        allTemplates = Array.isArray(data) ? data : (data.data || []);
         console.log(`[Marketplace Templates] Loaded ${allTemplates.length} templates`);
         
         return allTemplates;
