@@ -536,7 +536,7 @@ final_message: |
         {
             Name = "VS Code Server",
             Slug = "code-server",
-            Version = "2.0.0",  // Updated: Fixed auth config & code-server installation
+            Version = "2.0.1",  // Patch: Fixed systemd service path (/usr/local/bin)
             Category = "dev-tools",
             Description = "Visual Studio Code in your browser. Full-featured development environment accessible from anywhere.",
             LongDescription = @"## Features
@@ -634,7 +634,7 @@ runcmd:
     Type=simple
     User=ubuntu
     WorkingDirectory=/home/ubuntu
-    ExecStart=/usr/bin/code-server --bind-addr 0.0.0.0:8080
+    ExecStart=/usr/local/bin/code-server --bind-addr 0.0.0.0:8080
     Restart=always
     RestartSec=10
     
