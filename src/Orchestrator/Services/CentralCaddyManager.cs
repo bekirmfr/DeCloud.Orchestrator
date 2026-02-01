@@ -384,8 +384,10 @@ public class CentralCaddyManager : ICentralCaddyManager
                     {
                         request = new
                         {
+                            // Pass original Host so NodeAgent and backends (e.g. code-server) see the public hostname
                             set = new Dictionary<string, string[]>
                             {
+                                ["Host"] = new[] { "{http.request.host}" },
                                 ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
                                 ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
                                 ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
