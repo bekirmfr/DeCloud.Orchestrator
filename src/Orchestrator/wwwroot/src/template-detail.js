@@ -326,8 +326,21 @@ export async function deployFromTemplate() {
         if (data.success || response.ok) {
             console.log('[Template Detail] Deployment successful:', data.data || data);
             
+            const vmId = (data.data || data).vmId;
+            const password = (data.data || data).password;
+            
             // Close modal
             closeDeployTemplateModal();
+            
+            // Show password modal if we got a valid password (human-readable format)
+            if (password && !password.includes('_') && password.includes('-')) {
+                if (window.showPasswordModal) {
+                    await window.showPasswordModal(vmId, vmName, password);
+                } else {
+                    console.warn('[Template Detail] Password modal not available');
+                    showToast('warning', `VM created! Password: ${password} - Please save it!`);
+                }
+            }
             
             // Show success message
             showToast('success', `VM "${vmName}" is being deployed!`);

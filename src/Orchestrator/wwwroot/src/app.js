@@ -2159,6 +2159,7 @@ window.stopVM = stopVM;
 window.forceStopVM = forceStopVM;
 window.deleteVM = deleteVM;
 window.copyToClipboard = copyToClipboard;
+window.showPasswordModal = showPasswordModal;
 window.revealPassword = revealPassword;
 window.openAddSSHKeyModal = openAddSSHKeyModal;
 window.addSSHKey = addSSHKey;
