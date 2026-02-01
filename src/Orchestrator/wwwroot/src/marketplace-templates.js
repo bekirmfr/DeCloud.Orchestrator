@@ -3,13 +3,20 @@
 // Browse and deploy VM templates from the marketplace
 // ============================================================================
 
-// Use global api function (from app.js)
-const api = window.api;
-
 let currentCategory = null;
 let currentSearch = '';
 let allTemplates = [];
 let allCategories = [];
+
+/**
+ * Helper function to call the global API
+ */
+function api(endpoint, options = {}) {
+    if (!window.api) {
+        throw new Error('API function not available');
+    }
+    return window.api(endpoint, options);
+}
 
 /**
  * Initialize marketplace templates page

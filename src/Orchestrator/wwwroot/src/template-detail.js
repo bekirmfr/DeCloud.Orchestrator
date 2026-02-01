@@ -3,10 +3,17 @@
 // View template details and deploy
 // ============================================================================
 
-// Use global api function
-const api = window.api;
-
 let currentTemplate = null;
+
+/**
+ * Helper function to call the global API
+ */
+function api(endpoint, options = {}) {
+    if (!window.api) {
+        throw new Error('API function not available');
+    }
+    return window.api(endpoint, options);
+}
 
 /**
  * Show template detail modal
