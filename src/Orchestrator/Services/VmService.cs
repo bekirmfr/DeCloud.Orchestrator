@@ -162,6 +162,31 @@ public class VmService : IVmService
                     vm.Labels["template:cloud-init-vars"] = JsonSerializer.Serialize(mergedEnvVars);
                 }
 
+                // Configure ingress based on template's exposed ports
+                if (template.ExposedPorts?.Any() == true)
+                {
+                    var primaryPort = template.ExposedPorts
+                        .Where(p => p.IsPublic)
+                        .OrderBy(p => p.Port)
+                        .FirstOrDefault();
+
+                    if (primaryPort != null)
+                    {
+                        var subdomain = $"{SanitizeHostname(vm.Name)}.vms.stackfi.tech";
+                        
+                        vm.IngressConfig = new VmIngressConfig
+                        {
+                            DefaultSubdomain = subdomain,
+                            DefaultPort = primaryPort.Port,
+                            DefaultSubdomainEnabled = true
+                        };
+
+                        _logger.LogInformation(
+                            "VM {VmId} ingress configured: {Subdomain} -> port {Port}",
+                            vm.Id, subdomain, primaryPort.Port);
+                    }
+                }
+
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
@@ -660,11 +685,38 @@ public class VmService : IVmService
         {
             vm.StartedAt = DateTime.UtcNow;
             vm.PowerState = VmPowerState.Running;
+            
+            // Trigger ingress registration for the VM
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _ingressService.OnVmStartedAsync(vm.Id);
+                    _logger.LogInformation("Ingress auto-registration triggered for VM {VmId}", vm.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to auto-register ingress for VM {VmId}", vm.Id);
+                }
+            });
         }
         else if (status == VmStatus.Stopped)
         {
             vm.StoppedAt = DateTime.UtcNow;
             vm.PowerState = VmPowerState.Off;
+            
+            // Trigger ingress cleanup for the VM
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _ingressService.OnVmStoppedAsync(vm.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cleanup ingress for VM {VmId}", vm.Id);
+                }
+            });
         }
 
         await _dataStore.SaveVmAsync(vm);
