@@ -615,12 +615,14 @@ runcmd:
   # Configure code-server
   - mkdir -p /home/ubuntu/.config/code-server
   - |
-    cat > /home/ubuntu/.config/code-server/config.yaml <<'EOF'
+    cat > /home/ubuntu/.config/code-server/config.yaml <<'EOFCONFIG'
     bind-addr: 0.0.0.0:8080
     auth: password
     password: ${DECLOUD_PASSWORD}
     cert: false
-    EOF
+    # Public base URL so code-server sets cookies/redirects correctly behind our proxy
+    abs-proxy-base-path: https://${DECLOUD_DOMAIN}/
+    EOFCONFIG
   - chown -R ubuntu:ubuntu /home/ubuntu/.config
   
   # Create systemd service
