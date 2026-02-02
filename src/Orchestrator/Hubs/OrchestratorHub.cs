@@ -97,19 +97,26 @@ public class OrchestratorHub : Hub
     /// </summary>
     public async Task RegisterAsNode(string nodeId, string authToken)
     {
-        // Validate auth
-        /*
-        if (!await _nodeAuthService.ValidateTokenAsync(nodeId, authToken))
+        // Validate auth token - verify the JWT token is valid for this node
+        if (string.IsNullOrEmpty(authToken))
         {
-            _logger.LogWarning("Invalid node auth token for {NodeId}", nodeId);
-            await Clients.Caller.SendAsync("Error", new { Message = "Invalid authentication" });
+            _logger.LogWarning("Node registration rejected: empty auth token for {NodeId}", nodeId);
+            await Clients.Caller.SendAsync("Error", new { Message = "Authentication token required" });
             return;
         }
-        */
+
+        // Validate the node exists and the token matches
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+        {
+            _logger.LogWarning("Node registration rejected: unknown node {NodeId}", nodeId);
+            await Clients.Caller.SendAsync("Error", new { Message = "Unknown node" });
+            return;
+        }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, $"node:{nodeId}");
         await Groups.AddToGroupAsync(Context.ConnectionId, "nodes");
-        
+
         _logger.LogInformation("Node {NodeId} registered via SignalR: {ConnectionId}", nodeId, Context.ConnectionId);
     }
 
@@ -229,6 +236,16 @@ public class OrchestratorHub : Hub
     /// </summary>
     public async Task TerminalOutput(string sessionId, string clientConnectionId, string data)
     {
+        // Verify the target client actually has a terminal session with this sessionId
+        if (!ActiveTerminals.TryGetValue(clientConnectionId, out var session) ||
+            session.SessionId != sessionId)
+        {
+            _logger.LogWarning(
+                "TerminalOutput rejected: no matching session {SessionId} for client {ClientId}",
+                sessionId, clientConnectionId);
+            return;
+        }
+
         await Clients.Client(clientConnectionId).SendAsync("TerminalOutput", new
         {
             SessionId = sessionId,

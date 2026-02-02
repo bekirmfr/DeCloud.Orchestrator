@@ -1204,7 +1204,7 @@ function renderDashboardVMs(vms) {
                 <div class="vm-card-header">
                     <div class="vm-name">
                         <div class="vm-status ${vm.status}"></div>
-                        ${vm.name}
+                        ${escapeHtml(vm.name)}
                     </div>
                     <span class="status-badge status-${getStatusClass(vm.status)}">
                         ${getStatusText(vm.status)}
@@ -1262,8 +1262,8 @@ function renderSSHKeysTable(keys) {
 
         return `
         <tr>
-            <td>${key.name}</td>
-            <td><code style="font-size: 12px; color: #9ca3af;">${fingerprint}</code></td>
+            <td>${escapeHtml(key.name)}</td>
+            <td><code style="font-size: 12px; color: #9ca3af;">${escapeHtml(fingerprint)}</code></td>
             <td>${added}</td>
             <td>
                 <div class="table-actions">
@@ -1424,7 +1424,7 @@ async function restartVM(vmId) {
     }
     
     try {
-        const response = await api(`/api/{vmId}/action`, {
+        const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1453,7 +1453,7 @@ async function forceStopVM(vmId) {
     }
     
     try {
-        const response = await api(`/api/{vmId}/action`, {
+        const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1551,10 +1551,10 @@ async function showPasswordModal(vmId, vmName, password) {
         modal.innerHTML = `
                     <div class="modal-content" style="max-width: 550px;">
                         <h3>🔐 Save Your VM Password</h3>
-                        <p>Your VM <strong>${vmName}</strong> has been created with this password:</p>
-                
+                        <p>Your VM <strong>${escapeHtml(vmName)}</strong> has been created with this password:</p>
+
                         <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${password}</code>
+                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${escapeHtml(password)}</code>
                         </div>
                 
                         <div style="background: #2d1f1f; border: 1px solid #7f1d1d; padding: 15px; border-radius: 8px; margin: 15px 0;">
@@ -1621,14 +1621,14 @@ async function revealPassword(vmId, vmName) {
         modal.innerHTML = `
                     <div class="modal-content" style="max-width: 450px;">
                         <h3>🔑 VM Password</h3>
-                        <p>Password for <strong>${vmName}</strong>:</p>
-                
+                        <p>Password for <strong>${escapeHtml(vmName)}</strong>:</p>
+
                         <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
-                            <code style="font-size: 1.4em; color: #10b981;">${password}</code>
+                            <code style="font-size: 1.4em; color: #10b981;" id="revealed-password">${escapeHtml(password)}</code>
                         </div>
-                
+
                         <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="copyToClipboard('${password}')" class="btn btn-secondary">
+                            <button class="btn btn-secondary" id="copy-revealed-pw-btn">
                                 📋 Copy
                             </button>
                             <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
@@ -1638,6 +1638,7 @@ async function revealPassword(vmId, vmName) {
                     </div>
                 `;
         document.body.appendChild(modal);
+        modal.querySelector('#copy-revealed-pw-btn')?.addEventListener('click', () => copyToClipboard(password));
         modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
     } catch (error) {
@@ -1784,7 +1785,7 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
     modal.innerHTML = `
         <div style="background: #1a1d26; border: 1px solid #2a2d36; border-radius: 12px; padding: 28px; width: 520px; max-width: 90vw; color: #f0f2f5;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to ${vmName}</h3>
+                <h3 style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to ${escapeHtml(vmName)}</h3>
                 <button onclick="this.closest('#connect-info-modal').remove()" style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 1.5rem;">&times;</button>
             </div>
 

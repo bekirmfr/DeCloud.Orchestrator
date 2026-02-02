@@ -368,13 +368,15 @@ public class WireGuardManager : IWireGuardManager
     {
         try
         {
+            // Use stdin piping instead of shell interpolation to prevent injection
             var process = new System.Diagnostics.Process
             {
                 StartInfo = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "sh",
-                    Arguments = $"-c \"echo '{privateKey}' | wg pubkey\"",
+                    FileName = "wg",
+                    Arguments = "pubkey",
                     UseShellExecute = false,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
@@ -382,6 +384,10 @@ public class WireGuardManager : IWireGuardManager
             };
 
             process.Start();
+            await process.StandardInput.WriteLineAsync(privateKey);
+            await process.StandardInput.FlushAsync();
+            process.StandardInput.Close();
+
             var output = await process.StandardOutput.ReadToEndAsync(ct);
             var error = await process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);

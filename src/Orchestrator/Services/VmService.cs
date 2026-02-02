@@ -601,12 +601,12 @@ public class VmService : IVmService
         // FREE RESOURCES INCLUDING POINTS
         // ========================================
 
-        // Free reserved resources from nod
+        // Free reserved resources from node
         if (!string.IsNullOrEmpty(vm.NodeId))
         {
             var node = await _dataStore.GetNodeAsync(vm.NodeId);
 
-            if (node == null)
+            if (node != null)
             {
                 var cpuToFree = vm.Spec.VirtualCpuCores;
                 var memToFree = vm.Spec.MemoryBytes;
@@ -633,9 +633,12 @@ public class VmService : IVmService
                     (double)node.ReservedResources.ComputePoints /
                     Math.Max(1, node.TotalResources.ComputePoints) * 100);
             }
-            _logger.LogWarning(
+            else
+            {
+                _logger.LogWarning(
                     "Node {NodeId} not found when releasing resources for VM {VmId}",
                     vm.NodeId, vmId);
+            }
         }
 
         // Update user quotas (unchanged)
@@ -978,7 +981,7 @@ public class VmService : IVmService
             command.CommandId,
             vm.Id,
             vm.NodeId,
-            NodeCommandType.DeleteVm
+            NodeCommandType.CreateVm
         );
 
         await _commandService.DeliverCommandAsync(selectedNode.Id, command);

@@ -533,7 +533,7 @@ public class NodeService : INodeService
         // Strategy 1: Command Registry (most reliable)
         if (_dataStore.TryCompleteCommand(commandId, out registration))
         {
-            var affectedm = await _dataStore.GetVmAsync(registration!.VmId);
+            affectedVm = await _dataStore.GetVmAsync(registration!.VmId);
             if (affectedVm != null)
             {
                 lookupMethod = "command_registry";
@@ -1752,7 +1752,7 @@ public class NodeService : INodeService
     {
         // Get JWT configuration (same as user JWT)
         var jwtKey = _configuration["Jwt:Key"]
-            ?? "default-dev-key-change-in-production-min-32-chars!";
+            ?? throw new InvalidOperationException("JWT key not configured. Set Jwt:Key in appsettings or via environment variable Jwt__Key.");
         var jwtIssuer = _configuration["Jwt:Issuer"] ?? "orchestrator";
         var jwtAudience = _configuration["Jwt:Audience"] ?? "orchestrator-client";
 

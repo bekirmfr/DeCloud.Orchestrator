@@ -68,8 +68,8 @@ public class UserQuotas
 {
     public int MaxVms { get; set; } = 5;
     public int MaxVirtualCpuCores { get; set; } = 16;
-    public long MaxMemoryBytes { get; set; } = 32768;
-    public long MaxStorageBytes { get; set; } = 500;
+    public long MaxMemoryBytes { get; set; } = 32L * 1024L * 1024L * 1024L; // 32 GB
+    public long MaxStorageBytes { get; set; } = 500L * 1024L * 1024L * 1024L; // 500 GB
 
     public int CurrentVms { get; set; }
     public int CurrentVirtualCpuCores { get; set; }

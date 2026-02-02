@@ -11,8 +11,8 @@ export default defineConfig({
         outDir: 'dist',
         assetsDir: 'assets',
 
-        // Generate sourcemaps for production debugging
-        sourcemap: true,
+        // Disable sourcemaps in production to avoid exposing source code
+        sourcemap: false,
 
         // CRITICAL: Multi-page app configuration
         // This tells Vite to process both index.html AND sign.html as entry points
