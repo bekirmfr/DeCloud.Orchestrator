@@ -1146,7 +1146,7 @@ ConnectionStrings__MongoDB=$MONGODB_URI
 # =====================================================
 # SECURITY
 # =====================================================
-Jwt__SecretKey=$JWT_SECRET_KEY
+Jwt__Key=$JWT_SECRET_KEY
 
 # =====================================================
 # PAYMENT SYSTEM (CRITICAL - KEEP SECURE)
@@ -1210,11 +1210,10 @@ create_configuration() {
   },
   
   "Jwt": {
-    "SecretKey": "",
-    "Issuer": "DeCloudOrchestrator",
-    "Audience": "DeCloudUsers",
-    "AccessTokenExpirationMinutes": 60,
-    "RefreshTokenExpirationDays": 30
+    "Key": "",
+    "Issuer": "decloud-orchestrator",
+    "Audience": "decloud-users",
+    "ExpiryMinutes": 1440
   },
   
   "Admin": {
@@ -1224,7 +1223,14 @@ create_configuration() {
   "CentralIngress": {
     "Enabled": ${ENABLE_INGRESS},
     "BaseDomain": "${INGRESS_DOMAIN}",
-    "CaddyAdminUrl": "http://localhost:2019"
+    "CaddyAdminUrl": "http://localhost:2019",
+    "AcmeEmail": "${CADDY_EMAIL}",
+    "DnsProvider": "${DNS_PROVIDER}",
+    "DnsApiToken": "${CLOUDFLARE_TOKEN}",
+    "DefaultTargetPort": 80,
+    "SubdomainPattern": "{name}",
+    "AutoRegisterOnStart": true,
+    "AutoRemoveOnStop": true
   },
   
   "WireGuard": {
