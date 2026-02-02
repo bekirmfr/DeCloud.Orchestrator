@@ -367,27 +367,23 @@ public class CentralCaddyManager : ICentralCaddyManager
             },
             handle = new object[]
             {
-                new
-                {
-                    handler = "rewrite",
-                    uri = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{{http.request.uri}}"
-                },
-                // Proxy to node agent
+                // Proxy through Orchestrator's SubdomainProxyMiddleware which properly
+                // forwards POST bodies via StreamContent (NodeAgent's direct HTTP proxy
+                // endpoint drops request bodies due to ASP.NET model binding consuming the stream)
                 new
                 {
                     handler = "reverse_proxy",
                     upstreams = new[]
                     {
-                        new { dial = $"{route.NodePublicIp}:5100" }
+                        new { dial = "localhost:5050" }
                     },
                     headers = new
                     {
                         request = new
                         {
-                            // Pass original Host so NodeAgent and backends (e.g. code-server) see the public hostname
                             set = new Dictionary<string, string[]>
                             {
-                                ["Host"] = new[] { "{http.request.host}" },
+                                ["X-DeCloud-Subdomain"] = new[] { route.Subdomain },
                                 ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
                                 ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
                                 ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
@@ -401,7 +397,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                         read_buffer_size = 4096,
                         versions = new[] { "1.1" }  // Force HTTP/1.1 to backend
                     },
-                    flush_interval = 0  // Enable streaming (chunked encoding now fixed in NodeAgent)
+                    flush_interval = 0
                 }
             },
             terminal = true
