@@ -213,8 +213,16 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? "default-dev-key-change-in-production-min-32-chars!";
+// IMPORTANT: Jwt:Key MUST be set via appsettings.json or environment variable (Jwt__Key).
+// After rotating the key, all nodes must re-register to receive new JWT tokens.
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.StartsWith("CHANGE_ME"))
+{
+    Log.Fatal("JWT signing key is not configured! Set Jwt:Key in appsettings.json or via environment variable Jwt__Key.");
+    Log.Fatal("Without a valid JWT key, node authentication will fail and all nodes will appear offline.");
+    throw new InvalidOperationException(
+        "JWT signing key is not configured. Set Jwt:Key in appsettings.json or via environment variable Jwt__Key.");
+}
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "orchestrator";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "orchestrator-client";
 
