@@ -113,7 +113,7 @@ public class VmSpec
 {
     public VmType? VmType { get; set; } = Models.VmType.General;
     public int VirtualCpuCores { get; set; } = 1;
-    public long MemoryBytes { get; set; } = 2 * 1024L * 1024L;
+    public long MemoryBytes { get; set; } = 2 * 1024L * 1024L * 1024L; // 2 GB
     //[BsonIgnore]
     //[JsonIgnore]
     //public long MemoryMb => MemoryBytes / (1024L * 1024L);
@@ -136,12 +136,12 @@ public class VmSpec
 
     /// <summary>
     /// Compute point cost for this VM based on tier and vCPU count
-    /// Calculated during scheduling: CpuCores × PointsPerVCpu[QualityTier]
+    /// Calculated during scheduling: CpuCores ï¿½ PointsPerVCpu[QualityTier]
     /// Examples on 2-core (16-point) node:
-    /// - Guaranteed 1vCPU: 1 × 8 = 8 points
-    /// - Standard 1vCPU: 1 × 4 = 4 points
-    /// - Balanced 1vCPU: 1 × 2 = 2 points
-    /// - Burstable 1vCPU: 1 × 1 = 1 point
+    /// - Guaranteed 1vCPU: 1 ï¿½ 8 = 8 points
+    /// - Standard 1vCPU: 1 ï¿½ 4 = 4 points
+    /// - Balanced 1vCPU: 1 ï¿½ 2 = 2 points
+    /// - Burstable 1vCPU: 1 ï¿½ 1 = 1 point
     /// </summary>
     public int ComputePointCost { get; set; }
 

@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;
 
@@ -6,11 +7,10 @@ namespace Orchestrator.Controllers;
 
 /// <summary>
 /// Admin API for managing scheduling configuration
-/// SECURITY: This should be protected with proper authentication in production
 /// </summary>
 [ApiController]
 [Route("api/admin/scheduling-config")]
-// TODO: Add authentication: [Authorize(Roles = "Admin")]
+[Authorize(Roles = "Admin")]
 public class SchedulingConfigController : ControllerBase
 {
     private readonly ISchedulingConfigService _configService;

@@ -306,9 +306,12 @@ public class UserService : IUserService
             // 2. Verify the signature (or bypass in development mode)
             bool signatureValid = false;
 
-            if (_environment.IsDevelopment() && IsMockSignature(request.Signature))
+            if (_environment.IsDevelopment() &&
+                IsMockSignature(request.Signature) &&
+                Environment.GetEnvironmentVariable("DECLOUD_ALLOW_MOCK_AUTH") == "true")
             {
                 // Development mode: allow mock signatures for testing
+                // Requires explicit opt-in via DECLOUD_ALLOW_MOCK_AUTH=true
                 _logger.LogWarning("DEV MODE: Accepting mock signature for wallet {Wallet}", request.WalletAddress);
                 signatureValid = true;
             }
@@ -471,7 +474,8 @@ public class UserService : IUserService
     /// </summary>
     private string GenerateJwtToken(User user)
     {
-        var jwtKey = _configuration["Jwt:Key"] ?? "default-dev-key-change-in-production-min-32-chars!";
+        var jwtKey = _configuration["Jwt:Key"]
+            ?? throw new InvalidOperationException("JWT key not configured. Set Jwt:Key in appsettings or via environment variable Jwt__Key.");
         var jwtIssuer = _configuration["Jwt:Issuer"] ?? "orchestrator";
         var jwtAudience = _configuration["Jwt:Audience"] ?? "decloud";
 
@@ -516,7 +520,21 @@ public class UserService : IUserService
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(randomBytes);
 
-        return Convert.ToBase64String(randomBytes);
+        var token = Convert.ToBase64String(randomBytes);
+
+        // Store the refresh token so it can be validated later
+        lock (_refreshTokenLock)
+        {
+            _refreshTokens[token] = new RefreshTokenInfo
+            {
+                UserId = userId,
+                Token = token,
+                ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
+                CreatedAt = DateTime.UtcNow
+            };
+        }
+
+        return token;
     }
 
     /// <summary>

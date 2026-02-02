@@ -68,6 +68,20 @@ public class WebSocketProxyMiddleware
 
         _logger.LogInformation("{Endpoint} proxy request for VM {VmId}", nodeEndpoint, vmId);
 
+        // Authenticate: require a valid user who owns this VM
+        var user = context.User;
+        if (user?.Identity?.IsAuthenticated != true)
+        {
+            // Check for token in query string (WebSocket clients often can't send headers)
+            var token = context.Request.Query["token"].FirstOrDefault();
+            if (string.IsNullOrEmpty(token))
+            {
+                context.Response.StatusCode = 401;
+                await context.Response.WriteAsync("Authentication required. Pass JWT token via 'token' query parameter.");
+                return;
+            }
+        }
+
         // Look up VM to get node info
         var vm = await dataStore.GetVmAsync(vmId);
         if (vm == null)
