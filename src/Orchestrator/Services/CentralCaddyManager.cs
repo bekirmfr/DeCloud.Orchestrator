@@ -372,7 +372,6 @@ public class CentralCaddyManager : ICentralCaddyManager
                     handler = "rewrite",
                     uri = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{{http.request.uri}}"
                 },
-                // Proxy to node agent
                 new
                 {
                     handler = "reverse_proxy",
@@ -384,7 +383,6 @@ public class CentralCaddyManager : ICentralCaddyManager
                     {
                         request = new
                         {
-                            // Pass original Host so NodeAgent and backends (e.g. code-server) see the public hostname
                             set = new Dictionary<string, string[]>
                             {
                                 ["Host"] = new[] { "{http.request.host}" },
@@ -399,9 +397,9 @@ public class CentralCaddyManager : ICentralCaddyManager
                     {
                         protocol = "http",
                         read_buffer_size = 4096,
-                        versions = new[] { "1.1" }  // Force HTTP/1.1 to backend
+                        versions = new[] { "1.1" }
                     },
-                    flush_interval = 0  // Enable streaming (chunked encoding now fixed in NodeAgent)
+                    flush_interval = 0
                 }
             },
             terminal = true
