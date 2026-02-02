@@ -409,8 +409,8 @@ if (mongoDatabase != null)
                 logger.LogInformation("🔄 Restoring WireGuard peers for relay nodes...");
 
                 var wgManager = scope.ServiceProvider.GetRequiredService<IWireGuardManager>();
-                var relayNodes = dataStore.GetAllNodes()
-                    .Where(n => n.Type == NodeType.Relay && n.RelayInfo?.Status == RelayStatus.Active)
+                var relayNodes = (await dataStore.GetAllNodesAsync())
+                    .Where(n => n.RelayInfo != null && n.RelayInfo.Status == RelayStatus.Active)
                     .ToList();
 
                 logger.LogInformation("Found {Count} active relay nodes to restore", relayNodes.Count);
