@@ -39,8 +39,7 @@ public class NodesController : ControllerBase
         {
             var response = await _nodeService.RegisterNodeAsync(request);
 
-            // ✅ NO TOKEN RETURNED! Just acknowledgment
-            // Node will authenticate future requests with wallet signatures
+            // Returns JWT token for authenticating future heartbeat/commands requests
             return Ok(ApiResponse<NodeRegistrationResponse>.Ok(response));
         }
         catch (Exception ex)
@@ -52,9 +51,10 @@ public class NodesController : ControllerBase
 
     /// <summary>
     /// Node heartbeat - sent periodically by node agents.
-    /// Authenticated via wallet signature (stateless!)
+    /// Authenticated via JWT token issued at registration.
     /// </summary>
     [HttpPost("{nodeId}/heartbeat")]
+    [Authorize]
     public async Task<ActionResult<ApiResponse<NodeHeartbeatResponse>>> Heartbeat(
     string nodeId,
     [FromBody] NodeHeartbeat heartbeat)
@@ -86,9 +86,10 @@ public class NodesController : ControllerBase
     /// Get pending commands for this node.
     /// Commands are cleared from queue upon retrieval (atomic).
     /// Part of hybrid push-pull command delivery system.
-    /// Authenticated via wallet signature (stateless).
+    /// Authenticated via JWT token issued at registration.
     /// </summary>
     [HttpGet("{nodeId}/commands")]
+    [Authorize]
     [ProducesResponseType(typeof(ApiResponse<List<NodeCommand>>), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
