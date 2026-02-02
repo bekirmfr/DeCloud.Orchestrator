@@ -421,7 +421,15 @@
 
             // Build WebSocket URL through orchestrator proxy
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal-proxy/${vmId}?user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                setStatus('disconnected');
+                terminal.writeln('\x1b[31mError: Not authenticated. Please log in first.\x1b[0m');
+                showError('Authentication required. Please log in to the dashboard first.');
+                showConnectForm();
+                return;
+            }
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/terminal-proxy/${vmId}?user=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&token=${encodeURIComponent(token)}`;
 
             if (socket) {
                 socket.close();
