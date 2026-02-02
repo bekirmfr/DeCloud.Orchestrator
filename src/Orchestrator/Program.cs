@@ -244,17 +244,27 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
     };
 
-    // Allow SignalR to use token from query string
+    // Allow SignalR and WebSocket proxy to use token from query string
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
         {
-            var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
 
+            // SignalR hub connections use access_token query param
+            var accessToken = context.Request.Query["access_token"];
             if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hub"))
             {
                 context.Token = accessToken;
+            }
+
+            // WebSocket proxy connections (terminal/sftp) use token query param
+            // Browser WebSocket API cannot set Authorization headers, so token must come via query string
+            var wsToken = context.Request.Query["token"];
+            if (!string.IsNullOrEmpty(wsToken) &&
+                (path.StartsWithSegments("/api/terminal-proxy") || path.StartsWithSegments("/api/sftp-proxy")))
+            {
+                context.Token = wsToken;
             }
 
             return Task.CompletedTask;
@@ -577,18 +587,22 @@ app.UseSwaggerUI(c =>
 app.UseRequestLogging();
 app.UseErrorHandling();
 
-// WebSocket terminal/sftp proxy (MUST be before CORS)
+// WebSocket support (must be early in pipeline)
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(30)
 });
-app.UseWebSocketProxy();
+
 app.UseSubdomainProxy();
 
 app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// WebSocket terminal/sftp proxy runs AFTER auth so context.User is populated
+// The JWT bearer middleware reads the 'token' query param for these paths (configured in OnMessageReceived)
+app.UseWebSocketProxy();
 
 app.MapControllers();
 app.MapHub<OrchestratorHub>("/hub/orchestrator");

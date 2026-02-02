@@ -68,18 +68,12 @@ public class WebSocketProxyMiddleware
 
         _logger.LogInformation("{Endpoint} proxy request for VM {VmId}", nodeEndpoint, vmId);
 
-        // Authenticate: require a valid user who owns this VM
-        var user = context.User;
-        if (user?.Identity?.IsAuthenticated != true)
+        // Authenticate: require a valid user (JWT token passed via 'token' query param, validated by auth middleware)
+        if (context.User?.Identity?.IsAuthenticated != true)
         {
-            // Check for token in query string (WebSocket clients often can't send headers)
-            var token = context.Request.Query["token"].FirstOrDefault();
-            if (string.IsNullOrEmpty(token))
-            {
-                context.Response.StatusCode = 401;
-                await context.Response.WriteAsync("Authentication required. Pass JWT token via 'token' query parameter.");
-                return;
-            }
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsync("Authentication required. Pass JWT token via 'token' query parameter.");
+            return;
         }
 
         // Look up VM to get node info
@@ -144,8 +138,9 @@ public class WebSocketProxyMiddleware
                 nodeEndpoint, vmId, node.Id, nodeHost);
         }
 
-        // Build upstream WebSocket URL
+        // Build upstream WebSocket URL (strip 'token' param to avoid leaking JWT to node agent)
         var queryParams = context.Request.Query
+            .Where(q => q.Key != "token")
             .ToDictionary(q => q.Key, q => q.Value.ToString());
 
         if (!queryParams.ContainsKey("ip"))
