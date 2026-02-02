@@ -620,8 +620,7 @@ runcmd:
     auth: password
     password: ${DECLOUD_PASSWORD}
     cert: false
-    # Public base URL so code-server sets cookies/redirects correctly behind our proxy
-    abs-proxy-base-path: https://${DECLOUD_DOMAIN}/
+    proxy-domain: ${DECLOUD_DOMAIN}
     EOFCONFIG
   - chown -R ubuntu:ubuntu /home/ubuntu/.config
   
