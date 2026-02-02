@@ -161,29 +161,29 @@ public class RelayHealthMonitor : BackgroundService
                     "Relay {RelayId} health check failed with status {StatusCode}",
                     relay.Id, response.StatusCode);
 
-                relay.RelayInfo.Status = RelayStatus.Degraded;
-                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-
                 // ====================================================
                 // SELF-HEALING: Check if orchestrator has this relay as WireGuard peer
+                // MUST happen BEFORE setting status to Degraded
                 // ====================================================
                 var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
 
-                if (!hasPeer && relay.RelayInfo?.Status == RelayStatus.Active)
+                if (!hasPeer)
                 {
                     _logger.LogWarning(
-                        "Relay {RelayId} is active but not configured as peer - attempting to add",
+                        "Relay {RelayId} not configured as WireGuard peer - attempting to add",
                         relay.Id);
 
                     var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
 
                     if (added)
                     {
-                        _logger.LogInformation("✓ Recovered relay {RelayId} via health check", relay.Id);
+                        _logger.LogInformation("✓ Added relay {RelayId} as WireGuard peer (self-healing)", relay.Id);
                     }
-
-                    await _dataStore.SaveNodeAsync(relay);
                 }
+
+                relay.RelayInfo.Status = RelayStatus.Degraded;
+                relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                await _dataStore.SaveNodeAsync(relay);
             }
         }
         catch (OperationCanceledException)
@@ -191,6 +191,25 @@ public class RelayHealthMonitor : BackgroundService
             _logger.LogWarning(
                 "Relay {RelayId} health check timed out after {Timeout}s (age: {Age:mm\\:ss})",
                 relay.Id, HealthCheckTimeout.TotalSeconds, relayAge);
+
+            // ====================================================
+            // SELF-HEALING: Check if orchestrator has this relay as WireGuard peer
+            // ====================================================
+            var hasPeer = await _wireGuardManager.HasRelayPeerAsync(relay, ct);
+
+            if (!hasPeer)
+            {
+                _logger.LogWarning(
+                    "Relay {RelayId} health check timed out and not configured as WireGuard peer - attempting to add",
+                    relay.Id);
+
+                var added = await _wireGuardManager.AddRelayPeerAsync(relay, ct);
+
+                if (added)
+                {
+                    _logger.LogInformation("✓ Added relay {RelayId} as WireGuard peer (self-healing after timeout)", relay.Id);
+                }
+            }
 
             relay.RelayInfo.Status = RelayStatus.Degraded;
             relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
