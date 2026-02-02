@@ -404,6 +404,49 @@ if (mongoDatabase != null)
                 }
 
                 logger.LogInformation("✓ CentralIngress initialization complete");
+
+                // ==================== Restore WireGuard Peers for Relay Nodes ====================
+                logger.LogInformation("🔄 Restoring WireGuard peers for relay nodes...");
+
+                var wgManager = scope.ServiceProvider.GetRequiredService<IWireGuardManager>();
+                var relayNodes = dataStore.GetAllNodes()
+                    .Where(n => n.Type == NodeType.Relay && n.RelayInfo?.Status == RelayStatus.Active)
+                    .ToList();
+
+                logger.LogInformation("Found {Count} active relay nodes to restore", relayNodes.Count);
+
+                foreach (var relay in relayNodes)
+                {
+                    try
+                    {
+                        var hasPeer = await wgManager.HasRelayPeerAsync(relay);
+                        if (!hasPeer)
+                        {
+                            logger.LogInformation("Restoring WireGuard peer for relay {RelayId} ({Name})",
+                                relay.Id, relay.Name);
+
+                            var added = await wgManager.AddRelayPeerAsync(relay);
+                            if (added)
+                            {
+                                logger.LogInformation("✓ Restored relay {RelayId} as WireGuard peer", relay.Id);
+                            }
+                            else
+                            {
+                                logger.LogWarning("Failed to restore relay {RelayId} as WireGuard peer", relay.Id);
+                            }
+                        }
+                        else
+                        {
+                            logger.LogDebug("Relay {RelayId} already configured as WireGuard peer", relay.Id);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to restore WireGuard peer for relay {RelayId}", relay.Id);
+                    }
+                }
+
+                logger.LogInformation("✓ WireGuard peer restoration complete");
             }
         }
         catch (Exception ex)
