@@ -117,17 +117,31 @@ public class NodeCapacityCalculator
 
         if (evaluation == null || !evaluation.EligibleTiers.Contains(tier))
         {
+            var reason = evaluation == null
+                ? "Node not evaluated"
+                : evaluation.TierCapabilities.TryGetValue(tier, out var cap)
+                    ? cap.IneligibilityReason ?? $"Not eligible for tier {tier}"
+                    : $"Not eligible for tier {tier}";
+
             return new TierSpecificCapacity
             {
                 NodeId = node.Id,
                 Tier = tier,
                 IsEligible = false,
-                IneligibilityReason = evaluation?.TierCapabilities[tier]?.IneligibilityReason
-                    ?? "Node not evaluated"
+                IneligibilityReason = reason
             };
         }
 
-        var tierConfig = config.Tiers[tier];
+        if (!config.Tiers.TryGetValue(tier, out var tierConfig))
+        {
+            return new TierSpecificCapacity
+            {
+                NodeId = node.Id,
+                Tier = tier,
+                IsEligible = false,
+                IneligibilityReason = $"Tier {tier} not configured"
+            };
+        }
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);

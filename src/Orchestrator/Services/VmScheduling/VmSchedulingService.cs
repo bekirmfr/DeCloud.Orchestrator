@@ -170,7 +170,7 @@ public class VmSchedulingService : IVmSchedulingService
             var scored = await ScoreNodeForVmAsync(
                 node, spec, tier, preferredRegion, preferredZone, requiredArchitecture, ct);
 
-            _logger.LogDebug(
+            _logger.LogInformation(
                 "Node {NodeId} ({Architecture}, {Region}/{Zone}) - " +
                 "Score: {TotalScore:F2}, Capacity: {CapacityScore:F2}, " +
                 "Load: {LoadScore:F2}, Reputation: {ReputationScore:F2}, " +
@@ -227,7 +227,7 @@ public class VmSchedulingService : IVmSchedulingService
 
             if (rejection != null)
             {
-                _logger.LogDebug("Node {NodeId} rejected: {Reason}", node.Id, rejection);
+                _logger.LogInformation("Node {NodeId} rejected: {Reason}", node.Id, rejection);
                 scored.RejectionReason = rejection;
                 scored.TotalScore = 0;
                 return scored;
@@ -332,8 +332,12 @@ public class VmSchedulingService : IVmSchedulingService
         // FILTER 2: Tier Eligibility
         // =====================================================
         var evaluation = node.PerformanceEvaluation;
-        if (evaluation == null || !evaluation.EligibleTiers.Contains(tier))
-            return $"Node not eligible for tier {tier}";
+        if (evaluation == null)
+            return "Node has no performance evaluation";
+
+        if (!evaluation.EligibleTiers.Contains(tier))
+            return $"Node not eligible for tier {tier} " +
+                   $"(eligible: [{string.Join(", ", evaluation.EligibleTiers)}])";
 
         // =====================================================
         // FILTER 3: ARCHITECTURE COMPATIBILITY (CRITICAL)
