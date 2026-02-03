@@ -1,6 +1,6 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-01-30  
+**Last Updated:** 2026-02-03
 **Status:** Active Development - Phase 1 (Marketplace Foundation) In Progress
 
 ---
@@ -46,7 +46,7 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 - VM scheduling and lifecycle management
 - Node registration and heartbeat monitoring
 - Resource allocation using compute points
-- Billing and payment processing (USDC on Polygon)
+- Billing and payment processing (USDC on Polygon, bandwidth-aware, hybrid pricing)
 - MongoDB Atlas for persistence
 - React/TypeScript frontend with WalletConnect
 
@@ -64,12 +64,27 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 4. **Inference VMs** - Future: AI-specific optimizations
 
 ### Quality Tiers & Resource Allocation
-- **Guaranteed:** 1:1 compute points (no overcommit)
-- **Standard:** 1.5:1 overcommit ratio
-- **Balanced:** 2:1 overcommit ratio
-- **Burstable:** 4:1 overcommit ratio
+- **Dedicated:** 1:1 compute points (no overcommit, premium)
+- **Standard:** 1.5:1 overcommit ratio (default)
+- **Balanced:** 2:1 overcommit ratio (cost-optimized)
+- **Burstable:** 4:1 overcommit ratio (lowest cost)
 
 CPU points calculated via sysbench benchmarking, normalized against baseline performance.
+
+### Bandwidth Tiers & QoS Enforcement
+- **Basic (10 Mbps):** Entry-level, +$0.005/hr
+- **Standard (50 Mbps):** General workloads, +$0.015/hr
+- **Performance (200 Mbps):** High-throughput, +$0.040/hr (1.2x multiplier)
+- **Unmetered:** No artificial cap, host NIC limited, +$0.040/hr (1.5x multiplier)
+
+Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` elements on virtio NIC interfaces. Both x86_64 and ARM (aarch64) VM paths apply matching QoS rules. Billing formula: `(resourceCost × tierMultiplier) + bandwidthRate`.
+
+### Hybrid Pricing Model (Model C)
+- **Platform floor rates:** Minimum per-resource prices that nodes cannot undercut
+- **Node operator pricing:** Operators set custom per-resource rates (CPU, RAM, Storage, GPU per hour)
+- **Floor enforcement:** `Math.Max(operatorRate, floorRate)` applied server-side
+- **Rate lifecycle:** Initial rate uses platform defaults → recalculated with node-specific pricing after scheduling
+- **Configuration:** Operators set pricing via `appsettings.json`, environment variables, or runtime `PATCH /api/nodes/me/pricing` API
 
 ### Relay Infrastructure (Critical Innovation)
 **Problem:** 60-80% of nodes are behind CGNAT and can't accept inbound connections.
@@ -101,13 +116,16 @@ CPU points calculated via sysbench benchmarking, normalized against baseline per
 ✅ HTTPS deployment with automatic certificates  
 ✅ Relay infrastructure for CGNAT nodes  
 ✅ CPU benchmarking and resource tracking  
-✅ USDC payments on Polygon blockchain  
-✅ WebSocket terminal access  
-✅ Automated deployment via install.sh scripts  
-✅ ARM architecture support (Raspberry Pi)  
-✅ Node marketplace with search and filtering  
-✅ Real-time node reputation tracking (uptime, reliability)  
-✅ Actionable marketplace with one-click VM deployment to specific nodes  
+✅ USDC payments on Polygon blockchain
+✅ WebSocket terminal access
+✅ Automated deployment via install.sh scripts
+✅ ARM architecture support (Raspberry Pi)
+✅ Node marketplace with search and filtering
+✅ Real-time node reputation tracking (uptime, reliability)
+✅ Actionable marketplace with one-click VM deployment to specific nodes
+✅ Bandwidth tier system with libvirt QoS enforcement (Basic/Standard/Performance/Unmetered)
+✅ Hybrid pricing model: platform floor rates + node operator custom pricing
+✅ Node operator self-service pricing API (GET/PATCH endpoints)
 
 ### Recent Achievements (2026-01-30)
 
@@ -281,6 +299,104 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
 - **Competitive advantage** - No other decentralized platform has this UX
 
 **Status:** ✅ **Production-ready and tested** - Full end-to-end verification complete
+
+---
+
+---
+
+🎯 **Bandwidth Tier System with libvirt QoS Enforcement (2026-02-02)**
+
+**Core Innovation:** Per-VM bandwidth limiting enforced at the hypervisor level, integrated with tiered billing
+
+**Implementation Details:**
+
+- **BandwidthTier Enum:** Basic (10 Mbps), Standard (50 Mbps), Performance (200 Mbps), Unmetered (no cap)
+- **libvirt QoS Enforcement:**
+  - Injects `<bandwidth><inbound average="X" peak="Y" burst="Z"/><outbound .../></bandwidth>` into virtio NIC XML
+  - Both x86_64 and ARM (aarch64) `GenerateDomainXml` methods updated
+  - Rates in KB/s (libvirt requirement), burst buffers calculated per tier
+  - Unmetered tier omits bandwidth element entirely (no artificial cap)
+
+- **Billing Integration:**
+  - Each tier has a per-hour bandwidth rate and a tier multiplier
+  - Formula: `(resourceCost × tierMultiplier) + bandwidthRate`
+  - Tier multipliers: Basic 0.8x, Standard 1.0x, Performance 1.2x, Unmetered 1.5x
+  - Cost estimate updates live in VM creation modal
+
+- **Frontend:**
+  - Bandwidth tier dropdown in VM creation modal
+  - Dynamic info panel showing speed, burst, cost per tier
+  - Cost estimate recalculates on tier change
+
+**Files Modified:**
+- `SchedulingConfig.cs` - BandwidthTier enum + tier configs
+- `VirtualMachine.cs` - BandwidthTier on VmSpec
+- `VmService.cs` - CalculateHourlyRate with bandwidth billing
+- `LibvirtVmManager.cs` (NodeAgent) - QoS XML injection for x86_64 + ARM
+- `VmModels.cs` (NodeAgent) - BandwidthTier enum mirror
+- `app.js` - Bandwidth tier UI + cost estimation
+- `index.html` - Bandwidth tier dropdown + info panel
+- `styles.css` - Tier info styling
+
+**Status:** ✅ **Production-ready** - Full stack implementation with hypervisor enforcement
+
+---
+
+🎯 **Model C Hybrid Pricing - Platform Floor + Node Operator Pricing (2026-02-03)**
+
+**Core Innovation:** Two-layer pricing where the platform sets minimum floor rates and node operators set their own competitive prices above the floor
+
+**Implementation Details:**
+
+- **PricingConfig (Platform-level):**
+  - Floor rates: CPU $0.005/hr, Memory $0.0025/GB/hr, Storage $0.00005/GB/hr, GPU $0.05/hr
+  - Default rates: CPU $0.01/hr, Memory $0.005/GB/hr, Storage $0.0001/GB/hr, GPU $0.10/hr
+  - Bound via `IOptions<PricingConfig>` from `appsettings.json`
+
+- **NodePricing (Per-node):**
+  - Operators set custom rates for CPU, Memory, Storage, GPU
+  - Floor enforcement: `Math.Max(operatorRate, floorRate)` on every update
+  - Currency field (default "USDC")
+  - `HasCustomPricing` flag for marketplace display
+
+- **Rate Lifecycle:**
+  1. VM created → rate calculated using platform defaults
+  2. Node assigned by scheduler → rate recalculated with node-specific pricing
+  3. Operator updates pricing → future VMs use new rates (existing VMs unaffected)
+
+- **Node Operator API Endpoints:**
+  - `GET /api/nodes/me/pricing` - View current pricing
+  - `PATCH /api/nodes/me/pricing` - Update pricing (floor-enforced)
+  - `PATCH /api/nodes/me/profile` - Update full profile including pricing
+
+- **Marketplace Integration:**
+  - Node cards show per-resource pricing or "Platform defaults"
+  - Detail modal shows full pricing breakdown (CPU/Memory/Storage/GPU per hour)
+  - Cost estimate label clarifies "default rates" vs node-specific
+
+- **NodeAgent Integration:**
+  - Pricing loaded from `Node:Pricing` config section on startup
+  - Sent during registration to Orchestrator
+  - Configurable via appsettings.json, env vars (`Node__Pricing__CpuPerHour`), or runtime API
+
+**Files Modified (Orchestrator):**
+- `PricingConfig.cs` (NEW) - Floor/default rates + NodePricing model
+- `Program.cs` - DI registration for PricingConfig
+- `Node.cs` - NodePricing property on Node + NodeRegistrationRequest
+- `VmService.cs` - CalculateHourlyRate refactored for node pricing
+- `NodeSelfController.cs` - Pricing GET/PATCH endpoints
+- `NodeMarketplaceService.cs` - Floor enforcement + pricing in profiles
+- `NodeMarketplace.cs` - NodePricing on NodeAdvertisement
+- `appsettings.json` - Pricing section with floor/default values
+- `marketplace.js` - Per-node pricing display
+- `app.js` - Cost estimate label update
+
+**Files Modified (NodeAgent):**
+- `NodeModels.cs` - Aligned NodePricing field names
+- `NodeMetadataService.cs` - Pricing config loading
+- `OrchestratorClient.cs` - Pricing in registration payload
+
+**Status:** ✅ **Production-ready** - Full stack with floor enforcement and marketplace display
 
 ---
 
@@ -657,7 +773,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ---
 
-## Current Development Focus (2026-01-30)
+## Current Development Focus (2026-02-03)
 
 **Just Completed:**
 - ✅ Node Marketplace (Goal 1.1) - **COMPLETE**
@@ -667,6 +783,17 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Multi-criteria search (tags, region, GPU, price, uptime)
   - Node detail views with full hardware specs
   - Operator profile management
+- ✅ Bandwidth Tier System - **COMPLETE**
+  - 4-tier bandwidth model (Basic/Standard/Performance/Unmetered)
+  - libvirt QoS enforcement on both x86_64 and ARM
+  - Integrated billing with tier multipliers and bandwidth rates
+  - Frontend tier selection with live cost estimation
+- ✅ Model C Hybrid Pricing - **COMPLETE**
+  - Platform floor rates + node operator custom pricing
+  - Floor enforcement server-side on all pricing updates
+  - Node self-service pricing API (GET/PATCH)
+  - Marketplace displays per-node pricing
+  - NodeAgent pricing config + registration integration
 
 **Ready for Next:**
 - 🎯 VM Template Marketplace (Priority 1.2) - **NEXT FOCUS**
@@ -684,12 +811,14 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ## Project Status Summary
 
-**Platform Maturity:** 75% Production-Ready (↑ from 70%)
+**Platform Maturity:** 80% Production-Ready (↑ from 75%)
 
 **Infrastructure Complete:**
 - ✅ Self-organizing relay architecture
 - ✅ Sophisticated scheduling (quality tiers, compute points)
-- ✅ Economic foundation (USDC payments, billing)
+- ✅ Economic foundation (USDC payments, bandwidth-aware billing, hybrid pricing)
+- ✅ Bandwidth QoS enforcement (libvirt-level, 4 tiers)
+- ✅ Node operator pricing with platform floor enforcement
 - ✅ Security (wallet auth, attestation, SSH certs)
 - ✅ Monitoring (heartbeats, metrics, events)
 
