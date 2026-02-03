@@ -172,6 +172,14 @@ public class TemplateSeederService
                 Description = "Content management systems, blogs, and web platforms",
                 IconEmoji = "🌐",
                 DisplayOrder = 4
+            },
+            new TemplateCategory
+            {
+                Name = "Privacy & Security",
+                Slug = "privacy-security",
+                Description = "Privacy-focused tools, VPNs, secure browsing, and censorship-resistant applications",
+                IconEmoji = "🔒",
+                DisplayOrder = 5
             }
         };
     }
@@ -182,7 +190,8 @@ public class TemplateSeederService
         {
             CreateStableDiffusionTemplate(),
             CreatePostgreSqlTemplate(),
-            CreateCodeServerTemplate()
+            CreateCodeServerTemplate(),
+            CreatePrivateBrowserTemplate()
         };
     }
 
@@ -730,6 +739,202 @@ final_message: |
             Status = TemplateStatus.Published,
             IsFeatured = true,
             
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreatePrivateBrowserTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Private Browser",
+            Slug = "private-browser",
+            Version = "1.0.0",
+            Category = "privacy-security",
+            Description = "Isolated browser streamed to your device via WebRTC. Browse privately from a remote VM — your real IP and device fingerprint stay hidden.",
+            LongDescription = @"## Features
+- **Full Firefox browser** running on a remote VM, streamed via WebRTC
+- **IP isolation** — websites see the VM's IP, not yours
+- **Fingerprint protection** — browser fingerprint belongs to the VM, not your device
+- **Low latency** — WebRTC streaming with hardware-accelerated video encoding
+- **Audio support** — full audio passthrough for media playback
+- **Clipboard sync** — copy/paste between your device and the remote browser
+- **Multi-user ready** — share a browsing session with collaborators (optional)
+
+## How It Works
+This template deploys [Neko](https://github.com/m1k1o/neko), a self-hosted browser-in-browser solution that streams a full desktop browser from the VM to your local browser tab via WebRTC. Think of it as a private, disposable browsing environment.
+
+## Use Cases
+- **Privacy browsing** — access the web without exposing your real IP or device
+- **Geo-shifting** — deploy on nodes in different regions to browse as if you're there
+- **Disposable sessions** — spin up, browse, destroy — no local traces
+- **Security research** — safely visit untrusted sites in an isolated environment
+- **Bypassing restrictions** — access content blocked in your network/region
+
+## Getting Started
+1. Wait for setup to complete (~3-5 minutes for Docker image pull)
+2. Open `https://${DECLOUD_DOMAIN}:8080` in your browser
+3. Log in with password: `${DECLOUD_PASSWORD}`
+4. Start browsing privately!
+
+## Default Bandwidth
+This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides smooth 720p streaming. Upgrade to Performance tier for 1080p.",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/m1k1o/neko",
+            License = "Apache-2.0",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
+                DiskBytes = 15L * 1024 * 1024 * 1024,   // 15 GB
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,  // 4 GB
+                DiskBytes = 20L * 1024 * 1024 * 1024,   // 20 GB
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+
+            Tags = new List<string> { "browser", "privacy", "vpn", "neko", "webrtc", "streaming", "firefox", "censorship-resistant" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Private Browser (Neko) - Isolated Browser Streaming
+# DeCloud Template v1.0.0
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Create data directory
+  - mkdir -p /opt/neko
+
+  # Create docker-compose file
+  - |
+    cat > /opt/neko/docker-compose.yml <<'EOFCOMPOSE'
+    version: '3'
+    services:
+      neko:
+        image: ghcr.io/m1k1o/neko/firefox:latest
+        container_name: neko
+        restart: unless-stopped
+        shm_size: '2gb'
+        ports:
+          - '8080:8080'
+          - '52000-52100:52000-52100/udp'
+        environment:
+          NEKO_SCREEN: '1920x1080@30'
+          NEKO_PASSWORD: '${DECLOUD_PASSWORD}'
+          NEKO_PASSWORD_ADMIN: '${DECLOUD_PASSWORD}'
+          NEKO_ICELITE: 'true'
+          NEKO_EPR: '52000-52100'
+          NEKO_NAT1TO1: '${DECLOUD_PUBLIC_IP}'
+    EOFCOMPOSE
+
+  # Pull image and start container
+  - cd /opt/neko && docker compose pull
+  - cd /opt/neko && docker compose up -d
+
+  # Create systemd service for auto-restart on boot
+  - |
+    cat > /etc/systemd/system/neko.service <<'EOF'
+    [Unit]
+    Description=Neko Private Browser
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    WorkingDirectory=/opt/neko
+    ExecStart=/usr/bin/docker compose up -d
+    ExecStop=/usr/bin/docker compose down
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+
+  - systemctl daemon-reload
+  - systemctl enable neko.service
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║            Private Browser (Neko) - DeCloud Template         ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  Browser: https://${DECLOUD_DOMAIN}:8080                     ║
+    ║  Password: ${DECLOUD_PASSWORD}                               ║
+    ║                                                               ║
+    ║  Service: docker compose -f /opt/neko/docker-compose.yml ps  ║
+    ║  Logs:    docker logs -f neko                                ║
+    ║  Restart: systemctl restart neko                             ║
+    ║                                                               ║
+    ║  Your browsing is isolated to this VM.                       ║
+    ║  Websites see VM's IP, not yours.                            ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  Private Browser is starting up!
+
+  The Docker image download may take 2-3 minutes on first boot.
+
+  Access your private browser at: https://${DECLOUD_DOMAIN}:8080
+  Password: ${DECLOUD_PASSWORD}
+
+  Browse privately — your real IP and fingerprint stay hidden.",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["NEKO_SCREEN"] = "1920x1080@30"
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "Neko Browser WebUI",
+                    IsPublic = true
+                },
+                new TemplatePort
+                {
+                    Port = 52000,
+                    Protocol = "udp",
+                    Description = "WebRTC media (UDP range 52000-52100)",
+                    IsPublic = true
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8080",
+
+            EstimatedCostPerHour = 0.06m, // $0.06/hour — lightweight workload
+
+            DefaultBandwidthTier = BandwidthTier.Standard, // 50 Mbps — good for 720p streaming
+
+            Status = TemplateStatus.Published,
+            IsFeatured = true,
+
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
