@@ -329,7 +329,7 @@ public class NodesController : ControllerBase
     {
         try
         {
-            var nodes = await _dataStore.GetNodesAsync();
+            var nodes = await _dataStore.GetAllNodesAsync();
 
             if (onlineOnly)
             {
@@ -343,8 +343,8 @@ public class NodesController : ControllerBase
                 {
                     Region = g.Key,
                     NodeCount = g.Count(),
-                    AvailableComputePoints = g.Sum(n => n.AvailableComputePoints),
-                    HasGpu = g.Any(n => n.GpuInfo?.Count > 0)
+                    AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.TotalResources.ComputePoints),
+                    HasGpu = g.Any(n => !string.IsNullOrEmpty(n.GpuInfo?.Model))
                 })
                 .OrderByDescending(r => r.NodeCount)
                 .ToList();
@@ -371,7 +371,7 @@ public class NodesController : ControllerBase
     {
         try
         {
-            var nodes = await _dataStore.GetNodesAsync();
+            var nodes = await _dataStore.GetAllNodesAsync();
 
             if (onlineOnly)
             {
@@ -386,8 +386,8 @@ public class NodesController : ControllerBase
                 {
                     Zone = g.Key,
                     NodeCount = g.Count(),
-                    AvailableComputePoints = g.Sum(n => n.AvailableComputePoints),
-                    HasGpu = g.Any(n => n.GpuInfo?.Count > 0)
+                    AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
+                    HasGpu = g.Any(n => !string.IsNullOrEmpty(n.GpuInfo?.Model))
                 })
                 .OrderByDescending(z => z.NodeCount)
                 .ToList();

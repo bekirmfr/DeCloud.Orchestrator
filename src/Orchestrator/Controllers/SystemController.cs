@@ -127,35 +127,6 @@ public class SystemController : ControllerBase
     }
 
     /// <summary>
-    /// Get available regions
-    /// </summary>
-    [HttpGet("regions")]
-    [AllowAnonymous]
-    public ActionResult<ApiResponse<List<RegionInfo>>> GetRegions()
-    {
-        // Aggregate regions from nodes
-        var regions = _dataStore.GetActiveNodes()
-            .GroupBy(n => n.Region)
-            .Select(g => new RegionInfo(
-                g.Key,
-                g.Key.ToUpper().Replace("-", " "),
-                g.Count(),
-                g.Count(n => n.Status == NodeStatus.Online),
-                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
-                g.Where(n => n.Status == NodeStatus.Online).Sum(n => n.TotalResources.MemoryBytes - n.ReservedResources.MemoryBytes)
-            ))
-            .ToList();
-
-        // Add default if no nodes
-        if (!regions.Any())
-        {
-            regions.Add(new RegionInfo("default", "Default", 0, 0, 0, 0));
-        }
-
-        return Ok(ApiResponse<List<RegionInfo>>.Ok(regions));
-    }
-
-    /// <summary>
     /// Get recent events (for debugging/monitoring)
     /// </summary>
     [HttpGet("events")]
@@ -209,13 +180,4 @@ public record PriceCalculation(
     decimal DailyTotal,
     decimal MonthlyTotal,
     string Currency
-);
-
-public record RegionInfo(
-    string Id,
-    string Name,
-    int TotalNodes,
-    int OnlineNodes,
-    long AvailableCpu,
-    long AvailableMemoryMb
 );
