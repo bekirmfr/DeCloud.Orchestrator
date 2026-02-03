@@ -1,3 +1,5 @@
+using Orchestrator.Models.Payment;
+
 namespace Orchestrator.Models;
 
 /// <summary>
@@ -26,7 +28,8 @@ public class NodeAdvertisement
     
     // Pricing
     public decimal BasePrice { get; set; }
-    
+    public NodePricing Pricing { get; set; } = new();
+
     // Availability
     public bool IsOnline { get; set; }
     public int AvailableComputePoints { get; set; }

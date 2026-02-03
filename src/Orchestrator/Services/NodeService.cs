@@ -1,6 +1,7 @@
 using DeCloud.Shared;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
 using Orchestrator.Services.VmScheduling;
@@ -212,7 +213,8 @@ public class NodeService : INodeService
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
             RegisteredAt = request.RegisteredAt,
-            LastSeenAt = DateTime.UtcNow
+            LastSeenAt = DateTime.UtcNow,
+            Pricing = request.Pricing ?? new NodePricing()
         };
 
         // =====================================================
@@ -1937,6 +1939,7 @@ public class NodeService : INodeService
             RegisteredAt = node.RegisteredAt,
 
             BasePrice = node.BasePrice,
+            Pricing = node.Pricing,
 
             IsOnline = node.Status == NodeStatus.Online,
             AvailableComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,

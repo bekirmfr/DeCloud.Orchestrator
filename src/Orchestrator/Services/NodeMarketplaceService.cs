@@ -1,5 +1,7 @@
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace Orchestrator.Services;
 
@@ -29,13 +31,16 @@ public interface INodeMarketplaceService
 public class NodeMarketplaceService : INodeMarketplaceService
 {
     private readonly DataStore _dataStore;
+    private readonly PricingConfig _pricingConfig;
     private readonly ILogger<NodeMarketplaceService> _logger;
 
     public NodeMarketplaceService(
         DataStore dataStore,
+        IOptions<PricingConfig> pricingConfig,
         ILogger<NodeMarketplaceService> logger)
     {
         _dataStore = dataStore;
+        _pricingConfig = pricingConfig.Value;
         _logger = logger;
     }
 
@@ -173,11 +178,25 @@ public class NodeMarketplaceService : INodeMarketplaceService
             node.BasePrice = update.BasePrice.Value;
         }
 
+        if (update.Pricing != null)
+        {
+            // Enforce floor rates
+            var p = update.Pricing;
+            node.Pricing = new NodePricing
+            {
+                CpuPerHour = p.CpuPerHour > 0 ? Math.Max(p.CpuPerHour, _pricingConfig.FloorCpuPerHour) : 0,
+                MemoryPerGbPerHour = p.MemoryPerGbPerHour > 0 ? Math.Max(p.MemoryPerGbPerHour, _pricingConfig.FloorMemoryPerGbPerHour) : 0,
+                StoragePerGbPerHour = p.StoragePerGbPerHour > 0 ? Math.Max(p.StoragePerGbPerHour, _pricingConfig.FloorStoragePerGbPerHour) : 0,
+                GpuPerHour = p.GpuPerHour > 0 ? Math.Max(p.GpuPerHour, _pricingConfig.FloorGpuPerHour) : 0,
+                Currency = p.Currency ?? "USDC"
+            };
+        }
+
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
-            "Updated profile for node {NodeId}: Name={Name}, Tags={Tags}",
-            nodeId, node.Name, string.Join(", ", node.Tags));
+            "Updated profile for node {NodeId}: Name={Name}, Tags={Tags}, HasCustomPricing={HasPricing}",
+            nodeId, node.Name, string.Join(", ", node.Tags), node.Pricing.HasCustomPricing);
 
         return true;
     }
@@ -218,7 +237,8 @@ public class NodeMarketplaceService : INodeMarketplaceService
             RegisteredAt = node.RegisteredAt,
             
             BasePrice = node.BasePrice,
-            
+            Pricing = node.Pricing,
+
             IsOnline = node.Status == NodeStatus.Online,
             AvailableComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
             AvailableMemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
@@ -236,4 +256,5 @@ public class NodeProfileUpdate
     public string? Description { get; set; }
     public List<string>? Tags { get; set; }
     public decimal? BasePrice { get; set; }
+    public NodePricing? Pricing { get; set; }
 }

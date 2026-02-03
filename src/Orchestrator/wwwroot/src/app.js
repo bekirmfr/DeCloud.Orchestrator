@@ -1547,7 +1547,7 @@ function updateEstimatedCost() {
     const hourlyTotal = ((cpuCost + memoryCost + storageCost) * tier.priceMultiplier) + bw.hourlyRate;
 
     document.getElementById('compute-points').textContent = `${computePoints} points`;
-    document.getElementById('estimated-cost').textContent = `$${hourlyTotal.toFixed(4)}/hour`;
+    document.getElementById('estimated-cost').textContent = `~$${hourlyTotal.toFixed(4)}/hr (default rates)`;
 }
 
 async function deleteVM(vmId, vmName) {

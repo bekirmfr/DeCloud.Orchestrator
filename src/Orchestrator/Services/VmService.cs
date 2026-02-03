@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -31,6 +32,7 @@ public class VmService : IVmService
     private readonly ICentralIngressService _ingressService;
     private readonly INetworkLatencyTracker _latencyTracker;
     private readonly ITemplateService _templateService;
+    private readonly PricingConfig _pricingConfig;
     private readonly ILogger<VmService> _logger;
     private readonly IServiceProvider _serviceProvider;
 
@@ -43,6 +45,7 @@ public class VmService : IVmService
         ICentralIngressService ingressService,
         INetworkLatencyTracker latencyTracker,
         ITemplateService templateService,
+        IOptions<PricingConfig> pricingConfig,
         ILogger<VmService> logger,
         IServiceProvider serviceProvider)
     {
@@ -54,6 +57,7 @@ public class VmService : IVmService
         _ingressService = ingressService;
         _latencyTracker = latencyTracker;
         _templateService = templateService;
+        _pricingConfig = pricingConfig.Value;
         _logger = logger;
         _serviceProvider = serviceProvider;
     }
@@ -836,6 +840,9 @@ public class VmService : IVmService
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
+        // Recalculate hourly rate with node-specific pricing (replaces platform defaults)
+        vm.BillingInfo.HourlyRateCrypto = CalculateHourlyRate(vm.Spec, selectedNode.Pricing);
+
         // Track VM hosting in node reputation
         var reputationService = _serviceProvider.GetService<INodeReputationService>();
         if (reputationService != null)
@@ -1015,39 +1022,30 @@ public class VmService : IVmService
         return $"{adj}-{noun}-{verb}-{num}";
     }
 
-    private static decimal CalculateHourlyRate(VmSpec spec)
+    /// <summary>
+    /// Calculate the hourly rate for a VM based on its spec and the node's pricing.
+    /// Uses node operator pricing if set, otherwise platform defaults.
+    /// All rates are clamped to platform floor minimums.
+    /// </summary>
+    private decimal CalculateHourlyRate(VmSpec spec, NodePricing? nodePricing = null)
     {
-        var baseCpuRate = 0m;
-        var baseMemoryRate = 0m;  // per GB
-        var baseStorageRate = 0m; // per GB
+        if (spec.VmType == VmType.Relay)
+            return 0.005m; // Flat rate for relay VMs
 
         const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
+        var cfg = _pricingConfig;
 
-        switch (spec.VmType)
-        {
-            case VmType.General:
-                baseCpuRate = 0.01m;
-                baseMemoryRate = 0.005m;  // per GB
-                baseStorageRate = 0.0001m; // per GB
-                break;
-            case VmType.Compute:
-                break;
-            case VmType.Memory:
-                break;
-            case VmType.Storage:
-                break;
-            case VmType.Gpu:
-                break;
-            case VmType.Relay:
-                return 0.005m; // Flat rate for relay VMs
-            default:
-                baseCpuRate = 0.01m;
-                baseMemoryRate = 0.005m * 1024m * 1024m * 1024m;  // per GB
-                baseStorageRate = 0.0001m * 1024m * 1024m * 1024m; // per GB
-                break;
-        }
+        // Resolve per-resource rates: node pricing > platform default > floor
+        var cpuRate = (nodePricing?.CpuPerHour > 0 ? nodePricing.CpuPerHour : cfg.DefaultCpuPerHour);
+        var memRate = (nodePricing?.MemoryPerGbPerHour > 0 ? nodePricing.MemoryPerGbPerHour : cfg.DefaultMemoryPerGbPerHour);
+        var storageRate = (nodePricing?.StoragePerGbPerHour > 0 ? nodePricing.StoragePerGbPerHour : cfg.DefaultStoragePerGbPerHour);
 
-        // Bandwidth tier pricing (per hour)
+        // Enforce platform floor (nodes can't undercut)
+        cpuRate = Math.Max(cpuRate, cfg.FloorCpuPerHour);
+        memRate = Math.Max(memRate, cfg.FloorMemoryPerGbPerHour);
+        storageRate = Math.Max(storageRate, cfg.FloorStoragePerGbPerHour);
+
+        // Bandwidth tier pricing (per hour, platform-set)
         var bandwidthRate = spec.BandwidthTier switch
         {
             BandwidthTier.Basic => 0.002m,        // 10 Mbps
@@ -1056,11 +1054,22 @@ public class VmService : IVmService
             _ => 0.040m                           // Unmetered
         };
 
-        return
-            (spec.VirtualCpuCores * baseCpuRate) +
-            ((spec.MemoryBytes / BYTES_PER_GB) * baseMemoryRate) +
-            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate) +
-            bandwidthRate;
+        // Quality tier price multiplier (must match frontend QUALITY_TIERS)
+        var tierMultiplier = spec.QualityTier switch
+        {
+            QualityTier.Guaranteed => 2.5m,
+            QualityTier.Standard => 1.0m,
+            QualityTier.Balanced => 0.6m,
+            QualityTier.Burstable => 0.4m,
+            _ => 1.0m
+        };
+
+        var resourceCost =
+            (spec.VirtualCpuCores * cpuRate) +
+            ((spec.MemoryBytes / BYTES_PER_GB) * memRate) +
+            ((spec.DiskBytes / BYTES_PER_GB) * storageRate);
+
+        return (resourceCost * tierMultiplier) + bandwidthRate;
     }
 
     private static string GeneratePrivateIp()

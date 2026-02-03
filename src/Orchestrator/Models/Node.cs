@@ -1,4 +1,5 @@
 using Nethereum.Merkle.Patricia;
+using Orchestrator.Models.Payment;
 using Orchestrator.Services;
 
 namespace Orchestrator.Models;
@@ -134,11 +135,17 @@ public class Node
     public List<string> Tags { get; set; } = new();
     
     /// <summary>
-    /// Base pricing in USDC per compute point per hour
-    /// Default: 0.01 USDC/point/hour
-    /// Operators can charge premiums for specialized hardware
+    /// Base pricing in USDC per compute point per hour (legacy, kept for backward compatibility)
+    /// Prefer using Pricing for per-resource rates.
     /// </summary>
     public decimal BasePrice { get; set; } = 0.01m;
+
+    /// <summary>
+    /// Per-resource pricing set by the node operator.
+    /// Rates must be >= platform floor rates (enforced by orchestrator).
+    /// If null or zero rates, platform defaults are used.
+    /// </summary>
+    public NodePricing Pricing { get; set; } = new();
 }
 
 /// <summary>
@@ -338,6 +345,12 @@ public class NodeRegistrationRequest
     /// </summary>
     public required string Message { get; set; }
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Operator-defined pricing per resource (optional).
+    /// If null, platform defaults are used.
+    /// </summary>
+    public NodePricing? Pricing { get; set; }
 }
 
 public record NodeRegistrationResponse(
