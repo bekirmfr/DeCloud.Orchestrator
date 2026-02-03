@@ -1056,11 +1056,22 @@ public class VmService : IVmService
             _ => 0.040m                           // Unmetered
         };
 
-        return
+        // Quality tier price multiplier (must match frontend QUALITY_TIERS)
+        var tierMultiplier = spec.QualityTier switch
+        {
+            QualityTier.Guaranteed => 2.5m,
+            QualityTier.Standard => 1.0m,
+            QualityTier.Balanced => 0.6m,
+            QualityTier.Burstable => 0.4m,
+            _ => 1.0m
+        };
+
+        var resourceCost =
             (spec.VirtualCpuCores * baseCpuRate) +
             ((spec.MemoryBytes / BYTES_PER_GB) * baseMemoryRate) +
-            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate) +
-            bandwidthRate;
+            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate);
+
+        return (resourceCost * tierMultiplier) + bandwidthRate;
     }
 
     private static string GeneratePrivateIp()

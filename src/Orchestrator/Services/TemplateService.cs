@@ -383,8 +383,9 @@ public class TemplateService : ITemplateService
         // Use custom spec or template's recommended spec
         var spec = customSpec ?? template.RecommendedSpec ?? template.MinimumSpec;
 
-        // Apply template's default bandwidth tier if not explicitly set by user
-        if (customSpec == null || customSpec.BandwidthTier == BandwidthTier.Unmetered)
+        // Apply template's default bandwidth tier only when using template spec
+        // (don't override explicit user selection, even if they chose Unmetered)
+        if (customSpec == null)
         {
             spec.BandwidthTier = template.DefaultBandwidthTier;
         }

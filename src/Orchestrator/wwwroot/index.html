@@ -561,17 +561,14 @@
                         Bandwidth Tier
                         <span class="quality-tier-help" id="bandwidth-help-text">Unmetered</span>
                     </label>
-                    <select id="bandwidth-tier" class="form-control" onchange="updateBandwidthInfo()">
+                    <select id="bandwidth-tier" class="form-control">
                         <option value="0">Basic (10 Mbps)</option>
                         <option value="1">Standard (50 Mbps)</option>
                         <option value="2">Performance (200 Mbps)</option>
                         <option value="3" selected>Unmetered</option>
                     </select>
                     <div class="tier-info" id="bandwidth-info">
-                        <div class="tier-description">No artificial bandwidth cap. Limited only by host NIC.</div>
-                        <div class="tier-pricing">
-                            <span class="tier-multiplier">+$0.040/hr</span>
-                        </div>
+                        <!-- Populated by updateBandwidthInfo() on init -->
                     </div>
                 </div>
                 <div class="form-row">
