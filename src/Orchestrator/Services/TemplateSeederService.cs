@@ -750,7 +750,7 @@ final_message: |
         {
             Name = "Private Browser",
             Slug = "private-browser",
-            Version = "1.1.0",
+            Version = "1.2.0",
             Category = "privacy-security",
             Description = "Isolated browser streamed to your device via WebRTC. Browse privately from a remote VM — your real IP and device fingerprint stay hidden.",
             LongDescription = @"## Features
@@ -779,7 +779,12 @@ This template deploys [Neko](https://github.com/m1k1o/neko), a self-hosted brows
 4. Start browsing privately!
 
 ## Default Bandwidth
-This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides smooth 720p streaming. Upgrade to Performance tier for 1080p.",
+This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides smooth 720p streaming. Upgrade to Performance tier for 1080p.
+
+## Technical Details
+- WebRTC streaming with STUN/TURN relay for NAT traversal
+- Works behind firewalls and restrictive networks
+- Low latency (typically <100ms with good network conditions)",
 
             AuthorId = "platform",
             AuthorName = "DeCloud",
@@ -811,7 +816,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
             CloudInitTemplate = @"#cloud-config
 
 # Private Browser (Neko) - Isolated Browser Streaming
-# DeCloud Template v1.0.0
+# DeCloud Template v1.2.0 - TCP multiplexing for WebRTC
 
 packages:
   - apt-transport-https
@@ -839,14 +844,13 @@ runcmd:
         shm_size: '2gb'
         ports:
           - '8080:8080'
-          - '52000-52100:52000-52100/udp'
+        cap_add:
+          - SYS_ADMIN
         environment:
           NEKO_SCREEN: '1920x1080@30'
           NEKO_PASSWORD: '${DECLOUD_PASSWORD}'
           NEKO_PASSWORD_ADMIN: '${DECLOUD_PASSWORD}'
-          NEKO_ICELITE: 'true'
-          NEKO_EPR: '52000-52100'
-          NEKO_NAT1TO1: '${DECLOUD_PUBLIC_IP}'
+          NEKO_ICESERVERS: '[{"urls":["stun:stun.relay.metered.ca:80"]},{"urls":["turn:standard.relay.metered.ca:80"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turn:standard.relay.metered.ca:80?transport=tcp"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turn:standard.relay.metered.ca:443"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turns:standard.relay.metered.ca:443?transport=tcp"],"username":"openrelayproject","credential":"openrelayproject"}]'
     EOFCOMPOSE
 
   # Pull image and start container
@@ -916,14 +920,7 @@ final_message: |
                 {
                     Port = 8080,
                     Protocol = "http",
-                    Description = "Neko Browser WebUI",
-                    IsPublic = true
-                },
-                new TemplatePort
-                {
-                    Port = 52000,
-                    Protocol = "udp",
-                    Description = "WebRTC media (UDP range 52000-52100)",
+                    Description = "Neko Browser WebUI and WebRTC signaling",
                     IsPublic = true
                 }
             },
