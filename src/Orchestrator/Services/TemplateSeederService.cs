@@ -792,7 +792,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
                 MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
                 DiskBytes = 15L * 1024 * 1024 * 1024,   // 15 GB
                 RequiresGpu = false,
-                QualityTier = QualityTier.Balanced
+                QualityTier = QualityTier.Burstable
             },
 
             RecommendedSpec = new VmSpec
