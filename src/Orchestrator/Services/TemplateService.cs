@@ -480,10 +480,15 @@ public class TemplateService : ITemplateService
         {
             variables["DECLOUD_PRIVATE_IP"] = vm.NetworkConfig.PrivateIp;
         }
-        
+
         if (!string.IsNullOrEmpty(vm.NetworkConfig?.PublicIp))
         {
             variables["DECLOUD_PUBLIC_IP"] = vm.NetworkConfig.PublicIp;
+        }
+        else if (node != null && !string.IsNullOrEmpty(node.PublicIp))
+        {
+            // Fallback to node's public IP (e.g. for VMs behind NAT/relay)
+            variables["DECLOUD_PUBLIC_IP"] = node.PublicIp;
         }
         
         return variables;
