@@ -83,6 +83,13 @@ const QUALITY_TIERS = {
     }
 };
 
+const BANDWIDTH_TIERS = {
+    0: { name: 'Basic', speed: '10 Mbps', burst: '20 Mbps', hourlyRate: 0.002, description: 'Light browsing and text-based workloads' },
+    1: { name: 'Standard', speed: '50 Mbps', burst: '100 Mbps', hourlyRate: 0.008, description: 'General browsing, video calls, moderate streaming' },
+    2: { name: 'Performance', speed: '200 Mbps', burst: '400 Mbps', hourlyRate: 0.020, description: 'HD video streaming, large downloads, data-intensive tasks' },
+    3: { name: 'Unmetered', speed: 'No cap', burst: 'No cap', hourlyRate: 0.040, description: 'No artificial bandwidth cap. Limited only by host NIC.' }
+};
+
 const VmAction = {
         Start: 0,
         Stop: 1,
@@ -129,6 +136,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     updateTierInfo();
+    updateBandwidthInfo();
     updateEstimatedCost();
 });
 
@@ -138,6 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 document.getElementById('vm-cpu').addEventListener('change', updateEstimatedCost);
 document.getElementById('vm-memory').addEventListener('change', updateEstimatedCost);
 document.getElementById('vm-disk').addEventListener('change', updateEstimatedCost);
+document.getElementById('bandwidth-tier').addEventListener('change', updateEstimatedCost);
 
 // ============================================
 // APPKIT INITIALIZATION
@@ -1297,7 +1306,8 @@ async function createVM() {
     const diskGb = parseInt(document.getElementById('vm-disk').value);
     const imageId = document.getElementById('vm-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
-    
+    const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
+
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
     
@@ -1314,7 +1324,8 @@ async function createVM() {
                 memoryBytes: memoryMb * (1024 * 1024),
                 diskBytes: diskGb * (1024 * 1024 * 1024),
                 imageId: imageId,
-                qualityTier: qualityTier
+                qualityTier: qualityTier,
+                bandwidthTier: bandwidthTier
             }
         };
         
@@ -1346,7 +1357,9 @@ async function createVM() {
             
             document.getElementById('vm-name').value = '';
             document.getElementById('quality-tier').value = '1';  // ← RESET TO STANDARD
+            document.getElementById('bandwidth-tier').value = '3'; // ← RESET TO UNMETERED
             updateTierInfo();  // ← REFRESH TIER INFO
+            updateBandwidthInfo();
             
             await refreshData();
         } else {
@@ -1493,25 +1506,46 @@ function updateTierInfo() {
     updateEstimatedCost();
 }
 
+function updateBandwidthInfo() {
+    const bwSelect = document.getElementById('bandwidth-tier');
+    const bwId = parseInt(bwSelect.value);
+    const bw = BANDWIDTH_TIERS[bwId];
+
+    document.getElementById('bandwidth-help-text').textContent = bw.name;
+
+    const bandwidthInfo = document.getElementById('bandwidth-info');
+    bandwidthInfo.innerHTML = `
+        <div class="tier-description">${bw.description}</div>
+        <div class="tier-pricing">
+            <span class="tier-points">${bw.speed} avg / ${bw.burst} burst</span>
+            <span class="tier-multiplier">+$${bw.hourlyRate.toFixed(3)}/hr</span>
+        </div>
+    `;
+
+    updateEstimatedCost();
+}
+
 function updateEstimatedCost() {
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
     const memoryMb = parseInt(document.getElementById('vm-memory').value);
     const diskGb = parseInt(document.getElementById('vm-disk').value);
     const tierId = parseInt(document.getElementById('quality-tier').value);
     const tier = QUALITY_TIERS[tierId];
-    
+    const bwId = parseInt(document.getElementById('bandwidth-tier').value);
+    const bw = BANDWIDTH_TIERS[bwId];
+
     const computePoints = cpuCores * tier.pointsPerVCpu;
-    
+
     const baseCpuRate = 0.01;
     const baseMemoryRate = 0.005;
     const baseStorageRate = 0.0001;
-    
+
     const cpuCost = cpuCores * baseCpuRate;
     const memoryCost = (memoryMb / 1024) * baseMemoryRate;
     const storageCost = diskGb * baseStorageRate;
-    
-    const hourlyTotal = (cpuCost + memoryCost + storageCost) * tier.priceMultiplier;
-    
+
+    const hourlyTotal = ((cpuCost + memoryCost + storageCost) * tier.priceMultiplier) + bw.hourlyRate;
+
     document.getElementById('compute-points').textContent = `${computePoints} points`;
     document.getElementById('estimated-cost').textContent = `$${hourlyTotal.toFixed(4)}/hour`;
 }

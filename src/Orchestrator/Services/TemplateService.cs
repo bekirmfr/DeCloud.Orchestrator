@@ -382,6 +382,12 @@ public class TemplateService : ITemplateService
         
         // Use custom spec or template's recommended spec
         var spec = customSpec ?? template.RecommendedSpec ?? template.MinimumSpec;
+
+        // Apply template's default bandwidth tier if not explicitly set by user
+        if (customSpec == null || customSpec.BandwidthTier == BandwidthTier.Unmetered)
+        {
+            spec.BandwidthTier = template.DefaultBandwidthTier;
+        }
         
         // Merge environment variables (template defaults + user overrides)
         var mergedEnvVars = new Dictionary<string, string>(template.DefaultEnvironmentVariables);

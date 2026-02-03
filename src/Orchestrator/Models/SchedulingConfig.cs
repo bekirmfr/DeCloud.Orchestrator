@@ -323,6 +323,25 @@ public class AgentSchedulingConfig
 }
 
 /// <summary>
+/// Bandwidth tier for VM network rate limiting.
+/// Enforced via libvirt QoS on the VM's virtio network interface.
+/// </summary>
+public enum BandwidthTier
+{
+    /// <summary>10 Mbps average, 20 Mbps burst - Light browsing, text</summary>
+    Basic = 0,
+
+    /// <summary>50 Mbps average, 100 Mbps burst - General browsing, streaming</summary>
+    Standard = 1,
+
+    /// <summary>200 Mbps average, 400 Mbps burst - HD video, downloads</summary>
+    Performance = 2,
+
+    /// <summary>No artificial cap - limited only by host NIC</summary>
+    Unmetered = 3
+}
+
+/// <summary>
 /// Calculated resource availability for a node considering overcommit and points
 /// </summary>
 public class NodeResourceAvailability
