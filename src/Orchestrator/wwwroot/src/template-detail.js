@@ -252,7 +252,7 @@ function renderTemplateDetail(template) {
 /**
  * Open deployment modal for template
  */
-export function openDeployTemplateModal(template) {
+export async function openDeployTemplateModal(template) {
     if (!template) template = currentTemplate;
     if (!template) return;
 
