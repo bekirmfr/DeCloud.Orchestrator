@@ -5,6 +5,26 @@
 
 let currentTemplate = null;
 
+// ============================================
+// TIER CONFIGURATIONS (must match app.js / backend enums)
+// ============================================
+
+// QualityTier enum: 0=Dedicated, 1=Standard, 2=Balanced, 3=Burstable
+const DEPLOY_QUALITY_TIERS = {
+    0: { name: 'Dedicated (Premium)', pointsPerVCpu: 8, priceMultiplier: 2.5 },
+    1: { name: 'Standard', pointsPerVCpu: 4, priceMultiplier: 1.0 },
+    2: { name: 'Balanced (Cost-Optimized)', pointsPerVCpu: 2, priceMultiplier: 0.6 },
+    3: { name: 'Burstable (Lowest Cost)', pointsPerVCpu: 1, priceMultiplier: 0.4 }
+};
+
+// BandwidthTier enum: 0=Basic, 1=Standard, 2=Performance, 3=Unmetered
+const DEPLOY_BANDWIDTH_TIERS = {
+    0: { name: 'Basic (10 Mbps)', hourlyRate: 0.002 },
+    1: { name: 'Standard (50 Mbps)', hourlyRate: 0.008 },
+    2: { name: 'Performance (200 Mbps)', hourlyRate: 0.020 },
+    3: { name: 'Unmetered', hourlyRate: 0.040 }
+};
+
 /**
  * Helper function to call the global API
  */
@@ -235,35 +255,84 @@ function renderTemplateDetail(template) {
 export function openDeployTemplateModal(template) {
     if (!template) template = currentTemplate;
     if (!template) return;
-    
+
     console.log('[Template Detail] Opening deployment modal for:', template.name);
-    
+
     // Close detail modal
     closeTemplateDetail();
-    
+
+    // Store template reference for validation
+    currentTemplate = template;
+
     // Open deploy modal
     const modal = document.getElementById('deploy-template-modal');
     if (!modal) {
         console.error('[Template Detail] Deploy modal not found');
         return;
     }
-    
+
     // Pre-fill form with template data
     document.getElementById('deploy-template-id').value = template.id;
     document.getElementById('deploy-vm-name').value = `${template.slug}-${Date.now().toString(36)}`;
     document.getElementById('deploy-template-name-display').textContent = template.name;
-    
-    // Set recommended specs
-    const recSpec = template.recommendedSpec || template.minimumSpec;
-    if (recSpec) {
-        document.getElementById('deploy-cpu').value = recSpec.virtualCpuCores || 2;
-        document.getElementById('deploy-memory').value = (recSpec.memoryBytes || 2147483648) / (1024 * 1024) || 2048;
-        document.getElementById('deploy-disk').value = (recSpec.diskBytes || 21474836480) / (1024 * 1024 * 1024) || 20;
+
+    // Determine minimum and recommended specs
+    const minSpec = template.minimumSpec || {};
+    const recSpec = template.recommendedSpec || minSpec;
+
+    // Set min attributes and recommended values for resource inputs
+    const cpuInput = document.getElementById('deploy-cpu');
+    const memInput = document.getElementById('deploy-memory');
+    const diskInput = document.getElementById('deploy-disk');
+
+    const minCpu = minSpec.virtualCpuCores || 1;
+    const minMemMb = Math.round((minSpec.memoryBytes || 536870912) / (1024 * 1024));
+    const minDiskGb = Math.round((minSpec.diskBytes || 10737418240) / (1024 * 1024 * 1024));
+
+    cpuInput.min = minCpu;
+    cpuInput.value = recSpec.virtualCpuCores || minCpu;
+    memInput.min = minMemMb;
+    memInput.value = Math.round((recSpec.memoryBytes || minSpec.memoryBytes || 2147483648) / (1024 * 1024));
+    diskInput.min = minDiskGb;
+    diskInput.value = Math.round((recSpec.diskBytes || minSpec.diskBytes || 21474836480) / (1024 * 1024 * 1024));
+
+    // Populate quality tier dropdown — only show tiers >= template minimum
+    // QualityTier enum order: 0=Dedicated(best), 1=Standard, 2=Balanced, 3=Burstable(worst)
+    // A higher enum value means more overcommit (lower quality).
+    // Minimum tier from the template is the worst allowed (highest enum value).
+    const minQualityTier = minSpec.qualityTier ?? 1; // default Standard
+    const recQualityTier = recSpec.qualityTier ?? minQualityTier;
+    const qualitySelect = document.getElementById('deploy-quality-tier');
+    qualitySelect.innerHTML = '';
+    for (let i = 0; i <= minQualityTier; i++) {
+        const tier = DEPLOY_QUALITY_TIERS[i];
+        if (!tier) continue;
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = tier.name;
+        if (i === recQualityTier) opt.selected = true;
+        qualitySelect.appendChild(opt);
     }
-    
+
+    // Populate bandwidth tier dropdown — only show tiers >= template minimum
+    // BandwidthTier enum order: 0=Basic(lowest), 1=Standard, 2=Performance, 3=Unmetered(highest)
+    // Minimum tier from the template is the lowest allowed bandwidth.
+    const minBandwidthTier = template.defaultBandwidthTier ?? 3; // default Unmetered
+    const bwSelect = document.getElementById('deploy-bandwidth-tier');
+    bwSelect.innerHTML = '';
+    for (let i = minBandwidthTier; i <= 3; i++) {
+        const tier = DEPLOY_BANDWIDTH_TIERS[i];
+        if (!tier) continue;
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = tier.name;
+        if (i === minBandwidthTier) opt.selected = true;
+        bwSelect.appendChild(opt);
+    }
+
     // Update cost estimate
     updateDeployCostEstimate();
-    
+
     // Show modal
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
@@ -287,25 +356,51 @@ export async function deployFromTemplate() {
     const templateId = document.getElementById('deploy-template-id').value;
     const vmName = document.getElementById('deploy-vm-name').value.trim();
     const cpu = parseInt(document.getElementById('deploy-cpu').value);
-    const memory = parseInt(document.getElementById('deploy-memory').value) * 1024 * 1024; // MB to bytes
-    const disk = parseInt(document.getElementById('deploy-disk').value) * 1024 * 1024 * 1024; // GB to bytes
-    
+    const memoryMb = parseInt(document.getElementById('deploy-memory').value);
+    const diskGb = parseInt(document.getElementById('deploy-disk').value);
+    const qualityTier = parseInt(document.getElementById('deploy-quality-tier').value);
+    const bandwidthTier = parseInt(document.getElementById('deploy-bandwidth-tier').value);
+
     if (!vmName) {
         alert('Please enter a VM name');
         return;
     }
-    
+
     if (!templateId) {
         alert('Template not selected');
         return;
     }
-    
+
+    // Validate against template minimums
+    if (currentTemplate) {
+        const minSpec = currentTemplate.minimumSpec || {};
+        const minCpu = minSpec.virtualCpuCores || 1;
+        const minMemMb = Math.round((minSpec.memoryBytes || 0) / (1024 * 1024));
+        const minDiskGb = Math.round((minSpec.diskBytes || 0) / (1024 * 1024 * 1024));
+
+        if (cpu < minCpu) {
+            alert(`This template requires at least ${minCpu} CPU core(s).`);
+            return;
+        }
+        if (memoryMb < minMemMb) {
+            alert(`This template requires at least ${minMemMb} MB of memory.`);
+            return;
+        }
+        if (diskGb < minDiskGb) {
+            alert(`This template requires at least ${minDiskGb} GB of disk.`);
+            return;
+        }
+    }
+
+    const memory = memoryMb * 1024 * 1024; // MB to bytes
+    const disk = diskGb * 1024 * 1024 * 1024; // GB to bytes
+
     const deployButton = document.getElementById('deploy-template-btn-submit');
     if (deployButton) {
         deployButton.disabled = true;
         deployButton.textContent = 'Deploying...';
     }
-    
+
     try {
         const response = await api(`/api/marketplace/templates/${templateId}/deploy`, {
             method: 'POST',
@@ -316,7 +411,9 @@ export async function deployFromTemplate() {
                     memoryBytes: memory,
                     diskBytes: disk,
                     imageId: 'ubuntu-22.04',
-                    requiresGpu: currentTemplate?.requiresGpu || false
+                    requiresGpu: currentTemplate?.requiresGpu || false,
+                    qualityTier: qualityTier,
+                    bandwidthTier: bandwidthTier
                 }
             })
         });
@@ -370,18 +467,28 @@ function updateDeployCostEstimate() {
     const cpu = parseInt(document.getElementById('deploy-cpu')?.value || 2);
     const memory = parseInt(document.getElementById('deploy-memory')?.value || 2048);
     const disk = parseInt(document.getElementById('deploy-disk')?.value || 20);
-    
-    // Simple cost calculation (can be enhanced)
-    const baseCost = 0.01; // $0.01 per vCPU per hour
-    const memoryCost = (memory / 1024) * 0.005; // $0.005 per GB RAM per hour
-    const diskCost = (disk / 100) * 0.01; // $0.01 per 100GB disk per hour
-    
-    const totalHourly = (cpu * baseCost) + memoryCost + diskCost;
-    
+    const qualityTierId = parseInt(document.getElementById('deploy-quality-tier')?.value ?? 1);
+    const bwTierId = parseInt(document.getElementById('deploy-bandwidth-tier')?.value ?? 3);
+
+    const qualityTier = DEPLOY_QUALITY_TIERS[qualityTierId] || DEPLOY_QUALITY_TIERS[1];
+    const bwTier = DEPLOY_BANDWIDTH_TIERS[bwTierId] || DEPLOY_BANDWIDTH_TIERS[3];
+
+    // Cost calculation matching app.js / VmService.CalculateHourlyRate
+    const baseCpuRate = 0.01;   // $0.01 per vCPU per hour
+    const baseMemRate = 0.005;  // $0.005 per GB RAM per hour
+    const baseDiskRate = 0.0001; // $0.0001 per GB disk per hour
+
+    const cpuCost = cpu * baseCpuRate;
+    const memCost = (memory / 1024) * baseMemRate;
+    const diskCost = disk * baseDiskRate;
+
+    const resourceCost = (cpuCost + memCost + diskCost) * qualityTier.priceMultiplier;
+    const totalHourly = resourceCost + bwTier.hourlyRate;
+
     // Update display
     const costDisplay = document.getElementById('deploy-cost-estimate');
     if (costDisplay) {
-        costDisplay.textContent = `~$${totalHourly.toFixed(3)}/hr`;
+        costDisplay.textContent = `~$${totalHourly.toFixed(4)}/hr (default rates)`;
     }
 }
 
@@ -393,7 +500,8 @@ function getCategoryIcon(categorySlug) {
         'ai-ml': '🤖',
         'databases': '🗄️',
         'dev-tools': '🛠️',
-        'web-apps': '🌐'
+        'web-apps': '🌐',
+        'privacy-security': '🔒'
     };
     return icons[categorySlug] || '📦';
 }

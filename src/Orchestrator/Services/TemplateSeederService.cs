@@ -791,7 +791,8 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
                 VirtualCpuCores = 2,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
                 DiskBytes = 15L * 1024 * 1024 * 1024,   // 15 GB
-                RequiresGpu = false
+                RequiresGpu = false,
+                QualityTier = QualityTier.Burstable
             },
 
             RecommendedSpec = new VmSpec
@@ -799,7 +800,8 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
                 VirtualCpuCores = 4,
                 MemoryBytes = 4L * 1024 * 1024 * 1024,  // 4 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,   // 20 GB
-                RequiresGpu = false
+                RequiresGpu = false,
+                QualityTier = QualityTier.Balanced
             },
 
             RequiresGpu = false,
