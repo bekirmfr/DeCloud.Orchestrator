@@ -146,7 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 document.getElementById('vm-cpu').addEventListener('change', updateEstimatedCost);
 document.getElementById('vm-memory').addEventListener('change', updateEstimatedCost);
 document.getElementById('vm-disk').addEventListener('change', updateEstimatedCost);
-document.getElementById('bandwidth-tier').addEventListener('change', updateEstimatedCost);
+document.getElementById('bandwidth-tier').addEventListener('change', updateBandwidthInfo);
 
 // ============================================
 // APPKIT INITIALIZATION
@@ -2188,6 +2188,7 @@ window.closeModal = closeModal;
 window.createVM = createVM;
 window.updateTierInfo = updateTierInfo;
 window.updateEstimatedCost = updateEstimatedCost;
+window.updateBandwidthInfo = updateBandwidthInfo;
 window.startVM = startVM;
 window.restartVM = restartVM;
 window.stopVM = stopVM;
