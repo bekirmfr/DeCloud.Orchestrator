@@ -796,20 +796,33 @@ public class VmService : IVmService
         }
         else
         {
-            // Normal scheduling for user VMs
+            // Normal scheduling for user VMs with region/zone preferences
             selectedNode = await _schedulingService.SelectBestNodeForVmAsync(
                 vm.Spec,
-                vm.Spec.QualityTier);
+                vm.Spec.QualityTier,
+                vm.Spec.Region,
+                vm.Spec.Zone);
+
+            _logger.LogInformation(
+                "Scheduling VM {VmId} with preferences: Region={Region}, Zone={Zone}",
+                vm.Id, vm.Spec.Region ?? "any", vm.Spec.Zone ?? "any");
         }
 
         if (selectedNode == null)
         {
+            var regionConstraint = !string.IsNullOrEmpty(vm.Spec.Region)
+                ? $" in region '{vm.Spec.Region}'"
+                : "";
+            var zoneConstraint = !string.IsNullOrEmpty(vm.Spec.Zone)
+                ? $" zone '{vm.Spec.Zone}'"
+                : "";
+
             _logger.LogWarning(
-                "No suitable node found for VM {VmId} - Tier: {Tier}, Points: {Points}",
-                vm.Id, vm.Spec.QualityTier, pointCost);
+                "No suitable node found for VM {VmId} - Tier: {Tier}, Points: {Points}, Region: {Region}, Zone: {Zone}",
+                vm.Id, vm.Spec.QualityTier, pointCost, vm.Spec.Region ?? "any", vm.Spec.Zone ?? "any");
 
             vm.Status = VmStatus.Pending;
-            vm.StatusMessage = "No suitable node available";
+            vm.StatusMessage = $"No suitable node available{regionConstraint}{zoneConstraint}";
             throw new InvalidOperationException(vm.StatusMessage);
         }
         

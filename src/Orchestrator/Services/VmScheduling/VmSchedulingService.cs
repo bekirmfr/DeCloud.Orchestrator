@@ -223,7 +223,8 @@ public class VmSchedulingService : IVmSchedulingService
             // =====================================================
 
             var rejection = await ApplyHardFiltersAsync(
-                node, spec, tier, tierConfig, config, requiredArchitecture, ct);
+                node, spec, tier, tierConfig, config, requiredArchitecture,
+                preferredRegion, preferredZone, ct);
 
             if (rejection != null)
             {
@@ -309,8 +310,9 @@ public class VmSchedulingService : IVmSchedulingService
 
     /// <summary>
     /// Apply hard filters - return rejection reason if any filter fails
-    /// 
+    ///
     /// SECURITY: Architecture validation prevents incompatible VM deployment
+    /// LOCALITY: Region/zone filtering ensures geographic constraints are met
     /// </summary>
     private async Task<string?> ApplyHardFiltersAsync(
         Node node,
@@ -319,6 +321,8 @@ public class VmSchedulingService : IVmSchedulingService
         TierConfiguration tierConfig,
         SchedulingConfig config,
         string? requiredArchitecture,
+        string? requiredRegion = null,
+        string? requiredZone = null,
         CancellationToken ct = default)
     {
         // =====================================================
@@ -357,13 +361,44 @@ public class VmSchedulingService : IVmSchedulingService
         }
 
         // =====================================================
-        // FILTER 4: Load Average
+        // FILTER 4: REGION/ZONE REQUIREMENTS (GEOGRAPHIC)
+        // =====================================================
+        if (!string.IsNullOrEmpty(requiredRegion))
+        {
+            var nodeRegion = node.Region ?? "default";
+
+            if (!string.Equals(nodeRegion, requiredRegion, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Region mismatch: Node is in '{nodeRegion}', VM requires '{requiredRegion}'";
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} region {Region} matches requirement",
+                node.Id, nodeRegion);
+        }
+
+        if (!string.IsNullOrEmpty(requiredZone))
+        {
+            var nodeZone = node.Zone ?? "default";
+
+            if (!string.Equals(nodeZone, requiredZone, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Zone mismatch: Node is in '{nodeZone}', VM requires '{requiredZone}'";
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} zone {Zone} matches requirement",
+                node.Id, nodeZone);
+        }
+
+        // =====================================================
+        // FILTER 5: Load Average
         // =====================================================
         if (node.LatestMetrics?.LoadAverage > config.Limits.MaxLoadAverage)
             return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {config.Limits.MaxLoadAverage})";
 
         // =====================================================
-        // FILTER 5: Minimum Free Memory
+        // FILTER 6: Minimum Free Memory
         // =====================================================
         var freeMemoryMb = (node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes) / (1024 * 1024);
         if (freeMemoryMb < config.Limits.MinFreeMemoryMb)
