@@ -279,8 +279,12 @@ function renderNodeCards(container, nodes) {
 
                 <div class="mp-card-footer">
                     <div class="mp-price">
-                        <span class="mp-price-value">$${(node.basePrice || 0).toFixed(4)}</span>
-                        <span class="mp-price-unit">USDC / point / hr</span>
+                        ${node.pricing && node.pricing.hasCustomPricing
+                            ? `<span class="mp-price-value">$${node.pricing.cpuPerHour.toFixed(3)}</span>
+                               <span class="mp-price-unit">CPU/hr</span>`
+                            : `<span class="mp-price-value">Default</span>
+                               <span class="mp-price-unit">Platform rates</span>`
+                        }
                     </div>
                     <div class="mp-uptime">
                         <span class="mp-uptime-value ${uptimeClass}">${(node.uptimePercentage || 0).toFixed(2)}%</span>
@@ -416,11 +420,31 @@ export async function openNodeDetail(nodeId) {
                     </div>
 
                     <div class="node-detail-section">
-                        <div class="node-detail-section-title">Pricing & Info</div>
+                        <div class="node-detail-section-title">Pricing (USDC/hr)</div>
+                        ${node.pricing && node.pricing.hasCustomPricing ? `
                         <div class="node-detail-row">
-                            <span class="node-detail-label">Base Price</span>
-                            <span class="node-detail-value" style="color: var(--accent-primary);">$${(node.basePrice || 0).toFixed(4)} / pt / hr</span>
+                            <span class="node-detail-label">CPU (per core)</span>
+                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.cpuPerHour.toFixed(4)}</span>
                         </div>
+                        <div class="node-detail-row">
+                            <span class="node-detail-label">Memory (per GB)</span>
+                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.memoryPerGbPerHour.toFixed(4)}</span>
+                        </div>
+                        <div class="node-detail-row">
+                            <span class="node-detail-label">Storage (per GB)</span>
+                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.storagePerGbPerHour.toFixed(5)}</span>
+                        </div>
+                        ${node.pricing.gpuPerHour > 0 ? `
+                        <div class="node-detail-row">
+                            <span class="node-detail-label">GPU (per unit)</span>
+                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.gpuPerHour.toFixed(4)}</span>
+                        </div>` : ''}
+                        ` : `
+                        <div class="node-detail-row">
+                            <span class="node-detail-label">Rates</span>
+                            <span class="node-detail-value" style="color: var(--text-muted);">Platform defaults</span>
+                        </div>
+                        `}
                         <div class="node-detail-row">
                             <span class="node-detail-label">Region</span>
                             <span class="node-detail-value">${escapeHtmlFn(node.region || 'Unknown')}</span>

@@ -10,6 +10,7 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
@@ -118,6 +119,7 @@ builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
+builder.Services.Configure<PricingConfig>(builder.Configuration.GetSection("Pricing"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
 builder.Services.AddSingleton<IBlockchainService, BlockchainService>();

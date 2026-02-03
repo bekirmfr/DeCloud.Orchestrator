@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Services;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.VmScheduling;
 
@@ -16,6 +17,7 @@ public class NodeSelfController : ControllerBase
     private readonly ISchedulingConfigService _configService;
     private readonly NodePerformanceEvaluator _evaluator;
     private readonly NodeCapacityCalculator _capacityCalculator;
+    private readonly INodeMarketplaceService _marketplaceService;
     private readonly ILogger<NodeSelfController> _logger;
 
     public NodeSelfController(
@@ -23,12 +25,14 @@ public class NodeSelfController : ControllerBase
         ISchedulingConfigService configService,
         NodePerformanceEvaluator evaluator,
         NodeCapacityCalculator capacityCalculator,
+        INodeMarketplaceService marketplaceService,
         ILogger<NodeSelfController> logger)
     {
         _dataStore = dataStore;
         _configService = configService;
         _evaluator = evaluator;
         _capacityCalculator = capacityCalculator;
+        _marketplaceService = marketplaceService;
         _logger = logger;
     }
 
@@ -228,6 +232,69 @@ public class NodeSelfController : ControllerBase
             Tiers = config.Tiers,
             UpdatedAt = config.UpdatedAt
         };
+    }
+
+    /// <summary>
+    /// Get current pricing for this node
+    /// </summary>
+    [HttpGet("pricing")]
+    [ProducesResponseType(typeof(NodePricing), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<NodePricing>> GetPricing()
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+            return NotFound("Node not registered");
+
+        return Ok(node.Pricing);
+    }
+
+    /// <summary>
+    /// Update pricing for this node. Rates are clamped to platform floor minimums.
+    /// </summary>
+    [HttpPatch("pricing")]
+    [ProducesResponseType(typeof(NodePricing), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<NodePricing>> UpdatePricing([FromBody] NodePricing pricing)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var update = new NodeProfileUpdate { Pricing = pricing };
+        var success = await _marketplaceService.UpdateNodeProfileAsync(nodeId, update);
+        if (!success)
+            return NotFound("Node not registered");
+
+        // Return the saved pricing (with floor enforcement applied)
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        return Ok(node!.Pricing);
+    }
+
+    /// <summary>
+    /// Update node profile (name, description, tags, pricing)
+    /// </summary>
+    [HttpPatch("profile")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult> UpdateProfile([FromBody] NodeProfileUpdate update)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var success = await _marketplaceService.UpdateNodeProfileAsync(nodeId, update);
+        if (!success)
+            return NotFound("Node not registered");
+
+        return Ok(new { message = "Profile updated" });
     }
 
     // ============================================================
