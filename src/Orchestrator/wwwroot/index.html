@@ -571,6 +571,30 @@
                         <!-- Populated by updateBandwidthInfo() on init -->
                     </div>
                 </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="vm-region" class="form-label">
+                            Region 🌍
+                            <span class="label-hint">(Geographic location)</span>
+                        </label>
+                        <select id="vm-region" class="form-control" onchange="onVmRegionChange()">
+                            <option value="">Any region (default)</option>
+                            <!-- Options populated by JS from online nodes -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="vm-zone" class="form-label">
+                            Zone
+                            <span class="label-hint">(Specific datacenter - optional)</span>
+                        </label>
+                        <select id="vm-zone" class="form-control" disabled>
+                            <option value="">Any zone (default)</option>
+                            <!-- Options populated by JS based on selected region -->
+                        </select>
+                    </div>
+                </div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">CPU Cores</label>
@@ -774,6 +798,29 @@
                             <label class="form-label">Bandwidth Tier</label>
                             <select class="form-input" id="deploy-bandwidth-tier" onchange="window.templateDetail.updateDeployCostEstimate()">
                                 <!-- Options populated by JS based on template minimums -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">
+                                Region 🌍
+                                <span class="label-hint">(Geographic location - important for privacy browsing)</span>
+                            </label>
+                            <select class="form-input" id="deploy-region" onchange="window.templateDetail.onRegionChange()">
+                                <option value="">Any region (default)</option>
+                                <!-- Options populated by JS from online nodes -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">
+                                Zone
+                                <span class="label-hint">(Specific datacenter - optional)</span>
+                            </label>
+                            <select class="form-input" id="deploy-zone" disabled>
+                                <option value="">Any zone (default)</option>
+                                <!-- Options populated by JS based on selected region -->
                             </select>
                         </div>
                     </div>
