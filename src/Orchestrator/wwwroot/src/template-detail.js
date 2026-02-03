@@ -330,6 +330,16 @@ export function openDeployTemplateModal(template) {
         bwSelect.appendChild(opt);
     }
 
+    // Load available regions
+    await loadAvailableRegions();
+
+    // Reset zone selector
+    const zoneSelect = document.getElementById('deploy-zone');
+    if (zoneSelect) {
+        zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
+        zoneSelect.disabled = true;
+    }
+
     // Update cost estimate
     updateDeployCostEstimate();
 
@@ -350,6 +360,82 @@ export function closeDeployTemplateModal() {
 }
 
 /**
+ * Load available regions from online nodes
+ */
+async function loadAvailableRegions() {
+    try {
+        const response = await api('/api/nodes/regions?onlineOnly=true');
+        const data = await response.json();
+
+        const regions = data.data || data;
+        const regionSelect = document.getElementById('deploy-region');
+
+        if (!regionSelect) return;
+
+        // Clear existing options except the default
+        regionSelect.innerHTML = '<option value="">Any region (default)</option>';
+
+        // Add region options
+        regions.forEach(region => {
+            const opt = document.createElement('option');
+            opt.value = region.region;
+            opt.textContent = `${region.region} (${region.nodeCount} nodes, ${region.availableComputePoints} compute points)`;
+            regionSelect.appendChild(opt);
+        });
+
+        console.log('[Template Detail] Loaded {0} available regions', regions.length);
+    } catch (error) {
+        console.error('[Template Detail] Failed to load regions:', error);
+    }
+}
+
+/**
+ * Handle region change - load zones for selected region
+ */
+export async function onRegionChange() {
+    const regionSelect = document.getElementById('deploy-region');
+    const zoneSelect = document.getElementById('deploy-zone');
+
+    if (!regionSelect || !zoneSelect) return;
+
+    const selectedRegion = regionSelect.value;
+
+    // Reset zone selector
+    zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
+
+    if (!selectedRegion) {
+        zoneSelect.disabled = true;
+        return;
+    }
+
+    // Load zones for selected region
+    try {
+        const response = await api(`/api/nodes/regions/${encodeURIComponent(selectedRegion)}/zones?onlineOnly=true`);
+        const data = await response.json();
+
+        const zones = data.data || data;
+
+        if (zones.length > 0) {
+            zones.forEach(zone => {
+                const opt = document.createElement('option');
+                opt.value = zone.zone;
+                opt.textContent = `${zone.zone} (${zone.nodeCount} nodes, ${zone.availableComputePoints} compute points)`;
+                zoneSelect.appendChild(opt);
+            });
+
+            zoneSelect.disabled = false;
+            console.log('[Template Detail] Loaded {0} zones for region {1}', zones.length, selectedRegion);
+        } else {
+            zoneSelect.disabled = true;
+            console.log('[Template Detail] No zones available for region {0}', selectedRegion);
+        }
+    } catch (error) {
+        console.error('[Template Detail] Failed to load zones:', error);
+        zoneSelect.disabled = true;
+    }
+}
+
+/**
  * Deploy template
  */
 export async function deployFromTemplate() {
@@ -360,6 +446,8 @@ export async function deployFromTemplate() {
     const diskGb = parseInt(document.getElementById('deploy-disk').value);
     const qualityTier = parseInt(document.getElementById('deploy-quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('deploy-bandwidth-tier').value);
+    const region = document.getElementById('deploy-region')?.value || null;
+    const zone = document.getElementById('deploy-zone')?.value || null;
 
     if (!vmName) {
         alert('Please enter a VM name');
@@ -413,7 +501,9 @@ export async function deployFromTemplate() {
                     imageId: 'ubuntu-22.04',
                     requiresGpu: currentTemplate?.requiresGpu || false,
                     qualityTier: qualityTier,
-                    bandwidthTier: bandwidthTier
+                    bandwidthTier: bandwidthTier,
+                    region: region,
+                    zone: zone
                 }
             })
         });
@@ -579,5 +669,6 @@ window.templateDetail = {
     openDeployTemplateModal,
     closeDeployTemplateModal,
     deployFromTemplate,
-    updateDeployCostEstimate
+    updateDeployCostEstimate,
+    onRegionChange
 };

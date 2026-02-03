@@ -1291,12 +1291,91 @@ function renderSSHKeysTable(keys) {
 // VM OPERATIONS
 // ============================================
 
-function openCreateVMModal() {
+async function openCreateVMModal() {
     document.getElementById('create-vm-modal').classList.add('active');
+
+    // Load available regions
+    await loadVmRegions();
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active');
+}
+
+/**
+ * Load available regions for VM creation
+ */
+async function loadVmRegions() {
+    try {
+        const response = await api('/api/nodes/regions?onlineOnly=true');
+        const data = await response.json();
+
+        const regions = data.data || data;
+        const regionSelect = document.getElementById('vm-region');
+
+        if (!regionSelect) return;
+
+        // Clear existing options except the default
+        regionSelect.innerHTML = '<option value="">Any region (default)</option>';
+
+        // Add region options
+        regions.forEach(region => {
+            const opt = document.createElement('option');
+            opt.value = region.region;
+            opt.textContent = `${region.region} (${region.nodeCount} nodes, ${region.availableComputePoints} compute points)`;
+            regionSelect.appendChild(opt);
+        });
+
+        console.log('[VM Creation] Loaded {0} available regions', regions.length);
+    } catch (error) {
+        console.error('[VM Creation] Failed to load regions:', error);
+    }
+}
+
+/**
+ * Handle region change in VM creation modal
+ */
+async function onVmRegionChange() {
+    const regionSelect = document.getElementById('vm-region');
+    const zoneSelect = document.getElementById('vm-zone');
+
+    if (!regionSelect || !zoneSelect) return;
+
+    const selectedRegion = regionSelect.value;
+
+    // Reset zone selector
+    zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
+
+    if (!selectedRegion) {
+        zoneSelect.disabled = true;
+        return;
+    }
+
+    // Load zones for selected region
+    try {
+        const response = await api(`/api/nodes/regions/${encodeURIComponent(selectedRegion)}/zones?onlineOnly=true`);
+        const data = await response.json();
+
+        const zones = data.data || data;
+
+        if (zones.length > 0) {
+            zones.forEach(zone => {
+                const opt = document.createElement('option');
+                opt.value = zone.zone;
+                opt.textContent = `${zone.zone} (${zone.nodeCount} nodes, ${zone.availableComputePoints} compute points)`;
+                zoneSelect.appendChild(opt);
+            });
+
+            zoneSelect.disabled = false;
+            console.log('[VM Creation] Loaded {0} zones for region {1}', zones.length, selectedRegion);
+        } else {
+            zoneSelect.disabled = true;
+            console.log('[VM Creation] No zones available for region {0}', selectedRegion);
+        }
+    } catch (error) {
+        console.error('[VM Creation] Failed to load zones:', error);
+        zoneSelect.disabled = true;
+    }
 }
 
 async function createVM() {
@@ -1307,6 +1386,8 @@ async function createVM() {
     const imageId = document.getElementById('vm-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
+    const region = document.getElementById('vm-region')?.value || null;
+    const zone = document.getElementById('vm-zone')?.value || null;
 
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
@@ -1325,7 +1406,9 @@ async function createVM() {
                 diskBytes: diskGb * (1024 * 1024 * 1024),
                 imageId: imageId,
                 qualityTier: qualityTier,
-                bandwidthTier: bandwidthTier
+                bandwidthTier: bandwidthTier,
+                region: region,
+                zone: zone
             }
         };
         
@@ -1354,10 +1437,13 @@ async function createVM() {
 
             showToast(`VM "${name}" created successfully!`, 'success');
             closeModal('create-vm-modal');
-            
+
             document.getElementById('vm-name').value = '';
             document.getElementById('quality-tier').value = '1';  // ← RESET TO STANDARD
             document.getElementById('bandwidth-tier').value = '3'; // ← RESET TO UNMETERED
+            document.getElementById('vm-region').value = '';  // ← RESET REGION
+            document.getElementById('vm-zone').value = '';    // ← RESET ZONE
+            document.getElementById('vm-zone').disabled = true;  // ← DISABLE ZONE
             updateTierInfo();  // ← REFRESH TIER INFO
             updateBandwidthInfo();
             

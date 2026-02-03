@@ -318,4 +318,110 @@ public class NodesController : ControllerBase
             return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "Node not found"));
         }
     }
+
+    /// <summary>
+    /// Get available regions from online nodes
+    /// </summary>
+    [HttpGet("regions")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<List<RegionInfo>>>> GetAvailableRegions(
+        [FromQuery] bool onlineOnly = true)
+    {
+        try
+        {
+            var nodes = await _dataStore.GetNodesAsync();
+
+            if (onlineOnly)
+            {
+                nodes = nodes.Where(n => n.Status == NodeStatus.Online).ToList();
+            }
+
+            // Group nodes by region and count
+            var regions = nodes
+                .GroupBy(n => n.Region ?? "default")
+                .Select(g => new RegionInfo
+                {
+                    Region = g.Key,
+                    NodeCount = g.Count(),
+                    AvailableComputePoints = g.Sum(n => n.AvailableComputePoints),
+                    HasGpu = g.Any(n => n.GpuInfo?.Count > 0)
+                })
+                .OrderByDescending(r => r.NodeCount)
+                .ToList();
+
+            _logger.LogInformation("Retrieved {Count} available regions", regions.Count);
+
+            return Ok(ApiResponse<List<RegionInfo>>.Ok(regions));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get available regions");
+            return StatusCode(500, new { error = "Failed to retrieve available regions" });
+        }
+    }
+
+    /// <summary>
+    /// Get available zones for a specific region
+    /// </summary>
+    [HttpGet("regions/{region}/zones")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<List<ZoneInfo>>>> GetAvailableZones(
+        string region,
+        [FromQuery] bool onlineOnly = true)
+    {
+        try
+        {
+            var nodes = await _dataStore.GetNodesAsync();
+
+            if (onlineOnly)
+            {
+                nodes = nodes.Where(n => n.Status == NodeStatus.Online).ToList();
+            }
+
+            // Filter by region and group by zone
+            var zones = nodes
+                .Where(n => (n.Region ?? "default") == region)
+                .GroupBy(n => n.Zone ?? "default")
+                .Select(g => new ZoneInfo
+                {
+                    Zone = g.Key,
+                    NodeCount = g.Count(),
+                    AvailableComputePoints = g.Sum(n => n.AvailableComputePoints),
+                    HasGpu = g.Any(n => n.GpuInfo?.Count > 0)
+                })
+                .OrderByDescending(z => z.NodeCount)
+                .ToList();
+
+            _logger.LogInformation(
+                "Retrieved {Count} available zones for region {Region}",
+                zones.Count, region);
+
+            return Ok(ApiResponse<List<ZoneInfo>>.Ok(zones));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get available zones for region {Region}", region);
+            return StatusCode(500, new { error = "Failed to retrieve available zones" });
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Response Models for Region/Zone APIs
+// ════════════════════════════════════════════════════════════════════════
+
+public class RegionInfo
+{
+    public string Region { get; set; } = string.Empty;
+    public int NodeCount { get; set; }
+    public int AvailableComputePoints { get; set; }
+    public bool HasGpu { get; set; }
+}
+
+public class ZoneInfo
+{
+    public string Zone { get; set; } = string.Empty;
+    public int NodeCount { get; set; }
+    public int AvailableComputePoints { get; set; }
+    public bool HasGpu { get; set; }
 }
