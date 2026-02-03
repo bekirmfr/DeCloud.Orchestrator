@@ -1047,10 +1047,20 @@ public class VmService : IVmService
                 break;
         }
 
-        return 
+        // Bandwidth tier pricing (per hour)
+        var bandwidthRate = spec.BandwidthTier switch
+        {
+            BandwidthTier.Basic => 0.002m,        // 10 Mbps
+            BandwidthTier.Standard => 0.008m,     // 50 Mbps
+            BandwidthTier.Performance => 0.020m,  // 200 Mbps
+            _ => 0.040m                           // Unmetered
+        };
+
+        return
             (spec.VirtualCpuCores * baseCpuRate) +
-            ((spec.MemoryBytes / BYTES_PER_GB) * baseMemoryRate) +  // Divide by bytes per GB
-            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate);
+            ((spec.MemoryBytes / BYTES_PER_GB) * baseMemoryRate) +
+            ((spec.DiskBytes / BYTES_PER_GB) * baseStorageRate) +
+            bandwidthRate;
     }
 
     private static string GeneratePrivateIp()

@@ -199,6 +199,17 @@ public class VmSpec
     public string? UserData { get; set; }
 
     public int MaxConnections { get; set; } = -1; // -1 = unlimited
+
+    // ========================================
+    // BANDWIDTH TIER
+    // ========================================
+
+    /// <summary>
+    /// Bandwidth tier for network rate limiting.
+    /// Enforced via libvirt QoS on the VM's virtio network interface.
+    /// Default: Unmetered (no artificial cap)
+    /// </summary>
+    public BandwidthTier BandwidthTier { get; set; } = BandwidthTier.Unmetered;
 }
 
 public class VmNetworkConfig

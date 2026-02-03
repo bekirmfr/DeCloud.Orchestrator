@@ -217,6 +217,16 @@ public class VmTemplate
     /// Estimated cost per hour based on recommended spec
     /// </summary>
     public decimal EstimatedCostPerHour { get; set; }
+
+    // ============================================
+    // BANDWIDTH
+    // ============================================
+
+    /// <summary>
+    /// Default bandwidth tier for this template.
+    /// Templates like "Private Browser" default to Standard (50 Mbps).
+    /// </summary>
+    public BandwidthTier DefaultBandwidthTier { get; set; } = BandwidthTier.Unmetered;
 }
 
 /// <summary>
