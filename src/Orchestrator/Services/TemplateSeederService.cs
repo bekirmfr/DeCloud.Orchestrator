@@ -850,7 +850,7 @@ runcmd:
           NEKO_SCREEN: '1920x1080@30'
           NEKO_PASSWORD: '${DECLOUD_PASSWORD}'
           NEKO_PASSWORD_ADMIN: '${DECLOUD_PASSWORD}'
-          NEKO_ICESERVERS: '[{"urls":["stun:stun.relay.metered.ca:80"]},{"urls":["turn:standard.relay.metered.ca:80"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turn:standard.relay.metered.ca:80?transport=tcp"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turn:standard.relay.metered.ca:443"],"username":"openrelayproject","credential":"openrelayproject"},{"urls":["turns:standard.relay.metered.ca:443?transport=tcp"],"username":"openrelayproject","credential":"openrelayproject"}]'
+          NEKO_ICESERVERS: '[{""urls"":[""stun:stun.relay.metered.ca:80""]},{""urls"":[""turn:standard.relay.metered.ca:80""],""username"":""openrelayproject"",""credential"":""openrelayproject""},{""urls"":[""turn:standard.relay.metered.ca:80?transport=tcp""],""username"":""openrelayproject"",""credential"":""openrelayproject""},{""urls"":[""turn:standard.relay.metered.ca:443""],""username"":""openrelayproject"",""credential"":""openrelayproject""},{""urls"":[""turns:standard.relay.metered.ca:443?transport=tcp""],""username"":""openrelayproject"",""credential"":""openrelayproject""}]'
     EOFCOMPOSE
 
   # Pull image and start container
