@@ -750,7 +750,7 @@ final_message: |
         {
             Name = "Private Browser",
             Slug = "private-browser",
-            Version = "1.0.0",
+            Version = "1.1.0",
             Category = "privacy-security",
             Description = "Isolated browser streamed to your device via WebRTC. Browse privately from a remote VM — your real IP and device fingerprint stay hidden.",
             LongDescription = @"## Features
