@@ -241,9 +241,8 @@ public class VmSchedulingService : IVmSchedulingService
             scored.Availability = availability;
 
             // Calculate compute point cost for VM
-            var baselineOvercommit = config.Tiers[QualityTier.Burstable].CpuOvercommitRatio;
             var pointCost = spec.VirtualCpuCores *
-                (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, baselineOvercommit);
+                (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
 
             availability.RequiredComputePoints = pointCost;
 
