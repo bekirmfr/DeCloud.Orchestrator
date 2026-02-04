@@ -93,6 +93,13 @@
                     </svg>
                     Template Marketplace
                 </a>
+                <a class="nav-item" data-page="my-templates" onclick="showPage('my-templates')">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    </svg>
+                    My Templates
+                </a>
                 <a class="nav-item" data-page="virtual-machines" onclick="showPage('virtual-machines')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="2" y="3" width="20" height="14" rx="2" />
@@ -490,6 +497,7 @@
                             <select id="template-sort" class="form-select">
                                 <option value="popular">Most Popular</option>
                                 <option value="newest">Newest</option>
+                                <option value="rating">Highest Rated</option>
                                 <option value="name">Name (A-Z)</option>
                             </select>
                         </div>
@@ -505,6 +513,34 @@
                 <div class="templates-grid" id="templates-grid">
                     <!-- Populated by JavaScript -->
                     <div class="loading-spinner">Loading templates...</div>
+                </div>
+            </div>
+
+            <!-- My Templates Page -->
+            <div id="page-my-templates" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">My Templates</h1>
+                        <p class="page-subtitle">Create and manage your VM templates</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <button class="btn btn-primary" onclick="window.myTemplates.showCreateModal()">
+                            + Create Template
+                        </button>
+                    </div>
+                </header>
+
+                <!-- Earnings Section -->
+                <div class="section-card" style="margin-bottom: 24px;">
+                    <h3 style="margin-bottom: 12px;">Template Earnings</h3>
+                    <div id="my-templates-earnings">
+                        <p class="text-muted">Loading earnings...</p>
+                    </div>
+                </div>
+
+                <!-- My Templates Grid -->
+                <div class="my-templates-grid" id="my-templates-grid">
+                    <div class="loading-spinner">Loading your templates...</div>
                 </div>
             </div>
         </main>

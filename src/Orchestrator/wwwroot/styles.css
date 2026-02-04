@@ -3205,8 +3205,337 @@
     .spec-comparison {
         grid-template-columns: 1fr;
     }
-    
+
     .form-row {
         grid-template-columns: 1fr;
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MARKETPLACE ENHANCEMENTS - Ratings, Pricing, Reviews, My Templates
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Price & Community badges on template cards */
+.price-badge {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    margin-left: auto;
+}
+
+.price-free {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-success);
+}
+
+.price-paid {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-warning);
+}
+
+.community-badge {
+    font-size: var(--font-xs);
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: rgba(139, 92, 246, 0.15);
+    color: var(--accent-tertiary);
+}
+
+/* Star ratings */
+.template-rating {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 6px 0;
+}
+
+.stars-display {
+    font-size: var(--font-md);
+    letter-spacing: 1px;
+}
+
+.stars-display.stars-detail {
+    font-size: var(--font-lg);
+}
+
+.stars-filled {
+    color: var(--accent-warning);
+}
+
+.stars-empty {
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.rating-count {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.rating-text {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+
+/* Template fee info in detail modal */
+.template-fee-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: var(--radius-md);
+}
+
+.template-fee-amount {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    color: var(--accent-warning);
+}
+
+.template-fee-note {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+/* Reviews */
+.review-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.review-item:last-child {
+    border-bottom: none;
+}
+
+.review-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.review-stars {
+    color: var(--accent-warning);
+    font-size: var(--font-md);
+    letter-spacing: 1px;
+}
+
+.review-author {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.review-date {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.review-comment {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin: 4px 0 0;
+    line-height: 1.5;
+}
+
+/* Review star input */
+.review-stars-input {
+    display: flex;
+    gap: 4px;
+}
+
+.review-star {
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color var(--transition-fast);
+    user-select: none;
+}
+
+.review-star.active,
+.review-star:hover {
+    color: var(--accent-warning);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MY TEMPLATES PAGE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.my-templates-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.my-template-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: border-color var(--transition-fast);
+}
+
+.my-template-card:hover {
+    border-color: var(--accent-primary);
+}
+
+.my-template-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.template-status-badge {
+    font-size: var(--font-xs);
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+}
+
+.status-published {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-success);
+}
+
+.status-draft {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-warning);
+}
+
+.status-archived {
+    background: rgba(107, 114, 128, 0.15);
+    color: var(--text-muted);
+}
+
+.template-visibility-badge {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.my-template-body {
+    padding: 16px;
+    flex: 1;
+}
+
+.my-template-name {
+    font-size: var(--font-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.my-template-desc {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.my-template-meta {
+    display: flex;
+    gap: 12px;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.my-template-meta .stars {
+    color: var(--accent-warning);
+}
+
+.my-template-meta .stars-empty {
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.my-template-actions {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* Earnings card */
+.section-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+}
+
+.earnings-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.earnings-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.earnings-label {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.earnings-value {
+    font-size: var(--font-2xl);
+    font-weight: 700;
+    color: var(--accent-success);
+}
+
+/* Small danger button */
+.btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--accent-danger);
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.25);
+}
+
+/* Form sections in create template modal */
+.form-section {
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.form-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.form-section-title {
+    font-size: var(--font-md);
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+}
+
+.text-muted {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
 }

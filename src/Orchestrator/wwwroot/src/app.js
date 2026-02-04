@@ -32,6 +32,9 @@ import {
 import {
     initMarketplaceTemplates
 } from './marketplace-templates.js';
+import {
+    initMyTemplates
+} from './my-templates.js';
 import './template-detail.js';
 
 // ============================================
@@ -935,6 +938,11 @@ function showPage(pageName) {
         loadNodes();
     } else if (pageName === 'marketplace-templates') {
         initMarketplaceTemplates();
+    } else if (pageName === 'my-templates') {
+        initMyTemplates();
+        if (window.myTemplates && window.myTemplates.loadEarnings) {
+            window.myTemplates.loadEarnings();
+        }
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     }
