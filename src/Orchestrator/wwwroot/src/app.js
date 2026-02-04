@@ -1484,7 +1484,7 @@ async function startVM(vmId) {
         const data = await response.json();
         
         if (data.success) {
-            showToast(`VM "${name}" started successfully!`, 'success');
+            showToast(`VM "${vmId}" started successfully!`, 'success');
         } else {
             showToast(data.message || 'Failed to start VM', 'error');
         }
@@ -1513,7 +1513,7 @@ async function stopVM(vmId) {
         const data = await response.json();
         
         if (data.success) {
-            showToast(`VM "${name}" sopped successfully!`, 'success');
+            showToast(`VM "${vmId}" stopped successfully!`, 'success');
         } else {
             showToast(data.message || 'Failed to stop VM', 'error');
         }
@@ -1542,7 +1542,7 @@ async function restartVM(vmId) {
         const data = await response.json();
         
         if (data.success) {
-            showToast(`VM "${name}" restarted successfully!`, 'success');
+            showToast(`VM "${vmId}" restarted successfully!`, 'success');
         } else {
             showToast(data.message || 'Failed to restart VM', 'error');
         }
@@ -1571,7 +1571,7 @@ async function forceStopVM(vmId) {
         const data = await response.json();
         
         if (data.success) {
-            showToast(`VM "${name}" force-stopped successfully!`, 'success');
+            showToast(`VM "${vmId}" force-stopped successfully!`, 'success');
         } else {
             showToast(data.message || 'Failed to force-stop VM', 'error');
         }
