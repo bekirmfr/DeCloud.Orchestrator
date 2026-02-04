@@ -770,7 +770,7 @@ export async function submitReview() {
         const proofVm = userVms.find(vm => vm.templateId === currentTemplate.id);
 
         if (!proofVm) {
-            showToast('error', 'You must deploy this template before reviewing it.');
+            showToast('You must deploy this template before reviewing it.', 'error');
             return;
         }
 
@@ -793,12 +793,12 @@ export async function submitReview() {
             throw new Error(err.error || 'Failed to submit review');
         }
 
-        showToast('success', 'Review submitted!');
+        showToast('Review submitted!', 'success');
         currentReviewRating = 0;
         if (document.getElementById('review-comment')) document.getElementById('review-comment').value = '';
         await loadReviews(currentTemplate.id);
     } catch (error) {
-        showToast('error', error.message);
+        showToast(error.message, 'error');
     }
 }
 

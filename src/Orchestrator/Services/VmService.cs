@@ -378,7 +378,8 @@ public class VmService : IVmService
                 Spec: v.Spec,
                 NetworkConfig: networkConfig,
                 CreatedAt: v.CreatedAt,
-                UpdatedAt: v.UpdatedAt
+                UpdatedAt: v.UpdatedAt,
+                TemplateId: v.TemplateId
             );
         });
 
