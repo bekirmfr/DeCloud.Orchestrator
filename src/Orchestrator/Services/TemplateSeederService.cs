@@ -76,12 +76,6 @@ public class TemplateSeederService
         // that may be missing the Visibility field (bypasses marketplace filter)
         var existingTemplates = await _dataStore.GetAllTemplatesAsync();
 
-        // Clean up duplicates that may have been created when the visibility
-        // filter caused the seeder to think templates didn't exist
-        await DeduplicateTemplatesAsync(existingTemplates);
-        // Re-fetch after dedup
-        existingTemplates = await _dataStore.GetAllTemplatesAsync();
-
         var templates = GetSeedTemplates();
 
         foreach (var template in templates)
@@ -91,7 +85,7 @@ public class TemplateSeederService
             if (existing == null)
             {
                 var created = await _templateService.CreateTemplateAsync(template);
-                _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}",
+                _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}", 
                     created.Name, created.Slug, created.Version);
             }
             else if (force || IsNewerVersion(template.Version, existing.Version) || IsMissingNewFields(existing))
@@ -103,34 +97,8 @@ public class TemplateSeederService
             }
             else
             {
-                _logger.LogDebug("Template up-to-date: {Name} ({Slug}) v{Version}",
+                _logger.LogDebug("Template up-to-date: {Name} ({Slug}) v{Version}", 
                     template.Name, template.Slug, template.Version);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Remove duplicate templates sharing the same slug, keeping the oldest (original).
-    /// Duplicates can occur when a filtered query made the seeder think templates didn't exist.
-    /// </summary>
-    private async Task DeduplicateTemplatesAsync(List<VmTemplate> allTemplates)
-    {
-        var duplicateGroups = allTemplates
-            .GroupBy(t => t.Slug)
-            .Where(g => g.Count() > 1);
-
-        foreach (var group in duplicateGroups)
-        {
-            // Keep the oldest document (original), delete the rest
-            var ordered = group.OrderBy(t => t.CreatedAt).ToList();
-            var keep = ordered.First();
-
-            for (int i = 1; i < ordered.Count; i++)
-            {
-                await _dataStore.DeleteTemplateAsync(ordered[i].Id);
-                _logger.LogWarning(
-                    "Removed duplicate template: {Name} ({Slug}) Id={Id}, keeping Id={KeepId}",
-                    ordered[i].Name, ordered[i].Slug, ordered[i].Id, keep.Id);
             }
         }
     }

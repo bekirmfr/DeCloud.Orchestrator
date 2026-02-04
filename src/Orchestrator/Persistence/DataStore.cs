@@ -1378,7 +1378,7 @@ public class DataStore
         try
         {
             return await TemplatesCollection!
-                .Find(t => t.Slug == slug)
+                .Find(t => t.Slug == slug && t.Status == TemplateStatus.Published)
                 .FirstOrDefaultAsync();
         }
         catch (Exception ex)
