@@ -1400,11 +1400,14 @@ public class DataStore
         try
         {
             // Build filter - marketplace queries only show Public + Published templates
+            // Use Or(Eq, Exists(false)) to also match old documents missing the Visibility field
             var filterBuilder = Builders<VmTemplate>.Filter;
             var filters = new List<FilterDefinition<VmTemplate>>
             {
                 filterBuilder.Eq(t => t.Status, TemplateStatus.Published),
-                filterBuilder.Eq(t => t.Visibility, TemplateVisibility.Public)
+                filterBuilder.Or(
+                    filterBuilder.Eq(t => t.Visibility, TemplateVisibility.Public),
+                    filterBuilder.Exists(t => t.Visibility, false))
             };
 
             if (!string.IsNullOrEmpty(category))
@@ -1557,11 +1560,14 @@ public class DataStore
 
             foreach (var category in categories)
             {
-                var count = await TemplatesCollection!
-                    .CountDocumentsAsync(t =>
-                        t.Category == category.Slug &&
-                        t.Status == TemplateStatus.Published &&
-                        t.Visibility == TemplateVisibility.Public);
+                var fb = Builders<VmTemplate>.Filter;
+                var countFilter = fb.And(
+                    fb.Eq(t => t.Category, category.Slug),
+                    fb.Eq(t => t.Status, TemplateStatus.Published),
+                    fb.Or(
+                        fb.Eq(t => t.Visibility, TemplateVisibility.Public),
+                        fb.Exists(t => t.Visibility, false)));
+                var count = await TemplatesCollection!.CountDocumentsAsync(countFilter);
 
                 category.TemplateCount = (int)count;
                 category.UpdatedAt = DateTime.UtcNow;
@@ -1577,6 +1583,27 @@ public class DataStore
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update category counts");
+        }
+    }
+
+    /// <summary>
+    /// Get ALL templates without any visibility/status filtering.
+    /// Used by the seeder to find existing documents that may predate new fields.
+    /// </summary>
+    public async Task<List<VmTemplate>> GetAllTemplatesAsync()
+    {
+        if (!_useMongoDB) return new List<VmTemplate>();
+
+        try
+        {
+            return await TemplatesCollection!
+                .Find(Builders<VmTemplate>.Filter.Empty)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get all templates");
+            return new List<VmTemplate>();
         }
     }
 

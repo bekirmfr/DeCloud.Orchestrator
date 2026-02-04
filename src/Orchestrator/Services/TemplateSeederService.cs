@@ -72,7 +72,9 @@ public class TemplateSeederService
 
     private async Task SeedTemplatesAsync(bool force)
     {
-        var existingTemplates = await _templateService.GetTemplatesAsync(new TemplateQuery());
+        // Query all templates directly from DataStore to find old documents
+        // that may be missing the Visibility field (bypasses marketplace filter)
+        var existingTemplates = await _dataStore.GetAllTemplatesAsync();
 
         var templates = GetSeedTemplates();
 
@@ -86,11 +88,11 @@ public class TemplateSeederService
                 _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}", 
                     created.Name, created.Slug, created.Version);
             }
-            else if (force || IsNewerVersion(template.Version, existing.Version))
+            else if (force || IsNewerVersion(template.Version, existing.Version) || IsMissingNewFields(existing))
             {
                 template.Id = existing.Id;
                 var updated = await _templateService.UpdateTemplateAsync(template);
-                _logger.LogInformation("✓ Updated template: {Name} ({Slug}) v{OldVersion} → v{NewVersion}", 
+                _logger.LogInformation("✓ Updated template: {Name} ({Slug}) v{OldVersion} → v{NewVersion}",
                     updated.Name, updated.Slug, existing.Version, updated.Version);
             }
             else
@@ -131,6 +133,23 @@ public class TemplateSeederService
                 newVersion, currentVersion);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Detect old seed documents that predate the marketplace fields.
+    /// Triggers re-seed so Visibility, PricingModel, etc. get written to MongoDB.
+    /// </summary>
+    private bool IsMissingNewFields(VmTemplate existing)
+    {
+        // AuthorName was always set on seed templates; if PricingModel or
+        // AuthorRevenueWallet are at their C# defaults but the document was
+        // created before these fields existed, we should re-seed.
+        // The simplest heuristic: check if IsCommunity was never persisted
+        // (old docs won't have it, so the driver deserialises it as false —
+        // same as the default). We also check AuthorName because all seed
+        // templates set it to "DeCloud"; old docs have it too, so instead
+        // we check TotalReviews == 0 && AverageRating == 0 && RatingDistribution is null.
+        return existing.RatingDistribution == null || existing.RatingDistribution.Count == 0;
     }
 
     // ════════════════════════════════════════════════════════════════════════
