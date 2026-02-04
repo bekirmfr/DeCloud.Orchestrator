@@ -209,24 +209,60 @@ function renderTemplateDetail(template) {
             </div>
         ` : ''}
         
-        <!-- Stats -->
+        <!-- Stats & Rating -->
         <div class="detail-section">
-            <h3 class="detail-section-title">📊 Stats</h3>
+            <h3 class="detail-section-title">📊 Stats & Rating</h3>
             <div class="template-stats-detail">
                 <div class="stat-detail">
                     <span class="stat-detail-label">Deployments:</span>
                     <span class="stat-detail-value">${template.deploymentCount || 0}</span>
                 </div>
                 <div class="stat-detail">
-                    <span class="stat-detail-label">Last Deployed:</span>
+                    <span class="stat-detail-label">Rating:</span>
                     <span class="stat-detail-value">
-                        ${template.lastDeployedAt ? formatDate(template.lastDeployedAt) : 'Never'}
+                        ${renderStarsDetail(template.averageRating || 0)}
+                        <span class="rating-text">${(template.averageRating || 0).toFixed(1)} (${template.totalReviews || 0} reviews)</span>
                     </span>
                 </div>
                 <div class="stat-detail">
                     <span class="stat-detail-label">Created:</span>
                     <span class="stat-detail-value">${formatDate(template.createdAt)}</span>
                 </div>
+                ${template.isCommunity ? `
+                <div class="stat-detail">
+                    <span class="stat-detail-label">Author:</span>
+                    <span class="stat-detail-value">${escapeHtml(template.authorName || 'Community')}</span>
+                </div>
+                ` : ''}
+            </div>
+        </div>
+
+        <!-- Template Price -->
+        ${template.pricingModel === 'PerDeploy' && template.templatePrice > 0 ? `
+        <div class="detail-section">
+            <h3 class="detail-section-title">💳 Template Fee</h3>
+            <div class="template-fee-info">
+                <span class="template-fee-amount">${template.templatePrice} USDC</span>
+                <span class="template-fee-note">per deployment (charged from your escrow balance)</span>
+            </div>
+        </div>
+        ` : ''}
+
+        <!-- Reviews Section -->
+        <div class="detail-section">
+            <h3 class="detail-section-title">💬 Reviews</h3>
+            <div id="template-reviews-list">
+                <div class="loading-spinner">Loading reviews...</div>
+            </div>
+            <div id="template-review-form" style="margin-top: 16px; display: none;">
+                <h4 style="margin-bottom: 8px;">Write a Review</h4>
+                <div class="review-stars-input" id="review-stars-input">
+                    ${[1,2,3,4,5].map(i => `<span class="review-star" data-value="${i}" onclick="window.templateDetail.setReviewRating(${i})">☆</span>`).join('')}
+                </div>
+                <textarea class="form-input" id="review-comment" rows="3" placeholder="Share your experience with this template..." style="margin-top: 8px;"></textarea>
+                <button class="btn btn-sm btn-primary" onclick="window.templateDetail.submitReview()" style="margin-top: 8px;">
+                    Submit Review
+                </button>
             </div>
         </div>
         
@@ -247,6 +283,9 @@ function renderTemplateDetail(template) {
     if (deployButton) {
         deployButton.onclick = () => openDeployTemplateModal(template);
     }
+
+    // Load reviews async
+    loadReviews(template.id);
 }
 
 /**
@@ -643,6 +682,116 @@ function renderMarkdown(markdown) {
 }
 
 /**
+ * Helper: Render stars for detail view
+ */
+function renderStarsDetail(rating) {
+    const full = Math.floor(rating);
+    const half = rating - full >= 0.5 ? 1 : 0;
+    const empty = 5 - full - half;
+    return '<span class="stars-display stars-detail">' +
+        '<span class="stars-filled">' + '★'.repeat(full) + (half ? '★' : '') + '</span>' +
+        '<span class="stars-empty">' + '☆'.repeat(empty) + '</span>' +
+        '</span>';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REVIEWS
+// ═══════════════════════════════════════════════════════════════════════════
+
+let currentReviewRating = 0;
+
+async function loadReviews(templateId) {
+    const listEl = document.getElementById('template-reviews-list');
+    const formEl = document.getElementById('template-review-form');
+    if (!listEl) return;
+
+    try {
+        const response = await api(`/api/marketplace/reviews/template/${templateId}`);
+        const data = await response.json();
+        const reviews = Array.isArray(data) ? data : (data.data || []);
+
+        if (reviews.length === 0) {
+            listEl.innerHTML = '<p class="text-muted">No reviews yet. Be the first to review!</p>';
+        } else {
+            listEl.innerHTML = reviews.map(r => `
+                <div class="review-item">
+                    <div class="review-header">
+                        <span class="review-stars">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span>
+                        <span class="review-author">${escapeHtml((r.reviewerId || '').slice(0, 6))}...${escapeHtml((r.reviewerId || '').slice(-4))}</span>
+                        <span class="review-date">${r.createdAt ? formatDate(r.createdAt) : ''}</span>
+                    </div>
+                    ${r.comment ? `<p class="review-comment">${escapeHtml(r.comment)}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Show review form if authenticated
+        if (formEl) {
+            const token = localStorage.getItem('authToken');
+            formEl.style.display = token ? '' : 'none';
+            currentReviewRating = 0;
+            updateStarInputDisplay();
+        }
+    } catch (error) {
+        console.error('[Template Detail] Failed to load reviews:', error);
+        listEl.innerHTML = '<p class="text-muted">Unable to load reviews</p>';
+    }
+}
+
+export function setReviewRating(value) {
+    currentReviewRating = value;
+    updateStarInputDisplay();
+}
+
+function updateStarInputDisplay() {
+    const container = document.getElementById('review-stars-input');
+    if (!container) return;
+    container.querySelectorAll('.review-star').forEach(star => {
+        const val = parseInt(star.dataset.value);
+        star.textContent = val <= currentReviewRating ? '★' : '☆';
+        star.classList.toggle('active', val <= currentReviewRating);
+    });
+}
+
+export async function submitReview() {
+    if (!currentTemplate) return;
+    if (currentReviewRating < 1 || currentReviewRating > 5) {
+        showToast('warning', 'Please select a rating (1-5 stars)');
+        return;
+    }
+
+    const comment = document.getElementById('review-comment')?.value?.trim() || '';
+
+    try {
+        const response = await api('/api/marketplace/reviews', {
+            method: 'POST',
+            body: JSON.stringify({
+                resourceType: 'template',
+                resourceId: currentTemplate.id,
+                rating: currentReviewRating,
+                comment: comment || null,
+                eligibilityProof: {
+                    type: 'deployment',
+                    referenceId: currentTemplate.id
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Failed to submit review');
+        }
+
+        showToast('success', 'Review submitted!');
+        currentReviewRating = 0;
+        if (document.getElementById('review-comment')) document.getElementById('review-comment').value = '';
+        await loadReviews(currentTemplate.id);
+    } catch (error) {
+        showToast('error', error.message);
+    }
+}
+
+/**
  * Helper: Escape HTML
  */
 function escapeHtml(text) {
@@ -670,5 +819,7 @@ window.templateDetail = {
     closeDeployTemplateModal,
     deployFromTemplate,
     updateDeployCostEstimate,
-    onRegionChange
+    onRegionChange,
+    setReviewRating,
+    submitReview
 };

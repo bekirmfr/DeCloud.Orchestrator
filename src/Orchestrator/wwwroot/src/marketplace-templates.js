@@ -139,55 +139,70 @@ function createTemplateCard(template) {
     const category = allCategories.find(c => c.slug === template.category);
     const categoryName = category?.name || template.category;
     const categoryIcon = category?.iconEmoji || '📦';
-    
-    // Format cost
-    const costPerHour = template.estimatedCostPerHour || 0;
-    const costText = costPerHour > 0 ? `$${costPerHour.toFixed(2)}/hr` : 'Free';
-    
+
+    // Template price badge
+    const isPaid = template.pricingModel === 'PerDeploy' && template.templatePrice > 0;
+    const priceText = isPaid ? `${template.templatePrice} USDC` : 'Free';
+
     // Deployment count
     const deployments = template.deploymentCount || 0;
-    const deploymentsText = deployments === 1 ? '1 deployment' : `${deployments} deployments`;
-    
+    const deploymentsText = deployments === 1 ? '1 deploy' : `${deployments} deploys`;
+
+    // Rating
+    const rating = template.averageRating || 0;
+    const totalReviews = template.totalReviews || 0;
+    const starsHtml = renderStarsHtml(rating);
+
+    // Community badge
+    const communityBadge = template.isCommunity ? '<span class="community-badge">Community</span>' : '';
+
     return `
         <div class="template-card" data-template-id="${template.id}">
             <div class="template-card-header">
                 ${template.isFeatured ? '<span class="featured-badge">⭐ Featured</span>' : ''}
                 ${template.requiresGpu ? '<span class="gpu-badge">🎮 GPU</span>' : ''}
+                ${communityBadge}
+                <span class="price-badge ${isPaid ? 'price-paid' : 'price-free'}">${priceText}</span>
             </div>
-            
+
             <div class="template-card-body">
                 <div class="template-icon">${categoryIcon}</div>
                 <h3 class="template-name">${escapeHtml(template.name)}</h3>
                 <div class="template-category">${categoryIcon} ${categoryName}</div>
                 <p class="template-description">${escapeHtml(template.description)}</p>
-                
+
+                <div class="template-rating">
+                    ${starsHtml}
+                    <span class="rating-count">(${totalReviews})</span>
+                </div>
+
                 <div class="template-tags">
-                    ${template.tags.slice(0, 3).map(tag => 
+                    ${template.tags.slice(0, 3).map(tag =>
                         `<span class="tag">${escapeHtml(tag)}</span>`
                     ).join('')}
                     ${template.tags.length > 3 ? `<span class="tag">+${template.tags.length - 3}</span>` : ''}
                 </div>
             </div>
-            
+
             <div class="template-card-footer">
                 <div class="template-stats">
-                    <span class="stat">
-                        <span class="stat-icon">💰</span>
-                        <span class="stat-value">${costText}</span>
-                    </span>
                     <span class="stat">
                         <span class="stat-icon">🚀</span>
                         <span class="stat-value">${deploymentsText}</span>
                     </span>
+                    <span class="stat">
+                        <span class="stat-icon">👤</span>
+                        <span class="stat-value">${escapeHtml(template.authorName || 'DeCloud')}</span>
+                    </span>
                 </div>
                 <div class="template-actions">
-                    <button 
+                    <button
                         class="btn-secondary btn-sm"
                         onclick="window.marketplaceTemplates.viewTemplate('${template.id}')"
                     >
                         Details
                     </button>
-                    <button 
+                    <button
                         class="btn-primary btn-sm"
                         onclick="window.marketplaceTemplates.deployTemplate('${template.id}')"
                     >
@@ -197,6 +212,16 @@ function createTemplateCard(template) {
             </div>
         </div>
     `;
+}
+
+function renderStarsHtml(rating) {
+    const full = Math.floor(rating);
+    const half = rating - full >= 0.5 ? 1 : 0;
+    const empty = 5 - full - half;
+    return '<span class="stars-display">' +
+        '<span class="stars-filled">' + '★'.repeat(full) + (half ? '★' : '') + '</span>' +
+        '<span class="stars-empty">' + '☆'.repeat(empty + (half ? 0 : 0)) + '</span>' +
+        '</span>';
 }
 
 /**
