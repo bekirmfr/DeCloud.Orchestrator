@@ -30,14 +30,59 @@ export default [
                 FormData: 'readonly',
                 URL: 'readonly',
                 URLSearchParams: 'readonly',
-                
+
+                // Timers & scheduling
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+                setInterval: 'readonly',
+                clearInterval: 'readonly',
+
+                // Dialog functions
+                alert: 'readonly',
+                confirm: 'readonly',
+                prompt: 'readonly',
+
+                // Encoding/decoding
+                atob: 'readonly',
+                btoa: 'readonly',
+                TextEncoder: 'readonly',
+                TextDecoder: 'readonly',
+
+                // Binary & data
+                Blob: 'readonly',
+                File: 'readonly',
+                FileReader: 'readonly',
+                ArrayBuffer: 'readonly',
+                Uint8Array: 'readonly',
+                DataView: 'readonly',
+
                 // Modern Web APIs
                 WebSocket: 'readonly',
                 crypto: 'readonly',
                 navigator: 'readonly',
-                
+                AbortController: 'readonly',
+                Headers: 'readonly',
+                Request: 'readonly',
+                Response: 'readonly',
+                Event: 'readonly',
+                CustomEvent: 'readonly',
+                MutationObserver: 'readonly',
+                IntersectionObserver: 'readonly',
+                ResizeObserver: 'readonly',
+
+                // DOM
+                HTMLElement: 'readonly',
+                Element: 'readonly',
+                Node: 'readonly',
+                NodeList: 'readonly',
+
+                // Navigation & location
+                location: 'readonly',
+                history: 'readonly',
+
                 // Vite globals
-                import: 'readonly'
+                import: 'readonly',
+                __APP_VERSION__: 'readonly'
             }
         },
         
