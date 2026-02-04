@@ -781,10 +781,8 @@ export async function submitReview() {
                 resourceId: currentTemplate.id,
                 rating: currentReviewRating,
                 comment: comment || null,
-                eligibilityProof: {
-                    type: 'deployment',
-                    referenceId: proofVm.id
-                }
+                proofType: 'deployment',
+                proofReferenceId: proofVm.id
             })
         });
 
