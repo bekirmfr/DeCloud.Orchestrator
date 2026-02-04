@@ -524,7 +524,7 @@ public class MarketplaceController : ControllerBase
         }
         catch (UnauthorizedAccessException ex)
         {
-            return StatusCode(403, new { error = ex.Message });
+            return Forbid(ex.Message);
         }
         catch (InvalidOperationException ex)
         {
