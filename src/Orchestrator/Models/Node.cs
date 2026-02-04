@@ -486,7 +486,9 @@ public enum NodeCommandType
     DeleteVm,
     MigrateVm,
     UpdateAgent,
-    CollectDiagnostics
+    CollectDiagnostics,
+    AllocatePort,      // Smart Port Allocation: Allocate public port for VM
+    RemovePort         // Smart Port Allocation: Remove port mapping
 }
 
 public record CommandAcknowledgment(

@@ -54,6 +54,11 @@ public class VirtualMachine
     /// </summary>
     public VmIngressConfig? IngressConfig { get; set; }
 
+    /// <summary>
+    /// Direct access configuration (Smart Port Allocation for TCP/UDP)
+    /// </summary>
+    public VmDirectAccess? DirectAccess { get; set; }
+
     // Access
     public VmAccessInfo? AccessInfo { get; set; }
     
