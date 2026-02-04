@@ -793,7 +793,7 @@ export async function submitReview() {
             throw new Error(err.error || 'Failed to submit review');
         }
 
-        showToast('success', 'Review submitted!',;
+        showToast('success', 'Review submitted!');
         currentReviewRating = 0;
         if (document.getElementById('review-comment')) document.getElementById('review-comment').value = '';
         await loadReviews(currentTemplate.id);
