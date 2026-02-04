@@ -946,7 +946,7 @@ final_message: |
         {
             Name = "Privacy Proxy (Shadowsocks)",
             Slug = "privacy-proxy-shadowsocks",
-            Version = "1.0.0",
+            Version = "1.0.1",
             Category = "privacy-security",
             Description = "Fast SOCKS5 proxy for private browsing with native browser experience. Route your traffic through a remote VM — fast, lightweight, and secure.",
             LongDescription = @"## Features
@@ -972,22 +972,24 @@ Shadowsocks is a secure SOCKS5 proxy protocol originally designed to bypass inte
 
 ## Setup Instructions
 1. Wait for setup to complete (~2 minutes)
-2. Get connection details from the welcome message (SSH into VM)
+2. Get your **VM's public IP address** from the VM details page
 3. Configure your browser/system with the Shadowsocks server details:
-   - **Server**: `${DECLOUD_DOMAIN}` (or VM's public IP)
+   - **Server**: VM's public IP address (e.g., `88.234.217.167`)
    - **Port**: `8388`
    - **Password**: `${DECLOUD_PASSWORD}`
    - **Encryption**: `chacha20-ietf-poly1305`
 
+⚠️ **Important**: Connect to the VM's **direct IP address**, not the ingress subdomain. SOCKS5 requires a direct TCP connection.
+
 ## Browser Configuration
 ### Chrome/Edge/Brave
 1. Use extension: **Proxy SwitchyOmega**
-2. Add SOCKS5 proxy: `${DECLOUD_DOMAIN}:8388`
+2. Add SOCKS5 proxy: `<VM-IP>:8388` (use your VM's public IP)
 3. Toggle proxy on/off easily
 
 ### Firefox
 1. Settings → Network Settings → Manual proxy
-2. SOCKS Host: `${DECLOUD_DOMAIN}`, Port: `8388`
+2. SOCKS Host: `<VM-IP>` (your VM's public IP), Port: `8388`
 3. Select SOCKS v5
 
 ### System-Wide (All Apps)
@@ -1043,7 +1045,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, sufficient for 
             CloudInitTemplate = @"#cloud-config
 
 # Privacy Proxy (Shadowsocks) - Fast SOCKS5 Proxy
-# DeCloud Template v1.0.0
+# DeCloud Template v1.0.1
 
 packages:
   - apt-transport-https
@@ -1118,20 +1120,23 @@ runcmd:
     echo ""  Privacy Proxy (Shadowsocks) - Connection Information""
     echo ""════════════════════════════════════════════════════════════""
     echo """"
-    echo ""Server:     ${DECLOUD_DOMAIN}""
+    echo ""Server:     ${DECLOUD_PUBLIC_IP}""
     echo ""Port:       8388""
     echo ""Password:   ${DECLOUD_PASSWORD}""
     echo ""Encryption: chacha20-ietf-poly1305""
     echo ""Protocol:   SOCKS5""
     echo """"
+    echo ""⚠️  IMPORTANT: Use the server IP above (not the ingress subdomain)""
+    echo ""   Shadowsocks requires a direct SOCKS5 connection.""
+    echo """"
     echo ""Browser Setup (Chrome/Edge/Brave):""
     echo ""  1. Install 'Proxy SwitchyOmega' extension""
-    echo ""  2. Add SOCKS5 proxy: ${DECLOUD_DOMAIN}:8388""
+    echo ""  2. Add SOCKS5 proxy: ${DECLOUD_PUBLIC_IP}:8388""
     echo ""  3. Toggle proxy on/off as needed""
     echo """"
     echo ""Browser Setup (Firefox):""
     echo ""  Settings → Network → Manual Proxy""
-    echo ""  SOCKS Host: ${DECLOUD_DOMAIN}, Port: 8388, SOCKS v5""
+    echo ""  SOCKS Host: ${DECLOUD_PUBLIC_IP}, Port: 8388, SOCKS v5""
     echo """"
     echo ""System-Wide Setup:""
     echo ""  Use Shadowsocks client for your OS:""
@@ -1156,10 +1161,12 @@ runcmd:
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  Connection Details:                                          ║
-    ║  Server:     ${DECLOUD_DOMAIN}                               ║
+    ║  Server:     ${DECLOUD_PUBLIC_IP}                            ║
     ║  Port:       8388                                             ║
     ║  Password:   ${DECLOUD_PASSWORD}                             ║
     ║  Encryption: chacha20-ietf-poly1305                           ║
+    ║                                                               ║
+    ║  ⚠️  Use the server IP above, NOT the ingress subdomain!     ║
     ║                                                               ║
     ║  View full setup instructions:                                ║
     ║    /root/connection-info.sh                                   ║
@@ -1176,10 +1183,13 @@ final_message: |
   Privacy Proxy (Shadowsocks) is ready!
 
   Connection Details:
-    Server:     ${DECLOUD_DOMAIN}
+    Server:     ${DECLOUD_PUBLIC_IP}
     Port:       8388
     Password:   ${DECLOUD_PASSWORD}
     Encryption: chacha20-ietf-poly1305
+
+  ⚠️  IMPORTANT: Connect to the VM's PUBLIC IP above, not the ingress subdomain.
+  Shadowsocks uses SOCKS5 protocol which requires a direct TCP connection.
 
   Configure your browser or system with these details to start
   browsing privately through your VM.
@@ -1202,7 +1212,7 @@ final_message: |
                 }
             },
 
-            DefaultAccessUrl = "shadowsocks://${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:8388",
+            DefaultAccessUrl = "shadowsocks://${DECLOUD_PASSWORD}@${DECLOUD_PUBLIC_IP}:8388",
 
             EstimatedCostPerHour = 0.02m, // $0.02/hour — very lightweight
 
