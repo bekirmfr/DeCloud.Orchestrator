@@ -117,6 +117,8 @@ builder.Services.AddSingleton<INodeReputationService, NodeReputationService>();
 // Template Service (for marketplace VM templates)
 builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
+// Review Service (universal marketplace reviews for templates, nodes, etc.)
+builder.Services.AddSingleton<IReviewService, ReviewService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.Configure<PricingConfig>(builder.Configuration.GetSection("Pricing"));

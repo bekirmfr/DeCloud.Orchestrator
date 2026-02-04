@@ -372,8 +372,16 @@ final_message: |
             EstimatedCostPerHour = 0.50m, // $0.50/hour for GPU instance
             
             Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
             IsFeatured = true,
-            
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -533,8 +541,16 @@ final_message: |
             EstimatedCostPerHour = 0.05m, // $0.05/hour
             
             Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
             IsFeatured = true,
-            
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -738,8 +754,16 @@ final_message: |
             EstimatedCostPerHour = 0.10m, // $0.10/hour
             
             Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
             IsFeatured = true,
-            
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

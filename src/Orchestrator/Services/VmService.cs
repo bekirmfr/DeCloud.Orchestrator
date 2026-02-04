@@ -693,7 +693,7 @@ public class VmService : IVmService
         {
             vm.StartedAt = DateTime.UtcNow;
             vm.PowerState = VmPowerState.Running;
-            
+
             // Trigger ingress registration for the VM
             _ = Task.Run(async () =>
             {
@@ -707,6 +707,22 @@ public class VmService : IVmService
                     _logger.LogWarning(ex, "Failed to auto-register ingress for VM {VmId}", vm.Id);
                 }
             });
+
+            // Settle template fee on successful VM boot (paid templates only)
+            if (!string.IsNullOrEmpty(vm.TemplateId))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await SettleTemplateFeeAsync(vm);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to settle template fee for VM {VmId}", vm.Id);
+                    }
+                });
+            }
         }
         else if (status == VmStatus.Stopped)
         {
@@ -1113,5 +1129,90 @@ public class VmService : IVmService
             "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/alpine-virt-3.19.0-x86_64.qcow2",
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Settle template fee via escrow reportUsage() when VM boots from a paid template.
+    /// The template author's wallet receives 85% (same as node operators), 15% platform fee.
+    /// Uses the existing reportUsage() mechanism — no contract changes needed.
+    /// </summary>
+    private async Task SettleTemplateFeeAsync(VirtualMachine vm)
+    {
+        if (string.IsNullOrEmpty(vm.TemplateId) || string.IsNullOrEmpty(vm.OwnerId))
+            return;
+
+        var template = await _templateService.GetTemplateByIdAsync(vm.TemplateId);
+        if (template == null)
+            return;
+
+        // Only settle for paid templates
+        if (template.PricingModel != TemplatePricingModel.PerDeploy || template.TemplatePrice <= 0)
+            return;
+
+        // Must have a revenue wallet to receive payment
+        if (string.IsNullOrEmpty(template.AuthorRevenueWallet))
+        {
+            _logger.LogWarning(
+                "Paid template {TemplateId} has no revenue wallet, skipping fee settlement for VM {VmId}",
+                template.Id, vm.Id);
+            return;
+        }
+
+        // Don't charge the author for deploying their own templates
+        if (vm.OwnerId == template.AuthorId)
+        {
+            _logger.LogInformation(
+                "Skipping template fee for VM {VmId} - author is deploying their own template",
+                vm.Id);
+            return;
+        }
+
+        // Check if we already settled this fee (prevent double-charge on VM restart)
+        var feeLabel = $"template_fee_settled:{template.Id}";
+        if (vm.Labels.ContainsKey(feeLabel))
+        {
+            _logger.LogDebug("Template fee already settled for VM {VmId}", vm.Id);
+            return;
+        }
+
+        try
+        {
+            // Record template fee as usage with the template author as the "node" (recipient).
+            // The escrow contract's reportUsage() credits nodePendingPayouts[authorWallet].
+            // 85% goes to author, 15% platform fee — same split as VM billing.
+            var settlementService = _serviceProvider.GetRequiredService<Settlement.ISettlementService>();
+
+            var success = await settlementService.RecordUsageAsync(
+                userId: vm.OwnerId,
+                vmId: vm.Id,
+                nodeId: template.AuthorRevenueWallet,
+                amount: template.TemplatePrice,
+                periodStart: DateTime.UtcNow,
+                periodEnd: DateTime.UtcNow,
+                attestationVerified: true);
+
+            if (success)
+            {
+                // Mark as settled to prevent double-charge
+                vm.Labels[feeLabel] = DateTime.UtcNow.ToString("O");
+                await _dataStore.SaveVmAsync(vm);
+
+                _logger.LogInformation(
+                    "Template fee settled: {Amount} USDC from {UserId} to {AuthorWallet} for template {TemplateName} (VM {VmId})",
+                    template.TemplatePrice, vm.OwnerId, template.AuthorRevenueWallet, template.Name, vm.Id);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Failed to record template fee usage for VM {VmId}, template {TemplateId}",
+                    vm.Id, template.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error settling template fee for VM {VmId}, template {TemplateId}",
+                vm.Id, template.Id);
+        }
     }
 }

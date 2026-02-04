@@ -1,7 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
-using System.Collections;
 using System.Collections.Concurrent;
 
 namespace Orchestrator.Persistence;
@@ -67,6 +66,8 @@ public class DataStore
         _database?.GetCollection<VmTemplate>("vmTemplates");
     private IMongoCollection<TemplateCategory>? CategoriesCollection =>
         _database?.GetCollection<TemplateCategory>("templateCategories");
+    private IMongoCollection<MarketplaceReview>? ReviewsCollection =>
+        _database?.GetCollection<MarketplaceReview>("marketplaceReviews");
 
     public DataStore(
         IMongoDatabase? database,
@@ -233,7 +234,13 @@ public class DataStore
                 new CreateIndexOptions { Name = "idx_featured" }),
             new CreateIndexModel<VmTemplate>(
                 Builders<VmTemplate>.IndexKeys.Descending(t => t.CreatedAt),
-                new CreateIndexOptions { Name = "idx_created" })
+                new CreateIndexOptions { Name = "idx_created" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.AuthorId),
+                new CreateIndexOptions { Name = "idx_author" }),
+            new CreateIndexModel<VmTemplate>(
+                Builders<VmTemplate>.IndexKeys.Ascending(t => t.Visibility),
+                new CreateIndexOptions { Name = "idx_visibility" })
         };
             TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Wait();
 
@@ -248,6 +255,29 @@ public class DataStore
                 new CreateIndexOptions { Name = "idx_display_order" })
         };
             TryCreateIndexesAsync(CategoriesCollection!, "templateCategories", categoryIndexes).Wait();
+
+            // MarketplaceReview indexes
+            var reviewIndexes = new[]
+            {
+            new CreateIndexModel<MarketplaceReview>(
+                Builders<MarketplaceReview>.IndexKeys
+                    .Ascending(r => r.ResourceType)
+                    .Ascending(r => r.ResourceId),
+                new CreateIndexOptions { Name = "idx_resource" }),
+            new CreateIndexModel<MarketplaceReview>(
+                Builders<MarketplaceReview>.IndexKeys.Ascending(r => r.ReviewerId),
+                new CreateIndexOptions { Name = "idx_reviewer" }),
+            new CreateIndexModel<MarketplaceReview>(
+                Builders<MarketplaceReview>.IndexKeys.Descending(r => r.CreatedAt),
+                new CreateIndexOptions { Name = "idx_created" }),
+            new CreateIndexModel<MarketplaceReview>(
+                Builders<MarketplaceReview>.IndexKeys
+                    .Ascending(r => r.ResourceType)
+                    .Ascending(r => r.ResourceId)
+                    .Ascending(r => r.ReviewerId),
+                new CreateIndexOptions { Name = "idx_unique_review", Unique = true })
+        };
+            TryCreateIndexesAsync(ReviewsCollection!, "marketplaceReviews", reviewIndexes).Wait();
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
         }
@@ -1366,14 +1396,15 @@ public class DataStore
         string sortBy = "popular")
     {
         if (!_useMongoDB) return new List<VmTemplate>();
-        
+
         try
         {
-            // Build filter
+            // Build filter - marketplace queries only show Public + Published templates
             var filterBuilder = Builders<VmTemplate>.Filter;
             var filters = new List<FilterDefinition<VmTemplate>>
             {
-                filterBuilder.Eq(t => t.Status, TemplateStatus.Published)
+                filterBuilder.Eq(t => t.Status, TemplateStatus.Published),
+                filterBuilder.Eq(t => t.Visibility, TemplateVisibility.Public)
             };
 
             if (!string.IsNullOrEmpty(category))
@@ -1519,32 +1550,206 @@ public class DataStore
     public async Task UpdateCategoryCountsAsync()
     {
         if (!_useMongoDB) return;
-        
+
         try
         {
             var categories = await GetCategoriesAsync();
-            
+
             foreach (var category in categories)
             {
                 var count = await TemplatesCollection!
-                    .CountDocumentsAsync(t => 
-                        t.Category == category.Slug && 
-                        t.Status == TemplateStatus.Published);
-                
+                    .CountDocumentsAsync(t =>
+                        t.Category == category.Slug &&
+                        t.Status == TemplateStatus.Published &&
+                        t.Visibility == TemplateVisibility.Public);
+
                 category.TemplateCount = (int)count;
                 category.UpdatedAt = DateTime.UtcNow;
-                
+
                 await CategoriesCollection!.ReplaceOneAsync(
                     c => c.Id == category.Id,
                     category);
             }
-            
-            _logger.LogInformation("Updated template counts for {Count} categories", 
+
+            _logger.LogInformation("Updated template counts for {Count} categories",
                 categories.Count);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update category counts");
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Template Author Queries
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<List<VmTemplate>> GetTemplatesByAuthorAsync(string authorId)
+    {
+        if (!_useMongoDB) return new List<VmTemplate>();
+
+        try
+        {
+            return await TemplatesCollection!
+                .Find(t => t.AuthorId == authorId)
+                .SortByDescending(t => t.UpdatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get templates for author: {AuthorId}", authorId);
+            return new List<VmTemplate>();
+        }
+    }
+
+    public async Task<bool> DeleteTemplateAsync(string templateId)
+    {
+        if (!_useMongoDB) return false;
+
+        try
+        {
+            var result = await TemplatesCollection!.DeleteOneAsync(t => t.Id == templateId);
+            return result.DeletedCount > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete template: {TemplateId}", templateId);
+            return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Marketplace Review Operations
+    // ════════════════════════════════════════════════════════════════════════
+
+    public async Task<MarketplaceReview> SaveReviewAsync(MarketplaceReview review)
+    {
+        if (!_useMongoDB)
+        {
+            _logger.LogWarning("Cannot save review - MongoDB not configured");
+            return review;
+        }
+
+        try
+        {
+            review.UpdatedAt = DateTime.UtcNow;
+
+            await ReviewsCollection!.ReplaceOneAsync(
+                r => r.Id == review.Id,
+                review,
+                new ReplaceOptions { IsUpsert = true });
+
+            _logger.LogInformation("Saved review {ReviewId} for {ResourceType}/{ResourceId}",
+                review.Id, review.ResourceType, review.ResourceId);
+
+            return review;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save review: {ReviewId}", review.Id);
+            throw;
+        }
+    }
+
+    public async Task<List<MarketplaceReview>> GetReviewsAsync(
+        string resourceType,
+        string resourceId,
+        int limit = 50,
+        int skip = 0)
+    {
+        if (!_useMongoDB) return new List<MarketplaceReview>();
+
+        try
+        {
+            return await ReviewsCollection!
+                .Find(r => r.ResourceType == resourceType
+                        && r.ResourceId == resourceId
+                        && r.Status == ReviewStatus.Active)
+                .SortByDescending(r => r.CreatedAt)
+                .Skip(skip)
+                .Limit(limit)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get reviews for {ResourceType}/{ResourceId}",
+                resourceType, resourceId);
+            return new List<MarketplaceReview>();
+        }
+    }
+
+    public async Task<MarketplaceReview?> GetReviewByReviewerAsync(
+        string resourceType,
+        string resourceId,
+        string reviewerId)
+    {
+        if (!_useMongoDB) return null;
+
+        try
+        {
+            return await ReviewsCollection!
+                .Find(r => r.ResourceType == resourceType
+                        && r.ResourceId == resourceId
+                        && r.ReviewerId == reviewerId
+                        && r.Status == ReviewStatus.Active)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get review by reviewer {ReviewerId} for {ResourceType}/{ResourceId}",
+                reviewerId, resourceType, resourceId);
+            return null;
+        }
+    }
+
+    public async Task<(double averageRating, int totalReviews, int[] distribution)> GetRatingAggregateAsync(
+        string resourceType,
+        string resourceId)
+    {
+        if (!_useMongoDB) return (0, 0, new int[5]);
+
+        try
+        {
+            var reviews = await ReviewsCollection!
+                .Find(r => r.ResourceType == resourceType
+                        && r.ResourceId == resourceId
+                        && r.Status == ReviewStatus.Active)
+                .ToListAsync();
+
+            if (reviews.Count == 0)
+                return (0, 0, new int[5]);
+
+            var distribution = new int[5];
+            foreach (var review in reviews)
+            {
+                if (review.Rating >= 1 && review.Rating <= 5)
+                    distribution[review.Rating - 1]++;
+            }
+
+            var average = reviews.Average(r => r.Rating);
+            return (Math.Round(average, 2), reviews.Count, distribution);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get rating aggregate for {ResourceType}/{ResourceId}",
+                resourceType, resourceId);
+            return (0, 0, new int[5]);
+        }
+    }
+
+    public async Task<bool> DeleteReviewAsync(string reviewId)
+    {
+        if (!_useMongoDB) return false;
+
+        try
+        {
+            var result = await ReviewsCollection!.DeleteOneAsync(r => r.Id == reviewId);
+            return result.DeletedCount > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete review: {ReviewId}", reviewId);
+            return false;
         }
     }
 }

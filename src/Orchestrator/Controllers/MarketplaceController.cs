@@ -2,14 +2,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
 using Orchestrator.Services;
+using Orchestrator.Services.Balance;
 using System.Security.Claims;
 
 namespace Orchestrator.Controllers;
 
 /// <summary>
-/// API endpoints for the Marketplace (Templates and Node browsing)
-/// Note: Node endpoints here proxy to NodeService for frontend convenience.
-/// Canonical node search API is in NodesController.
+/// API endpoints for the Marketplace (Templates, Reviews, and Node browsing).
+/// Templates can be platform-curated or user-created (community).
 /// </summary>
 [ApiController]
 [Route("api/marketplace")]
@@ -17,6 +17,8 @@ public class MarketplaceController : ControllerBase
 {
     private readonly ITemplateService _templateService;
     private readonly IVmService _vmService;
+    private readonly IReviewService _reviewService;
+    private readonly IBalanceService _balanceService;
     private readonly TemplateSeederService _seederService;
     private readonly INodeService _nodeService;
     private readonly ILogger<MarketplaceController> _logger;
@@ -24,12 +26,16 @@ public class MarketplaceController : ControllerBase
     public MarketplaceController(
         ITemplateService templateService,
         IVmService vmService,
+        IReviewService reviewService,
+        IBalanceService balanceService,
         TemplateSeederService seederService,
         INodeService nodeService,
         ILogger<MarketplaceController> logger)
     {
         _templateService = templateService;
         _vmService = vmService;
+        _reviewService = reviewService;
+        _balanceService = balanceService;
         _seederService = seederService;
         _nodeService = nodeService;
         _logger = logger;
@@ -37,19 +43,12 @@ public class MarketplaceController : ControllerBase
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // Template Discovery & Browsing
+    // Template Discovery & Browsing (Public)
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Get all templates with optional filtering
+    /// Browse published public templates with optional filtering
     /// </summary>
-    /// <param name="category">Filter by category (e.g., "ai-ml", "web-apps")</param>
-    /// <param name="requiresGpu">Filter by GPU requirement</param>
-    /// <param name="tags">Filter by tags (comma-separated)</param>
-    /// <param name="search">Search term for name/description</param>
-    /// <param name="featured">Show only featured templates</param>
-    /// <param name="sortBy">Sort order: popular, newest, name</param>
-    /// <param name="limit">Maximum number of results</param>
     [HttpGet("templates")]
     [AllowAnonymous]
     public async Task<ActionResult<List<VmTemplate>>> GetTemplates(
@@ -75,11 +74,6 @@ public class MarketplaceController : ControllerBase
             };
 
             var templates = await _templateService.GetTemplatesAsync(query);
-
-            _logger.LogInformation(
-                "Retrieved {Count} templates (category: {Category}, gpu: {Gpu}, search: {Search})",
-                templates.Count, category ?? "all", requiresGpu?.ToString() ?? "any", search ?? "none");
-
             return Ok(templates);
         }
         catch (Exception ex)
@@ -100,9 +94,6 @@ public class MarketplaceController : ControllerBase
         try
         {
             var templates = await _templateService.GetFeaturedTemplatesAsync(limit);
-
-            _logger.LogInformation("Retrieved {Count} featured templates", templates.Count);
-
             return Ok(templates);
         }
         catch (Exception ex)
@@ -121,21 +112,19 @@ public class MarketplaceController : ControllerBase
     {
         try
         {
-            // Try slug first (lowercase with hyphens), then ID
-            var template = await _templateService.GetTemplateBySlugAsync(slugOrId);
-            
-            if (template == null)
-            {
-                template = await _templateService.GetTemplateByIdAsync(slugOrId);
-            }
+            var template = await _templateService.GetTemplateBySlugAsync(slugOrId)
+                        ?? await _templateService.GetTemplateByIdAsync(slugOrId);
 
             if (template == null)
-            {
-                _logger.LogWarning("Template not found: {SlugOrId}", slugOrId);
                 return NotFound(new { error = $"Template '{slugOrId}' not found" });
-            }
 
-            _logger.LogInformation("Retrieved template: {Name} ({Id})", template.Name, template.Id);
+            // Private templates: only author can view
+            if (template.Visibility == TemplateVisibility.Private)
+            {
+                var userId = GetUserId();
+                if (userId == null || template.AuthorId != userId)
+                    return NotFound(new { error = $"Template '{slugOrId}' not found" });
+            }
 
             return Ok(template);
         }
@@ -148,20 +137,438 @@ public class MarketplaceController : ControllerBase
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // Node Discovery & Browsing
+    // My Templates (Authenticated user's own templates)
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Search available compute nodes in the marketplace
+    /// Get all templates owned by the authenticated user (all statuses)
     /// </summary>
-    /// <param name="tags">Filter by tags (comma-separated)</param>
-    /// <param name="region">Filter by region</param>
-    /// <param name="requiresGpu">Filter by GPU requirement</param>
-    /// <param name="onlineOnly">Show only online nodes (default: false)</param>
-    /// <param name="sortBy">Sort by: price, uptime, capacity</param>
-    /// <param name="sortDescending">Sort in descending order (default: false)</param>
-    /// <param name="minUptime">Minimum uptime percentage (0-100)</param>
-    /// <param name="maxPrice">Maximum price per compute point per hour</param>
+    [HttpGet("templates/my")]
+    [Authorize]
+    public async Task<ActionResult<List<VmTemplate>>> GetMyTemplates()
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var templates = await _templateService.GetTemplatesByAuthorAsync(userId);
+            return Ok(templates);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get user templates");
+            return StatusCode(500, new { error = "Failed to retrieve your templates" });
+        }
+    }
+
+    /// <summary>
+    /// Create a new community template (any authenticated user)
+    /// </summary>
+    [HttpPost("templates/create")]
+    [Authorize]
+    public async Task<ActionResult<VmTemplate>> CreateCommunityTemplate(
+        [FromBody] CreateTemplateRequest request)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var template = new VmTemplate
+            {
+                Name = request.Name,
+                Slug = request.Slug,
+                Description = request.Description,
+                LongDescription = request.LongDescription,
+                Category = request.Category,
+                Tags = request.Tags ?? new List<string>(),
+                IconUrl = request.IconUrl,
+                AuthorId = userId,
+                AuthorName = request.AuthorName ?? TruncateWallet(userId),
+                AuthorRevenueWallet = request.AuthorRevenueWallet ?? userId,
+                License = request.License,
+                SourceUrl = request.SourceUrl,
+                MinimumSpec = request.MinimumSpec ?? new VmSpec(),
+                RecommendedSpec = request.RecommendedSpec ?? new VmSpec(),
+                RequiresGpu = request.RequiresGpu,
+                GpuRequirement = request.GpuRequirement,
+                CloudInitTemplate = request.CloudInitTemplate,
+                DefaultEnvironmentVariables = request.DefaultEnvironmentVariables ?? new(),
+                ExposedPorts = request.ExposedPorts ?? new(),
+                DefaultUsername = request.DefaultUsername,
+                UseGeneratedPassword = request.UseGeneratedPassword,
+                Visibility = request.Visibility,
+                PricingModel = request.PricingModel,
+                TemplatePrice = request.TemplatePrice,
+                DefaultBandwidthTier = request.DefaultBandwidthTier,
+                EstimatedCostPerHour = request.EstimatedCostPerHour,
+
+                // Community template defaults
+                Status = TemplateStatus.Draft,
+                IsCommunity = true,
+                IsVerified = false,
+                IsFeatured = false,
+            };
+
+            var validation = await _templateService.ValidateTemplateAsync(template);
+            if (!validation.IsValid)
+            {
+                return BadRequest(new
+                {
+                    error = "Template validation failed",
+                    errors = validation.Errors,
+                    warnings = validation.Warnings
+                });
+            }
+
+            var created = await _templateService.CreateTemplateAsync(template);
+
+            return CreatedAtAction(
+                nameof(GetTemplate),
+                new { slugOrId = created.Slug },
+                created);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create community template");
+            return StatusCode(500, new { error = "Failed to create template" });
+        }
+    }
+
+    /// <summary>
+    /// Update an existing template (owner only)
+    /// </summary>
+    [HttpPut("templates/{templateId}")]
+    [Authorize]
+    public async Task<ActionResult<VmTemplate>> UpdateTemplate(
+        string templateId,
+        [FromBody] VmTemplate template)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var existing = await _templateService.GetTemplateByIdAsync(templateId);
+            if (existing == null)
+                return NotFound(new { error = $"Template '{templateId}' not found" });
+
+            // Ownership check
+            if (existing.AuthorId != userId)
+                return Forbid();
+
+            template.Id = templateId;
+
+            var validation = await _templateService.ValidateTemplateAsync(template);
+            if (!validation.IsValid)
+            {
+                return BadRequest(new
+                {
+                    error = "Template validation failed",
+                    errors = validation.Errors,
+                    warnings = validation.Warnings
+                });
+            }
+
+            var updated = await _templateService.UpdateTemplateAsync(template);
+            return Ok(updated);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to update template" });
+        }
+    }
+
+    /// <summary>
+    /// Delete a template (owner only)
+    /// </summary>
+    [HttpDelete("templates/{templateId}")]
+    [Authorize]
+    public async Task<ActionResult> DeleteTemplate(string templateId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var deleted = await _templateService.DeleteTemplateAsync(templateId, userId);
+            if (!deleted)
+                return NotFound(new { error = $"Template '{templateId}' not found" });
+
+            return Ok(new { message = "Template deleted" });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to delete template" });
+        }
+    }
+
+    /// <summary>
+    /// Publish a draft template (Draft -> Published, owner only)
+    /// </summary>
+    [HttpPatch("templates/{templateId}/publish")]
+    [Authorize]
+    public async Task<ActionResult<VmTemplate>> PublishTemplate(string templateId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var published = await _templateService.PublishTemplateAsync(templateId, userId);
+            return Ok(published);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to publish template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to publish template" });
+        }
+    }
+
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Template Deployment
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Deploy a VM from a template.
+    /// For paid templates, the user's escrow balance must cover the template fee.
+    /// Template fee is settled on-chain via reportUsage() when the VM boots successfully.
+    /// </summary>
+    [HttpPost("templates/{templateId}/deploy")]
+    [Authorize]
+    public async Task<ActionResult<CreateVmResponse>> DeployTemplate(
+        string templateId,
+        [FromBody] DeployTemplateRequest request)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(new { error = "User authentication required" });
+
+            var template = await _templateService.GetTemplateByIdAsync(templateId);
+            if (template == null)
+                return NotFound(new { error = $"Template '{templateId}' not found" });
+
+            // Visibility check: private templates only deployable by author
+            if (template.Visibility == TemplateVisibility.Private && template.AuthorId != userId)
+                return NotFound(new { error = $"Template '{templateId}' not found" });
+
+            // Draft templates only deployable by author (for testing)
+            if (template.Status == TemplateStatus.Draft && template.AuthorId != userId)
+                return BadRequest(new { error = "Template is not available for deployment" });
+
+            if (template.Status == TemplateStatus.Archived)
+                return BadRequest(new { error = "Template has been archived" });
+
+            // Check balance for paid templates
+            if (template.PricingModel == TemplatePricingModel.PerDeploy && template.TemplatePrice > 0)
+            {
+                var hasBalance = await _balanceService.HasSufficientBalanceAsync(userId, template.TemplatePrice);
+                if (!hasBalance)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Insufficient balance for template fee",
+                        templatePrice = template.TemplatePrice,
+                        message = $"This template costs {template.TemplatePrice} USDC per deployment. Please deposit more funds."
+                    });
+                }
+            }
+
+            // Build VM request from template
+            var vmRequest = await _templateService.BuildVmRequestFromTemplateAsync(
+                templateId,
+                request.VmName,
+                request.CustomSpec,
+                request.EnvironmentVariables);
+
+            if (!string.IsNullOrEmpty(request.NodeId))
+            {
+                vmRequest = vmRequest with { NodeId = request.NodeId };
+            }
+
+            // Deploy VM
+            var vmResponse = await _vmService.CreateVmAsync(userId, vmRequest, request.NodeId);
+
+            // Track deployment stats (fire and forget)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _templateService.IncrementDeploymentCountAsync(templateId);
+                    await _templateService.UpdateTemplateStatsAsync(templateId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to update template stats for {TemplateId}", templateId);
+                }
+            });
+
+            _logger.LogInformation(
+                "Deployed template {TemplateName} as VM {VmId} for user {UserId} (price: {Price} USDC)",
+                template.Name, vmResponse.VmId, userId,
+                template.PricingModel == TemplatePricingModel.PerDeploy ? template.TemplatePrice : 0);
+
+            return Ok(vmResponse);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to deploy template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to deploy template", details = ex.Message });
+        }
+    }
+
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Reviews
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get reviews for a resource (template, node, etc.)
+    /// </summary>
+    [HttpGet("reviews/{resourceType}/{resourceId}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<MarketplaceReview>>> GetReviews(
+        string resourceType,
+        string resourceId,
+        [FromQuery] int limit = 50,
+        [FromQuery] int skip = 0)
+    {
+        try
+        {
+            var reviews = await _reviewService.GetReviewsAsync(resourceType, resourceId, limit, skip);
+            return Ok(reviews);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get reviews for {ResourceType}/{ResourceId}",
+                resourceType, resourceId);
+            return StatusCode(500, new { error = "Failed to retrieve reviews" });
+        }
+    }
+
+    /// <summary>
+    /// Submit a review for a resource (requires proof of usage)
+    /// </summary>
+    [HttpPost("reviews")]
+    [Authorize]
+    public async Task<ActionResult<MarketplaceReview>> SubmitReview(
+        [FromBody] SubmitReviewRequest request)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var review = new MarketplaceReview
+            {
+                ResourceType = request.ResourceType,
+                ResourceId = request.ResourceId,
+                ReviewerId = userId,
+                ReviewerName = request.ReviewerName,
+                Rating = request.Rating,
+                Title = request.Title,
+                Comment = request.Comment,
+                EligibilityProof = new ReviewEligibilityProof
+                {
+                    Type = request.ProofType,
+                    ReferenceId = request.ProofReferenceId
+                }
+            };
+
+            var saved = await _reviewService.SubmitReviewAsync(review);
+            return Ok(saved);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to submit review");
+            return StatusCode(500, new { error = "Failed to submit review" });
+        }
+    }
+
+    /// <summary>
+    /// Get the current user's review for a specific resource
+    /// </summary>
+    [HttpGet("reviews/{resourceType}/{resourceId}/my")]
+    [Authorize]
+    public async Task<ActionResult<MarketplaceReview?>> GetMyReview(
+        string resourceType, string resourceId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var review = await _reviewService.GetUserReviewAsync(resourceType, resourceId, userId);
+            if (review == null)
+                return Ok((MarketplaceReview?)null);
+
+            return Ok(review);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get user review");
+            return StatusCode(500, new { error = "Failed to retrieve review" });
+        }
+    }
+
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Node Discovery & Browsing
+    // ════════════════════════════════════════════════════════════════════════
+
     [HttpGet("nodes")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> SearchNodes(
@@ -189,11 +596,6 @@ public class MarketplaceController : ControllerBase
             };
 
             var nodes = await _nodeService.SearchNodesAsync(criteria);
-
-            _logger.LogInformation(
-                "Searched nodes: found {Count} (region: {Region}, gpu: {Gpu}, onlineOnly: {OnlineOnly}, sortBy: {SortBy})",
-                nodes.Count, region ?? "all", requiresGpu?.ToString() ?? "any", onlineOnly, sortBy);
-
             return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
@@ -203,9 +605,6 @@ public class MarketplaceController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get featured compute nodes (high uptime, good capacity, curated)
-    /// </summary>
     [HttpGet("nodes/featured")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<List<NodeAdvertisement>>>> GetFeaturedNodes()
@@ -213,9 +612,6 @@ public class MarketplaceController : ControllerBase
         try
         {
             var nodes = await _nodeService.GetFeaturedNodesAsync();
-
-            _logger.LogInformation("Retrieved {Count} featured nodes", nodes.Count);
-
             return Ok(ApiResponse<List<NodeAdvertisement>>.Ok(nodes));
         }
         catch (Exception ex)
@@ -225,9 +621,6 @@ public class MarketplaceController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Get detailed information about a specific node
-    /// </summary>
     [HttpGet("nodes/{nodeId}")]
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<NodeAdvertisement>>> GetNodeDetails(string nodeId)
@@ -235,14 +628,8 @@ public class MarketplaceController : ControllerBase
         try
         {
             var node = await _nodeService.GetNodeAdvertisementAsync(nodeId);
-
             if (node == null)
-            {
-                _logger.LogWarning("Node not found: {NodeId}", nodeId);
                 return NotFound(new { error = $"Node '{nodeId}' not found" });
-            }
-
-            _logger.LogInformation("Retrieved node details: {NodeId}", nodeId);
 
             return Ok(ApiResponse<NodeAdvertisement>.Ok(node));
         }
@@ -258,9 +645,6 @@ public class MarketplaceController : ControllerBase
     // Categories
     // ════════════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// Get all template categories
-    /// </summary>
     [HttpGet("categories")]
     [AllowAnonymous]
     public async Task<ActionResult<List<TemplateCategory>>> GetCategories()
@@ -268,9 +652,6 @@ public class MarketplaceController : ControllerBase
         try
         {
             var categories = await _templateService.GetCategoriesAsync();
-
-            _logger.LogInformation("Retrieved {Count} categories", categories.Count);
-
             return Ok(categories);
         }
         catch (Exception ex)
@@ -282,120 +663,21 @@ public class MarketplaceController : ControllerBase
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // Template Deployment
+    // Admin Endpoints
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Deploy a VM from a template
-    /// </summary>
-    [HttpPost("templates/{templateId}/deploy")]
-    [Authorize]
-    public async Task<ActionResult<CreateVmResponse>> DeployTemplate(
-        string templateId,
-        [FromBody] DeployTemplateRequest request)
-    {
-        try
-        {
-            // Get authenticated user
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                      ?? User.FindFirst("sub")?.Value;
-
-            if (string.IsNullOrEmpty(userId))
-            {
-                _logger.LogWarning("Unauthorized template deployment attempt");
-                return Unauthorized(new { error = "User authentication required" });
-            }
-
-            // Validate template exists
-            var template = await _templateService.GetTemplateByIdAsync(templateId);
-            if (template == null)
-            {
-                _logger.LogWarning("Template not found for deployment: {TemplateId}", templateId);
-                return NotFound(new { error = $"Template '{templateId}' not found" });
-            }
-
-            // Validate template is published
-            if (template.Status != TemplateStatus.Published)
-            {
-                _logger.LogWarning(
-                    "Attempted to deploy non-published template: {TemplateId} (status: {Status})",
-                    templateId, template.Status);
-                return BadRequest(new { error = "Template is not available for deployment" });
-            }
-
-            _logger.LogInformation(
-                "Deploying template {TemplateName} for user {UserId} with VM name {VmName}",
-                template.Name, userId, request.VmName);
-
-            // Build VM request from template
-            var vmRequest = await _templateService.BuildVmRequestFromTemplateAsync(
-                templateId,
-                request.VmName,
-                request.CustomSpec,
-                request.EnvironmentVariables);
-
-            // Override node selection if specified
-            if (!string.IsNullOrEmpty(request.NodeId))
-            {
-                vmRequest = vmRequest with { NodeId = request.NodeId };
-            }
-
-            // Deploy VM
-            var vmResponse = await _vmService.CreateVmAsync(userId, vmRequest, request.NodeId);
-
-            // Increment deployment counter (fire and forget)
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _templateService.IncrementDeploymentCountAsync(templateId);
-                    await _templateService.UpdateTemplateStatsAsync(templateId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to update template stats for {TemplateId}", templateId);
-                }
-            });
-
-            _logger.LogInformation(
-                "Successfully deployed template {TemplateName} as VM {VmId}",
-                template.Name, vmResponse.VmId);
-
-            return Ok(vmResponse);
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Invalid template deployment request");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to deploy template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to deploy template", details = ex.Message });
-        }
-    }
-
-
-    // ════════════════════════════════════════════════════════════════════════
-    // Admin/Creator Endpoints (Phase 2)
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Create a new template (admin only - Phase 1: curated templates only)
+    /// Create a platform-curated template (admin only)
     /// </summary>
     [HttpPost("templates")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<VmTemplate>> CreateTemplate([FromBody] VmTemplate template)
+    public async Task<ActionResult<VmTemplate>> CreatePlatformTemplate([FromBody] VmTemplate template)
     {
         try
         {
-            // Validate template
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
             {
-                _logger.LogWarning(
-                    "Template validation failed: {Errors}",
-                    string.Join(", ", validation.Errors));
                 return BadRequest(new
                 {
                     error = "Template validation failed",
@@ -404,12 +686,7 @@ public class MarketplaceController : ControllerBase
                 });
             }
 
-            // Create template
             var created = await _templateService.CreateTemplateAsync(template);
-
-            _logger.LogInformation(
-                "Created template: {TemplateName} ({TemplateId})",
-                created.Name, created.Id);
 
             return CreatedAtAction(
                 nameof(GetTemplate),
@@ -418,66 +695,12 @@ public class MarketplaceController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Invalid template creation request");
             return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to create template");
+            _logger.LogError(ex, "Failed to create platform template");
             return StatusCode(500, new { error = "Failed to create template" });
-        }
-    }
-
-    /// <summary>
-    /// Update an existing template (admin only - Phase 1)
-    /// </summary>
-    [HttpPut("templates/{templateId}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<VmTemplate>> UpdateTemplate(
-        string templateId,
-        [FromBody] VmTemplate template)
-    {
-        try
-        {
-            // Ensure ID matches
-            if (template.Id != templateId)
-            {
-                template.Id = templateId;
-            }
-
-            // Validate template
-            var validation = await _templateService.ValidateTemplateAsync(template);
-            if (!validation.IsValid)
-            {
-                _logger.LogWarning(
-                    "Template validation failed: {Errors}",
-                    string.Join(", ", validation.Errors));
-                return BadRequest(new
-                {
-                    error = "Template validation failed",
-                    errors = validation.Errors,
-                    warnings = validation.Warnings
-                });
-            }
-
-            // Update template
-            var updated = await _templateService.UpdateTemplateAsync(template);
-
-            _logger.LogInformation(
-                "Updated template: {TemplateName} ({TemplateId})",
-                updated.Name, updated.Id);
-
-            return Ok(updated);
-        }
-        catch (ArgumentException ex)
-        {
-            _logger.LogWarning(ex, "Invalid template update request");
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to update template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to update template" });
         }
     }
 
@@ -495,10 +718,6 @@ public class MarketplaceController : ControllerBase
             var templates = await _templateService.GetTemplatesAsync(new TemplateQuery());
             var categories = await _templateService.GetCategoriesAsync();
 
-            _logger.LogInformation(
-                "Template seeding completed: {TemplateCount} templates, {CategoryCount} categories",
-                templates.Count, categories.Count);
-
             return Ok(new
             {
                 message = "Templates seeded successfully",
@@ -514,10 +733,27 @@ public class MarketplaceController : ControllerBase
             return StatusCode(500, new { error = "Failed to seed templates", details = ex.Message });
         }
     }
+
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Helpers
+    // ════════════════════════════════════════════════════════════════════════
+
+    private string? GetUserId()
+    {
+        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? User.FindFirst("sub")?.Value;
+    }
+
+    private static string TruncateWallet(string wallet)
+    {
+        if (wallet.Length <= 10) return wallet;
+        return $"{wallet[..6]}...{wallet[^4..]}";
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// Request/Response Models
+// Request Models
 // ════════════════════════════════════════════════════════════════════════
 
 /// <summary>
@@ -525,26 +761,61 @@ public class MarketplaceController : ControllerBase
 /// </summary>
 public class DeployTemplateRequest
 {
-    /// <summary>
-    /// Name for the new VM
-    /// </summary>
     public string VmName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Optional: Custom VM specification (overrides template defaults)
-    /// If not provided, uses template's recommended spec
-    /// </summary>
     public VmSpec? CustomSpec { get; set; }
-
-    /// <summary>
-    /// Optional: Environment variables to inject into cloud-init
-    /// Merged with template defaults (request values override defaults)
-    /// </summary>
     public Dictionary<string, string>? EnvironmentVariables { get; set; }
-
-    /// <summary>
-    /// Optional: Target specific node for deployment
-    /// If not provided, scheduler will select best available node
-    /// </summary>
     public string? NodeId { get; set; }
+}
+
+/// <summary>
+/// Request to create a community template
+/// </summary>
+public class CreateTemplateRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string Slug { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string? LongDescription { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public List<string>? Tags { get; set; }
+    public string? IconUrl { get; set; }
+    public string? AuthorName { get; set; }
+    public string? AuthorRevenueWallet { get; set; }
+    public string? License { get; set; }
+    public string? SourceUrl { get; set; }
+    public VmSpec? MinimumSpec { get; set; }
+    public VmSpec? RecommendedSpec { get; set; }
+    public bool RequiresGpu { get; set; }
+    public string? GpuRequirement { get; set; }
+    public string CloudInitTemplate { get; set; } = string.Empty;
+    public Dictionary<string, string>? DefaultEnvironmentVariables { get; set; }
+    public List<TemplatePort>? ExposedPorts { get; set; }
+    public string? DefaultUsername { get; set; }
+    public bool UseGeneratedPassword { get; set; } = true;
+    public TemplateVisibility Visibility { get; set; } = TemplateVisibility.Public;
+    public TemplatePricingModel PricingModel { get; set; } = TemplatePricingModel.Free;
+    public decimal TemplatePrice { get; set; }
+    public BandwidthTier DefaultBandwidthTier { get; set; } = BandwidthTier.Unmetered;
+    public decimal EstimatedCostPerHour { get; set; }
+}
+
+/// <summary>
+/// Request to submit a review
+/// </summary>
+public class SubmitReviewRequest
+{
+    public string ResourceType { get; set; } = string.Empty;
+    public string ResourceId { get; set; } = string.Empty;
+    public string? ReviewerName { get; set; }
+    public int Rating { get; set; }
+    public string? Title { get; set; }
+    public string? Comment { get; set; }
+    /// <summary>
+    /// Proof type: "deployment" for templates, "vm_usage" for nodes
+    /// </summary>
+    public string ProofType { get; set; } = string.Empty;
+    /// <summary>
+    /// Reference ID for the proof (VM ID)
+    /// </summary>
+    public string ProofReferenceId { get; set; } = string.Empty;
 }
