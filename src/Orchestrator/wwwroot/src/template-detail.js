@@ -763,6 +763,17 @@ export async function submitReview() {
     const comment = document.getElementById('review-comment')?.value?.trim() || '';
 
     try {
+        // Find a VM the user deployed from this template as proof
+        const vmsResponse = await api('/api/vms');
+        const vmsData = await vmsResponse.json();
+        const userVms = vmsData.success ? (vmsData.data.items || []) : [];
+        const proofVm = userVms.find(vm => vm.templateId === currentTemplate.id);
+
+        if (!proofVm) {
+            showToast('error', 'You must deploy this template before reviewing it.');
+            return;
+        }
+
         const response = await api('/api/marketplace/reviews', {
             method: 'POST',
             body: JSON.stringify({
@@ -772,7 +783,7 @@ export async function submitReview() {
                 comment: comment || null,
                 eligibilityProof: {
                     type: 'deployment',
-                    referenceId: currentTemplate.id
+                    referenceId: proofVm.id
                 }
             })
         });
