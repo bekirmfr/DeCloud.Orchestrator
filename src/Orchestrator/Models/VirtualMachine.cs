@@ -360,7 +360,8 @@ public record VmSummary(
     VmSpec Spec,
     VmNetworkConfig NetworkConfig,
     DateTime CreatedAt,
-    DateTime UpdatedAt
+    DateTime UpdatedAt,
+    string? TemplateId = null
 );
 
 public record VmDetailResponse(
