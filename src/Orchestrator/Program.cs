@@ -124,6 +124,9 @@ builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSecti
 builder.Services.Configure<PricingConfig>(builder.Configuration.GetSection("Pricing"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
+// Smart Port Allocation Services
+builder.Services.AddSingleton<DirectAccessDnsService>();
+builder.Services.AddSingleton<DirectAccessService>();
 builder.Services.AddSingleton<IBlockchainService, BlockchainService>();
 builder.Services.AddHttpClient("SubdomainProxy")
     .ConfigureHttpClient(client =>
