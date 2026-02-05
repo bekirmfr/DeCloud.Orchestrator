@@ -36,7 +36,7 @@ import {
     initMyTemplates
 } from './my-templates.js';
 import './template-detail.js';
-import { openDirectAccessModal, closeDirectAccessModal} './direct-access.js';
+import { openDirectAccessModal, closeDirectAccessModal} from './direct-access.js';
 
 // ============================================
 // CONFIGURATION
