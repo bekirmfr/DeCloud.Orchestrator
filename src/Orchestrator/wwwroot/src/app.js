@@ -33,6 +33,7 @@ import {
     initMarketplaceTemplates
 } from './marketplace-templates.js';
 import './template-detail.js';
+import './direct-access.js';
 
 // ============================================
 // CONFIGURATION
