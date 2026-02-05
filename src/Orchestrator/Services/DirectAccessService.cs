@@ -247,9 +247,18 @@ public class DirectAccessService
         CancellationToken ct = default)
     {
         var vm = await _dataStore.GetVmAsync(vmId);
-        if (vm == null || vm.DirectAccess == null)
+        if (vm == null)
         {
             return null;
+        }
+
+        // If DirectAccess is not initialized, return empty info (no port mappings yet)
+        if (vm.DirectAccess == null)
+        {
+            return new DirectAccessInfoResponse(
+                string.Empty,
+                new List<PortMappingInfo>(),
+                IsDnsConfigured: false);
         }
 
         var mappings = vm.DirectAccess.PortMappings.Select(m => new PortMappingInfo(
