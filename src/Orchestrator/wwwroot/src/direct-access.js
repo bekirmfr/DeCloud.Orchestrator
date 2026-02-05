@@ -28,7 +28,7 @@ export async function getDirectAccessInfo(vmId) {
     try {
         const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access`, {
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('jwt')}`
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
             }
         });
 
@@ -54,7 +54,7 @@ export async function allocatePort(vmId, vmPort, protocol = 1, label = null) {
         const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/ports`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('jwt')}`,
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ vmPort, protocol, label })
@@ -81,7 +81,7 @@ export async function removePort(vmId, vmPort) {
         const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/ports/${vmPort}`, {
             method: 'DELETE',
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('jwt')}`
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
             }
         });
 
@@ -104,7 +104,7 @@ export async function quickAddService(vmId, serviceName) {
         const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/quick-add`, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('jwt')}`,
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ serviceName })
@@ -130,7 +130,7 @@ export async function getAvailableServices(vmId) {
     try {
         const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/services`, {
             headers: {
-                'Authorization': `Bearer ${localStorage.getItem('jwt')}`
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
             }
         });
 
