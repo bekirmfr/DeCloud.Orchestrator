@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Microsoft.Extensions.Logging;
@@ -93,19 +94,27 @@ public class DirectAccessService
                 Label = label
             };
 
-            var success = await _nodeCommandService.SendCommandAsync(
-                vm.NodeId,
+            var command = new NodeCommand(
+                Guid.NewGuid().ToString(),
                 NodeCommandType.AllocatePort,
-                payload,
-                requiresAck: true,
-                ct: ct);
+                JsonSerializer.Serialize(payload)
+            );
 
-            if (!success)
+            _dataStore.RegisterCommand(
+                command.CommandId,
+                vmId,
+                vm.NodeId,
+                NodeCommandType.AllocatePort
+            );
+
+            var result = await _nodeCommandService.DeliverCommandAsync(vm.NodeId, command, ct);
+
+            if (!result.Success)
             {
-                _logger.LogError("NodeAgent command failed for port allocation");
+                _logger.LogError("NodeAgent command delivery failed for port allocation: {Message}", result.Message);
                 return new AllocatePortResponse(
                     string.Empty, vmPort, 0, protocol, string.Empty,
-                    Success: false, Error: "Failed to allocate port on node");
+                    Success: false, Error: $"Failed to deliver command to node: {result.Message}");
             }
 
             // Note: We don't know the allocated public port yet since the NodeAgent
@@ -193,16 +202,24 @@ public class DirectAccessService
                 Protocol = (int)mapping.Protocol
             };
 
-            var success = await _nodeCommandService.SendCommandAsync(
-                vm.NodeId,
+            var command = new NodeCommand(
+                Guid.NewGuid().ToString(),
                 NodeCommandType.RemovePort,
-                payload,
-                requiresAck: true,
-                ct: ct);
+                JsonSerializer.Serialize(payload)
+            );
 
-            if (!success)
+            _dataStore.RegisterCommand(
+                command.CommandId,
+                vmId,
+                vm.NodeId,
+                NodeCommandType.RemovePort
+            );
+
+            var result = await _nodeCommandService.DeliverCommandAsync(vm.NodeId, command, ct);
+
+            if (!result.Success)
             {
-                _logger.LogWarning("NodeAgent command failed for port removal (continuing anyway)");
+                _logger.LogWarning("NodeAgent command delivery failed for port removal (continuing anyway): {Message}", result.Message);
             }
 
             // Remove from VM configuration
