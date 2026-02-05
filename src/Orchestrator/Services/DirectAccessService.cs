@@ -119,20 +119,11 @@ public class DirectAccessService
                     Success: false, Error: $"Failed to deliver command to node: {result.Message}");
             }
 
-            // Note: We don't know the allocated public port yet since the NodeAgent
-            // allocates it from the pool. In a production system, we would either:
-            // 1. Have the NodeAgent send back the allocated port in the acknowledgment
-            // 2. Poll the NodeAgent for the port mapping
-            // 3. Use a webhook for the NodeAgent to notify us
-            //
-            // For now, we'll create a placeholder mapping and update it later
-            // when we implement proper acknowledgment handling.
-
-            // Create mapping (with placeholder public port that will be updated)
+            // Create placeholder mapping (will be updated by acknowledgment handler)
             var mapping = new DirectAccessPortMapping
             {
                 VmPort = vmPort,
-                PublicPort = 0,  // Will be updated when we get acknowledgment from node
+                PublicPort = 0,  // Placeholder - will be updated by acknowledgment
                 Protocol = protocol,
                 Label = label
             };
@@ -142,22 +133,47 @@ public class DirectAccessService
 
             await _dataStore.SaveVmAsync(vm);
 
-            var connectionString = GenerateConnectionString(
-                vm.DirectAccess.DnsName ?? "unknown",
-                mapping.PublicPort,
-                label);
+            _logger.LogDebug(
+                "Created placeholder mapping for VM {VmId}, waiting for acknowledgment with actual port...",
+                vmId);
 
-            _logger.LogInformation(
-                "✓ Port allocated for VM {VmId}: {VmPort} → {PublicPort} ({Protocol})",
-                vmId, vmPort, mapping.PublicPort, protocol);
+            // Wait for acknowledgment to update the public port
+            var actualPort = await WaitForPortAllocationAsync(vmId, vmPort, protocol, command.CommandId, ct);
 
-            return new AllocatePortResponse(
-                mapping.Id,
-                vmPort,
-                mapping.PublicPort,
-                protocol,
-                connectionString,
-                Success: true);
+            if (actualPort > 0)
+            {
+                _logger.LogInformation(
+                    "✓ Port allocated for VM {VmId}: {VmPort} → {PublicPort} ({Protocol})",
+                    vmId, vmPort, actualPort, protocol);
+
+                var connectionString = GenerateConnectionString(
+                    vm.DirectAccess.DnsName ?? "unknown",
+                    actualPort,
+                    label);
+
+                return new AllocatePortResponse(
+                    mapping.Id,
+                    vmPort,
+                    actualPort,
+                    protocol,
+                    connectionString,
+                    Success: true);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Port allocation acknowledgment timed out for VM {VmId} - port may still be allocated but not confirmed",
+                    vmId);
+
+                // Return with publicPort=0 and indicate timeout
+                return new AllocatePortResponse(
+                    mapping.Id,
+                    vmPort,
+                    0,
+                    protocol,
+                    "Port allocation in progress - please check status in a moment",
+                    Success: true);  // Still success, just delayed
+            }
         }
         catch (Exception ex)
         {
@@ -457,5 +473,61 @@ public class DirectAccessService
             "minecraft" => $"Server Address: {dnsName}:{publicPort}",
             _ => $"{dnsName}:{publicPort}"
         };
+    }
+
+    /// <summary>
+    /// Wait for port allocation acknowledgment by polling the VM for the updated public port.
+    /// The acknowledgment handler (NodeService.ProcessCommandAcknowledgmentAsync) updates the mapping asynchronously.
+    /// </summary>
+    private async Task<int> WaitForPortAllocationAsync(
+        string vmId,
+        int vmPort,
+        PortProtocol protocol,
+        string commandId,
+        CancellationToken ct)
+    {
+        const int maxAttempts = 20;  // 20 attempts = 10 seconds max wait
+        const int delayMs = 500;     // Poll every 500ms
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            // Add small delay before checking (except first time)
+            if (attempt > 0)
+            {
+                await Task.Delay(delayMs, ct);
+            }
+
+            // Reload VM to get latest state
+            var vm = await _dataStore.GetVmAsync(vmId);
+            if (vm?.DirectAccess == null)
+            {
+                _logger.LogWarning(
+                    "VM {VmId} or DirectAccess configuration disappeared during acknowledgment wait",
+                    vmId);
+                return 0;
+            }
+
+            // Check if the mapping has been updated with a public port
+            var mapping = vm.DirectAccess.PortMappings
+                .FirstOrDefault(m => m.VmPort == vmPort && m.Protocol == protocol);
+
+            if (mapping != null && mapping.PublicPort > 0)
+            {
+                _logger.LogDebug(
+                    "Acknowledgment received for VM {VmId} after {Attempts} attempts ({Ms}ms): port {PublicPort}",
+                    vmId, attempt + 1, (attempt + 1) * delayMs, mapping.PublicPort);
+                return mapping.PublicPort;
+            }
+
+            _logger.LogDebug(
+                "Waiting for acknowledgment... attempt {Attempt}/{MaxAttempts} (command: {CommandId})",
+                attempt + 1, maxAttempts, commandId);
+        }
+
+        _logger.LogWarning(
+            "Acknowledgment timeout for VM {VmId} after {Seconds}s (command: {CommandId})",
+            vmId, (maxAttempts * delayMs) / 1000, commandId);
+
+        return 0;  // Timeout
     }
 }
