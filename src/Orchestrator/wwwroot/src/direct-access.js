@@ -480,7 +480,3 @@ function showToast(message, type = 'info') {
         console.log(`[${type}] ${message}`);
     }
 }
-
-// Export functions to window for onclick handlers
-window.openDirectAccessModal = openDirectAccessModal;
-window.closeDirectAccessModal = closeDirectAccessModal;
