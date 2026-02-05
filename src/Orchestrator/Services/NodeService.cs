@@ -822,7 +822,7 @@ public class NodeService : INodeService
                         if (affectedVm.DirectAccess != null)
                         {
                             var mapping = affectedVm.DirectAccess.PortMappings
-                                .FirstOrDefault(m => m.VmPort == portData.VmPort && m.Protocol == portData.Protocol);
+                                .FirstOrDefault(m => m.VmPort == portData.VmPort && m.Protocol == (PortProtocol)portData.Protocol);
 
                             if (mapping != null)
                             {

@@ -1,0 +1,39 @@
+From: Claude AI Assistant
+Subject: [PATCH 2/3] Update OrchestratorClient to send Data in acknowledgments
+
+Updates the AcknowledgeCommandAsync implementation to include the optional
+data parameter in the acknowledgment payload sent to the Orchestrator.
+
+---
+ src/DeCloud.NodeAgent/Services/OrchestratorClient.cs | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/DeCloud.NodeAgent/Services/OrchestratorClient.cs b/src/DeCloud.NodeAgent/Services/OrchestratorClient.cs
+index 1234567..abcdefg 100644
+--- a/src/DeCloud.NodeAgent/Services/OrchestratorClient.cs
++++ b/src/DeCloud.NodeAgent/Services/OrchestratorClient.cs
+@@ -808,10 +808,11 @@ public class OrchestratorClient : IOrchestratorClient
+     /// <summary>
+     /// Acknowledge command execution to orchestrator with wallet signature
+     /// </summary>
+     public async Task<bool> AcknowledgeCommandAsync(
+         string commandId,
+         bool success,
+         string? errorMessage,
++        string? data = null,
+         CancellationToken ct = default)
+     {
+         if (!_nodeState.IsAuthenticated)
+@@ -831,9 +832,10 @@ public class OrchestratorClient : IOrchestratorClient
+
+             var payload = new
+             {
+                 commandId,
+                 success,
+                 errorMessage = errorMessage ?? string.Empty,
+-                completedAt = DateTime.UtcNow.ToString("O")
++                completedAt = DateTime.UtcNow.ToString("O"),
++                data
+             };
+
+             request.Content = JsonContent.Create(payload);
