@@ -36,6 +36,7 @@ import {
     initMyTemplates
 } from './my-templates.js';
 import './template-detail.js';
+import './direct-access.js';
 
 // ============================================
 // CONFIGURATION
