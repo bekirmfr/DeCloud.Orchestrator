@@ -97,7 +97,9 @@ public class DirectAccessService
             var command = new NodeCommand(
                 Guid.NewGuid().ToString(),
                 NodeCommandType.AllocatePort,
-                JsonSerializer.Serialize(payload)
+                JsonSerializer.Serialize(payload),
+                RequiresAck: true,
+                TargetResourceId: vmId
             );
 
             _dataStore.RegisterCommand(
@@ -205,7 +207,9 @@ public class DirectAccessService
             var command = new NodeCommand(
                 Guid.NewGuid().ToString(),
                 NodeCommandType.RemovePort,
-                JsonSerializer.Serialize(payload)
+                JsonSerializer.Serialize(payload),
+                RequiresAck: true,
+                TargetResourceId: vmId
             );
 
             _dataStore.RegisterCommand(
