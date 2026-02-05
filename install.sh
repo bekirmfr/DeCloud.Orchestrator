@@ -33,6 +33,7 @@
 #       --ingress-domain vms.stackfi.tech \
 #       --caddy-email admin@stackfi.tech \
 #       --cloudflare-token YOUR_CF_TOKEN \
+#       --cloudflare-zone-id YOUR_ZONE_ID \
 #       --enable-wireguard
 #
 
@@ -143,6 +144,7 @@ CADDY_DATA_DIR="/var/lib/caddy"
 CADDY_LOG_DIR="/var/log/caddy"
 DNS_PROVIDER="cloudflare"
 CLOUDFLARE_TOKEN=""
+CLOUDFLARE_ZONE_ID=""
 
 # WireGuard (Dynamic Peer Management)
 ENABLE_WIREGUARD=false
@@ -243,6 +245,10 @@ parse_args() {
                 CLOUDFLARE_TOKEN="$2"
                 shift 2
                 ;;
+            --cloudflare-zone-id)
+                CLOUDFLARE_ZONE_ID="$2"
+                shift 2
+                ;;
             --enable-wireguard)
                 ENABLE_WIREGUARD=true
                 shift
@@ -330,6 +336,7 @@ ${CYAN}Ingress (Recommended):${NC}
   --ingress-domain <domain>          Domain for VM ingress (e.g., vms.stackfi.tech)
   --caddy-email <email>              Email for Let's Encrypt certificates
   --cloudflare-token <token>         Cloudflare API token for DNS-01 challenge
+  --cloudflare-zone-id <id>          Cloudflare Zone ID for DNS management
   --caddy-staging                    Use Let's Encrypt staging (for testing)
 
 ${CYAN}WireGuard (For CGNAT support):${NC}
@@ -366,7 +373,8 @@ ${YELLOW}Examples:${NC}
      --confirmations 20 \\
      --ingress-domain vms.stackfi.tech \\
      --caddy-email admin@stackfi.tech \\
-     --cloudflare-token YOUR_TOKEN \\
+     --cloudflare-token YOUR_CF_TOKEN \\
+     --cloudflare-zone-id YOUR_ZONE_ID \\
      --enable-wireguard
 
 ${RED}Security Notes:${NC}
@@ -1147,6 +1155,12 @@ ConnectionStrings__MongoDB=$MONGODB_URI
 # SECURITY
 # =====================================================
 Jwt__Key=$JWT_SECRET_KEY
+
+# =====================================================
+# CLOUDFLARE (For DNS Management)
+# =====================================================
+Cloudflare__ApiToken=$CLOUDFLARE_TOKEN
+Cloudflare__ZoneId=$CLOUDFLARE_ZONE_ID
 
 # =====================================================
 # PAYMENT SYSTEM (CRITICAL - KEEP SECURE)
