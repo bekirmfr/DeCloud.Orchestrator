@@ -495,7 +495,8 @@ public record CommandAcknowledgment(
     string CommandId,
     bool Success,
     string? ErrorMessage,
-    DateTime CompletedAt
+    DateTime CompletedAt,
+    string? Data = null  // JSON-encoded result data (e.g., allocated port info)
 );
 
 
@@ -636,4 +637,14 @@ public enum TunnelStatus
     Connected,
     Disconnected,
     Error
+}
+
+/// <summary>
+/// Acknowledgment data returned by NodeAgent when allocating a port
+/// </summary>
+public class AllocatePortAckData
+{
+    public int VmPort { get; set; }
+    public int PublicPort { get; set; }
+    public int Protocol { get; set; }
 }
