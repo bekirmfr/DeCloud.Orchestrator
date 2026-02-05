@@ -1137,12 +1137,22 @@ function renderVMsTable(vms) {
             <td>
                 <div class="table-actions">
                     <!-- Connect Info -->
-                    <button class="btn btn-sm btn-primary" 
-                            onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})" 
+                    <button class="btn btn-sm btn-primary"
+                            onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})"
                             title="Connection Info">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                    </button>
+
+                    <!-- Direct Access (Smart Port Allocation) -->
+                    <button class="btn btn-sm btn-secondary"
+                            onclick="window.openDirectAccessModal('${vm.id}', '${vm.name}')"
+                            title="Direct Access (TCP/UDP Ports)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>
                         </svg>
                     </button>
 

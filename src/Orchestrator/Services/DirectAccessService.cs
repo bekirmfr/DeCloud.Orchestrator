@@ -1,4 +1,4 @@
-using Orchestrator.Data;
+using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Microsoft.Extensions.Logging;
 
@@ -10,18 +10,18 @@ namespace Orchestrator.Services;
 /// </summary>
 public class DirectAccessService
 {
-    private readonly IMongoDbContext _dbContext;
-    private readonly NodeCommandService _nodeCommandService;
+    private readonly DataStore _dataStore;
+    private readonly INodeCommandService _nodeCommandService;
     private readonly DirectAccessDnsService _dnsService;
     private readonly ILogger<DirectAccessService> _logger;
 
     public DirectAccessService(
-        IMongoDbContext dbContext,
-        NodeCommandService nodeCommandService,
+        DataStore dataStore,
+        INodeCommandService nodeCommandService,
         DirectAccessDnsService dnsService,
         ILogger<DirectAccessService> logger)
     {
-        _dbContext = dbContext;
+        _dataStore = dataStore;
         _nodeCommandService = nodeCommandService;
         _dnsService = dnsService;
         _logger = logger;
@@ -40,7 +40,7 @@ public class DirectAccessService
         try
         {
             // Get VM
-            var vm = await _dbContext.VirtualMachines.FindOneAsync(v => v.Id == vmId, ct);
+            var vm = await _dataStore.GetVmAsync(vmId);
             if (vm == null)
             {
                 return new AllocatePortResponse(
@@ -129,7 +129,7 @@ public class DirectAccessService
             vm.DirectAccess.PortMappings.Add(mapping);
             vm.UpdatedAt = DateTime.UtcNow;
 
-            await _dbContext.VirtualMachines.UpdateOneAsync(vm, ct);
+            await _dataStore.SaveVmAsync(vm);
 
             var connectionString = GenerateConnectionString(
                 vm.DirectAccess.DnsName ?? "unknown",
@@ -167,7 +167,7 @@ public class DirectAccessService
     {
         try
         {
-            var vm = await _dbContext.VirtualMachines.FindOneAsync(v => v.Id == vmId, ct);
+            var vm = await _dataStore.GetVmAsync(vmId);
             if (vm == null || vm.DirectAccess == null)
             {
                 _logger.LogWarning("VM {VmId} not found or has no direct access configured", vmId);
@@ -209,7 +209,7 @@ public class DirectAccessService
             vm.DirectAccess.PortMappings.Remove(mapping);
             vm.UpdatedAt = DateTime.UtcNow;
 
-            await _dbContext.VirtualMachines.UpdateOneAsync(vm, ct);
+            await _dataStore.SaveVmAsync(vm);
 
             _logger.LogInformation("✓ Port mapping removed for VM {VmId}: {VmPort}", vmId, vmPort);
 
@@ -229,7 +229,7 @@ public class DirectAccessService
         string vmId,
         CancellationToken ct = default)
     {
-        var vm = await _dbContext.VirtualMachines.FindOneAsync(v => v.Id == vmId, ct);
+        var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null || vm.DirectAccess == null)
         {
             return null;
@@ -280,7 +280,7 @@ public class DirectAccessService
     {
         try
         {
-            var vm = await _dbContext.VirtualMachines.FindOneAsync(v => v.Id == vmId, ct);
+            var vm = await _dataStore.GetVmAsync(vmId);
             if (vm == null || vm.DirectAccess == null)
             {
                 return;
@@ -326,7 +326,7 @@ public class DirectAccessService
         }
 
         // Get node public IP
-        var node = await _dbContext.Nodes.FindOneAsync(n => n.Id == vm.NodeId, ct);
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
         if (node == null || string.IsNullOrEmpty(node.PublicIp))
         {
             throw new InvalidOperationException("Node not found or has no public IP");
@@ -359,7 +359,7 @@ public class DirectAccessService
         vm.DirectAccess.IsDnsConfigured = true;
         vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.VirtualMachines.UpdateOneAsync(vm, ct);
+        await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation("✓ DNS configured: {DnsName} → {NodeIp}", dnsName, node.PublicIp);
     }
