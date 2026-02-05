@@ -382,9 +382,10 @@ public class DirectAccessService
                 "Access via node IP: {NodeIp}",
                 vm.Id, node.PublicIp);
 
-            // Update VM with partial DNS info (no record ID, not fully configured)
+            // Update VM with partial DNS info (no record ID, DNS not configured)
             vm.DirectAccess.Subdomain = subdomain;
-            vm.DirectAccess.DnsName = dnsName; // Store for future use
+            // Do not persist dnsName when DNS is not configured to avoid implying it is active.
+            vm.DirectAccess.DnsName = null;
             vm.DirectAccess.CloudflareDnsRecordId = null;
             vm.DirectAccess.IsDnsConfigured = false;
             vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
