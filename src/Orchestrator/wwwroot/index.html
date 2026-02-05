@@ -843,7 +843,47 @@
         </div>
     </div>
 
+    <!-- Direct Access (Smart Port Allocation) Modal -->
+    <div class="modal-overlay" id="direct-access-modal" style="display: none;">
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h2 class="modal-title" id="direct-access-modal-title">Direct Access</h2>
+                <button class="modal-close" onclick="window.closeDirectAccessModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading -->
+                <div id="direct-access-loading" style="text-align: center; padding: 40px; display: none;">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 16px; color: #6b7280;">Loading direct access info...</p>
+                </div>
+
+                <!-- DNS Info -->
+                <div id="direct-access-dns-info" style="display: none;"></div>
+
+                <!-- Port Mappings -->
+                <div id="direct-access-ports" style="display: none; margin-top: 24px;"></div>
+
+                <!-- Quick Add & Custom Port -->
+                <div id="direct-access-quick-add" style="display: none; margin-top: 32px;"></div>
+
+                <div class="direct-access-help" style="margin-top: 32px; padding: 16px; background: #f9fafb; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                    <h4 style="margin: 0 0 8px 0; color: #1f2937;">💡 About Direct Access</h4>
+                    <p style="margin: 0; color: #6b7280; font-size: 14px;">
+                        Direct Access allows TCP/UDP connections directly to your VM for services like SSH, databases, game servers, and more.
+                        Each service gets a unique public port (40000-65535) that forwards to your VM's internal port.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Main Application Script - Vite will handle this -->
     <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/src/direct-access.js"></script>
 </body>
 </html>
