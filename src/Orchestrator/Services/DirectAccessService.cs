@@ -367,7 +367,7 @@ public class DirectAccessService
             "Creating DNS record {DnsName} → {NodeIp} for VM {VmId}",
             dnsName, node.PublicIp, vm.Id);
 
-        // Create DNS record
+        // Create DNS record (optional - gracefully degrade if Cloudflare not configured)
         var recordId = await _dnsService.CreateOrUpdateDnsRecordAsync(
             dnsName,
             node.PublicIp,
@@ -375,19 +375,33 @@ public class DirectAccessService
 
         if (string.IsNullOrEmpty(recordId))
         {
-            throw new InvalidOperationException("Failed to create DNS record");
+            _logger.LogWarning(
+                "DNS record creation skipped for VM {VmId}. " +
+                "Cloudflare may not be configured. " +
+                "Port allocation will work but without DNS name. " +
+                "Access via node IP: {NodeIp}",
+                vm.Id, node.PublicIp);
+
+            // Update VM with partial DNS info (no record ID, not fully configured)
+            vm.DirectAccess.Subdomain = subdomain;
+            vm.DirectAccess.DnsName = dnsName; // Store for future use
+            vm.DirectAccess.CloudflareDnsRecordId = null;
+            vm.DirectAccess.IsDnsConfigured = false;
+            vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            // Update VM with full DNS configuration
+            vm.DirectAccess.Subdomain = subdomain;
+            vm.DirectAccess.DnsName = dnsName;
+            vm.DirectAccess.CloudflareDnsRecordId = recordId;
+            vm.DirectAccess.IsDnsConfigured = true;
+            vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
+
+            _logger.LogInformation("✓ DNS configured: {DnsName} → {NodeIp}", dnsName, node.PublicIp);
         }
 
-        // Update VM
-        vm.DirectAccess.Subdomain = subdomain;
-        vm.DirectAccess.DnsName = dnsName;
-        vm.DirectAccess.CloudflareDnsRecordId = recordId;
-        vm.DirectAccess.IsDnsConfigured = true;
-        vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
-
         await _dataStore.SaveVmAsync(vm);
-
-        _logger.LogInformation("✓ DNS configured: {DnsName} → {NodeIp}", dnsName, node.PublicIp);
     }
 
     /// <summary>
