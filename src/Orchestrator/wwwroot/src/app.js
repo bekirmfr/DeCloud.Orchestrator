@@ -36,7 +36,7 @@ import {
     initMyTemplates
 } from './my-templates.js';
 import './template-detail.js';
-import { openDirectAccessModal, closeDirectAccessModal} from './direct-access.js';
+import './direct-access.js';
 
 // ============================================
 // CONFIGURATION
@@ -2321,5 +2321,3 @@ window.loadUserBalance = loadUserBalance;
 window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;
 window.clearNodeFilters = clearNodeFilters;
-window.openDirectAccessModal = openDirectAccessModal;
-window.closeDirectAccessModal = closeDirectAccessModal;
