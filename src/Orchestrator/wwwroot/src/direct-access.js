@@ -216,7 +216,8 @@ export async function openDirectAccessModal(vmId, vmName) {
         // Render quick-add buttons
         renderQuickAddButtons(vmId);
 
-        loadingEl.style.display = 'none';
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
     } catch (error) {
         loadingEl.style.display = 'none';
         showToast('Failed to load direct access info: ' + error.message, 'error');
@@ -229,7 +230,8 @@ export async function openDirectAccessModal(vmId, vmName) {
 export function closeDirectAccessModal() {
     const modal = document.getElementById('direct-access-modal');
     if (modal) {
-        modal.style.display = 'none';
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
     }
 }
 
