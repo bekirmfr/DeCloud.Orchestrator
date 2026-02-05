@@ -804,6 +804,62 @@ public class NodeService : INodeService
 
             await _ingressService.OnVmStoppedAsync(affectedVm.Id);
         }
+        else if (registration?.CommandType == NodeCommandType.AllocatePort)
+        {
+            _logger.LogInformation(
+                "Port allocation confirmed for VM {VmId}",
+                affectedVm.Id);
+
+            // Parse allocated port data from acknowledgment
+            if (!string.IsNullOrEmpty(ack.Data))
+            {
+                try
+                {
+                    var portData = System.Text.Json.JsonSerializer.Deserialize<AllocatePortAckData>(ack.Data);
+                    if (portData != null && portData.PublicPort > 0)
+                    {
+                        // Update the port mapping with the actual allocated port
+                        if (affectedVm.DirectAccess != null)
+                        {
+                            var mapping = affectedVm.DirectAccess.PortMappings
+                                .FirstOrDefault(m => m.VmPort == portData.VmPort && m.Protocol == portData.Protocol);
+
+                            if (mapping != null)
+                            {
+                                mapping.PublicPort = portData.PublicPort;
+                                affectedVm.UpdatedAt = DateTime.UtcNow;
+                                await _dataStore.SaveVmAsync(affectedVm);
+
+                                _logger.LogInformation(
+                                    "✓ Updated port mapping for VM {VmId}: {VmPort} → {PublicPort} ({Protocol})",
+                                    affectedVm.Id, portData.VmPort, portData.PublicPort, portData.Protocol);
+                            }
+                            else
+                            {
+                                _logger.LogWarning(
+                                    "Port mapping not found for VM {VmId}: vmPort={VmPort}, protocol={Protocol}",
+                                    affectedVm.Id, portData.VmPort, portData.Protocol);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Failed to parse AllocatePort acknowledgment data for VM {VmId}",
+                        affectedVm.Id);
+                }
+            }
+        }
+        else if (registration?.CommandType == NodeCommandType.RemovePort)
+        {
+            _logger.LogInformation(
+                "Port removal confirmed for VM {VmId}",
+                affectedVm.Id);
+
+            // Port mapping should already be removed by DirectAccessService
+            // This is just confirmation from the node
+        }
 
         return true;
     }
