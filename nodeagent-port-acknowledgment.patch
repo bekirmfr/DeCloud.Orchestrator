@@ -1,0 +1,223 @@
+From: Claude AI Assistant
+Subject: [PATCH] Add port acknowledgment with allocated port data to NodeAgent
+
+This patch updates the NodeAgent to send acknowledgments with the actual allocated
+port number when processing AllocatePort commands. This allows the Orchestrator to
+update the port mapping from the placeholder publicPort: 0 to the real port.
+
+Changes:
+- Update AllocatePort command handler to send acknowledgment with Data field
+- Include VmPort, PublicPort, and Protocol in the acknowledgment data
+- Update RemovePort command handler to send acknowledgment
+
+---
+ src/DeCloud.NodeAgent/Services/PortAllocationService.cs | 45 ++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 38 insertions(+), 7 deletions(-)
+
+diff --git a/src/DeCloud.NodeAgent/Services/PortAllocationService.cs b/src/DeCloud.NodeAgent/Services/PortAllocationService.cs
+index 1234567..abcdefg 100644
+--- a/src/DeCloud.NodeAgent/Services/PortAllocationService.cs
++++ b/src/DeCloud.NodeAgent/Services/PortAllocationService.cs
+@@ -1,5 +1,6 @@
+ using System;
+ using System.Threading.Tasks;
++using System.Text.Json;
+ using Microsoft.Extensions.Logging;
+ using DeCloud.NodeAgent.Models;
+
+@@ -10,6 +11,7 @@ public class PortAllocationService
+     private readonly PortMappingRepository _repository;
+     private readonly IptablesForwardingManager _forwardingManager;
+     private readonly PortPoolManager _poolManager;
++    private readonly IOrchestratorClient _orchestratorClient;
+     private readonly ILogger<PortAllocationService> _logger;
+
+     public PortAllocationService(
+         PortMappingRepository repository,
+         IptablesForwardingManager forwardingManager,
+         PortPoolManager poolManager,
++        IOrchestratorClient orchestratorClient,
+         ILogger<PortAllocationService> logger)
+     {
+         _repository = repository;
+         _forwardingManager = forwardingManager;
+         _poolManager = poolManager;
++        _orchestratorClient = orchestratorClient;
+         _logger = logger;
+     }
+
+     /// <summary>
+     /// Handle AllocatePort command from Orchestrator
+     /// </summary>
+-    public async Task<bool> HandleAllocatePortCommandAsync(string vmId, string vmPrivateIp, int vmPort, int protocol, string? label)
++    public async Task<bool> HandleAllocatePortCommandAsync(string commandId, string vmId, string vmPrivateIp, int vmPort, int protocol, string? label)
+     {
+         try
+         {
+             _logger.LogInformation(
+                 "Allocating port for VM {VmId}: vmPort={VmPort}, protocol={Protocol}, label={Label}",
+                 vmId, vmPort, protocol, label);
+
+             // Allocate public port from pool
+             var publicPort = await _poolManager.AllocatePortAsync(vmId, vmPort, protocol);
+             if (publicPort == 0)
+             {
+                 _logger.LogError("Failed to allocate port from pool for VM {VmId}", vmId);
++
++                // Send failure acknowledgment
++                await SendAcknowledgmentAsync(commandId, false, "Failed to allocate port from pool", null);
+                 return false;
+             }
+
+             _logger.LogInformation(
+                 "Allocated public port {PublicPort} for VM {VmId} port {VmPort}",
+                 publicPort, vmId, vmPort);
+
+             // Create port mapping record
+             var mapping = new PortMapping
+             {
+                 Id = Guid.NewGuid().ToString(),
+                 VmId = vmId,
+                 VmPrivateIp = vmPrivateIp,
+                 VmPort = vmPort,
+                 PublicPort = publicPort,
+                 Protocol = protocol,
+                 Label = label ?? $"Port {vmPort}",
+                 CreatedAt = DateTime.UtcNow
+             };
+
+             // Save to repository
+             await _repository.AddPortMappingAsync(mapping);
+
+             // Set up iptables DNAT rules
+             var iptablesSuccess = await _forwardingManager.AddForwardingRuleAsync(
+                 publicPort, vmPrivateIp, vmPort, protocol);
+
+             if (!iptablesSuccess)
+             {
+                 _logger.LogError(
+                     "Failed to create iptables rule for port {PublicPort} → {VmIp}:{VmPort}",
+                     publicPort, vmPrivateIp, vmPort);
+
+                 // Rollback: Remove mapping and free port
+                 await _repository.RemovePortMappingAsync(vmId, vmPort, protocol);
+                 await _poolManager.FreePortAsync(publicPort);
+-                return false;
++
++                // Send failure acknowledgment
++                await SendAcknowledgmentAsync(commandId, false, "Failed to create iptables forwarding rule", null);
++                return false;
+             }
+
+             _logger.LogInformation(
+                 "✓ Port allocation complete: {VmId} port {VmPort} → public port {PublicPort} ({Protocol})",
+                 vmId, vmPort, publicPort, protocol == 1 ? "TCP" : "UDP");
++
++            // Send success acknowledgment with allocated port data
++            var ackData = new
++            {
++                VmPort = vmPort,
++                PublicPort = publicPort,
++                Protocol = protocol
++            };
++
++            await SendAcknowledgmentAsync(commandId, true, null, JsonSerializer.Serialize(ackData));
+
+             return true;
+         }
+         catch (Exception ex)
+         {
+             _logger.LogError(ex, "Error handling AllocatePort command for VM {VmId}", vmId);
++
++            // Send failure acknowledgment
++            await SendAcknowledgmentAsync(commandId, false, $"Exception: {ex.Message}", null);
+             return false;
+         }
+     }
+
+     /// <summary>
+     /// Handle RemovePort command from Orchestrator
+     /// </summary>
+-    public async Task<bool> HandleRemovePortCommandAsync(string vmId, int vmPort, int protocol)
++    public async Task<bool> HandleRemovePortCommandAsync(string commandId, string vmId, int vmPort, int protocol)
+     {
+         try
+         {
+             _logger.LogInformation(
+                 "Removing port mapping for VM {VmId}: vmPort={VmPort}, protocol={Protocol}",
+                 vmId, vmPort, protocol);
+
+             // Get the mapping
+             var mapping = await _repository.GetPortMappingAsync(vmId, vmPort, protocol);
+             if (mapping == null)
+             {
+                 _logger.LogWarning(
+                     "Port mapping not found for VM {VmId} port {VmPort} protocol {Protocol}",
+                     vmId, vmPort, protocol);
+-                return false;
++
++                // Send acknowledgment anyway (idempotent operation)
++                await SendAcknowledgmentAsync(commandId, true, null, null);
++                return true;
+             }
+
+             // Remove iptables rule
+             await _forwardingManager.RemoveForwardingRuleAsync(
+                 mapping.PublicPort, mapping.VmPrivateIp, mapping.VmPort, mapping.Protocol);
+
+             // Free port in pool
+             await _poolManager.FreePortAsync(mapping.PublicPort);
+
+             // Remove from repository
+             await _repository.RemovePortMappingAsync(vmId, vmPort, protocol);
+
+             _logger.LogInformation(
+                 "✓ Port mapping removed: {VmId} port {VmPort} (was public port {PublicPort})",
+                 vmId, vmPort, mapping.PublicPort);
++
++            // Send success acknowledgment
++            await SendAcknowledgmentAsync(commandId, true, null, null);
+
+             return true;
+         }
+         catch (Exception ex)
+         {
+             _logger.LogError(ex, "Error handling RemovePort command for VM {VmId}", vmId);
++
++            // Send failure acknowledgment
++            await SendAcknowledgmentAsync(commandId, false, $"Exception: {ex.Message}", null);
+             return false;
+         }
+     }
++
++    /// <summary>
++    /// Send acknowledgment to Orchestrator for port allocation commands
++    /// </summary>
++    private async Task SendAcknowledgmentAsync(string commandId, bool success, string? errorMessage, string? data)
++    {
++        try
++        {
++            var ack = new
++            {
++                CommandId = commandId,
++                Success = success,
++                ErrorMessage = errorMessage,
++                CompletedAt = DateTime.UtcNow,
++                Data = data
++            };
++
++            await _orchestratorClient.SendCommandAcknowledgmentAsync(commandId, ack);
++
++            _logger.LogDebug(
++                "Sent acknowledgment for command {CommandId}: Success={Success}",
++                commandId, success);
++        }
++        catch (Exception ex)
++        {
++            _logger.LogError(ex,
++                "Failed to send acknowledgment for command {CommandId}",
++                commandId);
++        }
++    }
+ }
+
