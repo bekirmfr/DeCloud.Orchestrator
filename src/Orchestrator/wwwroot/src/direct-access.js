@@ -216,6 +216,7 @@ export async function openDirectAccessModal(vmId, vmName) {
         // Render quick-add buttons
         renderQuickAddButtons(vmId);
 
+        loadingEl.style.display = 'none';
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
     } catch (error) {
