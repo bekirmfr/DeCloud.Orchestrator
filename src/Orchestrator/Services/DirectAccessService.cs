@@ -80,18 +80,72 @@ public class DirectAccessService
             // Ensure DNS is configured
             await EnsureDnsConfiguredAsync(vm, ct);
 
+            // Get VM's node to determine allocation strategy
+            var vmNode = await _dataStore.GetNodeAsync(vm.NodeId);
+            if (vmNode == null)
+            {
+                return new AllocatePortResponse(
+                    string.Empty, vmPort, 0, protocol, string.Empty,
+                    Success: false, Error: $"Node {vm.NodeId} not found");
+            }
+
+            // Determine target node for port allocation (relay for CGNAT, direct for non-CGNAT)
+            string targetNodeId;
+            bool isRelayForwarding = false;
+            string? tunnelDestinationIp = null;
+
+            if (vmNode.CgnatInfo != null)
+            {
+                // CGNAT node - allocate port on relay instead
+                var relayNode = await _dataStore.GetNodeAsync(vmNode.CgnatInfo.AssignedRelayNodeId);
+                if (relayNode == null || string.IsNullOrEmpty(relayNode.PublicIp))
+                {
+                    return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, 
+                        Error: $"Relay node {vmNode.CgnatInfo.AssignedRelayNodeId} not found or has no public IP");
+                }
+
+                targetNodeId = relayNode.Id;
+                isRelayForwarding = true;
+                tunnelDestinationIp = vmNode.CgnatInfo.TunnelIp;
+
+                _logger.LogInformation(
+                    "Allocating port on relay {RelayId} ({RelayIp}) for CGNAT VM {VmId} on node {NodeId} (tunnel: {TunnelIp})",
+                    relayNode.Id, relayNode.PublicIp, vmId, vmNode.Id, tunnelDestinationIp);
+            }
+            else
+            {
+                // Direct access node - allocate normally
+                if (string.IsNullOrEmpty(vmNode.PublicIp))
+                {
+                   return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, Error: $"Node {vm.NodeId} has no public IP");
+                }
+
+                targetNodeId = vmNode.Id;
+
+                _logger.LogInformation(
+                    "Allocating port on node {NodeId} ({NodeIp}) for VM {VmId}",
+                    vmNode.Id, vmNode.PublicIp, vmId);
+            }
+
             _logger.LogInformation(
                 "Allocating port {VmPort} ({Protocol}) for VM {VmId} ({VmIp})",
                 vmPort, protocol, vmId, vm.NetworkConfig.PrivateIp);
 
-            // Send command to NodeAgent to allocate port
+            // Send command to target node (relay for CGNAT, vm node for direct)
             var payload = new
             {
                 VmId = vmId,
                 VmPrivateIp = vm.NetworkConfig.PrivateIp,
                 VmPort = vmPort,
                 Protocol = (int)protocol,
-                Label = label
+                Label = label,
+                // NEW: Relay forwarding information
+                IsRelayForwarding = isRelayForwarding,
+                TunnelDestinationIp = tunnelDestinationIp
             };
 
             var command = new NodeCommand(
@@ -105,11 +159,11 @@ public class DirectAccessService
             _dataStore.RegisterCommand(
                 command.CommandId,
                 vmId,
-                vm.NodeId,
+                targetNodeId,  // Register with target node (relay or vm node)
                 NodeCommandType.AllocatePort
             );
 
-            var result = await _nodeCommandService.DeliverCommandAsync(vm.NodeId, command, ct);
+            var result = await _nodeCommandService.DeliverCommandAsync(targetNodeId, command, ct);
 
             if (!result.Success)
             {
