@@ -486,7 +486,7 @@ public class DirectAccessService
         string commandId,
         CancellationToken ct)
     {
-        const int maxAttempts = 20;  // 20 attempts = 10 seconds max wait
+        const int maxAttempts = 60;  // 60 attempts = 30 seconds max wait (increased from 10s to handle processing delays)
         const int delayMs = 500;     // Poll every 500ms
 
         for (int attempt = 0; attempt < maxAttempts; attempt++)
