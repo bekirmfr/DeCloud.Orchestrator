@@ -1365,7 +1365,33 @@ public class NodeService : INodeService
                 var newStatus = ParseVmStatus(reported.State);
                 var newPowerState = ParsePowerState(reported.State);
 
-                if (vm.Status != newStatus || vm.PowerState != newPowerState)
+                // ====================================================================
+                // CRITICAL: Don't overwrite transitional statuses from heartbeat
+                // ====================================================================
+                // When a VM is in a transitional state (Provisioning, Deleting, Stopping),
+                // it's managed by command acknowledgments, not heartbeat.
+                // Heartbeat data is stale (node reports current libvirt state, which hasn't
+                // caught up to the command being executed).
+                //
+                // Race condition example:
+                // 1. Orchestrator sends DeleteVm command → Status = Deleting
+                // 2. Node receives command but VM still exists in libvirt
+                // 3. Node sends heartbeat with VM=Running (stale!) → Status reset to Running
+                // 4. Node deletes VM and sends acknowledgment
+                // 5. Acknowledgment handler checks Status==Deleting → FAILS (now Running!)
+                // 6. VM stuck in Running state forever
+                var isTransitionalStatus = vm.Status == VmStatus.Provisioning ||
+                                           vm.Status == VmStatus.Deleting ||
+                                           vm.Status == VmStatus.Stopping;
+
+                if (isTransitionalStatus)
+                {
+                    _logger.LogDebug(
+                        "Skipping heartbeat state update for VM {VmId} - in transitional status {Status}. " +
+                        "State is managed by command acknowledgment, not heartbeat.",
+                        vmId, vm.Status);
+                }
+                else if (vm.Status != newStatus || vm.PowerState != newPowerState)
                 {
                     var wasRunning = vm.Status == VmStatus.Running;
                     vm.Status = newStatus;
