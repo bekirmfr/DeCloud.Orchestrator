@@ -425,11 +425,46 @@ public class DirectAccessService
             return;
         }
 
-        // Get node public IP
+        // Get VM's node
         var node = await _dataStore.GetNodeAsync(vm.NodeId);
-        if (node == null || string.IsNullOrEmpty(node.PublicIp))
+        if (node == null)
         {
-            throw new InvalidOperationException("Node not found or has no public IP");
+            throw new InvalidOperationException("Node not found");
+        }
+
+        // Determine the correct public IP for DNS:
+        // - For CGNAT nodes: use the relay node's public IP
+        // - For direct access nodes: use the node's own public IP
+        string targetIp;
+        string targetDescription;
+
+        if (node.CgnatInfo != null)
+        {
+            // CGNAT node - use relay node's public IP
+            var relayNode = await _dataStore.GetNodeAsync(node.CgnatInfo.AssignedRelayNodeId);
+            if (relayNode == null || string.IsNullOrEmpty(relayNode.PublicIp))
+            {
+                throw new InvalidOperationException(
+                    $"CGNAT node {node.Id} has no assigned relay or relay has no public IP");
+            }
+
+            targetIp = relayNode.PublicIp;
+            targetDescription = $"relay {relayNode.Id}";
+
+            _logger.LogInformation(
+                "Using relay node {RelayId} IP {RelayIp} for DNS (CGNAT VM {VmId})",
+                relayNode.Id, relayNode.PublicIp, vm.Id);
+        }
+        else
+        {
+            // Direct access node - use node's own public IP
+            if (string.IsNullOrEmpty(node.PublicIp))
+            {
+                throw new InvalidOperationException("Node has no public IP");
+            }
+
+            targetIp = node.PublicIp;
+            targetDescription = $"node {node.Id}";
         }
 
         // Generate subdomain (similar to ingress pattern)
@@ -438,13 +473,13 @@ public class DirectAccessService
         var dnsName = $"{subdomain}.direct.stackfi.tech";
 
         _logger.LogInformation(
-            "Creating DNS record {DnsName} → {NodeIp} for VM {VmId}",
-            dnsName, node.PublicIp, vm.Id);
+            "Creating DNS record {DnsName} → {TargetIp} ({Description}) for VM {VmId}",
+            dnsName, targetIp, targetDescription, vm.Id);
 
         // Create DNS record (optional - gracefully degrade if Cloudflare not configured)
         var recordId = await _dnsService.CreateOrUpdateDnsRecordAsync(
             dnsName,
-            node.PublicIp,
+            targetIp,
             ct);
 
         if (string.IsNullOrEmpty(recordId))
@@ -473,7 +508,7 @@ public class DirectAccessService
             vm.DirectAccess.IsDnsConfigured = true;
             vm.DirectAccess.DnsUpdatedAt = DateTime.UtcNow;
 
-            _logger.LogInformation("✓ DNS configured: {DnsName} → {NodeIp}", dnsName, node.PublicIp);
+            _logger.LogInformation("✓ DNS configured: {DnsName} → {TargetIp}", dnsName, targetIp);
         }
 
         await _dataStore.SaveVmAsync(vm);
