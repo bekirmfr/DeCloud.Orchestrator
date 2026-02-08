@@ -1265,12 +1265,7 @@ public class VmService : IVmService
             portsToAllocate.Count, vm.Id, template.Name);
 
         // Get DirectAccessService from service provider
-        var directAccessService = _serviceProvider.GetService<DirectAccessService>();
-        if (directAccessService == null)
-        {
-            _logger.LogError("DirectAccessService not available for auto-allocation");
-            return;
-        }
+        var directAccessService = _serviceProvider.GetRequiredService<DirectAccessService>();
 
         foreach (var exposedPort in portsToAllocate)
         {
