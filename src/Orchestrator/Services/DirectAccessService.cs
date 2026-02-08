@@ -150,6 +150,17 @@ public class DirectAccessService
                         Success: false, Error: $"Failed to setup relay forwarding: {relayResult.Message}");
                 }
 
+                // Create a placeholder mapping for the relay command so the acknowledgment handler can update it
+                var tempMapping = new DirectAccessPortMapping
+                {
+                    VmPort = 0,  // Placeholder - relay doesn't map to a specific VM port
+                    PublicPort = 0,  // Will be filled by acknowledgment
+                    Protocol = protocol,
+                    CreatedAt = DateTime.UtcNow
+                };
+                vm.DirectAccess.PortMappings.Add(tempMapping);
+                await _dataStore.SaveVmAsync(vm);
+
                 // Wait for relay node to allocate a public port
                 _logger.LogDebug("Waiting for relay node to allocate public port...");
                 var publicPort = await WaitForPortAllocationAsync(vmId, 0, protocol, relayCommand.CommandId, ct);
@@ -157,6 +168,20 @@ public class DirectAccessService
                 if (publicPort <= 0)
                 {
                     _logger.LogError("Relay node did not allocate a public port within timeout");
+                    
+                    // Clean up placeholder mapping
+                    vm = await _dataStore.GetVmAsync(vmId);
+                    if (vm?.DirectAccess != null)
+                    {
+                        var placeholderMapping = vm.DirectAccess.PortMappings
+                            .FirstOrDefault(m => m.VmPort == 0 && m.Protocol == protocol);
+                        if (placeholderMapping != null)
+                        {
+                            vm.DirectAccess.PortMappings.Remove(placeholderMapping);
+                            await _dataStore.SaveVmAsync(vm);
+                        }
+                    }
+                    
                     return new AllocatePortResponse(
                         string.Empty, vmPort, 0, protocol, string.Empty,
                         Success: false, Error: "Relay port allocation failed or timed out");
@@ -165,6 +190,21 @@ public class DirectAccessService
                 _logger.LogInformation(
                     "✓ Relay node allocated public port {PublicPort} for CGNAT VM {VmId}",
                     publicPort, vmId);
+
+                // Remove the temporary placeholder mapping (it was only needed for acknowledgment handling)
+                vm = await _dataStore.GetVmAsync(vmId);  // Refresh VM state
+                if (vm?.DirectAccess != null)
+                {
+                    var placeholderMapping = vm.DirectAccess.PortMappings
+                        .FirstOrDefault(m => m.VmPort == 0 && m.Protocol == protocol && m.PublicPort == publicPort);
+                    if (placeholderMapping != null)
+                    {
+                        vm.DirectAccess.PortMappings.Remove(placeholderMapping);
+                        await _dataStore.SaveVmAsync(vm);
+                        _logger.LogDebug("Removed temporary placeholder mapping for relay port");
+                    }
+                }
+
 
                 // STEP 2: Allocate port on CGNAT node (3rd hop: CGNAT node → VM's local IP)
                 var cgnatPayload = new
