@@ -709,6 +709,22 @@ public class VmService : IVmService
                 }
             });
 
+            // Auto-allocate ports from template
+            if (!string.IsNullOrEmpty(vm.TemplateId))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await AutoAllocateTemplatePortsAsync(vm);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to auto-allocate ports for VM {VmId}", vm.Id);
+                    }
+                });
+            }
+
             // Settle template fee on successful VM boot (paid templates only)
             if (!string.IsNullOrEmpty(vm.TemplateId))
             {
@@ -1213,7 +1229,86 @@ public class VmService : IVmService
         {
             _logger.LogError(ex,
                 "Error settling template fee for VM {VmId}, template {TemplateId}",
-                vm.Id, template.Id);
+        }
+    }
+
+    /// <summary>
+    /// Automatically allocate ports from template when VM starts running
+    /// </summary>
+    private async Task AutoAllocateTemplatePortsAsync(VirtualMachine vm)
+    {
+        if (string.IsNullOrEmpty(vm.TemplateId))
+            return;
+
+        var template = await _templateService.GetTemplateByIdAsync(vm.TemplateId);
+        if (template?.ExposedPorts == null || !template.ExposedPorts.Any())
+        {
+            _logger.LogDebug("VM {VmId} template has no exposed ports", vm.Id);
+            return;
+        }
+
+        // Filter to only public ports that aren't already allocated
+        var portsToAllocate = template.ExposedPorts
+            .Where(p => p.IsPublic)
+            .Where(p => vm.DirectAccess?.PortMappings?.Any(m => m.VmPort == p.Port) != true)
+            .ToList();
+
+        if (!portsToAllocate.Any())
+        {
+            _logger.LogDebug("All template ports already allocated for VM {VmId}", vm.Id);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Auto-allocating {Count} ports for VM {VmId} from template {TemplateName}",
+            portsToAllocate.Count, vm.Id, template.Name);
+
+        // Get DirectAccessService from service provider
+        var directAccessService = _serviceProvider.GetService<DirectAccessService>();
+        if (directAccessService == null)
+        {
+            _logger.LogError("DirectAccessService not available for auto-allocation");
+            return;
+        }
+
+        foreach (var exposedPort in portsToAllocate)
+        {
+            // Parse protocol
+            var protocol = exposedPort.Protocol.ToLower() switch
+            {
+                "tcp" => PortProtocol.TCP,
+                "udp" => PortProtocol.UDP,
+                "both" or "tcp_and_udp" => PortProtocol.Both,
+                _ => PortProtocol.TCP
+            };
+
+            try
+            {
+                var result = await directAccessService.AllocatePortAsync(
+                    vm.Id,
+                    exposedPort.Port,
+                    protocol,
+                    exposedPort.Description ?? exposedPort.Port.ToString());
+
+                if (result.Success)
+                {
+                    _logger.LogInformation(
+                        "✓ Auto-allocated port {VmPort} ({Protocol}) → {PublicPort} for VM {VmId}",
+                        exposedPort.Port, protocol, result.PublicPort, vm.Id);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "✗ Failed to auto-allocate port {VmPort} for VM {VmId}: {Error}",
+                        exposedPort.Port, vm.Id, result.Error);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Exception during auto-allocation of port {Port} for VM {VmId}",
+                    exposedPort.Port, vm.Id);
+            }
         }
     }
 }
