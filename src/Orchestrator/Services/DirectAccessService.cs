@@ -494,11 +494,11 @@ public class DirectAccessService
                 var relayNode = await _dataStore.GetNodeAsync(vmNode.CgnatInfo.AssignedRelayNodeId);
                 if (relayNode != null)
                 {
-                    // For relay, use VmPort=0 to match the placeholder mapping pattern
+                    // Relay stores mappings with VmPort=PublicPort (not 0)
                     var relayPayload = new
                     {
                         VmId = vmId,
-                        VmPort = 0,  // Relay uses 0 as it doesn't map to a specific VM port
+                        VmPort = mapping.PublicPort,  // Relay uses publicPort as vmPort
                         Protocol = (int)mapping.Protocol
                     };
 
