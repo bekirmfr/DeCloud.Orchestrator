@@ -94,10 +94,19 @@ public class DirectAccessService
             bool isRelayForwarding = false;
             string? tunnelDestinationIp = null;
 
-            if (vmNode.CgnatInfo != null)
+            if (vmNode.IsBehindCgnat)  // ✅ FIX: Use IsBehindCgnat instead of CgnatInfo != null
             {
                 // CGNAT VM requires 3-hop forwarding:
                 // External → Relay Host → Relay VM → CGNAT Node → VM
+                
+                if (vmNode.CgnatInfo == null || string.IsNullOrEmpty(vmNode.CgnatInfo.AssignedRelayNodeId))
+                {
+                    return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, 
+                        Error: "Node is behind CGNAT but has no relay assignment");
+                }
+                
                 var relayNode = await _dataStore.GetNodeAsync(vmNode.CgnatInfo.AssignedRelayNodeId);
                 if (relayNode == null || string.IsNullOrEmpty(relayNode.PublicIp))
                 {
@@ -445,12 +454,12 @@ public class DirectAccessService
             var vmNode = await _dataStore.GetNodeAsync(vm.NodeId);
             if (vmNode == null)
             {
-                _logger.LogError("VM {VmId} references non-existent node {NodeId}", vmId, vm.NodeId);
+                        _logger.LogError("VM {VmId} references non-existent node {NodeId}", vmId, vm.NodeId);
                 return false;
             }
 
             // Check if this is a CGNAT VM requiring 3-hop cleanup
-            bool isCgnatVm = vmNode.CgnatInfo?.AssignedRelayNodeId != null;
+            bool isCgnatVm = vmNode.IsBehindCgnat;  // ✅ FIX: Use IsBehindCgnat instead of CgnatInfo check
 
             if (isCgnatVm)
             {
