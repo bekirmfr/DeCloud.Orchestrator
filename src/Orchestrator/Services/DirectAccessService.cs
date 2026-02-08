@@ -96,7 +96,8 @@ public class DirectAccessService
 
             if (vmNode.CgnatInfo != null)
             {
-                // CGNAT node - allocate port on relay instead
+                // CGNAT VM requires 3-hop forwarding:
+                // External → Relay Host → Relay VM → CGNAT Node → VM
                 var relayNode = await _dataStore.GetNodeAsync(vmNode.CgnatInfo.AssignedRelayNodeId);
                 if (relayNode == null || string.IsNullOrEmpty(relayNode.PublicIp))
                 {
@@ -106,13 +107,147 @@ public class DirectAccessService
                         Error: $"Relay node {vmNode.CgnatInfo.AssignedRelayNodeId} not found or has no public IP");
                 }
 
-                targetNodeId = relayNode.Id;
-                isRelayForwarding = true;
-                tunnelDestinationIp = vmNode.CgnatInfo.TunnelIp;
+                _logger.LogInformation(
+                    "Setting up 3-hop forwarding for CGNAT VM {VmId}: " +
+                    "Relay {RelayId} ({RelayIp}) → CGNAT {NodeId} ({TunnelIp}) → VM ({VmIp}:{VmPort})",
+                    vmId, relayNode.Id, relayNode.PublicIp, vmNode.Id, vmNode.CgnatInfo.TunnelIp, vm.NetworkConfig.PrivateIp, vmPort);
+
+                // STEP 1: Allocate port on relay node (2nd hop: relay VM → CGNAT node's tunnel IP)
+                var relayPayload = new
+                {
+                    VmId = vmId,
+                    VmPrivateIp = vmNode.CgnatInfo.TunnelIp,  // Forward to CGNAT node's tunnel IP
+                    VmPort = 0,  // Placeholder - will use same port as public
+                    Protocol = (int)protocol,
+                    Label = $"{label} (relay→tunnel)",
+                    IsRelayForwarding = true,
+                    TunnelDestinationIp = vmNode.CgnatInfo.TunnelIp
+                };
+
+                var relayCommand = new NodeCommand(
+                    Guid.NewGuid().ToString(),
+                    NodeCommandType.AllocatePort,
+                    JsonSerializer.Serialize(relayPayload),
+                    RequiresAck: true,
+                    TargetResourceId: vmId
+                );
+
+                _dataStore.RegisterCommand(
+                    relayCommand.CommandId,
+                    vmId,
+                    relayNode.Id,
+                    NodeCommandType.AllocatePort
+                );
+
+                _logger.LogInformation("Sending AllocatePort to relay node {RelayId}", relayNode.Id);
+                var relayResult = await _nodeCommandService.DeliverCommandAsync(relayNode.Id, relayCommand, ct);
+
+                if (!relayResult.Success)
+                {
+                    _logger.LogError("Failed to deliver command to relay node: {Message}", relayResult.Message);
+                    return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, Error: $"Failed to setup relay forwarding: {relayResult.Message}");
+                }
+
+                // Wait for relay node to allocate a public port
+                _logger.LogDebug("Waiting for relay node to allocate public port...");
+                var publicPort = await WaitForPortAllocationAsync(vmId, 0, protocol, relayCommand.CommandId, ct);
+
+                if (publicPort <= 0)
+                {
+                    _logger.LogError("Relay node did not allocate a public port within timeout");
+                    return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, Error: "Relay port allocation failed or timed out");
+                }
 
                 _logger.LogInformation(
-                    "Allocating port on relay {RelayId} ({RelayIp}) for CGNAT VM {VmId} on node {NodeId} (tunnel: {TunnelIp})",
-                    relayNode.Id, relayNode.PublicIp, vmId, vmNode.Id, tunnelDestinationIp);
+                    "✓ Relay node allocated public port {PublicPort} for CGNAT VM {VmId}",
+                    publicPort, vmId);
+
+                // STEP 2: Allocate port on CGNAT node (3rd hop: CGNAT node → VM's local IP)
+                var cgnatPayload = new
+                {
+                    VmId = vmId,
+                    VmPrivateIp = vm.NetworkConfig.PrivateIp,  // Forward to VM's local IP  
+                    VmPort = vmPort,  // VM's actual service port
+                    PublicPort = publicPort,  // Use same port as relay allocated
+                    Protocol = (int)protocol,
+                    Label = "${label} (node→vm)",
+                    IsRelayForwarding = false  // Direct local forwarding
+                };
+
+                var cgnatCommand = new NodeCommand(
+                    Guid.NewGuid().ToString(),
+                    NodeCommandType.AllocatePort,
+                    JsonSerializer.Serialize(cgnatPayload),
+                    RequiresAck: true,
+                    TargetResourceId: vmId
+                );
+
+                _dataStore.RegisterCommand(
+                    cgnatCommand.CommandId,
+                    vmId,
+                    vmNode.Id,
+                    NodeCommandType.AllocatePort
+                );
+
+                _logger.LogInformation(
+                    "Sending AllocatePort to CGNAT node {NodeId} with port {PublicPort}",
+                    vmNode.Id, publicPort);
+                var cgnatResult = await _nodeCommandService.DeliverCommandAsync(vmNode.Id, cgnatCommand, ct);
+
+                if (!cgnatResult.Success)
+                {
+                    _logger.LogError("Failed to deliver command to CGNAT node: {Message}", cgnatResult.Message);
+                    
+                    // Rollback: Remove relay port allocation
+                    _logger.LogWarning("Rolling back relay port allocation for VM {VmId}", vmId);
+                    try
+                    {
+                        await RemovePortAsync(vmId, vmPort, ct);
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        _logger.LogError(rollbackEx, "Failed to rollback relay port allocation");
+                    }
+                    
+                    return new AllocatePortResponse(
+                        string.Empty, vmPort, 0, protocol, string.Empty,
+                        Success: false, Error: $"Failed to setup CGNAT node forwarding: {cgnatResult.Message}");
+                }
+
+                _logger.LogInformation(
+                    "✓ 3-hop forwarding complete for VM {VmId}: " +
+                    "External:{PublicPort} → Relay → CGNAT:{PublicPort} → VM:{VmPort}",
+                    vmId, publicPort, vmPort);
+
+                // Create mapping with allocated port
+                var cgnatMapping = new DirectAccessPortMapping
+                {
+                    VmPort = vmPort,
+                    PublicPort = publicPort,
+                    Protocol = protocol,
+                    Label = label
+                };
+
+                vm.DirectAccess.PortMappings.Add(cgnatMapping);
+                vm.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(vm);
+
+                var connectionString = GenerateConnectionString(
+                    vm.DirectAccess.DnsName ?? "unknown",
+                    publicPort,
+                    label);
+
+                return new AllocatePortResponse(
+                    cgnatMapping.Id,
+                    vmPort,
+                    publicPort,
+                    protocol,
+                    connectionString,
+                    Success: true);
             }
             else
             {
