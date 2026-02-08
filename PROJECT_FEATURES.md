@@ -384,6 +384,207 @@ The relay infrastructure is architected to be **platform-agnostic** and could be
 
 ---
 
+## Smart Port Allocation (Direct Access)
+
+### Overview
+
+The Smart Port Allocation system enables external TCP/UDP access to VM services through automated port forwarding. For CGNAT nodes, it implements a 3-hop forwarding architecture through relay nodes, while public nodes use direct forwarding.
+
+**Key Features:**
+- Automatic relay forwarding for CGNAT nodes
+- Direct forwarding for public nodes (bypasses relay)
+- Database-backed persistence with reconciliation
+- Protocol support: TCP, UDP, or both
+- Port range: 40000-65535 (25,536 assignable ports)
+
+### 3-Hop Forwarding Architecture
+
+For VMs on CGNAT nodes, traffic flows through three hops:
+
+```
+External Client:40000
+  ↓ (Internet)
+Relay Node iptables DNAT
+  PublicPort:40000 → TunnelIP:40000
+  ↓ (WireGuard tunnel)
+CGNAT Node iptables DNAT
+  PublicPort:40000 → VM:22
+  ↓ (libvirt bridge)
+VM SSH Server:22
+```
+
+**Direct forwarding** (public nodes):
+```
+External Client:40000
+  ↓ (Internet)
+Node iptables DNAT
+  PublicPort:40000 → VM:22
+  ↓ (libvirt bridge)
+VM SSH Server:22
+```
+
+### Port Allocation Flow
+
+1. **User requests port** - VM service port (e.g., SSH 22) → public port (e.g., 40000)
+2. **Orchestrator validates:**
+   - Port in valid range (40000-65535)
+   - Port not already allocated
+   - VM exists and is running
+3. **Orchestrator identifies path:**
+   - **CGNAT node:** Finds assigned relay node → sends commands to both nodes
+   - **Public node:** Sends command directly to node
+4. **Nodes create iptables rules:**
+   - DNAT: `PublicPort → TargetIP:TargetPort`
+   - FORWARD: Accept forwarded packets
+5. **Database persistence:**
+   - Both nodes store mapping in SQLite
+   - Survives service restarts
+
+### Database Schema
+
+```sql
+CREATE TABLE PortMappings (
+    Id TEXT PRIMARY KEY,
+    VmId TEXT NOT NULL,
+    VmPrivateIp TEXT NOT NULL,  -- For CGNAT: VM IP, For Relay: Tunnel IP
+    VmPort INTEGER NOT NULL,     -- For CGNAT: VM port, For Relay: 0
+    PublicPort INTEGER NOT NULL UNIQUE,
+    Protocol INTEGER NOT NULL,   -- 0=TCP, 1=UDP, 2=Both
+    Label TEXT,
+    CreatedAt TEXT NOT NULL,
+    IsActive INTEGER NOT NULL DEFAULT 1
+);
+```
+
+**Special marker for relay mappings:** `VmPort = 0`
+
+This marker distinguishes relay forwarding rules from direct VM forwarding rules, enabling correct matching and deletion logic.
+
+### Port Deletion - Critical Bug Fixes (2026-02-08)
+
+Port deletion for relay nodes required fixing **5 interconnected bugs**:
+
+#### Bug #1: Deadlock in CreateForwardingAsync
+**Symptom:** Port allocation hung indefinitely  
+**Root Cause:** Method held lock while calling `GetRelayVmIpAsync`, which also tried to acquire same lock  
+**Fix:** Refactored to `CreateForwardingInternalAsync` (lock-free internal method) - [commit 73d5ee7]  
+**Files:** `PortForwardingManager.cs`
+
+#### Bug #2: VmPort Mismatch in Orchestrator
+**Symptom:** Relay `RemovePort` payload had `vmPort=22` instead of `0`  
+**Root Cause:** Orchestrator used original VM port instead of relay's special `VmPort=0`  
+**Fix:** Detect relay forwarding and send `VmPort=0` in RemovePort command - [commit 9a76f41]  
+**Files:** `DirectAccessService.cs`
+
+#### Bug #3: IP Address Mismatch
+**Symptom:** iptables deletion used VM IP (192.168.x.x) instead of tunnel IP (10.20.x.x)  
+**Root Cause:** Relay forwarding uses tunnel IP, not VM IP  
+**Fix:** Resolve relay VM's tunnel IP before calling RemoveForwardingAsync - [commit 2add8d8]  
+**Files:** `CommandProcessorService.cs`
+
+#### Bug #4: PublicPort Matching
+**Symptom:** Deleted wrong relay mapping (e.g., SSH instead of Redis)  
+**Root Cause:** All relay mappings have `VmPort=0`, so matching by VmPort returned first mapping  
+**Fix:** Extract `PublicPort` from payload and match by `PublicPort` when `VmPort=0` - [commits b8d505f, 3b46fed]  
+**Files:** `DirectAccessService.cs`, `CommandProcessorService.cs`
+
+Example:
+```csharp
+// Orchestrator: Send PublicPort in relay RemovePort
+payload["publicPort"] = mapping.PublicPort;
+
+// NodeAgent: Match by PublicPort when VmPort=0
+if (vmPort.Value == 0 && publicPort.HasValue)
+    mapping = mappings.FirstOrDefault(m => m.PublicPort == publicPort.Value);
+else
+    mapping = mappings.FirstOrDefault(m => m.VmPort == vmPort.Value);
+```
+
+#### Bug #5: Database Deletion
+**Symptom:** All relay mappings deleted when removing one port  
+**Root Cause:** After correct matching, code called `RemoveAsync(vmId, vmPort=0)` which matched ALL relay mappings  
+
+SQL executed:
+```sql
+DELETE FROM PortMappings WHERE VmId = '...' AND VmPort = 0  -- Deletes all!
+```
+
+**Fix:** Added `RemoveByPublicPortAsync` method, use it for relay mappings - [commit 75934c8]  
+**Files:** `PortMappingRepository.cs`, `CommandProcessorService.cs`
+
+```csharp
+// Delete by PublicPort for relay mappings
+if (vmPort.Value == 0)
+    removed = await _portMappingRepository.RemoveByPublicPortAsync(mapping.PublicPort);
+else
+    removed = await _portMappingRepository.RemoveAsync(vmId, vmPort.Value);
+```
+
+### Reconciliation & Self-Healing
+
+**Startup Reconciliation:**
+- `PortForwardingReconciliationService` runs on node startup
+- Reads all active mappings from database
+- Flushes iptables chain
+- Recreates all rules from database
+- **Database is source of truth** - iptables synced to match
+
+**Self-Healing Scenarios:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Service restart | ✅ All rules recreated from database |
+| iptables flushed | ✅ Rules recreated on next restart |
+| Database deleted | ❌ All mappings lost (DB is source of truth) |
+| Orphaned iptables rules | ❌ Not detected (acceptable - DB drives state) |
+
+**Design Decision:** One-way reconciliation (DB → iptables) is correct architecture.
+
+### Health Monitoring & Failure Handling
+
+**Node Health Detection:**
+- `NodeHealthMonitorService` runs every 30 seconds
+- No heartbeat for 2 minutes → node marked `Offline`
+- All VMs on offline node marked `Error`
+- Billing stops for Error VMs
+
+**Failure Handling Strategy:**
+
+When CGNAT node goes offline:
+1. **Immediate:** Node marked `Offline`, VMs marked `Error`, billing stops
+2. **User decision:** Wait for recovery OR delete VM
+3. **On deletion:** Orchestrator triggers port cleanup on relay nodes
+4. **Future:** Auto-delete after grace period (e.g., 24 hours)
+
+**Design rationale:**
+- ❌ Don't auto-cleanup immediately → prevents unintended service interruptions
+- ✅ Mark as Error + stop billing → fair to users, allows investigation
+- ✅ Manual or delayed cleanup → gives users control
+
+### Implementation Files
+
+**Orchestrator:**
+- `DirectAccessService.cs` - Port allocation coordinator
+- `NodeService.cs` - Health monitoring
+- `BackgroundServices.cs` - NodeHealthMonitorService
+
+**NodeAgent:**
+- `PortForwardingManager.cs` - iptables management
+- `PortMappingRepository.cs` - Database persistence
+- `CommandProcessorService.cs` - Command handling
+- `PortForwardingReconciliationService.cs` - Startup reconciliation
+
+### Production Status
+
+✅ **All critical bugs fixed** (5 bugs, 6 commits)  
+✅ **Database persistence working**  
+✅ **Reconciliation on restart**  
+✅ **Health monitoring active**  
+✅ **End-to-end tested and verified**  
+
+The 3-hop port forwarding system is **production-ready** for CGNAT bypass scenarios.
+
+
 ## VM Proxy System
 
 ### Unified HTTP and WebSocket Proxy

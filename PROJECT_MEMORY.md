@@ -794,8 +794,29 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Node self-service pricing API (GET/PATCH)
   - Marketplace displays per-node pricing
   - NodeAgent pricing config + registration integration
+- ✅ Smart Port Allocation (Direct Access) - **COMPLETE (2026-02-08)**
+  - 3-hop port forwarding for CGNAT nodes through relay infrastructure
+  - Direct port forwarding for public nodes
+  - Database-backed persistence (SQLite on nodes)
+  - Protocol support: TCP, UDP, or Both (critical for Shadowsocks, VPNs)
+  - Port range: 40000-65535 (25,536 assignable ports)
+  - **CRITICAL BUG FIXES (5 interconnected bugs):**
+    1. Deadlock in CreateForwardingAsync [commit 73d5ee7]
+    2. VmPort mismatch in Orchestrator RemovePort [commit 9a76f41]
+    3. IP address mismatch (VM IP vs tunnel IP) [commit 2add8d8]
+    4. PublicPort matching for relay mappings [commits b8d505f, 3b46fed]
+    5. Database deletion removing all relay mappings [commit 75934c8]
+  - Reconciliation on node startup (DB → iptables)
+  - Health monitoring integration (NodeHealthMonitorService)
+  - Failure handling strategy (Error state, billing stop, grace period)
+  - **Primary Use Case:** Shadowsocks browser template (requires UDP+TCP)
+  - **Production Status:** ✅ All bugs fixed, end-to-end tested, production-ready
 
 **Ready for Next:**
+- 🎯 Shadowsocks Browser Template - **READY TO IMPLEMENT**
+  - Now that Smart Port Allocation supports UDP+TCP protocols
+  - Privacy-focused censorship-resistant browsing
+  - One-click deployment with automatic port allocation
 - 🎯 VM Template Marketplace (Priority 1.2) - **NEXT FOCUS**
   - Template creation/sharing system
   - Cloud-init script management

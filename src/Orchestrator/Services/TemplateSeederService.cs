@@ -970,12 +970,13 @@ final_message: |
         {
             Name = "Privacy Proxy (Shadowsocks)",
             Slug = "privacy-proxy-shadowsocks",
-            Version = "1.0.0",
+            Version = "2.0.0",  // Updated to leverage TCP+UDP Smart Port Allocation
             Category = "privacy-security",
-            Description = "Fast SOCKS5 proxy for private browsing with native browser experience. Route your traffic through a remote VM — fast, lightweight, and secure.",
+            Description = "Fast SOCKS5 proxy for private browsing with native browser experience. Route your traffic through a remote VM — fast, lightweight, and secure. Now with UDP support for better performance.",
             LongDescription = @"## Features
 - **Native browser experience** — use your own browser, no sluggish video streaming
 - **Fast and responsive** — minimal latency, no video encoding overhead
+- **UDP support** — improved performance for DNS queries and other protocols (requires Smart Port Allocation)
 - **Low bandwidth** — only proxies actual web traffic, not video
 - **IP isolation** — websites see the VM's IP, not yours
 - **Encrypted traffic** — Shadowsocks uses strong encryption
@@ -987,19 +988,22 @@ Shadowsocks is a secure SOCKS5 proxy protocol originally designed to bypass inte
 - Strong encryption (AEAD ciphers)
 - Low overhead (minimal CPU usage)
 - Wide compatibility (works with all browsers and many apps)
+- **TCP+UDP support** for optimal browsing experience
 
 ## How It Works
 1. VM runs a Shadowsocks server on port 8388
-2. You configure your browser/system to use it as a SOCKS5 proxy
-3. All traffic routes through the VM encrypted
-4. Websites see the VM's IP address
+2. **Port is allocated with TCP+UDP protocols** via DeCloud's Smart Port Allocation
+3. You configure your browser/system to use it as a SOCKS5 proxy
+4. All traffic routes through the VM encrypted
+5. Websites see the VM's IP address
 
 ## Setup Instructions
 1. Wait for setup to complete (~2 minutes)
-2. Get connection details from the welcome message (SSH into VM)
-3. Configure your browser/system with the Shadowsocks server details:
+2. **Allocate port 8388 with BOTH TCP and UDP protocols** (done automatically during VM creation)
+3. Get connection details from the welcome message (SSH into VM)
+4. Configure your browser/system with the Shadowsocks server details:
    - **Server**: `${DECLOUD_DOMAIN}` (or VM's public IP)
-   - **Port**: `8388`
+   - **Port**: `8388` (or assigned public port)
    - **Password**: `${DECLOUD_PASSWORD}`
    - **Encryption**: `chacha20-ietf-poly1305`
 
@@ -1024,7 +1028,7 @@ Use a Shadowsocks client:
 ## Use Cases
 - **Privacy browsing** — hide your real IP address
 - **Geo-shifting** — access content from different regions
-- **Bypass censorship** — access blocked websites
+- **Bypass censorship** — access blocked websites (works through CGNAT with relay nodes!)
 - **Testing** — test apps from different geographic locations
 - **Security** — encrypted tunnel on public WiFi
 
@@ -1033,6 +1037,13 @@ Use a Shadowsocks client:
 - **Bandwidth**: Only your actual web traffic (vs. constant video stream)
 - **CPU**: Minimal overhead (vs. heavy video encoding)
 - **Responsiveness**: Native browser speed
+- **UDP**: Faster DNS resolution and improved app compatibility
+
+## CGNAT Support
+This template works seamlessly with nodes behind CGNAT through DeCloud's 3-hop port forwarding:
+- Traffic flows: Client → Relay Node → CGNAT Node → VM
+- Both TCP and UDP protocols are forwarded correctly
+- No configuration changes needed — it just works!
 
 ## Default Bandwidth
 This template defaults to **Standard (50 Mbps)** bandwidth tier, sufficient for fast browsing. Upgrade to Performance for higher speeds.",
@@ -1062,12 +1073,12 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, sufficient for 
 
             RequiresGpu = false,
 
-            Tags = new List<string> { "proxy", "privacy", "vpn", "shadowsocks", "socks5", "censorship-resistant", "geo-shift" },
+            Tags = new List<string> { "proxy", "privacy", "vpn", "shadowsocks", "socks5", "censorship-resistant", "geo-shift", "udp", "tcp" },
 
             CloudInitTemplate = @"#cloud-config
 
 # Privacy Proxy (Shadowsocks) - Fast SOCKS5 Proxy
-# DeCloud Template v1.0.0
+# DeCloud Template v2.0.0 - Now with TCP+UDP support via Smart Port Allocation
 
 packages:
   - apt-transport-https
@@ -1096,7 +1107,7 @@ runcmd:
   # Create config directory
   - mkdir -p /etc/shadowsocks
 
-  # Create shadowsocks configuration
+  # Create shadowsocks configuration with TCP+UDP support
   - |
     cat > /etc/shadowsocks/config.json <<'EOF'
     {
@@ -1115,7 +1126,7 @@ runcmd:
   - |
     cat > /etc/systemd/system/shadowsocks.service <<'EOF'
     [Unit]
-    Description=Shadowsocks SOCKS5 Proxy Server
+    Description=Shadowsocks SOCKS5 Proxy Server (TCP+UDP)
     After=network.target
 
     [Service]
@@ -1143,10 +1154,12 @@ runcmd:
     echo ""════════════════════════════════════════════════════════════""
     echo """"
     echo ""Server:     ${DECLOUD_DOMAIN}""
-    echo ""Port:       8388""
+    echo ""Port:       8388 (TCP+UDP)""
     echo ""Password:   ${DECLOUD_PASSWORD}""
     echo ""Encryption: chacha20-ietf-poly1305""
-    echo ""Protocol:   SOCKS5""
+    echo ""Protocol:   SOCKS5 (TCP+UDP)""
+    echo """"
+    echo ""✅ Port allocated with TCP+UDP via Smart Port Allocation""
     echo """"
     echo ""Browser Setup (Chrome/Edge/Brave):""
     echo ""  1. Install 'Proxy SwitchyOmega' extension""
@@ -1167,6 +1180,9 @@ runcmd:
     echo ""Service Status:""
     systemctl status shadowsocks.service --no-pager | grep Active
     echo """"
+    echo ""Check TCP listening: netstat -tln | grep 8388""
+    echo ""Check UDP listening: netstat -uln | grep 8388""
+    echo """"
     echo ""════════════════════════════════════════════════════════════""
     EOFSCRIPT
 
@@ -1177,13 +1193,16 @@ runcmd:
     cat > /etc/motd <<'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
     ║      Privacy Proxy (Shadowsocks) - DeCloud Template         ║
+    ║                 v2.0.0 with TCP+UDP Support                  ║
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  Connection Details:                                          ║
     ║  Server:     ${DECLOUD_DOMAIN}                               ║
-    ║  Port:       8388                                             ║
+    ║  Port:       8388 (TCP+UDP)                                   ║
     ║  Password:   ${DECLOUD_PASSWORD}                             ║
     ║  Encryption: chacha20-ietf-poly1305                           ║
+    ║                                                               ║
+    ║  ✅ UDP enabled for improved DNS and app performance          ║
     ║                                                               ║
     ║  View full setup instructions:                                ║
     ║    /root/connection-info.sh                                   ║
@@ -1197,14 +1216,16 @@ runcmd:
     EOF
 
 final_message: |
-  Privacy Proxy (Shadowsocks) is ready!
+  Privacy Proxy (Shadowsocks) is ready with TCP+UDP support!
 
   Connection Details:
     Server:     ${DECLOUD_DOMAIN}
-    Port:       8388
+    Port:       8388 (TCP+UDP)
     Password:   ${DECLOUD_PASSWORD}
     Encryption: chacha20-ietf-poly1305
 
+  ✅ UDP enabled for better DNS resolution and app compatibility
+  
   Configure your browser or system with these details to start
   browsing privately through your VM.
 
@@ -1220,8 +1241,8 @@ final_message: |
                 new TemplatePort
                 {
                     Port = 8388,
-                    Protocol = "tcp",
-                    Description = "Shadowsocks SOCKS5 proxy",
+                    Protocol = "both",  // ✅ CRITICAL: Now uses TCP+UDP!
+                    Description = "Shadowsocks SOCKS5 proxy (TCP+UDP)",
                     IsPublic = true
                 }
             },
@@ -1239,4 +1260,5 @@ final_message: |
             UpdatedAt = DateTime.UtcNow
         };
     }
+
 }
