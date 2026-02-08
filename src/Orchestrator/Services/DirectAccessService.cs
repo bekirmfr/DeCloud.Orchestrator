@@ -441,34 +441,126 @@ public class DirectAccessService
                 "Removing port mapping {VmPort} → {PublicPort} from VM {VmId}",
                 vmPort, mapping.PublicPort, vmId);
 
-            // Send command to NodeAgent
-            var payload = new
+            // Get the VM's node
+            var vmNode = await _dataStore.GetNodeAsync(vm.NodeId);
+            if (vmNode == null)
             {
-                VmId = vmId,
-                VmPort = vmPort,
-                Protocol = (int)mapping.Protocol
-            };
+                _logger.LogError("VM {VmId} references non-existent node {NodeId}", vmId, vm.NodeId);
+                return false;
+            }
 
-            var command = new NodeCommand(
-                Guid.NewGuid().ToString(),
-                NodeCommandType.RemovePort,
-                JsonSerializer.Serialize(payload),
-                RequiresAck: true,
-                TargetResourceId: vmId
-            );
+            // Check if this is a CGNAT VM requiring 3-hop cleanup
+            bool isCgnatVm = vmNode.CgnatInfo?.AssignedRelayNodeId != null;
 
-            _dataStore.RegisterCommand(
-                command.CommandId,
-                vmId,
-                vm.NodeId,
-                NodeCommandType.RemovePort
-            );
-
-            var result = await _nodeCommandService.DeliverCommandAsync(vm.NodeId, command, ct);
-
-            if (!result.Success)
+            if (isCgnatVm)
             {
-                _logger.LogWarning("NodeAgent command delivery failed for port removal (continuing anyway): {Message}", result.Message);
+                // 3-HOP CLEANUP: Remove from both CGNAT node and relay node
+                _logger.LogInformation(
+                    "Cleaning up 3-hop forwarding for CGNAT VM {VmId}: Relay {RelayId} + CGNAT {NodeId}",
+                    vmId, vmNode.CgnatInfo!.AssignedRelayNodeId, vmNode.Id);
+
+                // STEP 1: Remove from CGNAT node (3rd hop: node → VM)
+                var cgnatPayload = new
+                {
+                    VmId = vmId,
+                    VmPort = vmPort,
+                    Protocol = (int)mapping.Protocol
+                };
+
+                var cgnatCommand = new NodeCommand(
+                    Guid.NewGuid().ToString(),
+                    NodeCommandType.RemovePort,
+                    JsonSerializer.Serialize(cgnatPayload),
+                    RequiresAck: true,
+                    TargetResourceId: vmId
+                );
+
+                _dataStore.RegisterCommand(
+                    cgnatCommand.CommandId,
+                    vmId,
+                    vmNode.Id,
+                    NodeCommandType.RemovePort
+                );
+
+                _logger.LogInformation("Sending RemovePort to CGNAT node {NodeId} for port {PublicPort}", vmNode.Id, mapping.PublicPort);
+                var cgnatResult = await _nodeCommandService.DeliverCommandAsync(vmNode.Id, cgnatCommand, ct);
+
+                if (!cgnatResult.Success)
+                {
+                    _logger.LogWarning("Failed to deliver RemovePort to CGNAT node (continuing anyway): {Message}", cgnatResult.Message);
+                }
+
+                // STEP 2: Remove from relay node (2nd hop: relay → tunnel)
+                var relayNode = await _dataStore.GetNodeAsync(vmNode.CgnatInfo.AssignedRelayNodeId);
+                if (relayNode != null)
+                {
+                    // For relay, use VmPort=0 to match the placeholder mapping pattern
+                    var relayPayload = new
+                    {
+                        VmId = vmId,
+                        VmPort = 0,  // Relay uses 0 as it doesn't map to a specific VM port
+                        Protocol = (int)mapping.Protocol
+                    };
+
+                    var relayCommand = new NodeCommand(
+                        Guid.NewGuid().ToString(),
+                        NodeCommandType.RemovePort,
+                        JsonSerializer.Serialize(relayPayload),
+                        RequiresAck: true,
+                        TargetResourceId: vmId
+                    );
+
+                    _dataStore.RegisterCommand(
+                        relayCommand.CommandId,
+                        vmId,
+                        relayNode.Id,
+                        NodeCommandType.RemovePort
+                    );
+
+                    _logger.LogInformation("Sending RemovePort to relay node {RelayId} for port {PublicPort}", relayNode.Id, mapping.PublicPort);
+                    var relayResult = await _nodeCommandService.DeliverCommandAsync(relayNode.Id, relayCommand, ct);
+
+                    if (!relayResult.Success)
+                    {
+                        _logger.LogWarning("Failed to deliver RemovePort to relay node (continuing anyway): {Message}", relayResult.Message);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Relay node {RelayId} not found for CGNAT VM cleanup", vmNode.CgnatInfo.AssignedRelayNodeId);
+                }
+            }
+            else
+            {
+                // NORMAL DIRECT ACCESS: Remove from single node
+                var payload = new
+                {
+                    VmId = vmId,
+                    VmPort = vmPort,
+                    Protocol = (int)mapping.Protocol
+                };
+
+                var command = new NodeCommand(
+                    Guid.NewGuid().ToString(),
+                    NodeCommandType.RemovePort,
+                    JsonSerializer.Serialize(payload),
+                    RequiresAck: true,
+                    TargetResourceId: vmId
+                );
+
+                _dataStore.RegisterCommand(
+                    command.CommandId,
+                    vmId,
+                    vm.NodeId,
+                    NodeCommandType.RemovePort
+                );
+
+                var result = await _nodeCommandService.DeliverCommandAsync(vm.NodeId, command, ct);
+
+                if (!result.Success)
+                {
+                    _logger.LogWarning("NodeAgent command delivery failed for port removal (continuing anyway): {Message}", result.Message);
+                }
             }
 
             // Remove from VM configuration
