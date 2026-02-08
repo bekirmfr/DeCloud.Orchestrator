@@ -1229,6 +1229,7 @@ public class VmService : IVmService
         {
             _logger.LogError(ex,
                 "Error settling template fee for VM {VmId}, template {TemplateId}",
+                vm.Id, template.Id);
         }
     }
 
