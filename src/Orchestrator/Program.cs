@@ -95,6 +95,7 @@ builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();
 builder.Services.AddSingleton<IVmService, VmService>();
+builder.Services.AddSingleton<IVmLifecycleManager, VmLifecycleManager>();
 // Command delivery service (hybrid push-pull)
 builder.Services.AddSingleton<INodeCommandService, NodeCommandService>();
 

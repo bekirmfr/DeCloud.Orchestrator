@@ -157,10 +157,13 @@ public class CleanupService : BackgroundService
             {
                 if (vm.Status == VmStatus.Provisioning || vm.Status == VmStatus.Deleting)
                 {
-                    vm.Status = VmStatus.Error;
-                    vm.StatusMessage = $"{command.Type} timed out - no acknowledgment received from node after {timeout.TotalMinutes} minutes";
-                    vm.UpdatedAt = DateTime.UtcNow;
-                    await dataStore.SaveVmAsync(vm);
+                    var lifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                    await lifecycleManager.TransitionAsync(
+                        vm.Id,
+                        VmStatus.Error,
+                        TransitionContext.Timeout(
+                            command.Type.ToString(),
+                            $"{command.Type} timed out - no acknowledgment received from node after {timeout.TotalMinutes} minutes"));
 
                     _logger.LogWarning(
                         "Marked VM {VmId} as Error due to command timeout",
