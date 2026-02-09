@@ -943,12 +943,13 @@ All payments are in **USDC stablecoin** on the **Polygon blockchain** for low fe
 - ReviewService: Universal review system with eligibility proofs
 - Frontend: marketplace-templates.js, my-templates.js, template-detail.js
 
-**Seed Templates (5):**
+**Seed Templates (6):**
 - Stable Diffusion WebUI (AI image generation, GPU required) ✅
 - PostgreSQL Database (production-ready) ✅
 - VS Code Server (code-server, browser IDE) ✅
 - Private Browser (Neko/WebRTC streaming) ✅
 - Privacy Proxy (Shadowsocks, TCP+UDP) ✅
+- Web Proxy Browser (Ultraviolet, private browsing) ✅
 
 **Planned Additional Templates:**
 - Nextcloud (personal cloud)
@@ -1061,6 +1062,145 @@ All confirmed transitions route through `IVmLifecycleManager.TransitionAsync()`:
 - **PrivateIp timing race:** Heartbeat path set status to Running and saved, then set PrivateIp afterward. Side effects requiring IP would fail because IP wasn't persisted yet.
 - **Fire-and-forget anti-pattern:** Old code used `_ = Task.Run(async () => ...)` for side effects, which was unreliable and swallowed exceptions silently.
 - **Inconsistent cleanup on deletion:** `NodeService.CompleteVmDeletionAsync` freed node resources but not DirectAccess ports. `VmService.CompleteVmDeletionAsync` freed quotas but used different logic. Now unified in `OnVmDeletedAsync`.
+
+---
+
+## Web Proxy Browser Template (Ultraviolet)
+
+### Overview
+
+**Status:** ✅ Production-ready (v3.0.0, 2026-02-09)
+**Template slug:** `web-proxy-browser`
+**Category:** Privacy & Security
+
+A privacy-focused web proxy that runs entirely within a VM, allowing users to browse the internet through a service-worker-based proxy (Ultraviolet). The template deploys the official [titaniumnetwork-dev/Ultraviolet-App](https://github.com/nickerlass/Ultraviolet-App) behind nginx with HTTP Basic Auth.
+
+### Architecture
+
+```
+User Browser
+  ↓ (HTTPS via CentralIngress subdomain)
+nginx (:8080) — COOP/COEP headers + Basic Auth
+  ├─ / → Ultraviolet frontend (proxy_pass :3000)
+  ├─ /uv/ → UV service worker assets
+  ├─ /epoxy/ → Epoxy transport (SharedArrayBuffer-based)
+  ├─ /baremux/ → BareMux shared worker
+  └─ /wisp/ → Wisp WebSocket endpoint (proxy_pass :3000, WS upgrade)
+         ↓
+Ultraviolet-App (Node.js :3000)
+  ↓ (Wisp protocol over WebSocket)
+Target Website
+```
+
+### Critical Fix: Cross-Origin Isolation (v2.0.0 → v3.0.0)
+
+**Problem:** The Ultraviolet proxy loaded the initial HTML page successfully but all sub-resources (CSS, JS, images) failed silently. Console showed `bare-mux: recieved request for port from sw` followed by service worker errors.
+
+**Root Cause:** The **epoxy transport** uses `SharedArrayBuffer` for Wisp communication between the BareMux shared worker and the service worker. Browsers only expose `SharedArrayBuffer` when the page has **Cross-Origin Isolation** headers:
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: require-corp`
+
+Without these headers, the initial fetch worked (handled by the service worker directly), but all subsequent sub-resource fetches through the BareMux transport failed because the shared worker couldn't allocate `SharedArrayBuffer`.
+
+**Fix:** Added COOP/COEP headers to the nginx server block and added WebSocket-friendly settings for the wisp endpoint:
+
+```nginx
+server {
+    listen 8080;
+    server_name _;
+
+    # Cross-Origin Isolation headers - REQUIRED for SharedArrayBuffer
+    add_header Cross-Origin-Opener-Policy "same-origin";
+    add_header Cross-Origin-Embedder-Policy "require-corp";
+
+    auth_basic "Private Browser";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / { proxy_pass http://127.0.0.1:3000; auth_basic off; }
+
+    location /wisp/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        auth_basic off;
+    }
+
+    location /uv/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
+    location /epoxy/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
+    location /baremux/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
+}
+```
+
+### Version History
+
+| Version | Change | Issue |
+|---------|--------|-------|
+| v1.0.0 | Initial template with custom npm packages | Non-existent `@nicotine33/*` packages, crashes on start |
+| v2.0.0 | Switch to official Ultraviolet-App repo | Sub-resources fail — missing COOP/COEP headers |
+| v3.0.0 | Add Cross-Origin Isolation headers + WS tuning | ✅ Production-ready |
+
+### Privacy Use Case
+
+The Web Proxy Browser enables ephemeral private browsing: deploy a VM, browse the web through the proxy (traffic exits from the VM's IP, not the user's), then delete the VM. No browsing history persists. Combined with wallet-based auth (no KYC), this provides strong privacy guarantees.
+
+---
+
+## CentralIngress-Aware Port Allocation
+
+### Overview
+
+**Status:** ✅ Implemented (2026-02-09)
+**Location:** `VmLifecycleManager.AutoAllocateTemplatePortsAsync()`
+
+When a template-based VM starts, the lifecycle manager auto-allocates direct access ports (iptables DNAT rules) for the template's exposed ports. However, HTTP and WebSocket ports are already handled by CentralIngress (Caddy subdomain routing), making iptables port allocation redundant for those protocols.
+
+### Problem
+
+Before this fix, all public template ports received direct access allocation, including HTTP ports like 8080. This created redundant iptables rules for ports that were already accessible via CentralIngress subdomains (e.g., `web-proxy-browser-xyz.vms.stackfi.tech` → VM:8080).
+
+### Solution
+
+The `AutoAllocateTemplatePortsAsync` method now filters out protocols handled by CentralIngress:
+
+```csharp
+// Skip http/ws protocol ports — those are handled by CentralIngress subdomain routing
+// (Caddy reverse proxy handles both HTTP and WebSocket upgrades on the same port)
+var ingressProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    { "http", "https", "ws", "wss" };
+
+var portsToAllocate = template.ExposedPorts
+    .Where(p => p.IsPublic)
+    .Where(p => !ingressProtocols.Contains(p.Protocol ?? ""))
+    .Where(p => vm.DirectAccess?.PortMappings?.Any(m => m.VmPort == p.Port) != true)
+    .ToList();
+```
+
+### Protocol Routing Summary
+
+| Protocol | Routing Method | Example |
+|----------|---------------|---------|
+| `http` | CentralIngress (Caddy subdomain) | `app-xyz.vms.stackfi.tech` → VM:8080 |
+| `https` | CentralIngress (Caddy subdomain) | Same as HTTP with TLS termination |
+| `ws` | CentralIngress (Caddy WebSocket upgrade) | Transparent over same HTTP connection |
+| `wss` | CentralIngress (Caddy WebSocket upgrade) | Same as WS with TLS |
+| `tcp` | Direct Access (iptables DNAT) | `publicIP:40001` → VM:22 (SSH) |
+| `udp` | Direct Access (iptables DNAT) | `publicIP:40002` → VM:8388 (Shadowsocks) |
+| `both` | Direct Access (iptables DNAT, TCP+UDP) | `publicIP:40003` → VM:8388 |
+
+### Impact by Template
+
+| Template | Exposed Ports | Direct Access Allocated |
+|----------|--------------|------------------------|
+| Stable Diffusion | 7860 (http) | None (CentralIngress) |
+| PostgreSQL | 5432 (tcp) | ✅ 5432 → 40xxx |
+| VS Code Server | 8080 (http) | None (CentralIngress) |
+| Private Browser | 8080 (http) | None (CentralIngress) |
+| Shadowsocks | 8388 (both) | ✅ 8388 → 40xxx (TCP+UDP) |
+| Web Proxy Browser | 8080 (http) | None (CentralIngress) |
 
 ---
 

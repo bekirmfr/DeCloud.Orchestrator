@@ -127,6 +127,8 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ Hybrid pricing model: platform floor rates + node operator custom pricing
 ✅ Node operator self-service pricing API (GET/PATCH endpoints)
 ✅ Centralized VM lifecycle management (state machine with validated transitions and consistent side effects)
+✅ Web Proxy Browser template (Ultraviolet proxy with Cross-Origin Isolation)
+✅ CentralIngress-aware port allocation (HTTP/WS ports handled by Caddy, only TCP/UDP gets iptables DNAT)
 
 ### Recent Achievements (2026-01-30)
 
@@ -476,7 +478,7 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
 - ✅ Cloud-init variable substitution (${DECLOUD_VM_ID}, ${DECLOUD_PASSWORD}, etc.)
 - ✅ Security validation (fork bombs, rm -rf, untrusted curl|bash detection)
 - ✅ Frontend: marketplace-templates.js, my-templates.js, template-detail.js
-- ✅ 5 seed templates: Stable Diffusion, PostgreSQL, VS Code Server, Private Browser (Neko), Shadowsocks Proxy
+- ✅ 6 seed templates: Stable Diffusion, PostgreSQL, VS Code Server, Private Browser (Neko), Shadowsocks Proxy, Web Proxy Browser (Ultraviolet)
 
 **Network Effect:** More templates → more users → more templates → ...
 
@@ -663,7 +665,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Featured nodes discovery implemented
 - ✅ Multi-criteria search and filtering operational
 - ✅ VM template marketplace complete (backend + frontend)
-- ✅ 5 seed templates deployed (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks)
+- ✅ 6 seed templates deployed (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks, Web Proxy Browser)
 - ✅ Community template creation workflow (draft → publish)
 - ✅ Template deployment with cloud-init variable substitution
 - 🎯 50+ templates in marketplace (grow via community)
@@ -807,7 +809,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ VM Template Marketplace (Goal 1.2) - **COMPLETE (2026-02-09)**
   - Full template CRUD with community and platform-curated templates
   - 5 seed categories (AI & ML, Databases, Dev Tools, Web Apps, Privacy & Security)
-  - 5 seed templates (Stable Diffusion, PostgreSQL, VS Code Server, Private Browser, Shadowsocks)
+  - 6 seed templates (Stable Diffusion, PostgreSQL, VS Code Server, Private Browser, Shadowsocks, Web Proxy Browser)
   - Template deployment with cloud-init variable substitution
   - Paid templates (PerDeploy model, 85/15 author/platform split)
   - Security validation (dangerous command detection)
@@ -845,6 +847,16 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Persist-first design: status saved before effects, safe for crash recovery
   - 5 call sites routed through lifecycle manager (command ack, heartbeat, health check, timeout, manual)
   - Removed ~460 lines of duplicated/dead code
+- ✅ Web Proxy Browser Template - **COMPLETE (v3.0.0, 2026-02-09)**
+  - Ultraviolet-based service-worker proxy for private browsing
+  - Cross-Origin Isolation fix (COOP/COEP headers) for SharedArrayBuffer/epoxy transport
+  - nginx reverse proxy with HTTP Basic Auth, WebSocket tuning for wisp endpoint
+  - Ephemeral privacy: deploy, browse (traffic exits from VM IP), delete — no trace
+- ✅ CentralIngress-Aware Port Allocation - **COMPLETE (2026-02-09)**
+  - `AutoAllocateTemplatePortsAsync` skips HTTP/HTTPS/WS/WSS protocol ports
+  - Caddy subdomain routing already handles these protocols transparently
+  - Only TCP/UDP/Both protocols get iptables DNAT direct access rules
+  - Prevents redundant port allocations (e.g., 8080→40000 when CentralIngress already routes)
 - ✅ Targeted Node Selection (Goal 2.2) - **COMPLETE (2026-01-30)**
   - Deploy VM button on marketplace cards, target node banner in creation modal
 - ✅ User Reviews Backend (Goal 2.3) - **COMPLETE (backend)**
@@ -883,14 +895,15 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Reputation system: uptime tracking + review backend (Goal 1.3 - mostly done)
 - ✅ Targeted node selection (Goal 2.2)
 - ✅ Smart port allocation with CGNAT 3-hop forwarding
-- ✅ 5 seed templates (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks)
+- ✅ CentralIngress-aware port allocation (HTTP/WS ports skip direct access)
+- ✅ 6 seed templates (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks, Web Proxy Browser)
 
 **Remaining Gaps:**
 - ❌ Node operator dashboard (Priority 2.1 - next focus)
 - ❌ Trust badges in frontend
 - ❌ Node rating aggregates display
 - ❌ Review prompts after VM termination (frontend)
-- ❌ More seed templates (have 5, target 10-15)
+- ❌ More seed templates (have 6, target 10-15)
 - ❌ No collaboration features (Phase 3)
 
 **Strategic Position:**
