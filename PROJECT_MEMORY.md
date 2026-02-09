@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-02-03
-**Status:** Active Development - Phase 1 (Marketplace Foundation) In Progress
+**Last Updated:** 2026-02-09
+**Status:** Phase 1 (Marketplace Foundation) COMPLETE — Moving to Phase 2 (User Engagement)
 
 ---
 
@@ -450,39 +450,49 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
   - ✅ Node detail views
   - ✅ Multi-criteria filtering (tags, region, GPU, price, uptime)
 
-#### Priority 1.2: VM Template Marketplace ⭐⭐⭐⭐⭐
+#### ✅ Priority 1.2: VM Template Marketplace (COMPLETE)
 - **Impact:** 🔥 CRITICAL - Drives network effects
 - **Effort:** 🟡 MEDIUM (2-3 weeks)
-- **Status:** 🔜 NEXT
+- **Status:** ✅ DONE (2026-02-09)
 
-**What:** Users create, share, and deploy VM templates
-- Template model with cloud-init scripts
-- Search/browse templates by category (AI, Privacy, Gaming)
-- One-click deployments
-- Seed 10 featured templates:
-  - Nextcloud Personal Cloud
-  - Whisper AI (speech-to-text)
-  - Stable Diffusion
-  - VPN/Tor relay
-  - Jellyfin media server
-  - GitLab self-hosted
-  - Mastodon instance
-  - Minecraft server
-  - Privacy-focused web browser
-  - AI chatbot (Ollama)
+**Deliverables:**
+- ✅ VmTemplate model with cloud-init scripts, variable substitution, specs, pricing, ratings
+- ✅ TemplateCategory model with 5 seed categories (AI & ML, Databases, Dev Tools, Web Apps, Privacy & Security)
+- ✅ TemplateService - Full CRUD, search/filter, validation (security checks for dangerous commands), deployment helpers
+- ✅ TemplateSeederService - Auto-seeds categories and templates on startup with semantic versioning
+- ✅ MarketplaceController API endpoints:
+  - `GET /api/marketplace/templates` - Browse/filter (category, GPU, tags, search, sort)
+  - `GET /api/marketplace/templates/featured` - Featured templates
+  - `GET /api/marketplace/templates/{slugOrId}` - Detail by slug or ID
+  - `GET /api/marketplace/templates/my` - User's own templates (all statuses)
+  - `POST /api/marketplace/templates/create` - Community template creation
+  - `PUT /api/marketplace/templates/{id}` - Update (owner only)
+  - `DELETE /api/marketplace/templates/{id}` - Delete (owner only)
+  - `PATCH /api/marketplace/templates/{id}/publish` - Publish draft
+  - `POST /api/marketplace/templates/{id}/deploy` - Deploy VM from template (with paid template balance check)
+- ✅ Community templates (user-created, draft→publish workflow)
+- ✅ Paid templates (PerDeploy pricing, 85/15 author/platform split, escrow settlement)
+- ✅ Cloud-init variable substitution (${DECLOUD_VM_ID}, ${DECLOUD_PASSWORD}, etc.)
+- ✅ Security validation (fork bombs, rm -rf, untrusted curl|bash detection)
+- ✅ Frontend: marketplace-templates.js, my-templates.js, template-detail.js
+- ✅ 5 seed templates: Stable Diffusion, PostgreSQL, VS Code Server, Private Browser (Neko), Shadowsocks Proxy
 
 **Network Effect:** More templates → more users → more templates → ...
 
-#### Priority 1.3: Basic Reputation System ⭐⭐⭐⭐
+#### ✅ Priority 1.3: Basic Reputation System (MOSTLY COMPLETE)
 - **Impact:** 🚀 HIGH - Builds trust
 - **Effort:** 🟢 LOW (1 week)
-- **Status:** Planned
+- **Status:** ✅ DONE (core) - 2026-01-30 (uptime) + 2026-02-09 (reviews)
 
-**What:** Uptime tracking + user reviews
-- Extend existing uptime tracking (already 70% built)
-- Prompt users to review nodes after VM termination
-- Trust badges (99.9% uptime, 100+ VMs hosted)
-- Node operator dashboard showing earnings/reputation
+**Deliverables:**
+- ✅ 30-day rolling uptime tracking (NodeReputationService, NodeReputationMaintenanceService)
+- ✅ Failed heartbeat tracking by day with auto-cleanup
+- ✅ TotalVmsHosted and SuccessfulVmCompletions counters
+- ✅ ReviewService - Universal reviews for templates and nodes (1-5 stars, eligibility-verified)
+- ✅ Review API endpoints in MarketplaceController (submit, get, user review check)
+- ✅ Denormalized rating aggregates on templates (AverageRating, TotalReviews, RatingDistribution)
+- 🔜 Trust badges in UI (99.9% uptime, 100+ VMs hosted) - not yet in frontend
+- 🔜 Node rating aggregates - ReviewService has placeholder, not fully wired
 
 ---
 
@@ -499,24 +509,29 @@ curl 'http://142.234.200.108:5050/api/marketplace/nodes?requiresGpu=true&tags=nv
 - Relay earnings breakdown
 - Profile management (tags, description, pricing)
 
-#### Priority 2.2: Targeted Node Selection ⭐⭐⭐
+#### ✅ Priority 2.2: Targeted Node Selection (COMPLETE)
 - **Impact:** 🎯 MEDIUM - Power user feature
 - **Effort:** 🟢 LOW (1 week)
+- **Status:** ✅ DONE (2026-01-30)
 
-**What:** Let users choose specific nodes for VMs
-- Already 50% implemented (code has `targetNodeId` parameter)
-- Just need to expose in API/frontend
-- Use case: "I trust Alice's GPU node, always use it"
+**Deliverables:**
+- ✅ `nodeId` parameter in CreateVmRequest, passed through to scheduler
+- ✅ "Deploy VM" button on marketplace node cards pre-selects target node
+- ✅ VM creation modal shows target node banner
+- ✅ Scheduler uses target node if provided, auto-selects otherwise
 
-#### Priority 2.3: User Reviews After VM Termination ⭐⭐⭐
+#### ✅ Priority 2.3: User Reviews (MOSTLY COMPLETE)
 - **Impact:** 🎯 MEDIUM - Community trust
 - **Effort:** 🟡 MEDIUM (2 weeks)
+- **Status:** ✅ Backend DONE, frontend partial
 
-**What:** Prompt for feedback when deleting VMs
-- Rating (1-5 stars)
-- Comment (optional)
-- Aggregate ratings per node
-- Display in marketplace
+**Deliverables:**
+- ✅ ReviewService with eligibility verification (proof of deployment/usage)
+- ✅ MarketplaceReview model (1-5 stars, title, comment, eligibility proof)
+- ✅ API endpoints: submit review, get reviews, check user review
+- ✅ Denormalized rating aggregates on templates
+- 🔜 Prompt user to review after VM termination (frontend)
+- 🔜 Node rating aggregates display in marketplace
 
 ---
 
@@ -642,11 +657,15 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ## Success Metrics
 
-### Phase 1 (6 weeks) - Marketplace Foundation
+### Phase 1 (6 weeks) - Marketplace Foundation ✅ COMPLETE
 - ✅ Node marketplace complete (backend + frontend)
 - ✅ Featured nodes discovery implemented
 - ✅ Multi-criteria search and filtering operational
-- 🎯 50+ templates in marketplace
+- ✅ VM template marketplace complete (backend + frontend)
+- ✅ 5 seed templates deployed (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks)
+- ✅ Community template creation workflow (draft → publish)
+- ✅ Template deployment with cloud-init variable substitution
+- 🎯 50+ templates in marketplace (grow via community)
 - 🎯 10+ user-created templates
 - 🎯 75% of new VMs deployed from templates
 
@@ -744,11 +763,11 @@ Based on strategic analysis, these should be **deferred or rejected**:
 ## On the Horizon
 
 ### Near-Term (Next 3 Months)
-- Complete VM Template Marketplace (Goal 2)
-- Implement reputation system (Goal 3)
-- Build node operator dashboard
-- Deploy 10 featured templates
-- Achieve 50+ user-created templates
+- ✅ VM Template Marketplace complete
+- ✅ Reputation system core complete (uptime + reviews backend)
+- Build node operator dashboard (Priority 2.1)
+- Grow to 10-15 seed templates, then 50+ via community
+- Frontend polish: trust badges, review prompts, node ratings display
 
 ### Mid-Term (6-12 Months)
 - **Mobile Integration:** Two-tier architecture
@@ -773,22 +792,34 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ---
 
-## Current Development Focus (2026-02-03)
+## Current Development Focus (2026-02-09)
 
-**Just Completed:**
-- ✅ Node Marketplace (Goal 1.1) - **COMPLETE**
+**All Phase 1 Goals Complete:**
+- ✅ Node Marketplace (Goal 1.1) - **COMPLETE (2026-01-30)**
   - Backend: REST API with search/filtering
   - Frontend: Rich marketplace UI with cards, modals, filters
   - Featured nodes display (top 10 by uptime/capacity)
   - Multi-criteria search (tags, region, GPU, price, uptime)
   - Node detail views with full hardware specs
   - Operator profile management
-- ✅ Bandwidth Tier System - **COMPLETE**
+- ✅ VM Template Marketplace (Goal 1.2) - **COMPLETE (2026-02-09)**
+  - Full template CRUD with community and platform-curated templates
+  - 5 seed categories (AI & ML, Databases, Dev Tools, Web Apps, Privacy & Security)
+  - 5 seed templates (Stable Diffusion, PostgreSQL, VS Code Server, Private Browser, Shadowsocks)
+  - Template deployment with cloud-init variable substitution
+  - Paid templates (PerDeploy model, 85/15 author/platform split)
+  - Security validation (dangerous command detection)
+  - Frontend: marketplace-templates.js, my-templates.js, template-detail.js
+- ✅ Basic Reputation System (Goal 1.3) - **MOSTLY COMPLETE**
+  - 30-day rolling uptime tracking with failed heartbeat detection
+  - Universal review system (templates + nodes, eligibility-verified)
+  - Denormalized rating aggregates on templates
+- ✅ Bandwidth Tier System - **COMPLETE (2026-02-02)**
   - 4-tier bandwidth model (Basic/Standard/Performance/Unmetered)
   - libvirt QoS enforcement on both x86_64 and ARM
   - Integrated billing with tier multipliers and bandwidth rates
   - Frontend tier selection with live cost estimation
-- ✅ Model C Hybrid Pricing - **COMPLETE**
+- ✅ Model C Hybrid Pricing - **COMPLETE (2026-02-03)**
   - Platform floor rates + node operator custom pricing
   - Floor enforcement server-side on all pricing updates
   - Node self-service pricing API (GET/PATCH)
@@ -800,39 +831,30 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Database-backed persistence (SQLite on nodes)
   - Protocol support: TCP, UDP, or Both (critical for Shadowsocks, VPNs)
   - Port range: 40000-65535 (25,536 assignable ports)
-  - **CRITICAL BUG FIXES (5 interconnected bugs):**
-    1. Deadlock in CreateForwardingAsync [commit 73d5ee7]
-    2. VmPort mismatch in Orchestrator RemovePort [commit 9a76f41]
-    3. IP address mismatch (VM IP vs tunnel IP) [commit 2add8d8]
-    4. PublicPort matching for relay mappings [commits b8d505f, 3b46fed]
-    5. Database deletion removing all relay mappings [commit 75934c8]
   - Reconciliation on node startup (DB → iptables)
   - Health monitoring integration (NodeHealthMonitorService)
-  - Failure handling strategy (Error state, billing stop, grace period)
-  - **Primary Use Case:** Shadowsocks browser template (requires UDP+TCP)
   - **Production Status:** ✅ All bugs fixed, end-to-end tested, production-ready
+- ✅ Targeted Node Selection (Goal 2.2) - **COMPLETE (2026-01-30)**
+  - Deploy VM button on marketplace cards, target node banner in creation modal
+- ✅ User Reviews Backend (Goal 2.3) - **COMPLETE (backend)**
+  - ReviewService with eligibility proofs, rating aggregates
 
-**Ready for Next:**
-- 🎯 Shadowsocks Browser Template - **READY TO IMPLEMENT**
-  - Now that Smart Port Allocation supports UDP+TCP protocols
-  - Privacy-focused censorship-resistant browsing
-  - One-click deployment with automatic port allocation
-- 🎯 VM Template Marketplace (Priority 1.2) - **NEXT FOCUS**
-  - Template creation/sharing system
-  - Cloud-init script management
-  - One-click deployments
-  - Seed 10 featured templates (Nextcloud, Stable Diffusion, Whisper AI, etc.)
-  - Template search/browse UI (similar to node marketplace)
+**Ready for Next (Phase 2 Priorities):**
+- 🎯 Node Operator Dashboard (Priority 2.1) - earnings, uptime, relay stats, profile management
+- 🎯 Add more seed templates (target: 10-15 total, then community growth to 50)
+- 🎯 Trust badges in frontend (99.9% uptime, 100+ VMs hosted)
+- 🎯 Node rating aggregates (wire up ReviewService for nodes)
+- 🎯 Review prompts in frontend (after VM termination)
 
 **Blockers:** None
 
-**Next Milestone:** 50 templates in marketplace (target: 30 days)
+**Next Milestone:** Phase 2 - User Engagement & Retention
 
 ---
 
 ## Project Status Summary
 
-**Platform Maturity:** 80% Production-Ready (↑ from 75%)
+**Platform Maturity:** 90% Production-Ready (↑ from 80%)
 
 **Infrastructure Complete:**
 - ✅ Self-organizing relay architecture
@@ -843,19 +865,29 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Security (wallet auth, attestation, SSH certs)
 - ✅ Monitoring (heartbeats, metrics, events)
 
-**Critical Gaps (Blocking Growth):**
-- ✅ Node marketplace complete (Goal 1.1)
-- ❌ No VM templates yet (starting Goal 1.2)
-- ❌ No reputation system (Goal 1.3 - quick win)
+**Phase 1 Complete - Marketplace Foundation:**
+- ✅ Node marketplace with search/filtering/featured nodes (Goal 1.1)
+- ✅ VM template marketplace with community templates, paid templates, deployment (Goal 1.2)
+- ✅ Reputation system: uptime tracking + review backend (Goal 1.3 - mostly done)
+- ✅ Targeted node selection (Goal 2.2)
+- ✅ Smart port allocation with CGNAT 3-hop forwarding
+- ✅ 5 seed templates (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks)
+
+**Remaining Gaps:**
+- ❌ Node operator dashboard (Priority 2.1 - next focus)
+- ❌ Trust badges in frontend
+- ❌ Node rating aggregates display
+- ❌ Review prompts after VM termination (frontend)
+- ❌ More seed templates (have 5, target 10-15)
 - ❌ No collaboration features (Phase 3)
 
 **Strategic Position:**
 - **Unique Value Prop:** Censorship-resistant compute with full VMs
 - **Market Opportunity:** Privacy-sensitive AI, unrestricted hosting
 - **Competitive Edge:** CGNAT support via relay innovation
-- **Growth Path:** Network effects through template marketplace
+- **Growth Path:** Network effects through template marketplace (now live!)
 
-**Recommendation:** Continue Phase 1 (Marketplace Foundation) → Goal 2 (VM Templates) is highest priority for driving network effects.
+**Recommendation:** Phase 1 complete. Move to Phase 2 (User Engagement) → Node Operator Dashboard (Priority 2.1) is highest priority for attracting operators. Grow template library to 50+ for network effects.
 
 ---
 

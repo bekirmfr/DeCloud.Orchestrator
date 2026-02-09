@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-02-02  
+**Last Updated:** 2026-02-09
 **Purpose:** Technical documentation of all major platform features and innovations
 
 ---
@@ -929,19 +929,35 @@ All payments are in **USDC stablecoin** on the **Polygon blockchain** for low fe
 
 **API:** `/api/marketplace/nodes`
 
-### VM Template Marketplace (Planned - Phase 1.2)
+### VM Template Marketplace (COMPLETE - Phase 1.2)
 
-**Goal:** Community-created templates for one-click deployments
+**Status:** ✅ Fully implemented with backend API, frontend UI, and 5 seed templates
 
-**Seed Templates:**
+**Implementation:**
+- VmTemplate model with cloud-init scripts, variable substitution, specs, pricing, ratings
+- TemplateService: CRUD, search/filter, validation, deployment helpers
+- TemplateSeederService: Auto-seeds on startup with semantic version comparison
+- MarketplaceController: Full REST API (browse, featured, detail, create, update, delete, publish, deploy)
+- Community templates: User-created with draft→publish workflow
+- Paid templates: PerDeploy pricing model (85/15 author/platform split via escrow)
+- ReviewService: Universal review system with eligibility proofs
+- Frontend: marketplace-templates.js, my-templates.js, template-detail.js
+
+**Seed Templates (5):**
+- Stable Diffusion WebUI (AI image generation, GPU required) ✅
+- PostgreSQL Database (production-ready) ✅
+- VS Code Server (code-server, browser IDE) ✅
+- Private Browser (Neko/WebRTC streaming) ✅
+- Privacy Proxy (Shadowsocks, TCP+UDP) ✅
+
+**Planned Additional Templates:**
 - Nextcloud (personal cloud)
-- Stable Diffusion (AI image generation)
 - Whisper AI (speech-to-text)
-- code-server (VS Code in browser) ✅
 - Mastodon (social network)
 - Minecraft server
 - VPN/Tor relay
 - Jellyfin (media server)
+- AI chatbot (Ollama)
 
 ---
 
