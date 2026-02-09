@@ -1458,8 +1458,8 @@ runcmd:
 
         # Cross-Origin Isolation headers - REQUIRED for SharedArrayBuffer
         # The epoxy transport uses SharedArrayBuffer for Wisp communication
-        add_header Cross-Origin-Opener-Policy "same-origin";
-        add_header Cross-Origin-Embedder-Policy "require-corp";
+        add_header Cross-Origin-Opener-Policy ""same-origin"";
+        add_header Cross-Origin-Embedder-Policy ""require-corp"";
 
         auth_basic ""Private Browser"";
         auth_basic_user_file /etc/nginx/.htpasswd;
