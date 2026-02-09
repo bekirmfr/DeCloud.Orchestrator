@@ -83,24 +83,24 @@ public class TemplateSeederService
             if (existing == null)
             {
                 var created = await _templateService.CreateTemplateAsync(template);
-                _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}", 
+                _logger.LogInformation("✓ Created template: {Name} ({Slug}) v{Version}",
                     created.Name, created.Slug, created.Version);
             }
             else if (force || IsNewerVersion(template.Version, existing.Version))
             {
                 template.Id = existing.Id;
                 var updated = await _templateService.UpdateTemplateAsync(template);
-                _logger.LogInformation("✓ Updated template: {Name} ({Slug}) v{OldVersion} → v{NewVersion}", 
+                _logger.LogInformation("✓ Updated template: {Name} ({Slug}) v{OldVersion} → v{NewVersion}",
                     updated.Name, updated.Slug, existing.Version, updated.Version);
             }
             else
             {
-                _logger.LogDebug("Template up-to-date: {Name} ({Slug}) v{Version}", 
+                _logger.LogDebug("Template up-to-date: {Name} ({Slug}) v{Version}",
                     template.Name, template.Slug, template.Version);
             }
         }
     }
-    
+
     /// <summary>
     /// Compare semantic versions (e.g., "1.0.0" vs "1.1.0")
     /// Returns true if newVersion > currentVersion
@@ -111,23 +111,23 @@ public class TemplateSeederService
         {
             var newParts = newVersion.Split('.').Select(int.Parse).ToArray();
             var currentParts = currentVersion.Split('.').Select(int.Parse).ToArray();
-            
+
             // Compare major, minor, patch
             for (int i = 0; i < Math.Max(newParts.Length, currentParts.Length); i++)
             {
                 var newPart = i < newParts.Length ? newParts[i] : 0;
                 var currentPart = i < currentParts.Length ? currentParts[i] : 0;
-                
+
                 if (newPart > currentPart) return true;
                 if (newPart < currentPart) return false;
             }
-            
+
             return false; // Versions are equal
         }
         catch
         {
             // If version parsing fails, treat as equal (don't update)
-            _logger.LogWarning("Failed to parse versions: new={New}, current={Current}", 
+            _logger.LogWarning("Failed to parse versions: new={New}, current={Current}",
                 newVersion, currentVersion);
             return false;
         }
@@ -228,11 +228,11 @@ public class TemplateSeederService
 - GPU: NVIDIA with at least 8GB VRAM (RTX 3060+ recommended)
 - RAM: 16GB minimum
 - Storage: 40GB for models and cache",
-            
+
             AuthorId = "platform",
             AuthorName = "DeCloud",
             SourceUrl = "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
-            
+
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 4,
@@ -241,7 +241,7 @@ public class TemplateSeederService
                 RequiresGpu = true,
                 GpuModel = "NVIDIA"
             },
-            
+
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 8,
@@ -250,13 +250,13 @@ public class TemplateSeederService
                 RequiresGpu = true,
                 GpuModel = "NVIDIA RTX 3090"
             },
-            
+
             RequiresGpu = true,
             GpuRequirement = "NVIDIA GPU with CUDA support (RTX 3060+ recommended)",
             RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
-            
+
             Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "gpu", "machine-learning" },
-            
+
             CloudInitTemplate = @"#cloud-config
 
 # Stable Diffusion WebUI - Automatic Installation
@@ -351,12 +351,12 @@ final_message: |
   
   Check status: systemctl status stable-diffusion
   View logs: journalctl -u stable-diffusion -f",
-            
+
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
                 ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --xformers"
             },
-            
+
             ExposedPorts = new List<TemplatePort>
             {
                 new TemplatePort
@@ -367,11 +367,11 @@ final_message: |
                     IsPublic = true
                 }
             },
-            
+
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
-            
+
             EstimatedCostPerHour = 0.50m, // $0.50/hour for GPU instance
-            
+
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
             IsFeatured = true,
@@ -418,11 +418,11 @@ final_message: |
 ```
 postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud
 ```",
-            
+
             AuthorId = "platform",
             AuthorName = "DeCloud",
             SourceUrl = "https://www.postgresql.org/",
-            
+
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
@@ -430,7 +430,7 @@ postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud
                 DiskBytes = 20L * 1024 * 1024 * 1024,   // 20 GB
                 RequiresGpu = false
             },
-            
+
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 4,
@@ -438,11 +438,11 @@ postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
                 RequiresGpu = false
             },
-            
+
             RequiresGpu = false,
-            
+
             Tags = new List<string> { "database", "postgresql", "sql", "postgres" },
-            
+
             CloudInitTemplate = @"#cloud-config
 
 # PostgreSQL Database Server
@@ -523,9 +523,9 @@ final_message: |
   - Password: ${DECLOUD_PASSWORD}
   
   Connect: psql -h ${DECLOUD_DOMAIN} -U postgres -d decloud",
-            
+
             DefaultEnvironmentVariables = new Dictionary<string, string>(),
-            
+
             ExposedPorts = new List<TemplatePort>
             {
                 new TemplatePort
@@ -536,11 +536,11 @@ final_message: |
                     IsPublic = true
                 }
             },
-            
+
             DefaultAccessUrl = "postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud",
-            
+
             EstimatedCostPerHour = 0.05m, // $0.05/hour
-            
+
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
             IsFeatured = true,
@@ -586,11 +586,11 @@ final_message: |
 - Git
 - Docker
 - Common build tools",
-            
+
             AuthorId = "platform",
             AuthorName = "DeCloud",
             SourceUrl = "https://github.com/coder/code-server",
-            
+
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
@@ -598,7 +598,7 @@ final_message: |
                 DiskBytes = 30L * 1024 * 1024 * 1024,   // 30 GB
                 RequiresGpu = false
             },
-            
+
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 4,
@@ -606,11 +606,11 @@ final_message: |
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
                 RequiresGpu = false
             },
-            
+
             RequiresGpu = false,
-            
+
             Tags = new List<string> { "vscode", "ide", "development", "coding", "editor" },
-            
+
             CloudInitTemplate = @"#cloud-config
 
 # VS Code Server - Browser-based IDE
@@ -736,9 +736,9 @@ final_message: |
   Pre-installed: Node.js, Python, Git, Docker
   
   Start coding! 🎉",
-            
+
             DefaultEnvironmentVariables = new Dictionary<string, string>(),
-            
+
             ExposedPorts = new List<TemplatePort>
             {
                 new TemplatePort
@@ -749,11 +749,11 @@ final_message: |
                     IsPublic = true
                 }
             },
-            
+
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8080",
-            
+
             EstimatedCostPerHour = 0.10m, // $0.10/hour
-            
+
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
             IsFeatured = true,
