@@ -1268,7 +1268,7 @@ final_message: |
         {
             Name = "Web Proxy Browser",
             Slug = "web-proxy-browser",
-            Version = "2.0.0",
+            Version = "3.0.0",
             Category = "privacy-security",
             Description = "Private web browsing directly in your browser — no extensions, no client apps. Type any URL and browse through the VM. Lightweight, fast, zero setup.",
             LongDescription = @"## Features
@@ -1351,7 +1351,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enoug
             CloudInitTemplate = @"#cloud-config
 
 # Web Proxy Browser (Ultraviolet) - Private Browsing Proxy
-# DeCloud Template v2.0.0 - Uses official Ultraviolet-App with Wisp transport
+# DeCloud Template v3.0.0 - Cross-Origin Isolation fix for epoxy transport
 
 packages:
   - curl
@@ -1456,6 +1456,11 @@ runcmd:
         listen 8080;
         server_name _;
 
+        # Cross-Origin Isolation headers - REQUIRED for SharedArrayBuffer
+        # The epoxy transport uses SharedArrayBuffer for Wisp communication
+        add_header Cross-Origin-Opener-Policy "same-origin";
+        add_header Cross-Origin-Embedder-Policy "require-corp";
+
         auth_basic ""Private Browser"";
         auth_basic_user_file /etc/nginx/.htpasswd;
 
@@ -1475,6 +1480,9 @@ runcmd:
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection ""upgrade"";
             proxy_set_header Host $host;
+            proxy_buffering off;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
             auth_basic off;
         }
 
