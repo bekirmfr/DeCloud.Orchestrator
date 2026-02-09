@@ -392,8 +392,10 @@ public class VmLifecycleManager : IVmLifecycleManager
         }
 
         // Filter to only public ports that aren't already allocated
+        // Skip "http" protocol ports — those are handled by CentralIngress subdomain routing
         var portsToAllocate = template.ExposedPorts
             .Where(p => p.IsPublic)
+            .Where(p => !string.Equals(p.Protocol, "http", StringComparison.OrdinalIgnoreCase))
             .Where(p => vm.DirectAccess?.PortMappings?.Any(m => m.VmPort == p.Port) != true)
             .ToList();
 
