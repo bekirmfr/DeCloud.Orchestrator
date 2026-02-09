@@ -192,7 +192,8 @@ public class TemplateSeederService
             CreatePostgreSqlTemplate(),
             CreateCodeServerTemplate(),
             CreatePrivateBrowserTemplate(),
-            CreateShadowsocksProxyTemplate()
+            CreateShadowsocksProxyTemplate(),
+            CreateWebProxyBrowserTemplate()
         };
     }
 
@@ -1252,6 +1253,445 @@ final_message: |
             EstimatedCostPerHour = 0.02m, // $0.02/hour — very lightweight
 
             DefaultBandwidthTier = BandwidthTier.Standard, // 50 Mbps — plenty for browsing
+
+            Status = TemplateStatus.Published,
+            IsFeatured = true,
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateWebProxyBrowserTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Web Proxy Browser",
+            Slug = "web-proxy-browser",
+            Version = "1.0.0",
+            Category = "privacy-security",
+            Description = "Private web browsing directly in your browser — no extensions, no client apps. Type any URL and browse through the VM. Lightweight, fast, zero setup.",
+            LongDescription = @"## Features
+- **Full URL browsing** — type any URL and browse the web through the VM
+- **Zero setup** — just open the link and start browsing, no client software needed
+- **Lightweight** — no video streaming, no desktop environment, minimal overhead
+- **IP isolation** — websites see the VM's IP, not yours
+- **Modern web support** — handles JavaScript-heavy sites, CSS, WebSockets via service workers
+- **Search integration** — use the search bar to search via DuckDuckGo or enter a URL directly
+- **Password protected** — only you can access your browsing session
+
+## How It Works
+This template runs [Ultraviolet](https://github.com/nicotine33/ultraviolet), a modern web proxy that uses service workers to intercept all browser requests and route them through the VM. Unlike video-streaming solutions (Neko), this proxies the actual HTML/CSS/JS — giving you native browser speed with none of the latency.
+
+```
+You → Open URL → Ultraviolet (on VM) → fetches page → renders in your browser
+```
+
+All traffic exits from the VM's IP address. Your real IP is never exposed to the sites you visit.
+
+## Use Cases
+- **Private browsing** — browse without exposing your IP or device fingerprint
+- **Geo-shifting** — deploy on nodes in different regions to access geo-restricted content
+- **Bypass restrictions** — access blocked sites through the VM's network
+- **Quick & disposable** — spin up, browse, destroy — no traces on your device
+- **Low-bandwidth friendly** — only transfers HTML/CSS/JS, not video streams
+
+## Getting Started
+1. Wait for setup to complete (~2-3 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:8080` in your browser
+3. Enter the password: `${DECLOUD_PASSWORD}`
+4. Type a URL or search term and start browsing!
+
+## Comparison with Other Privacy Templates
+
+| Feature | Web Proxy Browser | Private Browser (Neko) | Shadowsocks |
+|---------|------------------|----------------------|-------------|
+| Setup required | None | None | Client app needed |
+| Resource usage | Very low (1 vCPU, 512MB) | High (2-4 vCPU, 2-4GB) | Very low |
+| Latency | Native speed | 50-100ms (video) | Native speed |
+| Works with all sites | Most sites | All sites | All sites |
+| Bandwidth usage | Low (HTML/CSS/JS only) | High (video stream) | Low |
+
+## Default Bandwidth
+This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enough for proxied browsing.
+
+## Technical Details
+- Ultraviolet web proxy with bare-server-node backend
+- Nginx reverse proxy on port 8080
+- Service worker-based request interception
+- Password authentication via Nginx basic auth
+- Systemd services for automatic startup",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/nicotine33/ultraviolet",
+            License = "AGPL-3.0",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 512 * 1024 * 1024,  // 512 MB
+                DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
+                ImageId = "ubuntu-22.04",
+                QualityTier = QualityTier.Burstable
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 1024 * 1024 * 1024,  // 1 GB
+                DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
+                ImageId = "ubuntu-22.04",
+                QualityTier = QualityTier.Burstable
+            },
+
+            RequiresGpu = false,
+
+            Tags = new List<string> { "browser", "privacy", "proxy", "web-proxy", "censorship-resistant", "ultraviolet", "zero-setup", "lightweight" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Web Proxy Browser (Ultraviolet) - Private Browsing Proxy
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - wget
+  - nginx
+  - apache2-utils
+
+runcmd:
+  # Install Node.js 20 LTS
+  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - apt-get install -y nodejs
+
+  # Create application directory
+  - mkdir -p /opt/webproxy
+
+  # Initialize Node.js project
+  - |
+    cd /opt/webproxy
+    npm init -y
+
+  # Install Ultraviolet and bare-server-node
+  - |
+    cd /opt/webproxy
+    npm install @nicotine33/ultraviolet-node @nicotine33/bare-server-node express
+
+  # Create the server application
+  - |
+    cat > /opt/webproxy/server.js <<'EOFSERVER'
+    const http = require('http');
+    const express = require('express');
+    const { createBareServer } = require('@nicotine33/bare-server-node');
+    const { uvPath } = require('@nicotine33/ultraviolet-node');
+    const path = require('path');
+
+    const bare = createBareServer('/bare/');
+    const app = express();
+
+    // Serve Ultraviolet static files
+    app.use('/uv/', express.static(uvPath));
+
+    // Serve custom frontend
+    app.use(express.static(path.join(__dirname, 'public')));
+
+    const server = http.createServer((req, res) => {
+      if (bare.shouldRoute(req)) {
+        bare.routeRequest(req, res);
+      } else {
+        app(req, res);
+      }
+    });
+
+    server.on('upgrade', (req, socket, head) => {
+      if (bare.shouldRoute(req)) {
+        bare.routeUpgrade(req, socket, head);
+      } else {
+        socket.end();
+      }
+    });
+
+    server.listen(3000, '127.0.0.1', () => {
+      console.log('Web Proxy Browser listening on http://127.0.0.1:3000');
+    });
+    EOFSERVER
+
+  # Create public directory and frontend
+  - mkdir -p /opt/webproxy/public
+
+  # Create the service worker registration
+  - |
+    cat > /opt/webproxy/public/sw.js <<'EOFSW'
+    importScripts('/uv/uv.bundle.js');
+    importScripts('/uv/uv.config.js');
+    importScripts('/uv/uv.sw.js');
+    EOFSW
+
+  # Create UV config
+  - |
+    cat > /opt/webproxy/public/uv.config.js <<'EOFUVCONFIG'
+    self.__uv$config = {
+      prefix: '/service/',
+      bare: '/bare/',
+      encodeUrl: Ultraviolet.codec.xor.encode,
+      decodeUrl: Ultraviolet.codec.xor.decode,
+      handler: '/uv/uv.handler.js',
+      client: '/uv/uv.client.js',
+      bundle: '/uv/uv.bundle.js',
+      config: '/uv.config.js',
+      sw: '/uv/uv.sw.js',
+    };
+    EOFUVCONFIG
+
+  # Create the landing page
+  - |
+    cat > /opt/webproxy/public/index.html <<'EOFHTML'
+    <!DOCTYPE html>
+    <html lang=""en"">
+    <head>
+      <meta charset=""UTF-8"">
+      <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
+      <title>Private Browser</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background: #0a0a0a;
+          color: #e0e0e0;
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+        }
+        .container {
+          text-align: center;
+          max-width: 600px;
+          width: 90%;
+        }
+        h1 {
+          font-size: 2rem;
+          margin-bottom: 0.5rem;
+          color: #fff;
+        }
+        .subtitle {
+          color: #888;
+          margin-bottom: 2rem;
+          font-size: 0.95rem;
+        }
+        .search-box {
+          display: flex;
+          background: #1a1a1a;
+          border: 1px solid #333;
+          border-radius: 8px;
+          overflow: hidden;
+          transition: border-color 0.2s;
+        }
+        .search-box:focus-within {
+          border-color: #4a9eff;
+        }
+        .search-box input {
+          flex: 1;
+          padding: 14px 18px;
+          background: transparent;
+          border: none;
+          color: #fff;
+          font-size: 1rem;
+          outline: none;
+        }
+        .search-box input::placeholder { color: #555; }
+        .search-box button {
+          padding: 14px 24px;
+          background: #4a9eff;
+          border: none;
+          color: #fff;
+          font-size: 1rem;
+          cursor: pointer;
+          transition: background 0.2s;
+        }
+        .search-box button:hover { background: #3a8eef; }
+        .info {
+          margin-top: 2rem;
+          font-size: 0.85rem;
+          color: #555;
+        }
+        .info a { color: #4a9eff; text-decoration: none; }
+      </style>
+    </head>
+    <body>
+      <div class=""container"">
+        <h1>Private Browser</h1>
+        <p class=""subtitle"">Browse the web privately through this VM. Your IP stays hidden.</p>
+        <form id=""search-form"" class=""search-box"">
+          <input type=""text"" id=""url-input"" placeholder=""Search or enter a URL..."" autofocus autocomplete=""off"">
+          <button type=""submit"">Go</button>
+        </form>
+        <p class=""info"">Powered by DeCloud &mdash; decentralized, censorship-resistant infrastructure</p>
+      </div>
+      <script>
+        async function registerSW() {
+          if (!navigator.serviceWorker) {
+            alert('Service workers are not supported in this browser.');
+            return;
+          }
+          await navigator.serviceWorker.register('/sw.js', { scope: '/service/' });
+        }
+        registerSW();
+
+        document.getElementById('search-form').addEventListener('submit', function(e) {
+          e.preventDefault();
+          var input = document.getElementById('url-input').value.trim();
+          if (!input) return;
+          var url;
+          if (/^https?:\/\//i.test(input)) {
+            url = input;
+          } else if (/^[\w-]+(\.[\w-]+)+/.test(input)) {
+            url = 'https://' + input;
+          } else {
+            url = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
+          }
+          window.location.href = '/service/' + __uv$config.encodeUrl(url);
+        });
+      </script>
+      <script src=""/uv.config.js""></script>
+    </body>
+    </html>
+    EOFHTML
+
+  # Set up Nginx as reverse proxy with basic auth
+  - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
+  - |
+    cat > /etc/nginx/sites-available/webproxy <<'EOFNGINX'
+    server {
+        listen 8080;
+        server_name _;
+
+        auth_basic ""Private Browser"";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /bare/ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection ""upgrade"";
+        }
+
+        location /service/ {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection ""upgrade"";
+
+            # No auth for proxied pages (service worker handles them)
+            auth_basic off;
+        }
+
+        location /uv/ {
+            proxy_pass http://127.0.0.1:3000;
+            auth_basic off;
+        }
+
+        location /sw.js {
+            proxy_pass http://127.0.0.1:3000;
+            auth_basic off;
+        }
+
+        location /uv.config.js {
+            proxy_pass http://127.0.0.1:3000;
+            auth_basic off;
+        }
+    }
+    EOFNGINX
+
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/webproxy /etc/nginx/sites-enabled/webproxy
+  - nginx -t && systemctl restart nginx
+
+  # Create systemd service for the Node.js app
+  - |
+    cat > /etc/systemd/system/webproxy.service <<'EOF'
+    [Unit]
+    Description=Web Proxy Browser (Ultraviolet)
+    After=network.target
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/opt/webproxy
+    ExecStart=/usr/bin/node /opt/webproxy/server.js
+    Restart=always
+    RestartSec=5
+    Environment=NODE_ENV=production
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+
+  - systemctl daemon-reload
+  - systemctl enable webproxy.service
+  - systemctl start webproxy.service
+  - systemctl enable nginx
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║          Web Proxy Browser - DeCloud Template                ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  Browser: https://${DECLOUD_DOMAIN}:8080                     ║
+    ║  Password: ${DECLOUD_PASSWORD}                               ║
+    ║                                                               ║
+    ║  Just open the URL, log in, and start browsing.              ║
+    ║  All traffic is routed through this VM.                      ║
+    ║                                                               ║
+    ║  Services:                                                    ║
+    ║    systemctl status webproxy    (Node.js proxy)              ║
+    ║    systemctl status nginx       (reverse proxy)              ║
+    ║                                                               ║
+    ║  Logs:                                                        ║
+    ║    journalctl -u webproxy -f                                 ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  Web Proxy Browser is ready!
+
+  Open: https://${DECLOUD_DOMAIN}:8080
+  Password: ${DECLOUD_PASSWORD}
+
+  Type any URL or search term to browse privately.
+  Your real IP stays hidden — sites see the VM's IP.",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>(),
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "Web Proxy Browser UI",
+                    IsPublic = true
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8080",
+
+            EstimatedCostPerHour = 0.02m, // $0.02/hour — very lightweight
+
+            DefaultBandwidthTier = BandwidthTier.Standard, // 50 Mbps
 
             Status = TemplateStatus.Published,
             IsFeatured = true,

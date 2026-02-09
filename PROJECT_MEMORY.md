@@ -126,6 +126,7 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ Bandwidth tier system with libvirt QoS enforcement (Basic/Standard/Performance/Unmetered)
 ✅ Hybrid pricing model: platform floor rates + node operator custom pricing
 ✅ Node operator self-service pricing API (GET/PATCH endpoints)
+✅ Centralized VM lifecycle management (state machine with validated transitions and consistent side effects)
 
 ### Recent Achievements (2026-01-30)
 
@@ -690,6 +691,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 3. **Deterministic State:** SHA256(machineId + walletAddress) for stable node IDs
 4. **Authoritative Source:** Orchestrator maintains truth, nodes report current state
 5. **Graceful Degradation:** System continues working even if components fail
+6. **Centralized Lifecycle Management:** All VM state transitions through VmLifecycleManager — validate transition, persist status, then run side effects (best-effort, individually guarded)
 
 ### Major Realizations
 - **Simplicity > Complexity:** Wallet-encrypted passwords beat complex ephemeral SSH keys
@@ -834,6 +836,15 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Reconciliation on node startup (DB → iptables)
   - Health monitoring integration (NodeHealthMonitorService)
   - **Production Status:** ✅ All bugs fixed, end-to-end tested, production-ready
+- ✅ Centralized VM Lifecycle Management - **COMPLETE (2026-02-09)**
+  - VmLifecycleManager: single entry point for all confirmed VM state transitions
+  - State transition validation (monotonic progression, invalid transitions rejected)
+  - Side effects keyed by (from, to) status pair (ingress, port allocation, template fees, resource cleanup)
+  - PrivateIp timing race fixed (IP persisted before transition + 30s polling safety net)
+  - SafeExecuteAsync pattern: individual error isolation per side effect
+  - Persist-first design: status saved before effects, safe for crash recovery
+  - 5 call sites routed through lifecycle manager (command ack, heartbeat, health check, timeout, manual)
+  - Removed ~460 lines of duplicated/dead code
 - ✅ Targeted Node Selection (Goal 2.2) - **COMPLETE (2026-01-30)**
   - Deploy VM button on marketplace cards, target node banner in creation modal
 - ✅ User Reviews Backend (Goal 2.3) - **COMPLETE (backend)**
@@ -864,6 +875,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Node operator pricing with platform floor enforcement
 - ✅ Security (wallet auth, attestation, SSH certs)
 - ✅ Monitoring (heartbeats, metrics, events)
+- ✅ Centralized VM lifecycle management (state machine, consistent side effects)
 
 **Phase 1 Complete - Marketplace Foundation:**
 - ✅ Node marketplace with search/filtering/featured nodes (Goal 1.1)
