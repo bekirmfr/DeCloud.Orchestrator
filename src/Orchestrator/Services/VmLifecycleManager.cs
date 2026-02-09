@@ -392,10 +392,12 @@ public class VmLifecycleManager : IVmLifecycleManager
         }
 
         // Filter to only public ports that aren't already allocated
-        // Skip "http" protocol ports — those are handled by CentralIngress subdomain routing
+        // Skip http/ws protocol ports — those are handled by CentralIngress subdomain routing
+        // (Caddy reverse proxy handles both HTTP and WebSocket upgrades on the same port)
+        var ingressProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "http", "https", "ws", "wss" };
         var portsToAllocate = template.ExposedPorts
             .Where(p => p.IsPublic)
-            .Where(p => !string.Equals(p.Protocol, "http", StringComparison.OrdinalIgnoreCase))
+            .Where(p => !ingressProtocols.Contains(p.Protocol ?? ""))
             .Where(p => vm.DirectAccess?.PortMappings?.Any(m => m.VmPort == p.Port) != true)
             .ToList();
 
