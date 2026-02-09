@@ -659,7 +659,9 @@ public class NodeService : INodeService
                 "Command {CommandId} failed on node {NodeId}: {Error}",
                 commandId, nodeId, ack.ErrorMessage ?? "Unknown error");
 
-            // Handle failure based on VM status
+            // Route failure transitions through lifecycle manager
+            var failLifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+
             if (affectedVm.Status == VmStatus.Deleting)
             {
                 // ====================================================================
@@ -673,59 +675,55 @@ public class NodeService : INodeService
                 if (vmNotFound)
                 {
                     _logger.LogInformation(
-                        "✓ VM {VmId} deletion reported as 'not found' by node {NodeId}. " +
-                        "Treating as successful deletion (reconciliation). " +
-                        "VM was likely already deleted.",
+                        "VM {VmId} deletion reported as 'not found' by node {NodeId}. " +
+                        "Treating as successful deletion (reconciliation).",
                         affectedVm.Id, nodeId);
 
-                    // Complete deletion as if it succeeded
-                    await CompleteVmDeletionAsync(affectedVm);
-                    
-                    await _eventService.EmitAsync(new OrchestratorEvent
-                    {
-                        Type = EventType.VmDeleted,
-                        ResourceType = "vm",
-                        ResourceId = affectedVm.Id,
-                        NodeId = nodeId,
-                        UserId = affectedVm.OwnerId,
-                        Payload = new Dictionary<string, object>
-                        {
-                            ["CommandId"] = commandId,
-                            ["Reconciled"] = true,
-                            ["Reason"] = "VM not found on node - already deleted"
-                        }
-                    });
+                    // Clear command tracking before terminal transition
+                    affectedVm.ActiveCommandId = null;
+                    affectedVm.ActiveCommandType = null;
+                    affectedVm.ActiveCommandIssuedAt = null;
+                    affectedVm.StatusMessage = "Deletion confirmed by node (reconciled - VM not found)";
+                    await _dataStore.SaveVmAsync(affectedVm);
+
+                    await failLifecycleManager.TransitionAsync(
+                        affectedVm.Id,
+                        VmStatus.Deleted,
+                        TransitionContext.CommandAck(commandId, nodeId, ack.CompletedAt));
 
                     return true;
                 }
 
-                // Real deletion failure - not a "not found" case
-                affectedVm.Status = VmStatus.Error;
-                affectedVm.StatusMessage = $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}";
-                affectedVm.UpdatedAt = DateTime.UtcNow;
-                await _dataStore.SaveVmAsync(affectedVm);
-
+                // Real deletion failure
                 _logger.LogWarning(
                     "VM {VmId} deletion failed - resources remain reserved. " +
                     "Manual intervention may be required.",
                     affectedVm.Id);
+
+                await failLifecycleManager.TransitionAsync(
+                    affectedVm.Id,
+                    VmStatus.Error,
+                    TransitionContext.CommandFailed(commandId, nodeId,
+                        $"Deletion failed: {ack.ErrorMessage ?? "Unknown error"}"));
             }
             else if (affectedVm.Status == VmStatus.Provisioning)
             {
-                affectedVm.Status = VmStatus.Error;
-                affectedVm.StatusMessage = $"Creation failed: {ack.ErrorMessage ?? "Unknown error"}";
-                affectedVm.UpdatedAt = DateTime.UtcNow;
-                await _dataStore.SaveVmAsync(affectedVm);
+                await failLifecycleManager.TransitionAsync(
+                    affectedVm.Id,
+                    VmStatus.Error,
+                    TransitionContext.CommandFailed(commandId, nodeId,
+                        $"Creation failed: {ack.ErrorMessage ?? "Unknown error"}"));
             }
             else if (affectedVm.Status == VmStatus.Stopping)
             {
-                // Stop failed - VM might still be running
-                affectedVm.Status = VmStatus.Error;
-                affectedVm.StatusMessage = $"Stop failed: {ack.ErrorMessage ?? "Unknown error"}";
-                affectedVm.UpdatedAt = DateTime.UtcNow;
-                await _dataStore.SaveVmAsync(affectedVm);
+                await failLifecycleManager.TransitionAsync(
+                    affectedVm.Id,
+                    VmStatus.Error,
+                    TransitionContext.CommandFailed(commandId, nodeId,
+                        $"Stop failed: {ack.ErrorMessage ?? "Unknown error"}"));
             }
 
+            // Event is now emitted by lifecycle manager, but keep command-specific error event
             await _eventService.EmitAsync(new OrchestratorEvent
             {
                 Type = EventType.VmError,
@@ -748,61 +746,51 @@ public class NodeService : INodeService
         // HANDLE COMMAND SUCCESS
         // ====================================================================
 
+        // ════════════════════════════════════════════════════════════════
+        // Route VM lifecycle transitions through VmLifecycleManager
+        // ════════════════════════════════════════════════════════════════
+
+        var lifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+
         if (affectedVm.Status == VmStatus.Deleting)
         {
             _logger.LogInformation(
-                "Deletion confirmed for VM {VmId} - completing deletion and freeing resources",
+                "Deletion confirmed for VM {VmId} - transitioning to Deleted",
                 affectedVm.Id);
 
-            await CompleteVmDeletionAsync(affectedVm);
+            // Clear command tracking before terminal transition
+            affectedVm.ActiveCommandId = null;
+            affectedVm.ActiveCommandType = null;
+            affectedVm.ActiveCommandIssuedAt = null;
+            affectedVm.StatusMessage = "Deletion confirmed by node";
+            await _dataStore.SaveVmAsync(affectedVm);
+
+            await lifecycleManager.TransitionAsync(
+                affectedVm.Id,
+                VmStatus.Deleted,
+                TransitionContext.CommandAck(commandId, nodeId, ack.CompletedAt));
         }
         else if (affectedVm.Status == VmStatus.Provisioning)
         {
             _logger.LogInformation(
-                "Creation confirmed for VM {VmId} - marking as running",
+                "Creation confirmed for VM {VmId} - transitioning to Running",
                 affectedVm.Id);
 
-            affectedVm.Status = VmStatus.Running;
-            affectedVm.PowerState = VmPowerState.Running;
-            affectedVm.StartedAt = ack.CompletedAt;
-            affectedVm.StatusMessage = null;
-            affectedVm.UpdatedAt = DateTime.UtcNow;
-            await _dataStore.SaveVmAsync(affectedVm);
-
-            await _eventService.EmitAsync(new OrchestratorEvent
-            {
-                Type = EventType.VmStarted,
-                ResourceType = "vm",
-                ResourceId = affectedVm.Id,
-                NodeId = nodeId,
-                UserId = affectedVm.OwnerId
-            });
-
-            await _ingressService.OnVmStartedAsync(affectedVm.Id);
+            await lifecycleManager.TransitionAsync(
+                affectedVm.Id,
+                VmStatus.Running,
+                TransitionContext.CommandAck(commandId, nodeId, ack.CompletedAt));
         }
         else if (affectedVm.Status == VmStatus.Stopping)
         {
             _logger.LogInformation(
-                "Stop confirmed for VM {VmId} - marking as stopped",
+                "Stop confirmed for VM {VmId} - transitioning to Stopped",
                 affectedVm.Id);
 
-            affectedVm.Status = VmStatus.Stopped;
-            affectedVm.PowerState = VmPowerState.Off;
-            affectedVm.StoppedAt = ack.CompletedAt;
-            affectedVm.StatusMessage = null;
-            affectedVm.UpdatedAt = DateTime.UtcNow;
-            await _dataStore.SaveVmAsync(affectedVm);
-
-            await _eventService.EmitAsync(new OrchestratorEvent
-            {
-                Type = EventType.VmStopped,
-                ResourceType = "vm",
-                ResourceId = affectedVm.Id,
-                NodeId = nodeId,
-                UserId = affectedVm.OwnerId
-            });
-
-            await _ingressService.OnVmStoppedAsync(affectedVm.Id);
+            await lifecycleManager.TransitionAsync(
+                affectedVm.Id,
+                VmStatus.Stopped,
+                TransitionContext.CommandAck(commandId, nodeId, ack.CompletedAt));
         }
         else if (registration?.CommandType == NodeCommandType.AllocatePort)
         {
@@ -864,105 +852,7 @@ public class NodeService : INodeService
         return true;
     }
 
-    /// <summary>
-    /// Complete VM deletion after node confirmation.
-    /// Frees all reserved resources and updates quotas.
-    /// </summary>
-    private async Task CompleteVmDeletionAsync(VirtualMachine vm)
-    {
-        _logger.LogInformation(
-            "Completing deletion for VM {VmId} (Owner: {Owner}, Node: {Node})",
-            vm.Id, vm.OwnerId, vm.NodeId ?? "none");
-
-        // Step 1: Mark as Deleted
-        vm.Status = VmStatus.Deleted;
-        vm.StatusMessage = "Deletion confirmed by node";
-        vm.StoppedAt = DateTime.UtcNow;
-        vm.UpdatedAt = DateTime.UtcNow;
-
-        // Clear any remaining command tracking
-        vm.ActiveCommandId = null;
-        vm.ActiveCommandType = null;
-        vm.ActiveCommandIssuedAt = null;
-
-        await _dataStore.SaveVmAsync(vm);
-
-        // Step 2: Free reserved resources from node
-        var node = await _dataStore.GetNodeAsync(vm.NodeId);
-        if (!string.IsNullOrEmpty(vm.NodeId) &&
-            node != null)
-        {
-            var computePointsToFree = vm.Spec.ComputePointCost;
-            var memToFree = vm.Spec.MemoryBytes;
-            var memToFreeMb = memToFree / (1024 * 1024);
-            var storageToFree = vm.Spec.DiskBytes;
-            var storageToFreeGb = storageToFree / (1024 * 1024 * 1024);
-
-            // Free CPU cores (legacy)
-            node.ReservedResources.ComputePoints = Math.Max(0,
-                node.ReservedResources.ComputePoints - computePointsToFree);
-            node.ReservedResources.MemoryBytes = Math.Max(0,
-                node.ReservedResources.MemoryBytes - memToFree);
-            node.ReservedResources.StorageBytes = Math.Max(0,
-                node.ReservedResources.StorageBytes - storageToFree);
-
-            await _dataStore.SaveNodeAsync(node);
-
-            _logger.LogInformation(
-                "Released reserved resources for VM {VmId} on node {NodeId}: " +
-                "{ComputePoints} point(s), {MemoryMb} MB, {StorageGb} GB. " +
-                "Node now has: Reserved={ResComputePoints} point(s), Available={AvComputePoints}pts",
-                vm.Id, node.Id, computePointsToFree, memToFreeMb, storageToFreeGb,
-                node.ReservedResources.ComputePoints, node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints);
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Could not find node {NodeId} to release resources for VM {VmId}",
-                vm.NodeId, vm.Id);
-        }
-
-        // Step 3: Update user quotas
-        if (_dataStore.Users.TryGetValue(vm.OwnerId, out var user))
-        {
-            user.Quotas.CurrentVms = Math.Max(0, user.Quotas.CurrentVms - 1);
-            user.Quotas.CurrentVirtualCpuCores = Math.Max(0,
-                user.Quotas.CurrentVirtualCpuCores - vm.Spec.VirtualCpuCores);
-            user.Quotas.CurrentMemoryBytes = Math.Max(0,
-                user.Quotas.CurrentMemoryBytes - vm.Spec.MemoryBytes);
-            user.Quotas.CurrentStorageBytes = Math.Max(0,
-                user.Quotas.CurrentStorageBytes - vm.Spec.DiskBytes);
-
-            await _dataStore.SaveUserAsync(user);
-
-            _logger.LogInformation(
-                "Updated quotas for user {UserId}: VMs={VMs}/{MaxVMs}, CPU={CPU}c, MEM={MEM}MB",
-                user.Id, user.Quotas.CurrentVms, user.Quotas.MaxVms,
-                user.Quotas.CurrentVirtualCpuCores, user.Quotas.CurrentMemoryBytes);
-        }
-
-        await _ingressService.OnVmDeletedAsync(vm.Id);
-
-        // Step 4: Emit completion event
-        await _eventService.EmitAsync(new OrchestratorEvent
-        {
-            Type = EventType.VmDeleted,
-            ResourceType = "vm",
-            ResourceId = vm.Id,
-            NodeId = vm.NodeId,
-            UserId = vm.OwnerId,
-            Payload = new Dictionary<string, object>
-            {
-                ["FreedCpu"] = vm.Spec.VirtualCpuCores,
-                ["FreedMemoryBytes"] = vm.Spec.MemoryBytes,
-                ["FreedStorageBytes"] = vm.Spec.DiskBytes
-            }
-        });
-
-        _logger.LogInformation(
-            "VM {VmId} deletion completed successfully - all resources freed",
-            vm.Id);
-    }
+    // CompleteVmDeletionAsync moved to VmLifecycleManager.OnVmDeletedAsync
 
     /// <summary>
     /// Synchronizes CGNAT node relay assignment between orchestrator state and node heartbeat.
@@ -1393,29 +1283,43 @@ public class NodeService : INodeService
                 }
                 else if (vm.Status != newStatus || vm.PowerState != newPowerState)
                 {
-                    var wasRunning = vm.Status == VmStatus.Running;
-                    vm.Status = newStatus;
-                    vm.PowerState = newPowerState;
+                    // ════════════════════════════════════════════════════════════
+                    // IMPORTANT: Update access info BEFORE transitioning status.
+                    // The lifecycle manager's OnVmBecameRunning polls for PrivateIp,
+                    // so the IP must be persisted before the transition fires.
+                    // ════════════════════════════════════════════════════════════
+                    if (reported.IsIpAssigned)
+                    {
+                        vm.NetworkConfig.PrivateIp = reported.IpAddress;
+                        vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
 
-                    if (newStatus == VmStatus.Running && vm.StartedAt == null)
-                        vm.StartedAt = reported.StartedAt ?? DateTime.UtcNow;
+                        vm.AccessInfo ??= new VmAccessInfo();
+                        vm.AccessInfo.SshHost = reported.IpAddress;
+                        vm.AccessInfo.SshPort = 22;
 
-                    await _dataStore.SaveVmAsync(vm);
+                        if (reported.VncPort != null)
+                        {
+                            vm.AccessInfo.VncHost = node?.PublicIp;
+                            vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
+                        }
 
-                    if (newStatus == VmStatus.Running && !wasRunning)
-                        await _ingressService.OnVmStartedAsync(vmId);
-                    else if (newStatus != VmStatus.Running && wasRunning)
-                        await _ingressService.OnVmStoppedAsync(vmId);
+                        await _dataStore.SaveVmAsync(vm);
+                    }
+
+                    // Route state transition through lifecycle manager
+                    var heartbeatLifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                    await heartbeatLifecycleManager.TransitionAsync(
+                        vmId,
+                        newStatus,
+                        TransitionContext.Heartbeat(nodeId));
 
                     _logger.LogInformation(
                         "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
                         vmId, newStatus, newPowerState);
                 }
-
-                // Update access info if available
-                if (reported.IsIpAssigned)
+                else if (reported.IsIpAssigned)
                 {
-                    // Update network config with actual libvirt IP
+                    // Status unchanged but IP info arrived — update access info
                     vm.NetworkConfig.PrivateIp = reported.IpAddress;
                     vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
 
@@ -1425,7 +1329,6 @@ public class NodeService : INodeService
 
                     if (reported.VncPort != null)
                     {
-                        // VNC accessible through WireGuard at node IP
                         vm.AccessInfo.VncHost = node?.PublicIp;
                         vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
                     }
@@ -1801,34 +1704,21 @@ public class NodeService : INodeService
     private async Task MarkNodeVmsAsErrorAsync(string nodeId)
     {
         var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
-        
+
         nodeVms = nodeVms.Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
             .ToList();
+
+        var lifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
 
         foreach (var vm in nodeVms)
         {
             _logger.LogWarning("VM {VmId} on offline node {NodeId} marked as error",
                 vm.Id, nodeId);
 
-            vm.Status = VmStatus.Error;
-            vm.StatusMessage = "Node went offline";
-            vm.UpdatedAt = DateTime.UtcNow;
-
-            await _dataStore.SaveVmAsync(vm);
-
-            await _eventService.EmitAsync(new OrchestratorEvent
-            {
-                Type = EventType.VmError,
-                ResourceType = "vm",
-                ResourceId = vm.Id,
-                UserId = vm.OwnerId,
-                NodeId = nodeId,
-                Payload = new Dictionary<string, object>
-                {
-                    ["reason"] = "Node offline",
-                    ["nodeId"] = nodeId
-                }
-            });
+            await lifecycleManager.TransitionAsync(
+                vm.Id,
+                VmStatus.Error,
+                TransitionContext.NodeOffline(nodeId));
         }
     }
 
