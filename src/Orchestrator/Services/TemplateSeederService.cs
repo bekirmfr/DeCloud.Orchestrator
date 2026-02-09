@@ -1268,7 +1268,7 @@ final_message: |
         {
             Name = "Web Proxy Browser",
             Slug = "web-proxy-browser",
-            Version = "1.0.0",
+            Version = "2.0.0",
             Category = "privacy-security",
             Description = "Private web browsing directly in your browser — no extensions, no client apps. Type any URL and browse through the VM. Lightweight, fast, zero setup.",
             LongDescription = @"## Features
@@ -1281,7 +1281,7 @@ final_message: |
 - **Password protected** — only you can access your browsing session
 
 ## How It Works
-This template runs [Ultraviolet](https://github.com/nicotine33/ultraviolet), a modern web proxy that uses service workers to intercept all browser requests and route them through the VM. Unlike video-streaming solutions (Neko), this proxies the actual HTML/CSS/JS — giving you native browser speed with none of the latency.
+This template runs [Ultraviolet](https://github.com/titaniumnetwork-dev/Ultraviolet), a modern web proxy that uses service workers to intercept all browser requests and route them through the VM. Unlike video-streaming solutions (Neko), this proxies the actual HTML/CSS/JS — giving you native browser speed with none of the latency.
 
 ```
 You → Open URL → Ultraviolet (on VM) → fetches page → renders in your browser
@@ -1299,7 +1299,7 @@ All traffic exits from the VM's IP address. Your real IP is never exposed to the
 ## Getting Started
 1. Wait for setup to complete (~2-3 minutes)
 2. Open `https://${DECLOUD_DOMAIN}:8080` in your browser
-3. Enter the password: `${DECLOUD_PASSWORD}`
+3. Enter the password (username: `user`, password: `${DECLOUD_PASSWORD}`)
 4. Type a URL or search term and start browsing!
 
 ## Comparison with Other Privacy Templates
@@ -1316,16 +1316,15 @@ All traffic exits from the VM's IP address. Your real IP is never exposed to the
 This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enough for proxied browsing.
 
 ## Technical Details
-- Ultraviolet web proxy with bare-server-node backend
-- Nginx reverse proxy on port 8080
+- Ultraviolet v3 web proxy with Wisp transport and epoxy backend
+- Nginx reverse proxy with basic auth on port 8080
 - Service worker-based request interception
-- Password authentication via Nginx basic auth
 - Systemd services for automatic startup",
 
             AuthorId = "platform",
             AuthorName = "DeCloud",
-            SourceUrl = "https://github.com/nicotine33/ultraviolet",
-            License = "AGPL-3.0",
+            SourceUrl = "https://github.com/titaniumnetwork-dev/Ultraviolet-App",
+            License = "GPL-3.0",
 
             MinimumSpec = new VmSpec
             {
@@ -1352,105 +1351,34 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enoug
             CloudInitTemplate = @"#cloud-config
 
 # Web Proxy Browser (Ultraviolet) - Private Browsing Proxy
-# DeCloud Template v1.0.0
+# DeCloud Template v2.0.0 - Uses official Ultraviolet-App with Wisp transport
 
 packages:
   - curl
   - wget
+  - git
   - nginx
   - apache2-utils
 
 runcmd:
-  # Install Node.js 20 LTS
-  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  # Install Node.js 22 LTS
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   - apt-get install -y nodejs
 
-  # Create application directory
-  - mkdir -p /opt/webproxy
+  # Clone official Ultraviolet-App
+  - git clone https://github.com/titaniumnetwork-dev/Ultraviolet-App.git /opt/webproxy
 
-  # Initialize Node.js project
-  - |
-    cd /opt/webproxy
-    npm init -y
+  # Install dependencies
+  - cd /opt/webproxy && npm install --ignore-engines 2>&1 || true
 
-  # Install Ultraviolet and bare-server-node
-  - |
-    cd /opt/webproxy
-    npm install @nicotine33/ultraviolet-node @nicotine33/bare-server-node express
-
-  # Create the server application
-  - |
-    cat > /opt/webproxy/server.js <<'EOFSERVER'
-    const http = require('http');
-    const express = require('express');
-    const { createBareServer } = require('@nicotine33/bare-server-node');
-    const { uvPath } = require('@nicotine33/ultraviolet-node');
-    const path = require('path');
-
-    const bare = createBareServer('/bare/');
-    const app = express();
-
-    // Serve Ultraviolet static files
-    app.use('/uv/', express.static(uvPath));
-
-    // Serve custom frontend
-    app.use(express.static(path.join(__dirname, 'public')));
-
-    const server = http.createServer((req, res) => {
-      if (bare.shouldRoute(req)) {
-        bare.routeRequest(req, res);
-      } else {
-        app(req, res);
-      }
-    });
-
-    server.on('upgrade', (req, socket, head) => {
-      if (bare.shouldRoute(req)) {
-        bare.routeUpgrade(req, socket, head);
-      } else {
-        socket.end();
-      }
-    });
-
-    server.listen(3000, '127.0.0.1', () => {
-      console.log('Web Proxy Browser listening on http://127.0.0.1:3000');
-    });
-    EOFSERVER
-
-  # Create public directory and frontend
-  - mkdir -p /opt/webproxy/public
-
-  # Create the service worker registration
-  - |
-    cat > /opt/webproxy/public/sw.js <<'EOFSW'
-    importScripts('/uv/uv.bundle.js');
-    importScripts('/uv/uv.config.js');
-    importScripts('/uv/uv.sw.js');
-    EOFSW
-
-  # Create UV config
-  - |
-    cat > /opt/webproxy/public/uv.config.js <<'EOFUVCONFIG'
-    self.__uv$config = {
-      prefix: '/service/',
-      bare: '/bare/',
-      encodeUrl: Ultraviolet.codec.xor.encode,
-      decodeUrl: Ultraviolet.codec.xor.decode,
-      handler: '/uv/uv.handler.js',
-      client: '/uv/uv.client.js',
-      bundle: '/uv/uv.bundle.js',
-      config: '/uv.config.js',
-      sw: '/uv/uv.sw.js',
-    };
-    EOFUVCONFIG
-
-  # Create the landing page
+  # Replace frontend with custom branded landing page
+  # Uses same element IDs as UV-App so existing JS (index.js, search.js) works
   - |
     cat > /opt/webproxy/public/index.html <<'EOFHTML'
-    <!DOCTYPE html>
-    <html lang=""en"">
+    <!doctype html>
+    <html>
     <head>
-      <meta charset=""UTF-8"">
+      <meta charset=""utf-8"">
       <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
       <title>Private Browser</title>
       <style>
@@ -1465,22 +1393,10 @@ runcmd:
           align-items: center;
           justify-content: center;
         }
-        .container {
-          text-align: center;
-          max-width: 600px;
-          width: 90%;
-        }
-        h1 {
-          font-size: 2rem;
-          margin-bottom: 0.5rem;
-          color: #fff;
-        }
-        .subtitle {
-          color: #888;
-          margin-bottom: 2rem;
-          font-size: 0.95rem;
-        }
-        .search-box {
+        .container { text-align: center; max-width: 600px; width: 90%; }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; color: #fff; }
+        .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.95rem; }
+        #uv-form {
           display: flex;
           background: #1a1a1a;
           border: 1px solid #333;
@@ -1488,73 +1404,46 @@ runcmd:
           overflow: hidden;
           transition: border-color 0.2s;
         }
-        .search-box:focus-within {
-          border-color: #4a9eff;
+        #uv-form:focus-within { border-color: #4a9eff; }
+        #uv-address {
+          flex: 1; padding: 14px 18px; background: transparent;
+          border: none; color: #fff; font-size: 1rem; outline: none;
         }
-        .search-box input {
-          flex: 1;
-          padding: 14px 18px;
-          background: transparent;
-          border: none;
-          color: #fff;
-          font-size: 1rem;
-          outline: none;
+        #uv-address::placeholder { color: #555; }
+        #uv-form button {
+          padding: 14px 24px; background: #4a9eff; border: none;
+          color: #fff; font-size: 1rem; cursor: pointer; transition: background 0.2s;
         }
-        .search-box input::placeholder { color: #555; }
-        .search-box button {
-          padding: 14px 24px;
-          background: #4a9eff;
-          border: none;
-          color: #fff;
-          font-size: 1rem;
-          cursor: pointer;
-          transition: background 0.2s;
+        #uv-form button:hover { background: #3a8eef; }
+        .info { margin-top: 2rem; font-size: 0.85rem; color: #555; }
+        #uv-error { color: #ff4444; margin-top: 1rem; font-size: 0.9rem; }
+        #uv-error-code { color: #888; font-size: 0.8rem; text-align: left; margin-top: 0.5rem; }
+        #uv-frame {
+          position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+          border: none; z-index: 10;
         }
-        .search-box button:hover { background: #3a8eef; }
-        .info {
-          margin-top: 2rem;
-          font-size: 0.85rem;
-          color: #555;
-        }
-        .info a { color: #4a9eff; text-decoration: none; }
       </style>
+      <script src=""baremux/index.js""></script>
+      <script src=""uv/uv.bundle.js""></script>
+      <script src=""uv/uv.config.js""></script>
     </head>
     <body>
       <div class=""container"">
         <h1>Private Browser</h1>
         <p class=""subtitle"">Browse the web privately through this VM. Your IP stays hidden.</p>
-        <form id=""search-form"" class=""search-box"">
-          <input type=""text"" id=""url-input"" placeholder=""Search or enter a URL..."" autofocus autocomplete=""off"">
+        <form id=""uv-form"">
+          <input id=""uv-search-engine"" value=""https://duckduckgo.com/?q=%s"" type=""hidden"">
+          <input id=""uv-address"" type=""text"" placeholder=""Search or enter a URL..."" autofocus autocomplete=""off"">
           <button type=""submit"">Go</button>
         </form>
+        <p id=""uv-error""></p>
+        <pre id=""uv-error-code""></pre>
         <p class=""info"">Powered by DeCloud &mdash; decentralized, censorship-resistant infrastructure</p>
       </div>
-      <script>
-        async function registerSW() {
-          if (!navigator.serviceWorker) {
-            alert('Service workers are not supported in this browser.');
-            return;
-          }
-          await navigator.serviceWorker.register('/sw.js', { scope: '/service/' });
-        }
-        registerSW();
-
-        document.getElementById('search-form').addEventListener('submit', function(e) {
-          e.preventDefault();
-          var input = document.getElementById('url-input').value.trim();
-          if (!input) return;
-          var url;
-          if (/^https?:\/\//i.test(input)) {
-            url = input;
-          } else if (/^[\w-]+(\.[\w-]+)+/.test(input)) {
-            url = 'https://' + input;
-          } else {
-            url = 'https://duckduckgo.com/?q=' + encodeURIComponent(input);
-          }
-          window.location.href = '/service/' + __uv$config.encodeUrl(url);
-        });
-      </script>
-      <script src=""/uv.config.js""></script>
+      <iframe style=""display:none"" id=""uv-frame""></iframe>
+      <script src=""register-sw.js""></script>
+      <script src=""search.js""></script>
+      <script src=""index.js""></script>
     </body>
     </html>
     EOFHTML
@@ -1576,38 +1465,33 @@ runcmd:
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
         }
 
-        location /bare/ {
+        # Wisp WebSocket endpoint - no auth (WS upgrade may not carry credentials)
+        location /wisp/ {
             proxy_pass http://127.0.0.1:3000;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
+            proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection ""upgrade"";
-        }
-
-        location /service/ {
-            proxy_pass http://127.0.0.1:3000;
             proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection ""upgrade"";
-
-            # No auth for proxied pages (service worker handles them)
             auth_basic off;
         }
 
+        # UV service worker and proxied content - no auth
         location /uv/ {
             proxy_pass http://127.0.0.1:3000;
             auth_basic off;
         }
 
-        location /sw.js {
+        # Epoxy transport - no auth (loaded by service worker)
+        location /epoxy/ {
             proxy_pass http://127.0.0.1:3000;
             auth_basic off;
         }
 
-        location /uv.config.js {
+        # Bare mux - no auth (loaded by service worker)
+        location /baremux/ {
             proxy_pass http://127.0.0.1:3000;
             auth_basic off;
         }
@@ -1628,10 +1512,11 @@ runcmd:
     [Service]
     Type=simple
     WorkingDirectory=/opt/webproxy
-    ExecStart=/usr/bin/node /opt/webproxy/server.js
+    ExecStart=/usr/bin/node /opt/webproxy/src/index.js
     Restart=always
     RestartSec=5
     Environment=NODE_ENV=production
+    Environment=PORT=3000
 
     [Install]
     WantedBy=multi-user.target
@@ -1650,6 +1535,7 @@ runcmd:
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  Browser: https://${DECLOUD_DOMAIN}:8080                     ║
+    ║  Username: user                                               ║
     ║  Password: ${DECLOUD_PASSWORD}                               ║
     ║                                                               ║
     ║  Just open the URL, log in, and start browsing.              ║
@@ -1669,6 +1555,7 @@ final_message: |
   Web Proxy Browser is ready!
 
   Open: https://${DECLOUD_DOMAIN}:8080
+  Username: user
   Password: ${DECLOUD_PASSWORD}
 
   Type any URL or search term to browse privately.
