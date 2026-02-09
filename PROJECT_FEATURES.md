@@ -961,6 +961,109 @@ All payments are in **USDC stablecoin** on the **Polygon blockchain** for low fe
 
 ---
 
+## VM Lifecycle Management
+
+### Centralized State Machine (VmLifecycleManager)
+
+**Status:** ✅ Implemented (2026-02-09)
+**Location:** `src/Orchestrator/Services/VmLifecycleManager.cs`
+
+All confirmed VM state transitions flow through a single entry point: `VmLifecycleManager.TransitionAsync()`. This replaces the previous pattern where 5 separate code paths changed VM status with inconsistent side effects.
+
+### Design Principles
+
+1. **Single entry point** — Every confirmed status change goes through `TransitionAsync`
+2. **Validate first, persist second, effects third** — Invalid transitions rejected before any mutation
+3. **Side effects keyed by (from, to) pair** — Different transitions trigger different effects
+4. **Individual error isolation** — `SafeExecuteAsync` wraps each side effect; one failure never aborts the chain
+5. **Persist-first** — Status saved before effects run; crash mid-effects leaves VM in correct state for reconciliation
+
+### State Transition Map
+
+```
+Pending       → Scheduling, Provisioning, Error, Deleting
+Scheduling    → Provisioning, Pending, Error, Deleting
+Provisioning  → Running, Error, Deleting
+Running       → Stopping, Error, Deleting
+Stopping      → Stopped, Running, Error, Deleting
+Stopped       → Provisioning, Running, Deleting, Error
+Deleting      → Deleted, Error
+Migrating     → Running, Error, Deleting
+Error         → Provisioning, Running, Deleting, Stopped, Error
+Deleted       → (terminal — no transitions)
+```
+
+Invalid transitions (e.g., `Deleted → Running`) are rejected with a warning log.
+
+### Side Effect Dispatch
+
+| Transition | Handler | Effects |
+|---|---|---|
+| `Provisioning/Stopped/Error → Running` | `OnVmBecameRunningAsync` | Wait for PrivateIp → Ingress registration → Template port auto-allocation → Template fee settlement |
+| `Running → Stopping/Deleting/Error` | `OnVmLeavingRunningAsync` | Ingress cleanup |
+| `* → Stopped` | `OnVmStoppedAsync` | Ingress cleanup |
+| `* → Deleted` | `OnVmDeletedAsync` | Ingress deletion → DirectAccess port cleanup → Free node resources → Free user quotas → Increment node reputation |
+
+Key behaviors:
+- `Error → Running` does **not** re-allocate ports or re-charge template fees
+- `Stopped → Deleting` does **not** run ingress cleanup (VM wasn't serving)
+- `Running → Running` (same status) is a no-op, preventing duplicate side effects
+
+### PrivateIp Timing Resolution
+
+VM private IPs arrive via heartbeat, often after the command ack sets status to Running. The lifecycle manager handles this with two mechanisms:
+
+1. **Structural fix:** The heartbeat path persists PrivateIp to the datastore **before** calling `TransitionAsync`, so IP is available when side effects fire
+2. **Safety net:** `WaitForPrivateIpAsync` polls the datastore every 2 seconds for up to 30 seconds, accommodating the ~15-second IP discovery delay on nodes
+
+If the IP still isn't available after 30 seconds, effects are deferred (not failed). A future reconciliation service or the next heartbeat can retry.
+
+### Transition Context
+
+Every transition carries metadata about what triggered it:
+
+| Trigger | Source | Use Case |
+|---|---|---|
+| `CommandAck` | NodeService command acknowledgment | Node confirmed a create/stop/delete completed |
+| `Heartbeat` | NodeService heartbeat sync | Node reports VM status different from Orchestrator's record |
+| `Manual` | VmService / SignalR hub | Admin or API-initiated status change |
+| `Timeout` | BackgroundServices stale command cleanup | Command not acknowledged within timeout window |
+| `NodeOffline` | NodeService health check | Node missed heartbeats, all its VMs marked Error |
+| `CommandFailed` | NodeService command acknowledgment | Node reported command execution failure |
+
+Context is used for structured logging and debugging — every transition log includes the trigger type, source, and relevant IDs.
+
+### Call Sites (5 entry points, 1 destination)
+
+All confirmed transitions route through `IVmLifecycleManager.TransitionAsync()`:
+
+1. **Command acknowledgment** (`NodeService.ProcessCommandAcknowledgmentAsync`) — Node confirms create → Running, stop → Stopped, delete → Deleted, or failure → Error
+2. **Heartbeat sync** (`NodeService.SyncVmStateFromHeartbeatAsync`) — Node reports a VM status that differs from the Orchestrator's record
+3. **Node offline** (`NodeService.MarkNodeVmsAsErrorAsync`) — Health check detects node went offline, all VMs → Error
+4. **Background timeout** (`BackgroundServices.CleanupExpiredCommands`) — Command not acknowledged within timeout → Error
+5. **Manual/API** (`VmService.UpdateVmStatusAsync`) — SignalR hub or API-initiated status change
+
+**Note:** "Command issuance" paths (setting `Provisioning` on create, `Stopping` on stop, `Deleting` on delete) intentionally set status directly as optimistic updates before the node confirms. These are not confirmed transitions and do not trigger side effects.
+
+### Implementation Files
+
+| File | Change |
+|---|---|
+| `Services/VmLifecycleManager.cs` | New — lifecycle manager with interface, context, and all side effect handlers |
+| `Program.cs` | DI registration (`AddSingleton<IVmLifecycleManager, VmLifecycleManager>`) |
+| `Services/NodeService.cs` | Command ack, heartbeat, and node-offline paths route through lifecycle manager |
+| `Services/VmService.cs` | `UpdateVmStatusAsync` delegates to lifecycle manager; removed ~280 lines of dead code |
+| `Background/BackgroundServices.cs` | Command timeout path routes through lifecycle manager |
+
+### Previous Issues Fixed
+
+- **Auto port allocation never fired:** `AutoAllocateTemplatePortsAsync` only existed in `VmService.UpdateVmStatusAsync`, which was only called from the SignalR hub. The actual VM lifecycle paths (command ack, heartbeat) set `vm.Status` directly, bypassing all side effects.
+- **PrivateIp timing race:** Heartbeat path set status to Running and saved, then set PrivateIp afterward. Side effects requiring IP would fail because IP wasn't persisted yet.
+- **Fire-and-forget anti-pattern:** Old code used `_ = Task.Run(async () => ...)` for side effects, which was unreliable and swallowed exceptions silently.
+- **Inconsistent cleanup on deletion:** `NodeService.CompleteVmDeletionAsync` freed node resources but not DirectAccess ports. `VmService.CompleteVmDeletionAsync` freed quotas but used different logic. Now unified in `OnVmDeletedAsync`.
+
+---
+
 ## Resource Management
 
 ### CPU Benchmarking
