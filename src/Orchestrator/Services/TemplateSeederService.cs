@@ -301,6 +301,7 @@ runcmd:
   # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
   # CLIP's setup.py imports pkg_resources, so --no-build-isolation uses the venv's older setuptools.
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools""
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install --no-build-isolation 'https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip'""
 
   # Download base model (with retry)
@@ -1713,6 +1714,7 @@ runcmd:
   # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
   # CLIP's setup.py imports pkg_resources, so --no-build-isolation uses the venv's older setuptools.
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools""
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install --no-build-isolation 'https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip'""
 
   # Download SD 1.5 base model (with retry)
