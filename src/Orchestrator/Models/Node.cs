@@ -426,6 +426,11 @@ public class HeartbeatServiceInfo
     public int? Port { get; set; }
     public string? Protocol { get; set; }
     public string Status { get; set; } = "Pending";  // Pending, Checking, Ready, TimedOut, Failed
+    /// <summary>
+    /// Human-readable explanation from node agent.
+    /// E.g., "cloud-init error: apt-get install failed" or "cloud-init did not finish within 300s"
+    /// </summary>
+    public string? StatusMessage { get; set; }
     public DateTime? ReadyAt { get; set; }
 }
 
