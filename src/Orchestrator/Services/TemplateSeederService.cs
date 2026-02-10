@@ -297,6 +297,12 @@ runcmd:
   # Clone Stable Diffusion WebUI
   - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
 
+  # Pre-create venv and install CLIP before service starts.
+  # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
+  # CLIP's setup.py imports pkg_resources, so --no-build-isolation uses the venv's older setuptools.
+  - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install --no-build-isolation 'https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip'""
+
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
   - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors""
@@ -1702,6 +1708,12 @@ runcmd:
 
   # Clone Stable Diffusion WebUI
   - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
+
+  # Pre-create venv and install CLIP before service starts.
+  # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
+  # CLIP's setup.py imports pkg_resources, so --no-build-isolation uses the venv's older setuptools.
+  - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install --no-build-isolation 'https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip'""
 
   # Download SD 1.5 base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
