@@ -2286,11 +2286,23 @@ function getStatusText(status) {
 }
 
 /**
+ * Normalize service readiness status (handles both integer enum and string)
+ * API may return integer (0-4) or string ("Pending", "Ready", etc.)
+ */
+function normalizeServiceStatus(status) {
+    if (status == null) return 'pending';
+    if (typeof status === 'number') {
+        const map = { 0: 'pending', 1: 'checking', 2: 'ready', 3: 'timedout', 4: 'failed' };
+        return map[status] || 'pending';
+    }
+    return String(status).toLowerCase();
+}
+
+/**
  * Get CSS class for service readiness status
  */
 function getServiceStatusClass(status) {
-    if (!status) return 'svc-pending';
-    switch (status.toLowerCase()) {
+    switch (normalizeServiceStatus(status)) {
         case 'ready': return 'svc-ready';
         case 'checking': return 'svc-checking';
         case 'pending': return 'svc-pending';
@@ -2304,8 +2316,7 @@ function getServiceStatusClass(status) {
  * Get icon for service readiness status
  */
 function getServiceStatusIcon(status) {
-    if (!status) return '<span class="svc-icon svc-pending">&#x25CB;</span>';
-    switch (status.toLowerCase()) {
+    switch (normalizeServiceStatus(status)) {
         case 'ready':    return '<span class="svc-icon svc-ready">&#x2713;</span>';
         case 'checking': return '<span class="svc-icon svc-checking">&#x25CF;</span>';
         case 'pending':  return '<span class="svc-icon svc-pending">&#x25CB;</span>';
@@ -2321,7 +2332,7 @@ function getServiceStatusIcon(status) {
 function renderServiceReadiness(services, vmStatus) {
     if (!services || services.length === 0 || vmStatus !== 3) return '';
 
-    const readyCount = services.filter(s => s.status?.toLowerCase() === 'ready').length;
+    const readyCount = services.filter(s => normalizeServiceStatus(s.status) === 'ready').length;
     const total = services.length;
     const allReady = readyCount === total;
 
@@ -2334,7 +2345,7 @@ function renderServiceReadiness(services, vmStatus) {
         const label = name === 'System' ? 'System' : `${name}${port}`;
         const statusClass = getServiceStatusClass(s.status);
         const icon = getServiceStatusIcon(s.status);
-        const statusText = s.status || 'Pending';
+        const statusText = normalizeServiceStatus(s.status);
 
         return `<div class="svc-item ${statusClass}" title="${label}: ${statusText}">
             ${icon}
@@ -2354,11 +2365,11 @@ function renderServiceReadiness(services, vmStatus) {
 function renderServiceBadge(services, vmStatus) {
     if (!services || services.length === 0 || vmStatus !== 3) return '';
 
-    const readyCount = services.filter(s => s.status?.toLowerCase() === 'ready').length;
+    const readyCount = services.filter(s => normalizeServiceStatus(s.status) === 'ready').length;
     const total = services.length;
     const allReady = readyCount === total;
     const hasFailure = services.some(s => {
-        const st = s.status?.toLowerCase();
+        const st = normalizeServiceStatus(s.status);
         return st === 'failed' || st === 'timedout';
     });
 
