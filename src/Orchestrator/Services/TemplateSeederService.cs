@@ -269,6 +269,7 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+  - python3-setuptools
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
@@ -1685,6 +1686,7 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+  - python3-setuptools
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
