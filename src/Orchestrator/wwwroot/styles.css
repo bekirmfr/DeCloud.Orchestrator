@@ -1494,6 +1494,120 @@
     background: var(--text-muted);
 }
 
+/* =============================================
+   SERVICE READINESS INDICATORS
+   ============================================= */
+
+.vm-status-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Compact badge in table (e.g. "3/3") */
+.svc-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.svc-badge-ready {
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--accent-primary);
+}
+
+.svc-badge-progress {
+    background: rgba(0, 168, 255, 0.15);
+    color: var(--accent-secondary);
+}
+
+.svc-badge-warn {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-warning);
+}
+
+/* Expanded service readiness section */
+.svc-readiness {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.svc-summary {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.svc-summary-ready {
+    color: var(--accent-primary);
+}
+
+.svc-summary-partial {
+    color: var(--accent-secondary);
+}
+
+/* Service list */
+.svc-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+}
+
+.svc-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.svc-icon {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.svc-icon.svc-ready {
+    color: var(--accent-primary);
+}
+
+.svc-icon.svc-checking {
+    color: var(--accent-secondary);
+    animation: pulse-glow 1.5s infinite;
+}
+
+.svc-icon.svc-pending {
+    color: var(--text-muted);
+}
+
+.svc-icon.svc-timedout {
+    color: var(--accent-warning);
+}
+
+.svc-icon.svc-failed {
+    color: var(--accent-danger);
+}
+
+.svc-label {
+    white-space: nowrap;
+}
+
+/* Service readiness in dashboard cards */
+.vm-card .svc-readiness {
+    margin-top: 10px;
+    background: rgba(0, 0, 0, 0.15);
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
 .action-btn {
     background: var(--bg-secondary);
     border: 1px solid var(--border-default);

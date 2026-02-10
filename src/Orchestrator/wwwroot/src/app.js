@@ -1131,9 +1131,13 @@ function renderVMsTable(vms) {
             <td>${vm.spec?.memoryBytes / (1024 * 1024) || 0} MB</td>
             <td>${vm.spec?.diskBytes / (1024 * 1024 * 1024) || 0} GB</td>
             <td>
-                <span class="status-badge status-${getStatusClass(vm.status)}">
-                    ${getStatusText(vm.status)}
-                </span>
+                <div class="vm-status-cell">
+                    <span class="status-badge status-${getStatusClass(vm.status)}">
+                        ${getStatusText(vm.status)}
+                    </span>
+                    ${renderServiceBadge(vm.services, vm.status)}
+                </div>
+                ${renderServiceReadiness(vm.services, vm.status)}
             </td>
             <td>
                 <div class="table-actions">
@@ -1252,6 +1256,7 @@ function renderDashboardVMs(vms) {
                         <span class="spec-value">${diskGB.toFixed(2)} GB</span>
                     </div>
                 </div>
+                ${renderServiceReadiness(vm.services, vm.status)}
             </div>
         `;
     }).join('');
@@ -2278,6 +2283,88 @@ function getStatusText(status) {
         6: 'Deleting', 7: 'Migrating', 8: 'Error', 9: 'Deleted'
     };
     return statusMap[status] || 'Unknown';
+}
+
+/**
+ * Get CSS class for service readiness status
+ */
+function getServiceStatusClass(status) {
+    if (!status) return 'svc-pending';
+    switch (status.toLowerCase()) {
+        case 'ready': return 'svc-ready';
+        case 'checking': return 'svc-checking';
+        case 'pending': return 'svc-pending';
+        case 'timedout': return 'svc-timedout';
+        case 'failed': return 'svc-failed';
+        default: return 'svc-pending';
+    }
+}
+
+/**
+ * Get icon for service readiness status
+ */
+function getServiceStatusIcon(status) {
+    if (!status) return '<span class="svc-icon svc-pending">&#x25CB;</span>';
+    switch (status.toLowerCase()) {
+        case 'ready':    return '<span class="svc-icon svc-ready">&#x2713;</span>';
+        case 'checking': return '<span class="svc-icon svc-checking">&#x25CF;</span>';
+        case 'pending':  return '<span class="svc-icon svc-pending">&#x25CB;</span>';
+        case 'timedout': return '<span class="svc-icon svc-timedout">&#x26A0;</span>';
+        case 'failed':   return '<span class="svc-icon svc-failed">&#x2717;</span>';
+        default:         return '<span class="svc-icon svc-pending">&#x25CB;</span>';
+    }
+}
+
+/**
+ * Render per-service readiness indicators for a VM
+ */
+function renderServiceReadiness(services, vmStatus) {
+    if (!services || services.length === 0 || vmStatus !== 3) return '';
+
+    const readyCount = services.filter(s => s.status?.toLowerCase() === 'ready').length;
+    const total = services.length;
+    const allReady = readyCount === total;
+
+    const summaryClass = allReady ? 'svc-summary-ready' : 'svc-summary-partial';
+    const summaryText = allReady ? 'All services ready' : `${readyCount}/${total} ready`;
+
+    const serviceItems = services.map(s => {
+        const name = s.name || 'Unknown';
+        const port = s.port ? `:${s.port}` : '';
+        const label = name === 'System' ? 'System' : `${name}${port}`;
+        const statusClass = getServiceStatusClass(s.status);
+        const icon = getServiceStatusIcon(s.status);
+        const statusText = s.status || 'Pending';
+
+        return `<div class="svc-item ${statusClass}" title="${label}: ${statusText}">
+            ${icon}
+            <span class="svc-label">${escapeHtml(label)}</span>
+        </div>`;
+    }).join('');
+
+    return `<div class="svc-readiness">
+        <div class="svc-summary ${summaryClass}">${summaryText}</div>
+        <div class="svc-list">${serviceItems}</div>
+    </div>`;
+}
+
+/**
+ * Render compact service readiness badge for VM table row
+ */
+function renderServiceBadge(services, vmStatus) {
+    if (!services || services.length === 0 || vmStatus !== 3) return '';
+
+    const readyCount = services.filter(s => s.status?.toLowerCase() === 'ready').length;
+    const total = services.length;
+    const allReady = readyCount === total;
+    const hasFailure = services.some(s => {
+        const st = s.status?.toLowerCase();
+        return st === 'failed' || st === 'timedout';
+    });
+
+    const badgeClass = allReady ? 'svc-badge-ready' : hasFailure ? 'svc-badge-warn' : 'svc-badge-progress';
+
+    return `<span class="svc-badge ${badgeClass}" title="${readyCount}/${total} services ready">${readyCount}/${total}</span>`;
 }
 
 // ============================================
