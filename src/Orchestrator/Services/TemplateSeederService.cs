@@ -206,16 +206,15 @@ public class TemplateSeederService
     {
         return new VmTemplate
         {
-            Name = "Stable Diffusion WebUI",
+            Name = "Stable Diffusion WebUI Forge",
             Slug = "stable-diffusion-webui",
-            Version = "1.1.0",
+            Version = "2.0.0",
             Category = "ai-ml",
-            Description = "AUTOMATIC1111 Stable Diffusion WebUI with popular models pre-installed. Generate images from text prompts using cutting-edge AI models.",
+            Description = "Stable Diffusion WebUI Forge with popular models pre-installed. Generate images from text prompts using cutting-edge AI models.",
             LongDescription = @"## Features
-- AUTOMATIC1111 Stable Diffusion WebUI (latest version)
+- Stable Diffusion WebUI Forge (actively maintained fork of AUTOMATIC1111)
 - Pre-configured with SD 1.5 base model
-- ControlNet extension included
-- Optimized for NVIDIA GPUs
+- Optimized for NVIDIA GPUs with better memory management
 - Automatic model downloading
 - Web interface accessible via browser
 
@@ -232,7 +231,7 @@ public class TemplateSeederService
 
             AuthorId = "platform",
             AuthorName = "DeCloud",
-            SourceUrl = "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+            SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
 
             MinimumSpec = new VmSpec
             {
@@ -256,12 +255,12 @@ public class TemplateSeederService
             GpuRequirement = "NVIDIA GPU with CUDA support (RTX 3060+ recommended)",
             RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
 
-            Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "gpu", "machine-learning" },
+            Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "gpu", "machine-learning", "forge" },
 
             CloudInitTemplate = @"#cloud-config
 
-# Stable Diffusion WebUI (GPU) - Automatic Installation
-# DeCloud Template v1.1.0
+# Stable Diffusion WebUI Forge (GPU) - Automatic Installation
+# DeCloud Template v2.0.0 — Uses Forge (maintained AUTOMATIC1111 fork)
 
 packages:
   - git
@@ -269,6 +268,7 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+  - python3-setuptools
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
@@ -293,8 +293,14 @@ runcmd:
   # Create application user
   - useradd -m -s /bin/bash sduser
 
-  # Clone Stable Diffusion WebUI
-  - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
+  # Clone Stable Diffusion WebUI Forge
+  - su - sduser -c ""git clone https://github.com/lllyasviel/stable-diffusion-webui-forge.git /home/sduser/stable-diffusion-webui""
+
+  # Pre-create venv and install build tools.
+  # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
+  # Pre-installing wheel+setuptools avoids build failures for packages that need them.
+  - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools""
 
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
@@ -304,7 +310,7 @@ runcmd:
   - |
     cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
     [Unit]
-    Description=Stable Diffusion WebUI
+    Description=Stable Diffusion WebUI Forge
     After=network.target
 
     [Service]
@@ -329,7 +335,7 @@ runcmd:
   - |
     cat > /etc/motd <<'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
-    ║           Stable Diffusion WebUI - DeCloud Template          ║
+    ║       Stable Diffusion WebUI Forge - DeCloud Template        ║
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  WebUI: https://${DECLOUD_DOMAIN}:7860                       ║
@@ -345,7 +351,7 @@ runcmd:
     EOF
 
 final_message: |
-  Stable Diffusion WebUI is starting up!
+  Stable Diffusion WebUI Forge is starting up!
 
   First-time setup will take 5-10 minutes to download dependencies.
 
@@ -357,7 +363,7 @@ final_message: |
 
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
-                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --xformers"
+                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api"
             },
 
             ExposedPorts = new List<TemplatePort>
@@ -1623,9 +1629,9 @@ final_message: |
             Slug = "stable-diffusion-cpu",
             Version = "1.0.0",
             Category = "ai-ml",
-            Description = "AUTOMATIC1111 Stable Diffusion WebUI running in CPU-only mode. No GPU required. Generate images from text prompts on any hardware.",
+            Description = "Stable Diffusion WebUI Forge running in CPU-only mode. No GPU required. Generate images from text prompts on any hardware.",
             LongDescription = @"## Features
-- AUTOMATIC1111 Stable Diffusion WebUI (latest version)
+- Stable Diffusion WebUI Forge (actively maintained AUTOMATIC1111 fork)
 - Runs entirely on CPU — no GPU or CUDA needed
 - Pre-configured with SD 1.5 base model
 - Gradio web interface with authentication
@@ -1651,7 +1657,7 @@ CPU inference is significantly slower than GPU:
 
             AuthorId = "platform",
             AuthorName = "DeCloud",
-            SourceUrl = "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+            SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
 
             MinimumSpec = new VmSpec
             {
@@ -1672,12 +1678,12 @@ CPU inference is significantly slower than GPU:
             RequiresGpu = false,
             RequiredCapabilities = new List<string>(),
 
-            Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "cpu", "machine-learning", "no-gpu" },
+            Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "cpu", "machine-learning", "no-gpu", "forge" },
 
             CloudInitTemplate = @"#cloud-config
 
-# Stable Diffusion WebUI (CPU) - Automatic Installation
-# DeCloud Template v1.0.0 — No GPU required
+# Stable Diffusion WebUI Forge (CPU) - Automatic Installation
+# DeCloud Template v2.0.0 — Uses Forge (maintained fork), no GPU required
 
 packages:
   - git
@@ -1685,6 +1691,7 @@ packages:
   - python3
   - python3-pip
   - python3-venv
+  - python3-setuptools
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
@@ -1698,8 +1705,14 @@ runcmd:
   # Create application user
   - useradd -m -s /bin/bash sduser
 
-  # Clone Stable Diffusion WebUI
-  - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
+  # Clone Stable Diffusion WebUI Forge
+  - su - sduser -c ""git clone https://github.com/lllyasviel/stable-diffusion-webui-forge.git /home/sduser/stable-diffusion-webui""
+
+  # Pre-create venv and install build tools.
+  # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
+  # Pre-installing wheel+setuptools avoids build failures for packages that need them.
+  - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools""
 
   # Download SD 1.5 base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
@@ -1709,7 +1722,7 @@ runcmd:
   - |
     cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
     [Unit]
-    Description=Stable Diffusion WebUI (CPU)
+    Description=Stable Diffusion WebUI Forge (CPU)
     After=network.target
 
     [Service]
@@ -1717,7 +1730,7 @@ runcmd:
     User=sduser
     Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
-    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --use-cpu all --no-half --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --always-cpu --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
     Restart=always
     RestartSec=10
 
@@ -1734,7 +1747,7 @@ runcmd:
   - |
     cat > /etc/motd <<'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
-    ║       Stable Diffusion WebUI (CPU) - DeCloud Template        ║
+    ║     Stable Diffusion WebUI Forge (CPU) - DeCloud Template    ║
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  WebUI: https://${DECLOUD_DOMAIN}:7860                       ║
@@ -1753,7 +1766,7 @@ runcmd:
     EOF
 
 final_message: |
-  Stable Diffusion WebUI (CPU) is starting up!
+  Stable Diffusion WebUI Forge (CPU) is starting up!
 
   First-time setup will take 10-15 minutes to install Python dependencies.
 
@@ -1767,7 +1780,7 @@ final_message: |
 
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
-                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --use-cpu all --no-half --skip-torch-cuda-test"
+                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --always-cpu --skip-torch-cuda-test"
             },
 
             ExposedPorts = new List<TemplatePort>
