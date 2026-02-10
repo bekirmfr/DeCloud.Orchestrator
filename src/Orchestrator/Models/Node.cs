@@ -427,6 +427,7 @@ public class HeartbeatServiceInfo
     public string? Protocol { get; set; }
     public string Status { get; set; } = "Pending";  // Pending, Checking, Ready, TimedOut, Failed
     public DateTime? ReadyAt { get; set; }
+}
 
 public record NodeHeartbeatResponse(
     bool Acknowledged,
