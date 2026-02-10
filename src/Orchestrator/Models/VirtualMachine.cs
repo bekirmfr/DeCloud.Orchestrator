@@ -587,6 +587,7 @@ public class VmServiceStatus
 /// <summary>
 /// How a service readiness check is performed via qemu-guest-agent
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum CheckType
 {
     /// <summary>
@@ -614,6 +615,7 @@ public enum CheckType
 /// <summary>
 /// Readiness state of a single service inside a VM
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ServiceReadiness
 {
     /// <summary>Waiting for System (cloud-init) to complete first</summary>
