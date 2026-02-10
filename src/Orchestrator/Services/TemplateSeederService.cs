@@ -189,6 +189,7 @@ public class TemplateSeederService
         return new List<VmTemplate>
         {
             CreateStableDiffusionTemplate(),
+            CreateStableDiffusionCpuTemplate(),
             CreatePostgreSqlTemplate(),
             CreateCodeServerTemplate(),
             CreatePrivateBrowserTemplate(),
@@ -207,7 +208,7 @@ public class TemplateSeederService
         {
             Name = "Stable Diffusion WebUI",
             Slug = "stable-diffusion-webui",
-            Version = "1.0.0",
+            Version = "1.1.0",
             Category = "ai-ml",
             Description = "AUTOMATIC1111 Stable Diffusion WebUI with popular models pre-installed. Generate images from text prompts using cutting-edge AI models.",
             LongDescription = @"## Features
@@ -259,8 +260,8 @@ public class TemplateSeederService
 
             CloudInitTemplate = @"#cloud-config
 
-# Stable Diffusion WebUI - Automatic Installation
-# DeCloud Template v1.0.0
+# Stable Diffusion WebUI (GPU) - Automatic Installation
+# DeCloud Template v1.1.0
 
 packages:
   - git
@@ -270,60 +271,60 @@ packages:
   - python3-venv
   - libgl1
   - libglib2.0-0
+  - qemu-guest-agent
 
 runcmd:
-  # Update system
+  - systemctl enable --now qemu-guest-agent
+
+  # Update package index (no full upgrade — keeps boot fast)
   - apt-get update
-  - apt-get upgrade -y
-  
+
   # Install NVIDIA drivers and CUDA (if GPU available)
   - |
     if lspci | grep -i nvidia; then
       echo ""Installing NVIDIA drivers...""
       apt-get install -y ubuntu-drivers-common
       ubuntu-drivers autoinstall
-      
+
       # Install CUDA toolkit
-      wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-      dpkg -i cuda-keyring_1.1-1_all.deb
-      apt-get update
-      apt-get install -y cuda-toolkit-12-3
+      apt-get install -y --no-install-recommends nvidia-cuda-toolkit
     fi
-  
+
   # Create application user
   - useradd -m -s /bin/bash sduser
-  
+
   # Clone Stable Diffusion WebUI
   - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
-  
-  # Download base model
+
+  # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
-  - su - sduser -c ""wget -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors""
-  
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors""
+
   # Create systemd service
   - |
     cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
     [Unit]
     Description=Stable Diffusion WebUI
     After=network.target
-    
+
     [Service]
     Type=simple
     User=sduser
+    Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
-    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --gradio-auth user:${DECLOUD_PASSWORD}
     Restart=always
     RestartSec=10
-    
+
     [Install]
     WantedBy=multi-user.target
     EOF
-  
+
   # Enable and start service
   - systemctl daemon-reload
   - systemctl enable stable-diffusion.service
   - systemctl start stable-diffusion.service
-  
+
   # Create welcome message
   - |
     cat > /etc/motd <<'EOF'
@@ -332,6 +333,7 @@ runcmd:
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  WebUI: https://${DECLOUD_DOMAIN}:7860                       ║
+    ║  User:  user / ${DECLOUD_PASSWORD}                           ║
     ║  API:   https://${DECLOUD_DOMAIN}:7860/docs                  ║
     ║                                                               ║
     ║  Service: systemctl status stable-diffusion                  ║
@@ -344,11 +346,12 @@ runcmd:
 
 final_message: |
   Stable Diffusion WebUI is starting up!
-  
+
   First-time setup will take 5-10 minutes to download dependencies.
-  
+
   Access the WebUI at: https://${DECLOUD_DOMAIN}:7860
-  
+  Username: user / Password: ${DECLOUD_PASSWORD}
+
   Check status: systemctl status stable-diffusion
   View logs: journalctl -u stable-diffusion -f",
 
@@ -368,8 +371,8 @@ final_message: |
                     ReadinessCheck = new ServiceCheck
                     {
                         Strategy = CheckStrategy.HttpGet,
-                        HttpPath = "/api/v1/sd-models",
-                        TimeoutSeconds = 600 // model download can take minutes
+                        HttpPath = "/sdapi/v1/sd-models",
+                        TimeoutSeconds = 900 // GPU model loading + first-time pip install
                     }
                 }
             },
@@ -1602,6 +1605,202 @@ final_message: |
 
             Status = TemplateStatus.Published,
             IsFeatured = true,
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Stable Diffusion WebUI (CPU) — lightweight, no GPU required
+    // ════════════════════════════════════════════════════════════════════════
+
+    private VmTemplate CreateStableDiffusionCpuTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Stable Diffusion WebUI (CPU)",
+            Slug = "stable-diffusion-cpu",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "AUTOMATIC1111 Stable Diffusion WebUI running in CPU-only mode. No GPU required. Generate images from text prompts on any hardware.",
+            LongDescription = @"## Features
+- AUTOMATIC1111 Stable Diffusion WebUI (latest version)
+- Runs entirely on CPU — no GPU or CUDA needed
+- Pre-configured with SD 1.5 base model
+- Gradio web interface with authentication
+- API access at /docs
+
+## Performance Notes
+CPU inference is significantly slower than GPU:
+- ~2-5 minutes per 512x512 image at 20 steps
+- Best suited for testing, low-volume generation, or API integration
+- Lower resolution (512x512) recommended for reasonable generation times
+
+## Getting Started
+1. Wait for initial setup to complete (~10-15 minutes for first boot)
+2. Access the WebUI at `https://${DECLOUD_DOMAIN}:7860`
+3. Log in with user / your generated password
+4. Start generating images!
+
+## Requirements
+- RAM: 8GB minimum (12GB recommended)
+- CPU: 4+ cores
+- Storage: 30GB for models and dependencies
+- No GPU required",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024, // 8 GB
+                DiskBytes = 30L * 1024 * 1024 * 1024,   // 30 GB
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 12L * 1024 * 1024 * 1024, // 12 GB
+                DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            RequiredCapabilities = new List<string>(),
+
+            Tags = new List<string> { "ai", "stable-diffusion", "image-generation", "cpu", "machine-learning", "no-gpu" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Stable Diffusion WebUI (CPU) - Automatic Installation
+# DeCloud Template v1.0.0 — No GPU required
+
+packages:
+  - git
+  - wget
+  - python3
+  - python3-pip
+  - python3-venv
+  - libgl1
+  - libglib2.0-0
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Update package index (no full upgrade — keeps boot fast)
+  - apt-get update
+
+  # Create application user
+  - useradd -m -s /bin/bash sduser
+
+  # Clone Stable Diffusion WebUI
+  - su - sduser -c ""git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git /home/sduser/stable-diffusion-webui""
+
+  # Download SD 1.5 base model (with retry)
+  - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors""
+
+  # Create systemd service (CPU-only flags)
+  - |
+    cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
+    [Unit]
+    Description=Stable Diffusion WebUI (CPU)
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=sduser
+    Environment=HOME=/home/sduser
+    WorkingDirectory=/home/sduser/stable-diffusion-webui
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --use-cpu all --no-half --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
+    Restart=always
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+
+  # Enable and start service
+  - systemctl daemon-reload
+  - systemctl enable stable-diffusion.service
+  - systemctl start stable-diffusion.service
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║       Stable Diffusion WebUI (CPU) - DeCloud Template        ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  WebUI: https://${DECLOUD_DOMAIN}:7860                       ║
+    ║  User:  user / ${DECLOUD_PASSWORD}                           ║
+    ║  API:   https://${DECLOUD_DOMAIN}:7860/docs                  ║
+    ║                                                               ║
+    ║  NOTE: CPU-only mode — image generation takes 2-5 min each.  ║
+    ║  Use 512x512 resolution and 20 steps for best speed.         ║
+    ║                                                               ║
+    ║  Service: systemctl status stable-diffusion                  ║
+    ║  Logs:    journalctl -u stable-diffusion -f                  ║
+    ║                                                               ║
+    ║  Models: /home/sduser/stable-diffusion-webui/models          ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  Stable Diffusion WebUI (CPU) is starting up!
+
+  First-time setup will take 10-15 minutes to install Python dependencies.
+
+  Access the WebUI at: https://${DECLOUD_DOMAIN}:7860
+  Username: user / Password: ${DECLOUD_PASSWORD}
+
+  CPU mode: image generation takes ~2-5 min per image at 512x512.
+
+  Check status: systemctl status stable-diffusion
+  View logs: journalctl -u stable-diffusion -f",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --use-cpu all --no-half --skip-torch-cuda-test"
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 7860,
+                    Protocol = "http",
+                    Description = "Stable Diffusion WebUI",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/sdapi/v1/sd-models",
+                        TimeoutSeconds = 1200 // CPU: pip install + model load is slow
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
+
+            EstimatedCostPerHour = 0.10m, // $0.10/hour for CPU instance
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = false,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
 
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
