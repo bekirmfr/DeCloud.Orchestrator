@@ -1,0 +1,646 @@
+diff --git a/src/DeCloud.NodeAgent.Core/Models/VmModels.cs b/src/DeCloud.NodeAgent.Core/Models/VmModels.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent.Core/Models/VmModels.cs
++++ b/src/DeCloud.NodeAgent.Core/Models/VmModels.cs
+@@ -1,3 +1,5 @@
++using System.Text.Json.Serialization;
++
+ namespace DeCloud.NodeAgent.Core.Models;
+
+ /// <summary>
+@@ -68,6 +70,15 @@ public class VmInstance
+     public string VmId { get; set; } = string.Empty;
+     public string Name { get; set; } = string.Empty;
+     public VmState State { get; set; }
++
++    /// <summary>
++    /// Per-service readiness statuses.
++    /// "System" (cloud-init) always first. Additional services from template.
++    /// Checked via qemu-guest-agent by VmReadinessMonitor.
++    /// </summary>
++    public List<VmServiceStatus> Services { get; set; } = new();
++    public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceReadiness.Ready);
++
+     public VmSpec Spec { get; set; } = new();
+     public string? NetworkInterface { get; set; }  // e.g., "vnet0"
+
+@@ -216,3 +227,56 @@ public class VmOperationResult
+         ErrorCode = code
+     };
+ }
++
++/// <summary>
++/// Readiness status of a single service inside a VM.
++/// Checked via qemu-guest-agent (virtio channel, no network needed).
++/// </summary>
++public class VmServiceStatus
++{
++    public string Name { get; set; } = string.Empty;
++    public int? Port { get; set; }
++    public string? Protocol { get; set; }
++    public CheckType CheckType { get; set; } = CheckType.CloudInitDone;
++    public string? HttpPath { get; set; }
++    public string? ExecCommand { get; set; }
++
++    [JsonConverter(typeof(JsonStringEnumConverter))]
++    public ServiceReadiness Status { get; set; } = ServiceReadiness.Pending;
++
++    public DateTime? ReadyAt { get; set; }
++    public DateTime? LastCheckAt { get; set; }
++    public int TimeoutSeconds { get; set; } = 300;
++}
++
++[JsonConverter(typeof(JsonStringEnumConverter))]
++public enum CheckType
++{
++    /// <summary>cloud-init status --format json → status == "done"</summary>
++    CloudInitDone,
++
++    /// <summary>nc -zv -w2 localhost {port} → exit 0</summary>
++    TcpPort,
++
++    /// <summary>curl -sf -o /dev/null http://localhost:{port}{path} → exit 0</summary>
++    HttpGet,
++
++    /// <summary>Arbitrary command via bash -c → exit 0</summary>
++    ExecCommand
++}
++
++[JsonConverter(typeof(JsonStringEnumConverter))]
++public enum ServiceReadiness
++{
++    /// <summary>Waiting for System (cloud-init) to complete first</summary>
++    Pending,
++
++    /// <summary>Actively being probed</summary>
++    Checking,
++
++    /// <summary>Check passed — service is accepting traffic</summary>
++    Ready,
++
++    /// <summary>Timeout expired without passing check</summary>
++    TimedOut,
++
++    /// <summary>cloud-init reported error (System service only)</summary>
++    Failed
++}
+diff --git a/src/DeCloud.NodeAgent.Core/Models/NodeModels.cs b/src/DeCloud.NodeAgent.Core/Models/NodeModels.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent.Core/Models/NodeModels.cs
++++ b/src/DeCloud.NodeAgent.Core/Models/NodeModels.cs
+@@ -114,6 +114,7 @@ public class VmSummary
+     public int? VncPort { get; set; }
+     public string? MacAddress { get; set; }
+     public DateTime StartedAt { get; set; }
++    public List<ServiceSummary>? Services { get; set; }
+ }
+
++/// <summary>
++/// Lightweight service status for heartbeat reporting.
++/// </summary>
++public class ServiceSummary
++{
++    public string Name { get; set; } = string.Empty;
++    public int? Port { get; set; }
++    public string? Protocol { get; set; }
++    public string Status { get; set; } = "Pending";
++    public DateTime? ReadyAt { get; set; }
++}
++
+ /// <summary>
+ /// Node registration with the orchestrator
+ /// </summary>
+diff --git a/src/DeCloud.NodeAgent/Services/VmReadinessMonitor.cs b/src/DeCloud.NodeAgent/Services/VmReadinessMonitor.cs
+new file mode 100644
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/Services/VmReadinessMonitor.cs
+@@ -0,0 +1,265 @@
++using System.Text;
++using System.Text.Json;
++using DeCloud.NodeAgent.Core.Models;
++using DeCloud.NodeAgent.Core.Interfaces;
++using DeCloud.NodeAgent.Infrastructure.Persistence;
++
++namespace DeCloud.NodeAgent.Services;
++
++/// <summary>
++/// Background service that monitors per-service readiness of running VMs
++/// using qemu-guest-agent commands through the virtio channel.
++/// Polls every 10 seconds. Reports results via HeartbeatService.
++/// </summary>
++public class VmReadinessMonitor : BackgroundService
++{
++    private readonly IVmManager _vmManager;
++    private readonly VmRepository _repository;
++    private readonly ICommandExecutor _commandExecutor;
++    private readonly ILogger<VmReadinessMonitor> _logger;
++    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
++    private static readonly TimeSpan GuestExecWait = TimeSpan.FromSeconds(3);
++
++    public VmReadinessMonitor(
++        IVmManager vmManager,
++        VmRepository repository,
++        ICommandExecutor commandExecutor,
++        ILogger<VmReadinessMonitor> logger)
++    {
++        _vmManager = vmManager;
++        _repository = repository;
++        _commandExecutor = commandExecutor;
++        _logger = logger;
++    }
++
++    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
++    {
++        _logger.LogInformation("VmReadinessMonitor started — polling every {Interval}s", PollInterval.TotalSeconds);
++
++        // Wait for VMs to be loaded from database
++        await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
++
++        while (!stoppingToken.IsCancellationRequested)
++        {
++            try
++            {
++                await CheckAllVmsAsync(stoppingToken);
++            }
++            catch (Exception ex) when (ex is not OperationCanceledException)
++            {
++                _logger.LogError(ex, "VmReadinessMonitor cycle failed");
++            }
++
++            await Task.Delay(PollInterval, stoppingToken);
++        }
++    }
++
++    private async Task CheckAllVmsAsync(CancellationToken ct)
++    {
++        var allVms = await _vmManager.GetAllVmsAsync(ct);
++        var runningVms = allVms
++            .Where(vm => vm.State == VmState.Running && vm.Services.Count > 0 && !vm.IsFullyReady)
++            .ToList();
++
++        if (runningVms.Count == 0) return;
++
++        foreach (var vm in runningVms)
++        {
++            try
++            {
++                await CheckVmServicesAsync(vm, ct);
++            }
++            catch (Exception ex) when (ex is not OperationCanceledException)
++            {
++                _logger.LogWarning(ex, "Failed to check readiness for VM {VmId}", vm.VmId);
++            }
++        }
++    }
++
++    private async Task CheckVmServicesAsync(VmInstance vm, CancellationToken ct)
++    {
++        var domainName = $"decloud-{vm.VmId}";
++        bool anyChanged = false;
++
++        // Check if guest agent is responding first
++        if (!await IsGuestAgentReady(domainName, ct))
++        {
++            _logger.LogDebug("Guest agent not ready for VM {VmId}, skipping", vm.VmId);
++            return;
++        }
++
++        var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
++        bool systemReady = systemService?.Status == ServiceReadiness.Ready;
++
++        foreach (var service in vm.Services)
++        {
++            if (service.Status == ServiceReadiness.Ready || service.Status == ServiceReadiness.TimedOut)
++                continue;
++
++            // Gate: non-System services wait for System to be Ready
++            if (service.Name != "System" && !systemReady)
++            {
++                if (service.Status != ServiceReadiness.Pending)
++                {
++                    service.Status = ServiceReadiness.Pending;
++                    anyChanged = true;
++                }
++                continue;
++            }
++
++            // Check timeout
++            var elapsed = (DateTime.UtcNow - (vm.StartedAt ?? vm.CreatedAt)).TotalSeconds;
++            if (elapsed > service.TimeoutSeconds)
++            {
++                if (service.Status != ServiceReadiness.TimedOut)
++                {
++                    service.Status = ServiceReadiness.TimedOut;
++                    service.LastCheckAt = DateTime.UtcNow;
++                    anyChanged = true;
++                    _logger.LogWarning("Service {Service} on VM {VmId} timed out after {Timeout}s",
++                        service.Name, vm.VmId, service.TimeoutSeconds);
++                }
++                continue;
++            }
++
++            // Execute the check
++            var (success, failed) = await ExecuteServiceCheckAsync(domainName, service, ct);
++            var previousStatus = service.Status;
++
++            if (success)
++            {
++                service.Status = ServiceReadiness.Ready;
++                service.ReadyAt = DateTime.UtcNow;
++                service.LastCheckAt = DateTime.UtcNow;
++                _logger.LogInformation("Service {Service} on VM {VmId} is READY (port: {Port})",
++                    service.Name, vm.VmId, service.Port);
++
++                // If System just became ready, allow other services to start checking
++                if (service.Name == "System") systemReady = true;
++            }
++            else if (failed)
++            {
++                service.Status = ServiceReadiness.Failed;
++                service.LastCheckAt = DateTime.UtcNow;
++                _logger.LogWarning("Service {Service} on VM {VmId} FAILED", service.Name, vm.VmId);
++            }
++            else
++            {
++                service.Status = ServiceReadiness.Checking;
++                service.LastCheckAt = DateTime.UtcNow;
++            }
++
++            if (service.Status != previousStatus) anyChanged = true;
++        }
++
++        if (anyChanged)
++        {
++            await _repository.SaveVmAsync(vm);
++        }
++    }
++
++    /// <summary>
++    /// Check if qemu-guest-agent is responding via guest-ping.
++    /// </summary>
++    private async Task<bool> IsGuestAgentReady(string domain, CancellationToken ct)
++    {
++        try
++        {
++            var result = await _commandExecutor.ExecuteAsync(
++                "virsh", $"qemu-agent-command {domain} '{{\"execute\":\"guest-ping\"}}'",
++                TimeSpan.FromSeconds(5), ct);
++            return result.ExitCode == 0;
++        }
++        catch
++        {
++            return false;
++        }
++    }
++
++    /// <summary>
++    /// Execute a service check via qemu-guest-agent guest-exec.
++    /// Returns (success, hardFailed). hardFailed is true only for cloud-init error state.
++    /// </summary>
++    private async Task<(bool success, bool failed)> ExecuteServiceCheckAsync(
++        string domain, VmServiceStatus service, CancellationToken ct)
++    {
++        string path;
++        string[] args;
++
++        switch (service.CheckType)
++        {
++            case CheckType.CloudInitDone:
++                path = "/usr/bin/cloud-init";
++                args = new[] { "status", "--format", "json" };
++                break;
++
++            case CheckType.TcpPort:
++                path = "/usr/bin/nc";
++                args = new[] { "-zv", "-w2", "localhost", service.Port?.ToString() ?? "0" };
++                break;
++
++            case CheckType.HttpGet:
++                path = "/usr/bin/curl";
++                var url = $"http://localhost:{service.Port}{service.HttpPath ?? "/"}";
++                args = new[] { "-sf", "-o", "/dev/null", "-m", "5", url };
++                break;
++
++            case CheckType.ExecCommand:
++                path = "/bin/bash";
++                args = new[] { "-c", service.ExecCommand ?? "true" };
++                break;
++
++            default:
++                return (false, false);
++        }
++
++        // Build guest-exec JSON
++        var argsJson = string.Join(",", args.Select(a => $"\"{EscapeJson(a)}\""));
++        var execCmd = $"{{\"execute\":\"guest-exec\",\"arguments\":{{\"path\":\"{EscapeJson(path)}\",\"arg\":[{argsJson}],\"capture-output\":true}}}}";
++
++        try
++        {
++            // Step 1: Send guest-exec, get PID
++            var execResult = await _commandExecutor.ExecuteAsync(
++                "virsh", $"qemu-agent-command {domain} '{execCmd}'",
++                TimeSpan.FromSeconds(10), ct);
++
++            if (execResult.ExitCode != 0) return (false, false);
++
++            var execJson = JsonDocument.Parse(execResult.Output.Trim());
++            var pid = execJson.RootElement.GetProperty("return").GetProperty("pid").GetInt64();
++
++            // Step 2: Wait, then get exit status
++            await Task.Delay(GuestExecWait, ct);
++
++            var statusCmd = $"{{\"execute\":\"guest-exec-status\",\"arguments\":{{\"pid\":{pid}}}}}";
++            var statusResult = await _commandExecutor.ExecuteAsync(
++                "virsh", $"qemu-agent-command {domain} '{statusCmd}'",
++                TimeSpan.FromSeconds(10), ct);
++
++            if (statusResult.ExitCode != 0) return (false, false);
++
++            var statusJson = JsonDocument.Parse(statusResult.Output.Trim());
++            var ret = statusJson.RootElement.GetProperty("return");
++
++            if (!ret.GetProperty("exited").GetBoolean())
++            {
++                // Process still running — not ready yet
++                return (false, false);
++            }
++
++            var exitCode = ret.GetProperty("exitcode").GetInt32();
++
++            // Special handling for cloud-init: parse JSON output to detect "error" status
++            if (service.CheckType == CheckType.CloudInitDone && exitCode == 0 &&
++                ret.TryGetProperty("out-data", out var outData))
++            {
++                var stdout = Encoding.UTF8.GetString(Convert.FromBase64String(outData.GetString() ?? ""));
++                try
++                {
++                    var cloudInitJson = JsonDocument.Parse(stdout);
++                    var status = cloudInitJson.RootElement.GetProperty("status").GetString();
++                    return status switch
++                    {
++                        "done" => (true, false),
++                        "error" => (false, true),
++                        _ => (false, false) // "running" or other
++                    };
++                }
++                catch
++                {
++                    return (false, false);
++                }
++            }
++
++            return (exitCode == 0, false);
++        }
++        catch (Exception ex)
++        {
++            _logger.LogDebug(ex, "Guest-exec failed for {Service} on {Domain}", service.Name, domain);
++            return (false, false);
++        }
++    }
++
++    private static string EscapeJson(string s) =>
++        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
++}
+diff --git a/src/DeCloud.NodeAgent/Services/HeartbeatService.cs b/src/DeCloud.NodeAgent/Services/HeartbeatService.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent/Services/HeartbeatService.cs
++++ b/src/DeCloud.NodeAgent/Services/HeartbeatService.cs
+@@ -160,7 +160,17 @@ private async Task SendHeartbeatAsync(CancellationToken ct)
+                     vmSummaries.Add(new VmSummary
+                     {
+                         VmId = vm.VmId,
+                         Name = vm.Name,
+                         OwnerId = vm.Spec.OwnerId,
+                         State = vm.State,
+                         VirtualCpuCores = vm.Spec.VirtualCpuCores,
+                         QualityTier = (int)vm.Spec.QualityTier,
+                         ComputePointCost = vm.Spec.ComputePointCost,
+                         MemoryBytes = vm.Spec.MemoryBytes,
+                         DiskBytes = vm.Spec.DiskBytes,
+                         VirtualCpuUsagePercent = usage?.CpuPercent ?? 0,
+                         StartedAt = vm.StartedAt ?? vm.CreatedAt,
+                         IsIpAssigned = isIpAssigned,
+                         IpAddress = ipAddress,
+                         VncPort = vm.VncPort,
+-                        MacAddress = vm.Spec.MacAddress
++                        MacAddress = vm.Spec.MacAddress,
++                        Services = vm.Services.Count > 0 ? vm.Services.Select(s => new ServiceSummary
++                        {
++                            Name = s.Name,
++                            Port = s.Port,
++                            Protocol = s.Protocol,
++                            Status = s.Status.ToString(),
++                            ReadyAt = s.ReadyAt
++                        }).ToList() : null
+                     });
+diff --git a/src/DeCloud.NodeAgent/Services/CommandProcessorService.cs b/src/DeCloud.NodeAgent/Services/CommandProcessorService.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent/Services/CommandProcessorService.cs
++++ b/src/DeCloud.NodeAgent/Services/CommandProcessorService.cs
+@@ -331,6 +331,47 @@ private async Task<bool> HandleCreateVmAsync(string payload, CancellationToken c
+
+         var result = await _vmManager.CreateVmAsync(vmSpec, password, ct);
+
++        // Parse service definitions from orchestrator payload
++        if (result.Success)
++        {
++            var vm = (await _vmManager.GetAllVmsAsync(ct)).FirstOrDefault(v => v.VmId == vmId);
++            if (vm != null)
++            {
++                vm.Services = ParseServiceDefinitions(root);
++                await _repository.SaveVmAsync(vm);
++                _logger.LogInformation("VM {VmId}: {Count} service readiness checks registered",
++                    vmId, vm.Services.Count);
++            }
++        }
++
+         if (result.Success)
+         {
+             _logger.LogInformation(
+@@ -354,6 +395,52 @@ private async Task<bool> HandleCreateVmAsync(string payload, CancellationToken c
+         }
+     }
+
++    /// <summary>
++    /// Parse service definitions from the orchestrator's CreateVm command payload.
++    /// Falls back to default System-only service if none provided.
++    /// </summary>
++    private static List<VmServiceStatus> ParseServiceDefinitions(JsonElement root)
++    {
++        var services = new List<VmServiceStatus>();
++
++        if (root.TryGetProperty("Services", out var servicesElement) ||
++            root.TryGetProperty("services", out servicesElement))
++        {
++            if (servicesElement.ValueKind == JsonValueKind.Array)
++            {
++                foreach (var svcElement in servicesElement.EnumerateArray())
++                {
++                    var name = svcElement.TryGetProperty("Name", out var n) ? n.GetString()
++                             : svcElement.TryGetProperty("name", out n) ? n.GetString()
++                             : "Unknown";
++
++                    var port = svcElement.TryGetProperty("Port", out var p) ? p.GetInt32()
++                             : svcElement.TryGetProperty("port", out p) ? (int?)p.GetInt32()
++                             : null;
++
++                    var protocol = svcElement.TryGetProperty("Protocol", out var pr) ? pr.GetString()
++                                 : svcElement.TryGetProperty("protocol", out pr) ? pr.GetString()
++                                 : null;
++
++                    var checkTypeStr = svcElement.TryGetProperty("CheckType", out var ct2) ? ct2.GetString()
++                                     : svcElement.TryGetProperty("checkType", out ct2) ? ct2.GetString()
++                                     : "CloudInitDone";
++
++                    Enum.TryParse<CheckType>(checkTypeStr, true, out var checkType);
++
++                    var httpPath = svcElement.TryGetProperty("HttpPath", out var hp) ? hp.GetString()
++                                 : svcElement.TryGetProperty("httpPath", out hp) ? hp.GetString()
++                                 : null;
++
++                    var execCommand = svcElement.TryGetProperty("ExecCommand", out var ec) ? ec.GetString()
++                                    : svcElement.TryGetProperty("execCommand", out ec) ? ec.GetString()
++                                    : null;
++
++                    var timeout = svcElement.TryGetProperty("TimeoutSeconds", out var ts) ? ts.GetInt32()
++                                : svcElement.TryGetProperty("timeoutSeconds", out ts) ? ts.GetInt32()
++                                : 300;
++
++                    services.Add(new VmServiceStatus
++                    {
++                        Name = name ?? "Unknown",
++                        Port = port,
++                        Protocol = protocol,
++                        CheckType = checkType,
++                        HttpPath = httpPath,
++                        ExecCommand = execCommand,
++                        Status = ServiceReadiness.Pending,
++                        TimeoutSeconds = timeout
++                    });
++                }
++            }
++        }
++
++        // Default: at least a System service
++        if (services.Count == 0)
++        {
++            services.Add(new VmServiceStatus
++            {
++                Name = "System",
++                CheckType = CheckType.CloudInitDone,
++                Status = ServiceReadiness.Pending,
++                TimeoutSeconds = 300
++            });
++        }
++
++        return services;
++    }
++
+     private async Task<bool> HandleStartVmAsync(string payload, CancellationToken ct)
+diff --git a/src/DeCloud.NodeAgent.Infrastructure/Persistence/VmRepository.cs b/src/DeCloud.NodeAgent.Infrastructure/Persistence/VmRepository.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent.Infrastructure/Persistence/VmRepository.cs
++++ b/src/DeCloud.NodeAgent.Infrastructure/Persistence/VmRepository.cs
+@@ -1,4 +1,5 @@
+ // ... existing usings ...
++using System.Text.Json;
+
+-    private const int CURRENT_SCHEMA_VERSION = 2;
++    private const int CURRENT_SCHEMA_VERSION = 3;
+
+@@ -155,6 +156,7 @@ private void CreateInitialSchema()
+             CREATE TABLE IF NOT EXISTS VmRecords (
+                 VmId TEXT PRIMARY KEY,
+                 Name TEXT NOT NULL,
++                ServicesJson TEXT DEFAULT '[]',
+                 OwnerId TEXT,
+                 QualityTier INTEGER NOT NULL DEFAULT 3,
+
+@@ -210,6 +212,23 @@ private void MigrateSchema(int fromVersion, int toVersion)
+                 SetSchemaVersion(2);
+             }
+
++            // Migration v2 → v3: Add ServicesJson column
++            if (fromVersion < 3)
++            {
++                _logger.LogInformation("Applying migration: v{From} → v3 (ServicesJson column)", Math.Max(fromVersion, 2));
++                MigrateToV3();
++                SetSchemaVersion(3);
++            }
++
+             transaction.Commit();
+         }
+
++    /// <summary>
++    /// Migrate to schema v3: Add ServicesJson column for per-service readiness tracking
++    /// </summary>
++    private void MigrateToV3()
++    {
++        if (!ColumnExists("VmRecords", "ServicesJson"))
++        {
++            using var cmd = _connection.CreateCommand();
++            cmd.CommandText = "ALTER TABLE VmRecords ADD COLUMN ServicesJson TEXT DEFAULT '[]'";
++            cmd.ExecuteNonQuery();
++            _logger.LogInformation("Added ServicesJson column to VmRecords");
++        }
++    }
++
+@@ -323,7 +342,8 @@ public async Task SaveVmAsync(VmInstance vm)
+             var sql = @"
+                 INSERT OR REPLACE INTO VmRecords
+-                (VmId, Name, OwnerId, QualityTier, ComputePointCost,
++                (VmId, Name, ServicesJson, OwnerId, QualityTier, ComputePointCost,
+                  VirtualCpuCores, MemoryBytes, DiskBytes,
+                  State, IpAddress, MacAddress, VncPort, Pid,
+                  CreatedAt, StartedAt, StoppedAt, LastUpdated, DiskPath, ConfigPath,
+                  BaseImageUrl, BaseImageHash, SshPublicKey, EncryptedPassword)
+                 VALUES
+-                (@VmId, @Name, @OwnerId, @QualityTier, @ComputePointCost,
++                (@VmId, @Name, @ServicesJson, @OwnerId, @QualityTier, @ComputePointCost,
+                  @VirtualCpuCores, @MemoryBytes, @DiskBytes,
+                  @State, @IpAddress, @MacAddress, @VncPort, @Pid,
+                  @CreatedAt, @StartedAt, @StoppedAt, @LastUpdated, @DiskPath, @ConfigPath,
+@@ -341,6 +361,8 @@ public async Task SaveVmAsync(VmInstance vm)
+             cmd.Parameters.AddWithValue("@VmId", vm.VmId);
+             cmd.Parameters.AddWithValue("@Name", vm.Name);
++            cmd.Parameters.AddWithValue("@ServicesJson",
++                vm.Services.Count > 0 ? JsonSerializer.Serialize(vm.Services) : "[]");
+             cmd.Parameters.AddWithValue("@OwnerId", vm.Spec.OwnerId ?? (object)DBNull.Value);
+
+@@ -611,6 +633,20 @@ private VmInstance? ParseVmFromReader(SqliteDataReader reader)
+             var vm = new VmInstance
+             {
+                 VmId = reader.GetString(reader.GetOrdinal("VmId")),
+                 Name = reader.GetString(reader.GetOrdinal("Name")),
++                Services = DeserializeServices(GetNullableString(reader, "ServicesJson")),
+                 Spec = new VmSpec
+
++    /// <summary>
++    /// Deserialize services JSON from database, with fallback to empty list.
++    /// </summary>
++    private static List<VmServiceStatus> DeserializeServices(string? json)
++    {
++        if (string.IsNullOrEmpty(json) || json == "[]") return new List<VmServiceStatus>();
++        try
++        {
++            return JsonSerializer.Deserialize<List<VmServiceStatus>>(json) ?? new List<VmServiceStatus>();
++        }
++        catch
++        {
++            return new List<VmServiceStatus>();
++        }
++    }
++
+diff --git a/src/DeCloud.NodeAgent/Program.cs b/src/DeCloud.NodeAgent/Program.cs
+index abc1234..def5678 100644
+--- a/src/DeCloud.NodeAgent/Program.cs
++++ b/src/DeCloud.NodeAgent/Program.cs
+@@ -202,6 +202,9 @@ builder.Services.AddHostedService<VmHealthService>();
+ // Periodic cleanup of orphaned ports (hourly)
+ builder.Services.AddHostedService<OrphanedPortCleanupService>();
+
++// Per-service VM readiness monitoring via qemu-guest-agent
++builder.Services.AddHostedService<VmReadinessMonitor>();
++
+ // =====================================================
+ // Security services for port validation and auditing
