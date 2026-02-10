@@ -364,7 +364,13 @@ final_message: |
                     Port = 7860,
                     Protocol = "http",
                     Description = "Stable Diffusion WebUI",
-                    IsPublic = true
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/api/v1/sd-models",
+                        TimeoutSeconds = 600 // model download can take minutes
+                    }
                 }
             },
 
@@ -533,7 +539,13 @@ final_message: |
                     Port = 5432,
                     Protocol = "tcp",
                     Description = "PostgreSQL Database",
-                    IsPublic = true
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.ExecCommand,
+                        ExecCommand = "pg_isready -U postgres",
+                        TimeoutSeconds = 120
+                    }
                 }
             },
 
