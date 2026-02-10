@@ -269,6 +269,9 @@ packages:
   - python3-pip
   - python3-venv
   - python3-setuptools
+  - pkg-config
+  - libcairo2-dev
+  - libgirepository1.0-dev
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
@@ -1692,6 +1695,9 @@ packages:
   - python3-pip
   - python3-venv
   - python3-setuptools
+  - pkg-config
+  - libcairo2-dev
+  - libgirepository1.0-dev
   - libgl1
   - libglib2.0-0
   - qemu-guest-agent
