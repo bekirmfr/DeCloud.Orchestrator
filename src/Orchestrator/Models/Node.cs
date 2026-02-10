@@ -408,7 +408,25 @@ public class HeartbeatVmInfo
     public long? DiskBytes { get; set; }
     public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
+
+    /// <summary>
+    /// Per-service readiness statuses reported by node agent's VmReadinessMonitor.
+    /// Updated via qemu-guest-agent checks on the node.
+    /// </summary>
+    public List<HeartbeatServiceInfo>? Services { get; set; }
 }
+
+/// <summary>
+/// Per-service readiness status reported in heartbeat from node agent.
+/// Lightweight DTO — the orchestrator maps this to VmServiceStatus on the VM.
+/// </summary>
+public class HeartbeatServiceInfo
+{
+    public string Name { get; set; } = string.Empty;
+    public int? Port { get; set; }
+    public string? Protocol { get; set; }
+    public string Status { get; set; } = "Pending";  // Pending, Checking, Ready, TimedOut, Failed
+    public DateTime? ReadyAt { get; set; }
 
 public record NodeHeartbeatResponse(
     bool Acknowledged,

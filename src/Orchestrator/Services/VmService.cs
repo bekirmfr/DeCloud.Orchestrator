@@ -195,13 +195,21 @@ public class VmService : IVmService
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
+
+                // Build service readiness list from template ExposedPorts
+                vm.Services = BuildServiceList(template);
             }
             else
             {
                 _logger.LogWarning("Template {TemplateId} not found for VM creation", request.TemplateId);
             }
         }
-        // No cloud-init (bare VM with just base image)
+
+        // Ensure all VMs have at least the System service (cloud-init check)
+        if (vm.Services.Count == 0)
+        {
+            vm.Services = BuildDefaultServiceList();
+        }
 
         // Save to DataStore with persistence
         await _dataStore.SaveVmAsync(vm);
@@ -379,7 +387,8 @@ public class VmService : IVmService
                 NetworkConfig: networkConfig,
                 CreatedAt: v.CreatedAt,
                 UpdatedAt: v.UpdatedAt,
-                TemplateId: v.TemplateId
+                TemplateId: v.TemplateId,
+                Services: v.Services
             );
         });
 
@@ -819,7 +828,18 @@ public class VmService : IVmService
                 },
                 Password = password,
                 UserData = processedUserData, // Cloud-init template (with variables substituted)
-                Labels = vm.Labels
+                Labels = vm.Labels,
+                // Per-service readiness definitions for VmReadinessMonitor on node agent
+                Services = vm.Services.Select(s => new
+                {
+                    s.Name,
+                    s.Port,
+                    s.Protocol,
+                    CheckType = s.CheckType.ToString(),
+                    s.HttpPath,
+                    s.ExecCommand,
+                    s.TimeoutSeconds
+                }).ToList()
             }),
             RequiresAck: true,
             TargetResourceId: vm.Id
@@ -949,4 +969,100 @@ public class VmService : IVmService
     }
 
     // SettleTemplateFeeAsync and AutoAllocateTemplatePortsAsync moved to VmLifecycleManager.cs
+
+    // =========================================================================
+    // Service Readiness Helpers
+    // =========================================================================
+
+    /// <summary>
+    /// Build the per-service readiness list from a template's ExposedPorts.
+    /// Always includes the implicit "System" (cloud-init) service as the first entry.
+    /// Check strategies are inferred from port protocol unless explicitly overridden.
+    /// </summary>
+    private static List<VmServiceStatus> BuildServiceList(VmTemplate template)
+    {
+        var services = new List<VmServiceStatus>
+        {
+            // Implicit "System" service — cloud-init completion check
+            new VmServiceStatus
+            {
+                Name = "System",
+                CheckType = CheckType.CloudInitDone,
+                Status = ServiceReadiness.Pending,
+                TimeoutSeconds = 300
+            }
+        };
+
+        if (template.ExposedPorts == null)
+            return services;
+
+        foreach (var port in template.ExposedPorts)
+        {
+            var service = new VmServiceStatus
+            {
+                Name = string.IsNullOrEmpty(port.Description) ? $"Port {port.Port}" : port.Description,
+                Port = port.Port,
+                Protocol = port.Protocol,
+                Status = ServiceReadiness.Pending
+            };
+
+            if (port.ReadinessCheck != null)
+            {
+                // Explicit override from template author
+                service.CheckType = port.ReadinessCheck.Strategy switch
+                {
+                    CheckStrategy.TcpPort => CheckType.TcpPort,
+                    CheckStrategy.HttpGet => CheckType.HttpGet,
+                    CheckStrategy.ExecCommand => CheckType.ExecCommand,
+                    _ => CheckType.TcpPort
+                };
+                service.HttpPath = port.ReadinessCheck.HttpPath;
+                service.ExecCommand = port.ReadinessCheck.ExecCommand;
+                service.TimeoutSeconds = port.ReadinessCheck.TimeoutSeconds;
+            }
+            else
+            {
+                // Infer check strategy from protocol
+                var (checkType, httpPath) = InferCheckStrategy(port.Protocol);
+                service.CheckType = checkType;
+                service.HttpPath = httpPath;
+                service.TimeoutSeconds = 300;
+            }
+
+            services.Add(service);
+        }
+
+        return services;
+    }
+
+    /// <summary>
+    /// Default service list for VMs without a template (bare VMs).
+    /// Only the System (cloud-init) service.
+    /// </summary>
+    private static List<VmServiceStatus> BuildDefaultServiceList()
+    {
+        return new List<VmServiceStatus>
+        {
+            new VmServiceStatus
+            {
+                Name = "System",
+                CheckType = CheckType.CloudInitDone,
+                Status = ServiceReadiness.Pending,
+                TimeoutSeconds = 300
+            }
+        };
+    }
+
+    /// <summary>
+    /// Infer the readiness check strategy from the port protocol.
+    /// </summary>
+    private static (CheckType checkType, string? httpPath) InferCheckStrategy(string protocol)
+    {
+        return protocol.ToLowerInvariant() switch
+        {
+            "http" or "https" or "ws" or "wss" => (CheckType.HttpGet, "/"),
+            "tcp" or "both" => (CheckType.TcpPort, null),
+            _ => (CheckType.TcpPort, null) // default to TCP for unknown protocols
+        };
+    }
 }

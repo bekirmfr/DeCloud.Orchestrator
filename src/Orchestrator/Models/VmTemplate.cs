@@ -279,7 +279,8 @@ public class VmTemplate
 }
 
 /// <summary>
-/// Template port configuration for exposed services
+/// Template port configuration for exposed services.
+/// Each port also serves as a service definition for readiness tracking.
 /// </summary>
 public class TemplatePort
 {
@@ -289,12 +290,13 @@ public class TemplatePort
     public int Port { get; set; }
 
     /// <summary>
-    /// Protocol (http, https, tcp, udp)
+    /// Protocol (http, https, tcp, udp, ws, wss, both)
     /// </summary>
     public string Protocol { get; set; } = "http";
 
     /// <summary>
-    /// Human-readable description
+    /// Human-readable description (e.g., "PostgreSQL", "VS Code Server")
+    /// Also used as the service name in readiness tracking UI.
     /// </summary>
     public string Description { get; set; } = string.Empty;
 
@@ -302,6 +304,69 @@ public class TemplatePort
     /// Whether this port should be publicly accessible via ingress
     /// </summary>
     public bool IsPublic { get; set; } = true;
+
+    /// <summary>
+    /// Optional readiness check override for this service.
+    /// If null, the check strategy is inferred from Protocol:
+    ///   http/https/ws/wss → HttpGet on this port (path "/")
+    ///   tcp               → TcpPort connect check
+    ///   udp               → skip (connectionless)
+    ///   both              → TcpPort connect check
+    /// </summary>
+    public ServiceCheck? ReadinessCheck { get; set; }
+}
+
+/// <summary>
+/// Defines how to check if a specific service inside a VM is ready.
+/// Executed via qemu-guest-agent from the node agent (hypervisor channel, no network).
+/// Modeled after Kubernetes readiness probes.
+/// </summary>
+public class ServiceCheck
+{
+    /// <summary>
+    /// Check strategy to use
+    /// </summary>
+    public CheckStrategy Strategy { get; set; } = CheckStrategy.TcpPort;
+
+    /// <summary>
+    /// For HttpGet: URL path to check (e.g., "/health", "/api/v1/status").
+    /// Default: "/"
+    /// </summary>
+    public string? HttpPath { get; set; }
+
+    /// <summary>
+    /// For ExecCommand: command to run inside VM via qemu-guest-agent.
+    /// Exit code 0 = ready. (e.g., "pg_isready -U postgres")
+    /// </summary>
+    public string? ExecCommand { get; set; }
+
+    /// <summary>
+    /// Max seconds to wait before marking service as TimedOut.
+    /// Default: 300 (5 minutes).
+    /// </summary>
+    public int TimeoutSeconds { get; set; } = 300;
+}
+
+/// <summary>
+/// Strategy for checking service readiness inside a VM.
+/// All strategies are executed via qemu-guest-agent (hypervisor channel).
+/// </summary>
+public enum CheckStrategy
+{
+    /// <summary>
+    /// TCP connect check: nc -zv -w2 localhost {port}
+    /// </summary>
+    TcpPort,
+
+    /// <summary>
+    /// HTTP GET check: curl -sf -o /dev/null localhost:{port}{path}
+    /// </summary>
+    HttpGet,
+
+    /// <summary>
+    /// Arbitrary command: execute inside VM, exit code 0 = ready
+    /// </summary>
+    ExecCommand
 }
 
 /// <summary>

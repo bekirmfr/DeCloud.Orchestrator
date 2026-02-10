@@ -1335,6 +1335,13 @@ public class NodeService : INodeService
 
                     await _dataStore.SaveVmAsync(vm);
                 }
+
+                // Update per-service readiness from node agent
+                if (reported.Services?.Count > 0 && vm.Services.Count > 0)
+                {
+                    UpdateServiceReadiness(vm, reported.Services);
+                    await _dataStore.SaveVmAsync(vm);
+                }
             }
             else if (!string.IsNullOrEmpty(reported.OwnerId))
             {
@@ -1918,5 +1925,54 @@ public class NodeService : INodeService
             AvailableMemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
             AvailableStorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
         };
+    }
+
+    // =========================================================================
+    // Service Readiness Processing
+    // =========================================================================
+
+    /// <summary>
+    /// Update VM's service readiness from heartbeat data reported by node agent.
+    /// Matches reported services by name and updates status/timestamps.
+    /// </summary>
+    private void UpdateServiceReadiness(VirtualMachine vm, List<HeartbeatServiceInfo> reportedServices)
+    {
+        var changed = false;
+
+        foreach (var reported in reportedServices)
+        {
+            var service = vm.Services.FirstOrDefault(s => s.Name == reported.Name);
+            if (service == null)
+                continue;
+
+            var newStatus = Enum.TryParse<ServiceReadiness>(reported.Status, true, out var parsed)
+                ? parsed
+                : ServiceReadiness.Pending;
+
+            if (service.Status != newStatus)
+            {
+                var oldStatus = service.Status;
+                service.Status = newStatus;
+                service.LastCheckAt = DateTime.UtcNow;
+
+                if (newStatus == ServiceReadiness.Ready && service.ReadyAt == null)
+                {
+                    service.ReadyAt = reported.ReadyAt ?? DateTime.UtcNow;
+                }
+
+                _logger.LogInformation(
+                    "VM {VmId} service '{ServiceName}' readiness: {OldStatus} → {NewStatus}",
+                    vm.Id, service.Name, oldStatus, newStatus);
+
+                changed = true;
+            }
+        }
+
+        if (changed && vm.IsFullyReady)
+        {
+            _logger.LogInformation(
+                "VM {VmId} all services ready ({Count} services)",
+                vm.Id, vm.Services.Count);
+        }
     }
 }

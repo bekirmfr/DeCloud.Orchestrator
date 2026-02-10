@@ -287,6 +287,19 @@ public class VmLifecycleManager : IVmLifecycleManager
     /// </summary>
     private async Task OnVmBecameRunningAsync(VirtualMachine vm, TransitionContext context)
     {
+        // Reset all service readiness to Pending so node agent re-checks via qemu-guest-agent
+        if (vm.Services.Count > 0)
+        {
+            foreach (var service in vm.Services)
+            {
+                service.Status = ServiceReadiness.Pending;
+                service.ReadyAt = null;
+                service.LastCheckAt = null;
+            }
+            _logger.LogDebug("VM {VmId} service readiness reset to Pending ({Count} services)",
+                vm.Id, vm.Services.Count);
+        }
+
         // Wait for PrivateIp to be available (heartbeat may not have delivered it yet)
         var ipReady = await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
         if (!ipReady)

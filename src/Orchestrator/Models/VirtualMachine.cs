@@ -91,6 +91,24 @@ public class VirtualMachine
     public string? TemplateVersion { get; set; }
 
     // =========================================================================
+    // Service Readiness Tracking (per-service status via qemu-guest-agent)
+    // =========================================================================
+
+    /// <summary>
+    /// Per-service readiness statuses.
+    /// Always includes an implicit "System" entry (cloud-init completion).
+    /// Additional entries come from template ExposedPorts.
+    /// Updated via heartbeat from node agent.
+    /// </summary>
+    public List<VmServiceStatus> Services { get; set; } = new();
+
+    /// <summary>
+    /// True when all services (including System) report Ready.
+    /// </summary>
+    [BsonIgnore]
+    public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceReadiness.Ready);
+
+    // =========================================================================
     // Command Tracking (for reliable acknowledgement processing)
     // =========================================================================
 
@@ -366,7 +384,8 @@ public record VmSummary(
     VmNetworkConfig NetworkConfig,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    string? TemplateId = null
+    string? TemplateId = null,
+    List<VmServiceStatus>? Services = null
 );
 
 public record VmDetailResponse(
@@ -500,4 +519,115 @@ public class RttMeasurement
     /// Total response time (RTT + processing)
     /// </summary>
     public double TotalTimeMs => RttMs + ProcessingTimeMs;
+}
+
+// =========================================================================
+// Service Readiness Tracking
+// =========================================================================
+
+/// <summary>
+/// Tracks the readiness status of a single service inside a VM.
+/// The "System" service (cloud-init completion) is always present.
+/// Additional services come from template ExposedPorts.
+/// Checked via qemu-guest-agent from the node agent (hypervisor channel).
+/// </summary>
+public class VmServiceStatus
+{
+    /// <summary>
+    /// Service display name (e.g., "System", "PostgreSQL", "VS Code Server")
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Port number for this service. Null for "System" (cloud-init).
+    /// </summary>
+    public int? Port { get; set; }
+
+    /// <summary>
+    /// Protocol (tcp, http, udp, etc.). Null for "System".
+    /// </summary>
+    public string? Protocol { get; set; }
+
+    /// <summary>
+    /// How this service is checked for readiness
+    /// </summary>
+    public CheckType CheckType { get; set; } = CheckType.CloudInitDone;
+
+    /// <summary>
+    /// For HttpGet: URL path to check
+    /// </summary>
+    public string? HttpPath { get; set; }
+
+    /// <summary>
+    /// For ExecCommand: command to run inside VM
+    /// </summary>
+    public string? ExecCommand { get; set; }
+
+    /// <summary>
+    /// Current readiness status
+    /// </summary>
+    public ServiceReadiness Status { get; set; } = ServiceReadiness.Pending;
+
+    /// <summary>
+    /// When the service was first detected as ready
+    /// </summary>
+    public DateTime? ReadyAt { get; set; }
+
+    /// <summary>
+    /// When the last check was performed
+    /// </summary>
+    public DateTime? LastCheckAt { get; set; }
+
+    /// <summary>
+    /// Max seconds to wait before marking TimedOut
+    /// </summary>
+    public int TimeoutSeconds { get; set; } = 300;
+}
+
+/// <summary>
+/// How a service readiness check is performed via qemu-guest-agent
+/// </summary>
+public enum CheckType
+{
+    /// <summary>
+    /// Implicit "System" check: cloud-init status == done.
+    /// Always the first service checked; all others gate on this.
+    /// </summary>
+    CloudInitDone,
+
+    /// <summary>
+    /// TCP connect: nc -zv -w2 localhost {port}
+    /// </summary>
+    TcpPort,
+
+    /// <summary>
+    /// HTTP GET: curl -sf -o /dev/null localhost:{port}{path}
+    /// </summary>
+    HttpGet,
+
+    /// <summary>
+    /// Arbitrary command: execute inside VM, exit code 0 = ready
+    /// </summary>
+    ExecCommand
+}
+
+/// <summary>
+/// Readiness state of a single service inside a VM
+/// </summary>
+public enum ServiceReadiness
+{
+    /// <summary>Waiting for System (cloud-init) to complete first</summary>
+    Pending,
+
+    /// <summary>Actively being probed</summary>
+    Checking,
+
+    /// <summary>Check passed — service is accepting traffic</summary>
+    Ready,
+
+    /// <summary>Timeout expired without the check passing</summary>
+    TimedOut,
+
+    /// <summary>Cloud-init reported error (System service only)</summary>
+    Failed
 }
