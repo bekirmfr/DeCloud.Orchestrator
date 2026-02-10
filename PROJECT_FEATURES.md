@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-02-09
+**Last Updated:** 2026-02-10
 **Purpose:** Technical documentation of all major platform features and innovations
 
 ---
@@ -15,7 +15,8 @@
 6. [Marketplace & Discovery](#marketplace--discovery)
 7. [Resource Management](#resource-management)
 8. [Monitoring & Health](#monitoring--health)
-9. [Future Features](#future-features)
+9. [Per-Service VM Readiness Tracking](#per-service-vm-readiness-tracking)
+10. [Future Features](#future-features)
 
 ---
 
@@ -1252,6 +1253,182 @@ computePoints = (nodePerformance / baselinePerformance) * coreCount
 - Port mapping validation (every 5min)
 - Bandwidth utilization tracking
 - Automatic repair on failures
+
+---
+
+## Per-Service VM Readiness Tracking
+
+### Overview
+
+**Status:** Orchestrator side complete (2026-02-10), NodeAgent implementation pending
+**Location:** Multiple files across Orchestrator models and services
+
+Distinguishes "VM Running" (hypervisor reports domain active) from "VM Ready for Service" (application-level services are actually responding). Uses **qemu-guest-agent** to probe service readiness from the hypervisor level — no network access to the VM needed.
+
+### The Problem
+
+Previously, a VM was marked "Running" as soon as the libvirt domain started, but cloud-init could still be installing packages, services could be starting up, and the actual application might not respond for 30-120+ seconds. Users saw "Running" but got connection refused. There was no visibility into what was actually ready inside the VM.
+
+### Solution: Universal qemu-guest-agent Probing
+
+Every VM gets per-service readiness tracking via the qemu-guest-agent virtio channel:
+
+1. **System service** (cloud-init) is always tracked — gates all other checks
+2. **Template-specific services** are inferred from `ExposedPorts` or explicitly defined per template
+3. **Node agent polls** via `virsh qemu-agent-command` every 10 seconds
+4. **Results reported** to orchestrator via existing 15-second heartbeat
+5. **Frontend displays** individual service status (Pending → Checking → Ready / TimedOut / Failed)
+
+### Architecture
+
+```
+Template Creation (Orchestrator):
+  VmTemplate.ExposedPorts[].ReadinessCheck
+    ↓ (VmService.BuildServiceList)
+  VirtualMachine.Services[]
+    ↓ (CreateVm command payload)
+
+Node Agent:
+  CommandProcessorService parses services from payload
+    ↓
+  VmInstance.Services[] (persisted in SQLite)
+    ↓
+  VmReadinessMonitor polls via qemu-guest-agent (10s cycle)
+    ↓
+  HeartbeatService reports services[] per VM (15s cycle)
+    ↓
+
+Orchestrator:
+  NodeService.ProcessHeartbeatAsync reads services[]
+    ↓
+  VirtualMachine.Services[] updated
+    ↓
+  Frontend displays per-service status
+```
+
+### Check Types
+
+| Check Type | Method | Use Case |
+|------------|--------|----------|
+| `CloudInitDone` | `cloud-init status --format json` | System service (always first) |
+| `TcpPort` | `nc -zv -w2 localhost {port}` | Databases, SSH, generic TCP |
+| `HttpGet` | `curl -sf -o /dev/null http://localhost:{port}{path}` | Web apps, APIs |
+| `ExecCommand` | Arbitrary command, exit 0 = ready | Custom checks (e.g., `pg_isready`) |
+
+All checks execute inside the VM via `virsh qemu-agent-command` using the `guest-exec` / `guest-exec-status` QMP protocol. No network access to the VM is required — communication happens through the virtio-serial channel.
+
+### Service Readiness States
+
+```
+Pending     → VM just started, waiting
+Checking    → Actively being probed
+Ready       → Check passed (service responding)
+TimedOut    → Timeout expired without success
+Failed      → cloud-init reported error (System service only)
+```
+
+**Gating Rule:** All non-System services wait for the System (cloud-init) service to reach Ready before their own checks begin.
+
+### Auto-Inference from Template Protocols
+
+When a template port has no explicit `ReadinessCheck`, the check strategy is inferred:
+
+| Protocol | Inferred Check | Notes |
+|----------|---------------|-------|
+| `http`, `https`, `ws`, `wss` | HttpGet `/` | Web services, verified via HTTP probe |
+| `tcp`, `both` | TcpPort | Raw TCP connection check |
+| `udp` | TcpPort (fallback) | UDP not directly probeable; TCP fallback |
+
+### Explicit Template Checks
+
+Templates can override auto-inference with explicit `ReadinessCheck` on `TemplatePort`:
+
+```csharp
+// Stable Diffusion — API model list endpoint, 600s timeout
+new TemplatePort { Port = 7860, Protocol = "http",
+    ReadinessCheck = new ServiceCheck {
+        Strategy = CheckStrategy.HttpGet,
+        HttpPath = "/api/v1/sd-models",
+        TimeoutSeconds = 600
+    }
+}
+
+// PostgreSQL — pg_isready command, 120s timeout
+new TemplatePort { Port = 5432, Protocol = "tcp",
+    ReadinessCheck = new ServiceCheck {
+        Strategy = CheckStrategy.ExecCommand,
+        ExecCommand = "pg_isready -U postgres",
+        TimeoutSeconds = 120
+    }
+}
+```
+
+### Service List Building
+
+`VmService.BuildServiceList()` constructs the service list when creating a VM:
+
+1. **Always adds "System" service** — `CloudInitDone` check, 300s timeout
+2. **For each template ExposedPort:**
+   - If `ReadinessCheck` is defined → use explicit strategy, path, command, timeout
+   - If no `ReadinessCheck` → auto-infer from protocol
+3. **Bare VMs** (no template) → System-only service list
+
+### Lifecycle Integration
+
+- **On VM creation:** Service list built from template, stored on `VirtualMachine.Services[]`, sent in CreateVm command payload to node agent
+- **On VM becomes Running:** `VmLifecycleManager.OnVmBecameRunningAsync()` resets all services to `Pending` (handles restart/recovery scenarios)
+- **On heartbeat:** `NodeService.UpdateServiceReadiness()` updates service statuses from node agent reports
+- **IsFullyReady:** Computed property — `true` when all services report `Ready`
+
+### Relay VM Separation of Concerns
+
+Relay VMs have existing callback mechanisms (`RelayNatCallbackController`, `RelayController.RegisterCallback`) that perform **infrastructure actions** (iptables NAT rules, WireGuard peer registration). These callbacks remain unchanged — they are action triggers, not readiness signals.
+
+Relay VM readiness is now tracked via the universal qemu-guest-agent system like all other VMs. This cleanly separates:
+- **Callbacks** = infrastructure plumbing (VM needs host/orchestrator to do things)
+- **qemu-agent** = readiness observation (is the service actually responding?)
+
+### ARM Architecture Support
+
+The ARM domain XML (`GenerateLibvirtXmlMultiArch()` in `LibvirtVmManager.cs`) was missing several devices compared to x86_64. Fixed by adding:
+- `<serial>` — console access
+- `<video>` — `virtio` model (not `qxl`, which is x86-specific)
+- `<rng>` — hardware random number generator
+- `<channel>` — qemu-guest-agent virtio channel (critical for readiness monitoring)
+
+### Implementation Files
+
+**Orchestrator (complete):**
+
+| File | Change |
+|------|--------|
+| `Models/VmTemplate.cs` | `ServiceCheck` class, `CheckStrategy` enum, `ReadinessCheck` on `TemplatePort` |
+| `Models/VirtualMachine.cs` | `VmServiceStatus`, `CheckType`, `ServiceReadiness` enums, `Services` list, `IsFullyReady`, updated `VmSummary` |
+| `Models/Node.cs` | `HeartbeatServiceInfo`, `Services` on `HeartbeatVmInfo` |
+| `Services/VmService.cs` | `BuildServiceList()`, `BuildDefaultServiceList()`, `InferCheckStrategy()`, services in CreateVm payload |
+| `Services/NodeService.cs` | `UpdateServiceReadiness()` in heartbeat processing |
+| `Services/VmLifecycleManager.cs` | Reset services to Pending on Running transition |
+| `Services/TemplateSeederService.cs` | Explicit checks for Stable Diffusion (HttpGet) and PostgreSQL (ExecCommand) |
+
+**NodeAgent (implementation spec created, pending development):**
+
+| File | Change |
+|------|--------|
+| `Core/Models/VmModels.cs` | `VmServiceStatus`, `CheckType`, `ServiceReadiness` on `VmInstance` |
+| `Services/VmReadinessMonitor.cs` | **NEW** — Background service polling via `virsh qemu-agent-command` |
+| `Services/HeartbeatService.cs` | Include `Services` in VM summary sent to orchestrator |
+| `Services/CommandProcessorService.cs` | Parse services from CreateVm payload |
+| `Infrastructure/Persistence/VmRepository.cs` | Persist `Services` JSON to SQLite |
+| `Program.cs` | Register `VmReadinessMonitor` as hosted service |
+| `Infrastructure/Libvirt/LibvirtVmManager.cs` | ARM XML: added serial, video, rng, guest-agent channel |
+
+### Design Advantages
+
+- **Minimal NodeAgent changes** — Intelligence lives in orchestrator (template→service list building, auto-inference, state management). NodeAgent is a simple executor that runs `virsh` commands and reports results.
+- **No network dependency** — qemu-guest-agent communicates through virtio-serial, not the VM's network stack. Works even if VM networking is misconfigured.
+- **Universal** — Works for all VM types (general, relay, template-based, bare).
+- **Template-extensible** — New templates automatically get readiness checks via protocol inference. Custom templates can define explicit checks.
+- **Industry-aligned** — Follows patterns from Kubernetes readiness probes, AWS CloudFormation cfn-signal, and VMware Tools.
 
 ---
 

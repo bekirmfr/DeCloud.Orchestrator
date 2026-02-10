@@ -1,6 +1,6 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-02-09
+**Last Updated:** 2026-02-10
 **Status:** Phase 1 (Marketplace Foundation) COMPLETE — Moving to Phase 2 (User Engagement)
 
 ---
@@ -129,6 +129,7 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ Centralized VM lifecycle management (state machine with validated transitions and consistent side effects)
 ✅ Web Proxy Browser template (Ultraviolet proxy with Cross-Origin Isolation)
 ✅ CentralIngress-aware port allocation (HTTP/WS ports handled by Caddy, only TCP/UDP gets iptables DNAT)
+✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator side complete, NodeAgent pending)
 
 ### Recent Achievements (2026-01-30)
 
@@ -796,7 +797,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ---
 
-## Current Development Focus (2026-02-09)
+## Current Development Focus (2026-02-10)
 
 **All Phase 1 Goals Complete:**
 - ✅ Node Marketplace (Goal 1.1) - **COMPLETE (2026-01-30)**
@@ -857,12 +858,24 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Caddy subdomain routing already handles these protocols transparently
   - Only TCP/UDP/Both protocols get iptables DNAT direct access rules
   - Prevents redundant port allocations (e.g., 8080→40000 when CentralIngress already routes)
+- ✅ Per-Service VM Readiness Tracking - **ORCHESTRATOR COMPLETE (2026-02-10)**
+  - Universal qemu-guest-agent based readiness probing (no network access to VM needed)
+  - Per-service status: System (cloud-init) always first, then template ExposedPorts
+  - Check types: CloudInitDone, TcpPort, HttpGet, ExecCommand
+  - Auto-inference from protocol (http→HttpGet, tcp→TcpPort) with explicit override support
+  - Explicit checks for Stable Diffusion (HttpGet /api/v1/sd-models, 600s) and PostgreSQL (ExecCommand pg_isready, 120s)
+  - Heartbeat-based status reporting from node agent to orchestrator
+  - Lifecycle integration: services reset to Pending on Running transition
+  - ARM domain XML fixed: added serial, video (virtio), rng, guest-agent channel
+  - **NodeAgent side:** Implementation spec created (`NODE_AGENT_READINESS_CHANGES.md`), pending development
 - ✅ Targeted Node Selection (Goal 2.2) - **COMPLETE (2026-01-30)**
   - Deploy VM button on marketplace cards, target node banner in creation modal
 - ✅ User Reviews Backend (Goal 2.3) - **COMPLETE (backend)**
   - ReviewService with eligibility proofs, rating aggregates
 
 **Ready for Next (Phase 2 Priorities):**
+- 🎯 NodeAgent readiness monitor implementation (VmReadinessMonitor background service, heartbeat reporting)
+- 🎯 Frontend per-service readiness UI (service status display under VM details)
 - 🎯 Node Operator Dashboard (Priority 2.1) - earnings, uptime, relay stats, profile management
 - 🎯 Add more seed templates (target: 10-15 total, then community growth to 50)
 - 🎯 Trust badges in frontend (99.9% uptime, 100+ VMs hosted)
@@ -888,6 +901,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Security (wallet auth, attestation, SSH certs)
 - ✅ Monitoring (heartbeats, metrics, events)
 - ✅ Centralized VM lifecycle management (state machine, consistent side effects)
+- ✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator complete)
 
 **Phase 1 Complete - Marketplace Foundation:**
 - ✅ Node marketplace with search/filtering/featured nodes (Goal 1.1)
@@ -896,9 +910,12 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Targeted node selection (Goal 2.2)
 - ✅ Smart port allocation with CGNAT 3-hop forwarding
 - ✅ CentralIngress-aware port allocation (HTTP/WS ports skip direct access)
+- ✅ Per-service VM readiness tracking (Orchestrator models, services, lifecycle integration)
 - ✅ 6 seed templates (Stable Diffusion, PostgreSQL, VS Code, Private Browser, Shadowsocks, Web Proxy Browser)
 
 **Remaining Gaps:**
+- ❌ NodeAgent readiness monitor (VmReadinessMonitor background service — spec ready)
+- ❌ Frontend readiness UI (per-service status display under VM details)
 - ❌ Node operator dashboard (Priority 2.1 - next focus)
 - ❌ Trust badges in frontend
 - ❌ Node rating aggregates display
