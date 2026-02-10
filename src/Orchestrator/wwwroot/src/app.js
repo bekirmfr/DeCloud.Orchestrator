@@ -2346,8 +2346,11 @@ function renderServiceReadiness(services, vmStatus) {
         const statusClass = getServiceStatusClass(s.status);
         const icon = getServiceStatusIcon(s.status);
         const statusText = normalizeServiceStatus(s.status);
+        const tooltip = s.statusMessage
+            ? `${label}: ${statusText} — ${s.statusMessage}`
+            : `${label}: ${statusText}`;
 
-        return `<div class="svc-item ${statusClass}" title="${label}: ${statusText}">
+        return `<div class="svc-item ${statusClass}" title="${escapeHtml(tooltip)}">
             ${icon}
             <span class="svc-label">${escapeHtml(label)}</span>
         </div>`;

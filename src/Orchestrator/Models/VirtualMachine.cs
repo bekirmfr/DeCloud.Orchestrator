@@ -569,6 +569,13 @@ public class VmServiceStatus
     public ServiceReadiness Status { get; set; } = ServiceReadiness.Pending;
 
     /// <summary>
+    /// Human-readable explanation of current status.
+    /// Set on TimedOut/Failed (e.g., "cloud-init error: apt-get install failed"),
+    /// cleared when service recovers to Ready.
+    /// </summary>
+    public string? StatusMessage { get; set; }
+
+    /// <summary>
     /// When the service was first detected as ready
     /// </summary>
     public DateTime? ReadyAt { get; set; }

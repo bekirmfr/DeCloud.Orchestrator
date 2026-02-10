@@ -1949,6 +1949,13 @@ public class NodeService : INodeService
                 ? parsed
                 : ServiceReadiness.Pending;
 
+            // Always update StatusMessage (may change even if status stays the same)
+            if (service.StatusMessage != reported.StatusMessage)
+            {
+                service.StatusMessage = reported.StatusMessage;
+                changed = true;
+            }
+
             if (service.Status != newStatus)
             {
                 var oldStatus = service.Status;
@@ -1960,9 +1967,18 @@ public class NodeService : INodeService
                     service.ReadyAt = reported.ReadyAt ?? DateTime.UtcNow;
                 }
 
-                _logger.LogInformation(
-                    "VM {VmId} service '{ServiceName}' readiness: {OldStatus} → {NewStatus}",
-                    vm.Id, service.Name, oldStatus, newStatus);
+                if (newStatus is ServiceReadiness.Failed or ServiceReadiness.TimedOut && reported.StatusMessage != null)
+                {
+                    _logger.LogWarning(
+                        "VM {VmId} service '{ServiceName}' readiness: {OldStatus} → {NewStatus} — {Message}",
+                        vm.Id, service.Name, oldStatus, newStatus, reported.StatusMessage);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "VM {VmId} service '{ServiceName}' readiness: {OldStatus} → {NewStatus}",
+                        vm.Id, service.Name, oldStatus, newStatus);
+                }
 
                 changed = true;
             }
