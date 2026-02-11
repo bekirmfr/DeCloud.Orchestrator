@@ -1336,6 +1336,13 @@ public class NodeService : INodeService
                     await _dataStore.SaveVmAsync(vm);
                 }
 
+                // Re-fetch VM after potential state transition to avoid stale object overwrite.
+                // TransitionAsync loads and saves a fresh VM internally. Without re-fetching,
+                // the subsequent SaveVmAsync would overwrite the transitioned status (e.g. Running)
+                // with the stale status (e.g. Error) from the vm object loaded before the transition.
+                vm = await _dataStore.GetVmAsync(vmId);
+                if (vm == null) continue;
+
                 // Update per-service readiness from node agent
                 if (reported.Services?.Count > 0 && vm.Services.Count > 0)
                 {
