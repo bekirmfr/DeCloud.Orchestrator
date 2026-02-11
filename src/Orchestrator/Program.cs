@@ -12,6 +12,7 @@ using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Reconciliation;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -156,6 +157,17 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = true;
     options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
+
+// =====================================================
+// Reconciliation Loop (Obligation-based work management)
+// =====================================================
+builder.Services.AddSingleton<ObligationStore>();
+builder.Services.AddSingleton<ObligationDispatcher>();
+builder.Services.AddSingleton<ReconciliationLoop>();
+builder.Services.AddSingleton<IObligationService, ObligationService>();
+// Register obligation handlers here as they are implemented:
+// builder.Services.AddSingleton<IObligationHandler, VmProvisionHandler>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ReconciliationLoop>());
 
 // =====================================================
 // Background Services
