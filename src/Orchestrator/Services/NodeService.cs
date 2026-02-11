@@ -5,6 +5,7 @@ using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
 using Orchestrator.Services.Reconciliation;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Collections.Concurrent;
@@ -274,49 +275,42 @@ public class NodeService : INodeService
             node.Id);
 
         // =====================================================
-        // STEP 6: Relay Node Deployment & Assignment (via obligations)
+        // STEP 6: Compute system VM obligations & deploy what's ready
         // =====================================================
-        // Instead of inline deployment (which blocks registration and has no retry),
-        // create obligations that the reconciliation loop handles with retry/backoff.
+        // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
+        // based on its capabilities. The reconciliation loop converges toward it.
 
-        var obligationService = _serviceProvider.GetService<IObligationService>();
-
-        if (_relayNodeService.IsEligibleForRelay(node) && node.RelayInfo == null)
+        var requiredRoles = SystemVm.ObligationEligibility.ComputeObligations(node);
+        node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
         {
-            if (obligationService != null)
-            {
-                obligationService.Create(new Obligation
-                {
-                    Id = $"{ObligationTypes.NodeDeployRelayVm}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
-                    Type = ObligationTypes.NodeDeployRelayVm,
-                    ResourceType = "node",
-                    ResourceId = node.Id,
-                    Priority = 2,
-                    MaxAttempts = 5,
-                    BackoffBaseSeconds = 10,
-                    Deadline = DateTime.UtcNow.AddMinutes(30)
-                });
+            Role = role,
+            Status = SystemVmStatus.Pending
+        }).ToList();
 
-                _logger.LogInformation(
-                    "Node {NodeId} is eligible for relay — created node.deploy-relay-vm obligation",
-                    node.Id);
-            }
-            else
-            {
-                // Fallback: obligation system not available, do inline (legacy path)
-                _logger.LogWarning("ObligationService not available — deploying relay VM inline for node {NodeId}", node.Id);
-                var vmService = _serviceProvider.GetRequiredService<IVmService>();
-                var relayVmId = await _relayNodeService.DeployRelayVmAsync(node, vmService);
-                if (relayVmId != null)
-                    await _dataStore.SaveNodeAsync(node);
-            }
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Node {NodeId} obligations computed: [{Roles}]",
+            node.Id, string.Join(", ", requiredRoles));
+
+        // Deploy obligations with no dependencies immediately (e.g., DHT)
+        var reconciler = _serviceProvider.GetService<SystemVm.SystemVmReconciliationService>();
+        if (reconciler != null)
+        {
+            await reconciler.ReconcileNodeAsync(node);
         }
 
-        // Check if node is behind CGNAT and needs relay assignment
+        // =====================================================
+        // STEP 6b: CGNAT relay assignment (separate from system VMs)
+        // =====================================================
+        // CGNAT nodes need to be assigned to an *existing* relay on another node.
+        // This is a different concern from deploying system VMs on this node.
+
         if (node.HardwareInventory.Network.NatType != NatType.None)
         {
             if (node.CgnatInfo == null)
             {
+                var obligationService = _serviceProvider.GetService<IObligationService>();
                 if (obligationService != null)
                 {
                     obligationService.Create(new Obligation
@@ -337,8 +331,6 @@ public class NodeService : INodeService
                 }
                 else
                 {
-                    // Fallback: obligation system not available, do inline (legacy path)
-                    _logger.LogWarning("ObligationService not available — assigning relay inline for node {NodeId}", node.Id);
                     var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
                     if (relay != null)
                         await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);

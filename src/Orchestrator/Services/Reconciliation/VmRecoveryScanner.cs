@@ -25,7 +25,6 @@ public class VmRecoveryScanner : BackgroundService
     private readonly DataStore _dataStore;
     private readonly IObligationService _obligationService;
     private readonly ICentralIngressService _ingressService;
-    private readonly IRelayNodeService _relayNodeService;
     private readonly ITemplateService _templateService;
     private readonly ILogger<VmRecoveryScanner> _logger;
 
@@ -37,14 +36,12 @@ public class VmRecoveryScanner : BackgroundService
         DataStore dataStore,
         IObligationService obligationService,
         ICentralIngressService ingressService,
-        IRelayNodeService relayNodeService,
         ITemplateService templateService,
         ILogger<VmRecoveryScanner> logger)
     {
         _dataStore = dataStore;
         _obligationService = obligationService;
         _ingressService = ingressService;
-        _relayNodeService = relayNodeService;
         _templateService = templateService;
         _logger = logger;
     }
@@ -85,8 +82,8 @@ public class VmRecoveryScanner : BackgroundService
         created += await ScanRunningVmsMissingIngressAsync(ct);
         created += await ScanRunningVmsMissingPortsAsync(ct);
 
-        // Node scans (relay/CGNAT infrastructure)
-        created += ScanNodesMissingRelayVm();
+        // Node scans (CGNAT relay assignment — system VM deployment is handled
+        // by SystemVmReconciliationService, not here)
         created += ScanCgnatNodesMissingRelay();
 
         if (created > 0)
@@ -284,47 +281,10 @@ public class VmRecoveryScanner : BackgroundService
     // ════════════════════════════════════════════════════════════════════════
     // Node Infrastructure Scans
     // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Online nodes eligible for relay that don't have relay infrastructure.
-    /// Catches cases where the obligation failed during registration or the node
-    /// was registered before the obligation system existed.
-    /// </summary>
-    private int ScanNodesMissingRelayVm()
-    {
-        var created = 0;
-
-        var eligibleNodes = _dataStore.GetActiveNodes()
-            .Where(n => n.Status == NodeStatus.Online)
-            .Where(n => n.RelayInfo == null || string.IsNullOrEmpty(n.RelayInfo.RelayVmId))
-            .Where(n => _relayNodeService.IsEligibleForRelay(n))
-            .ToList();
-
-        foreach (var node in eligibleNodes)
-        {
-            var obligation = _obligationService.Create(new Obligation
-            {
-                Id = $"{ObligationTypes.NodeDeployRelayVm}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
-                Type = ObligationTypes.NodeDeployRelayVm,
-                ResourceType = "node",
-                ResourceId = node.Id,
-                Priority = 2,
-                MaxAttempts = 5,
-                BackoffBaseSeconds = 30,
-                Deadline = DateTime.UtcNow.AddHours(1)
-            });
-
-            if (obligation != null)
-            {
-                created++;
-                _logger.LogInformation(
-                    "Recovery: created node.deploy-relay-vm for eligible node {NodeId} missing relay",
-                    node.Id);
-            }
-        }
-
-        return created;
-    }
+    // Note: System VM deployment (DHT, Relay, BlockStore, Ingress) is handled
+    // by SystemVmReconciliationService with its own dependency-aware loop.
+    // This scanner only handles CGNAT relay assignment (different concern).
+    // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
     /// CGNAT nodes that are online but don't have a relay assigned.

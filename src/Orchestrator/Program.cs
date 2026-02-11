@@ -14,6 +14,7 @@ using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Reconciliation;
 using Orchestrator.Services.Reconciliation.Handlers;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -172,11 +173,16 @@ builder.Services.AddSingleton<IObligationHandler, VmProvisionHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmDeleteHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmRegisterIngressHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmAllocatePortsHandler>();
-// Obligation handlers (Node infrastructure)
-builder.Services.AddSingleton<IObligationHandler, NodeDeployRelayVmHandler>();
+// Obligation handlers (Node infrastructure — CGNAT relay assignment)
 builder.Services.AddSingleton<IObligationHandler, NodeAssignRelayHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ReconciliationLoop>());
 builder.Services.AddHostedService<VmRecoveryScanner>();
+
+// =====================================================
+// System VM Reconciliation (declarative, dependency-aware deployment)
+// =====================================================
+builder.Services.AddSingleton<SystemVmReconciliationService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemVmReconciliationService>());
 
 // =====================================================
 // Background Services
