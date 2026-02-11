@@ -13,6 +13,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Reconciliation;
+using Orchestrator.Services.Reconciliation.Handlers;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -165,8 +166,12 @@ builder.Services.AddSingleton<ObligationStore>();
 builder.Services.AddSingleton<ObligationDispatcher>();
 builder.Services.AddSingleton<ReconciliationLoop>();
 builder.Services.AddSingleton<IObligationService, ObligationService>();
-// Register obligation handlers here as they are implemented:
-// builder.Services.AddSingleton<IObligationHandler, VmProvisionHandler>();
+// Obligation handlers (VM lifecycle)
+builder.Services.AddSingleton<IObligationHandler, VmScheduleHandler>();
+builder.Services.AddSingleton<IObligationHandler, VmProvisionHandler>();
+builder.Services.AddSingleton<IObligationHandler, VmDeleteHandler>();
+builder.Services.AddSingleton<IObligationHandler, VmRegisterIngressHandler>();
+builder.Services.AddSingleton<IObligationHandler, VmAllocatePortsHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ReconciliationLoop>());
 
 // =====================================================
