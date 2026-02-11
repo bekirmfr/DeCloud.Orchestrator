@@ -1628,9 +1628,9 @@ final_message: |
     {
         return new VmTemplate
         {
-            Name = "Stable Diffusion WebUI (CPU)",
+            Name = "Stable Diffusion WebUI Forge (CPU)",
             Slug = "stable-diffusion-cpu",
-            Version = "1.0.0",
+            Version = "2.0.0",
             Category = "ai-ml",
             Description = "Stable Diffusion WebUI Forge running in CPU-only mode. No GPU required. Generate images from text prompts on any hardware.",
             LongDescription = @"## Features
