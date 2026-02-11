@@ -173,6 +173,7 @@ builder.Services.AddSingleton<IObligationHandler, VmDeleteHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmRegisterIngressHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmAllocatePortsHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ReconciliationLoop>());
+builder.Services.AddHostedService<VmRecoveryScanner>();
 
 // =====================================================
 // Background Services

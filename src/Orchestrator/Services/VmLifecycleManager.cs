@@ -1,5 +1,6 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Reconciliation;
 
 namespace Orchestrator.Services;
 
@@ -280,10 +281,12 @@ public class VmLifecycleManager : IVmLifecycleManager
 
     /// <summary>
     /// Side effects when a VM transitions to Running:
-    ///   1. Wait for PrivateIp (polling, 30s timeout)
-    ///   2. Register with ingress (Caddy reverse proxy)
-    ///   3. Auto-allocate template ports (DirectAccess)
-    ///   4. Settle template fee (paid templates)
+    ///   1. Reset service readiness
+    ///   2. Create obligations for ingress registration, port allocation, template fee
+    ///
+    /// These are handled by the reconciliation loop (with retry, backoff, dependency tracking)
+    /// instead of blocking inline. This eliminates the 30s IP polling delay and makes
+    /// each side effect independently retryable.
     /// </summary>
     private async Task OnVmBecameRunningAsync(VirtualMachine vm, TransitionContext context)
     {
@@ -296,41 +299,80 @@ public class VmLifecycleManager : IVmLifecycleManager
                 service.ReadyAt = null;
                 service.LastCheckAt = null;
             }
+            await _dataStore.SaveVmAsync(vm);
             _logger.LogDebug("VM {VmId} service readiness reset to Pending ({Count} services)",
                 vm.Id, vm.Services.Count);
         }
 
-        // Wait for PrivateIp to be available (heartbeat may not have delivered it yet)
-        var ipReady = await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
-        if (!ipReady)
+        // Create obligations for post-Running side effects.
+        // The reconciliation loop handles retry, IP readiness checks, and backoff.
+        var obligationService = _serviceProvider.GetService<IObligationService>();
+        if (obligationService == null)
         {
-            _logger.LogWarning(
-                "VM {VmId} is Running but PrivateIp not assigned after 30s. " +
-                "Ingress and port allocation deferred until next heartbeat confirms IP.",
-                vm.Id);
-            // Don't fail the transition — VM is running, side effects will be retried
-            // when the heartbeat delivers the IP and triggers Running → Running (no-op transition).
-            // A reconciliation background service can also catch these.
+            // Fallback: obligation system not available, do inline (legacy path)
+            _logger.LogWarning("ObligationService not available — falling back to inline side effects for VM {VmId}", vm.Id);
+            await OnVmBecameRunningInlineAsync(vm);
             return;
         }
 
-        // Re-read VM to get latest state (IP may have been set during polling)
+        // Ingress registration obligation
+        obligationService.Create(new Obligation
+        {
+            Id = $"{ObligationTypes.VmRegisterIngress}:{vm.Id}:{Guid.NewGuid().ToString()[..8]}",
+            Type = ObligationTypes.VmRegisterIngress,
+            ResourceType = "vm",
+            ResourceId = vm.Id,
+            Deadline = DateTime.UtcNow.AddMinutes(10),
+            MaxAttempts = 10,
+            BackoffBaseSeconds = 3
+        });
+
+        // Port allocation obligation (only for template-based VMs)
+        if (!string.IsNullOrEmpty(vm.TemplateId))
+        {
+            obligationService.Create(new Obligation
+            {
+                Id = $"{ObligationTypes.VmAllocatePorts}:{vm.Id}:{Guid.NewGuid().ToString()[..8]}",
+                Type = ObligationTypes.VmAllocatePorts,
+                ResourceType = "vm",
+                ResourceId = vm.Id,
+                Deadline = DateTime.UtcNow.AddMinutes(10),
+                MaxAttempts = 10,
+                BackoffBaseSeconds = 3
+            });
+
+            // Template fee settlement (inline — fast, no external dependency)
+            await SafeExecuteAsync(
+                () => SettleTemplateFeeAsync(vm),
+                "Template fee settlement", vm.Id);
+        }
+
+        _logger.LogInformation(
+            "VM {VmId} Running — created reconciliation obligations for ingress/ports",
+            vm.Id);
+    }
+
+    /// <summary>
+    /// Legacy inline path — used as fallback if obligation system is not available.
+    /// </summary>
+    private async Task OnVmBecameRunningInlineAsync(VirtualMachine vm)
+    {
+        var ipReady = await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
+        if (!ipReady) return;
+
         var freshVm = await _dataStore.GetVmAsync(vm.Id);
         if (freshVm == null) return;
 
-        // 1. Ingress registration
         await SafeExecuteAsync(
             () => _ingressService.OnVmStartedAsync(freshVm.Id),
             "Ingress registration", freshVm.Id);
 
-        // 2. Auto-allocate ports from template
         if (!string.IsNullOrEmpty(freshVm.TemplateId))
         {
             await SafeExecuteAsync(
                 () => AutoAllocateTemplatePortsAsync(freshVm),
                 "Template port auto-allocation", freshVm.Id);
 
-            // 3. Settle template fee
             await SafeExecuteAsync(
                 () => SettleTemplateFeeAsync(freshVm),
                 "Template fee settlement", freshVm.Id);

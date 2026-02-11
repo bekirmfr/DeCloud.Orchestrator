@@ -4,6 +4,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
+using Orchestrator.Services.Reconciliation;
 using Orchestrator.Services.VmScheduling;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Collections.Concurrent;
@@ -739,6 +740,9 @@ public class NodeService : INodeService
                 }
             });
 
+            // Deliver signal to reconciliation system (even on failure — handler decides what to do)
+            DeliverCommandAckSignal(commandId, nodeId, affectedVm.Id, success: false);
+
             return true;
         }
 
@@ -849,10 +853,37 @@ public class NodeService : INodeService
             // This is just confirmation from the node
         }
 
+        // Deliver signal to reconciliation system
+        DeliverCommandAckSignal(commandId, nodeId, affectedVm.Id, success: true);
+
         return true;
     }
 
     // CompleteVmDeletionAsync moved to VmLifecycleManager.OnVmDeletedAsync
+
+    /// <summary>
+    /// Deliver a command ack signal to the reconciliation obligation system.
+    /// Wakes any obligation waiting on this command (e.g., vm.provision, vm.delete).
+    /// </summary>
+    private void DeliverCommandAckSignal(string commandId, string nodeId, string vmId, bool success)
+    {
+        try
+        {
+            var obligationService = _serviceProvider.GetService<IObligationService>();
+            obligationService?.Signal(
+                SignalKeys.CommandAck(commandId),
+                new Dictionary<string, string>
+                {
+                    ["success"] = success.ToString(),
+                    ["nodeId"] = nodeId,
+                    ["vmId"] = vmId
+                });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to deliver command ack signal for {CommandId}", commandId);
+        }
+    }
 
     /// <summary>
     /// Synchronizes CGNAT node relay assignment between orchestrator state and node heartbeat.
