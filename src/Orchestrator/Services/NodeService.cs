@@ -274,36 +274,42 @@ public class NodeService : INodeService
             node.Id);
 
         // =====================================================
-        // STEP 6: Relay Node Deployment & Assignment
+        // STEP 6: Relay Node Deployment & Assignment (via obligations)
         // =====================================================
+        // Instead of inline deployment (which blocks registration and has no retry),
+        // create obligations that the reconciliation loop handles with retry/backoff.
+
+        var obligationService = _serviceProvider.GetService<IObligationService>();
+
         if (_relayNodeService.IsEligibleForRelay(node) && node.RelayInfo == null)
         {
-            _logger.LogInformation(
-                "Node {NodeId} is eligible for relay - deploying relay VM",
-                node.Id);
-
-            var vmService = _serviceProvider.GetRequiredService<IVmService>();
-            var relayVmId = await _relayNodeService.DeployRelayVmAsync(node, vmService);
-
-            if (relayVmId != null)
+            if (obligationService != null)
             {
+                obligationService.Create(new Obligation
+                {
+                    Id = $"{ObligationTypes.NodeDeployRelayVm}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
+                    Type = ObligationTypes.NodeDeployRelayVm,
+                    ResourceType = "node",
+                    ResourceId = node.Id,
+                    Priority = 2,
+                    MaxAttempts = 5,
+                    BackoffBaseSeconds = 10,
+                    Deadline = DateTime.UtcNow.AddMinutes(30)
+                });
+
                 _logger.LogInformation(
-                    "Relay VM {VmId} deployed successfully for node {NodeId}",
-                    relayVmId, node.Id);
+                    "Node {NodeId} is eligible for relay — created node.deploy-relay-vm obligation",
+                    node.Id);
             }
             else
             {
-                _logger.LogWarning(
-                    "Failed to deploy relay VM for eligible node {NodeId}",
-                    node.Id);
+                // Fallback: obligation system not available, do inline (legacy path)
+                _logger.LogWarning("ObligationService not available — deploying relay VM inline for node {NodeId}", node.Id);
+                var vmService = _serviceProvider.GetRequiredService<IVmService>();
+                var relayVmId = await _relayNodeService.DeployRelayVmAsync(node, vmService);
+                if (relayVmId != null)
+                    await _dataStore.SaveNodeAsync(node);
             }
-            await _dataStore.SaveNodeAsync(node);
-        }
-        else
-        {
-            _logger.LogInformation(
-                "Node {NodeId} is not eligible for relay",
-                node.Id);
         }
 
         // Check if node is behind CGNAT and needs relay assignment
@@ -311,21 +317,31 @@ public class NodeService : INodeService
         {
             if (node.CgnatInfo == null)
             {
-                _logger.LogInformation(
-                "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
-                node.Id, node.HardwareInventory.Network.NatType);
-
-                var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
-
-                if (relay != null)
+                if (obligationService != null)
                 {
-                    await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                    obligationService.Create(new Obligation
+                    {
+                        Id = $"{ObligationTypes.NodeAssignRelay}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
+                        Type = ObligationTypes.NodeAssignRelay,
+                        ResourceType = "node",
+                        ResourceId = node.Id,
+                        Priority = 2,
+                        MaxAttempts = 10,
+                        BackoffBaseSeconds = 5,
+                        Deadline = DateTime.UtcNow.AddMinutes(30)
+                    });
+
+                    _logger.LogInformation(
+                        "CGNAT node {NodeId} (type: {NatType}) — created node.assign-relay obligation",
+                        node.Id, node.HardwareInventory.Network.NatType);
                 }
                 else
                 {
-                    _logger.LogWarning(
-                        "No available relay found for CGNAT node {NodeId}",
-                        node.Id);
+                    // Fallback: obligation system not available, do inline (legacy path)
+                    _logger.LogWarning("ObligationService not available — assigning relay inline for node {NodeId}", node.Id);
+                    var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+                    if (relay != null)
+                        await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
                 }
             }
             else
@@ -333,10 +349,6 @@ public class NodeService : INodeService
                 _logger.LogInformation(
                 "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
                 node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
-
-                // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
-
-
             }
         }
 

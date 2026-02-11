@@ -172,6 +172,9 @@ builder.Services.AddSingleton<IObligationHandler, VmProvisionHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmDeleteHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmRegisterIngressHandler>();
 builder.Services.AddSingleton<IObligationHandler, VmAllocatePortsHandler>();
+// Obligation handlers (Node infrastructure)
+builder.Services.AddSingleton<IObligationHandler, NodeDeployRelayVmHandler>();
+builder.Services.AddSingleton<IObligationHandler, NodeAssignRelayHandler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ReconciliationLoop>());
 builder.Services.AddHostedService<VmRecoveryScanner>();
 

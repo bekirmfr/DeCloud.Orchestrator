@@ -4,14 +4,18 @@ using Orchestrator.Persistence;
 namespace Orchestrator.Services.Reconciliation;
 
 /// <summary>
-/// Background service that periodically scans for VMs in stuck states
+/// Background service that periodically scans for VMs and nodes in stuck states
 /// and creates obligations to recover them.
 ///
-/// This catches cases that fall through the cracks of the normal flow:
+/// VM recovery:
 ///   - VM stuck in Pending (scheduler failed, no node available at the time)
 ///   - VM Running but missing ingress (side effect failed during transition)
 ///   - VM Running from template but ports not allocated
 ///   - VM stuck in Provisioning (command lost, ack never arrived)
+///
+/// Node recovery:
+///   - Online relay-eligible nodes missing relay VM infrastructure
+///   - CGNAT nodes missing relay assignment
 ///
 /// Runs every 60 seconds. Creates obligations with deduplication
 /// (ObligationService.Create skips if an active obligation already exists).
@@ -21,6 +25,7 @@ public class VmRecoveryScanner : BackgroundService
     private readonly DataStore _dataStore;
     private readonly IObligationService _obligationService;
     private readonly ICentralIngressService _ingressService;
+    private readonly IRelayNodeService _relayNodeService;
     private readonly ITemplateService _templateService;
     private readonly ILogger<VmRecoveryScanner> _logger;
 
@@ -32,12 +37,14 @@ public class VmRecoveryScanner : BackgroundService
         DataStore dataStore,
         IObligationService obligationService,
         ICentralIngressService ingressService,
+        IRelayNodeService relayNodeService,
         ITemplateService templateService,
         ILogger<VmRecoveryScanner> logger)
     {
         _dataStore = dataStore;
         _obligationService = obligationService;
         _ingressService = ingressService;
+        _relayNodeService = relayNodeService;
         _templateService = templateService;
         _logger = logger;
     }
@@ -72,10 +79,15 @@ public class VmRecoveryScanner : BackgroundService
     {
         var created = 0;
 
+        // VM scans
         created += ScanPendingVms();
         created += ScanProvisioningVms();
         created += await ScanRunningVmsMissingIngressAsync(ct);
         created += await ScanRunningVmsMissingPortsAsync(ct);
+
+        // Node scans (relay/CGNAT infrastructure)
+        created += ScanNodesMissingRelayVm();
+        created += ScanCgnatNodesMissingRelay();
 
         if (created > 0)
         {
@@ -263,6 +275,91 @@ public class VmRecoveryScanner : BackgroundService
                     "Recovery: created vm.allocate-ports for Running VM {VmId} " +
                     "missing {Count} template port(s)",
                     vm.Id, portsNeeded.Count);
+            }
+        }
+
+        return created;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Node Infrastructure Scans
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Online nodes eligible for relay that don't have relay infrastructure.
+    /// Catches cases where the obligation failed during registration or the node
+    /// was registered before the obligation system existed.
+    /// </summary>
+    private int ScanNodesMissingRelayVm()
+    {
+        var created = 0;
+
+        var eligibleNodes = _dataStore.GetActiveNodes()
+            .Where(n => n.Status == NodeStatus.Online)
+            .Where(n => n.RelayInfo == null || string.IsNullOrEmpty(n.RelayInfo.RelayVmId))
+            .Where(n => _relayNodeService.IsEligibleForRelay(n))
+            .ToList();
+
+        foreach (var node in eligibleNodes)
+        {
+            var obligation = _obligationService.Create(new Obligation
+            {
+                Id = $"{ObligationTypes.NodeDeployRelayVm}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
+                Type = ObligationTypes.NodeDeployRelayVm,
+                ResourceType = "node",
+                ResourceId = node.Id,
+                Priority = 2,
+                MaxAttempts = 5,
+                BackoffBaseSeconds = 30,
+                Deadline = DateTime.UtcNow.AddHours(1)
+            });
+
+            if (obligation != null)
+            {
+                created++;
+                _logger.LogInformation(
+                    "Recovery: created node.deploy-relay-vm for eligible node {NodeId} missing relay",
+                    node.Id);
+            }
+        }
+
+        return created;
+    }
+
+    /// <summary>
+    /// CGNAT nodes that are online but don't have a relay assigned.
+    /// </summary>
+    private int ScanCgnatNodesMissingRelay()
+    {
+        var created = 0;
+
+        var cgnatNodes = _dataStore.GetActiveNodes()
+            .Where(n => n.Status == NodeStatus.Online)
+            .Where(n => n.HardwareInventory.Network.NatType != NatType.None)
+            .Where(n => n.CgnatInfo == null ||
+                        string.IsNullOrEmpty(n.CgnatInfo.AssignedRelayNodeId))
+            .ToList();
+
+        foreach (var node in cgnatNodes)
+        {
+            var obligation = _obligationService.Create(new Obligation
+            {
+                Id = $"{ObligationTypes.NodeAssignRelay}:{node.Id}:{Guid.NewGuid().ToString()[..8]}",
+                Type = ObligationTypes.NodeAssignRelay,
+                ResourceType = "node",
+                ResourceId = node.Id,
+                Priority = 2,
+                MaxAttempts = 10,
+                BackoffBaseSeconds = 15,
+                Deadline = DateTime.UtcNow.AddHours(1)
+            });
+
+            if (obligation != null)
+            {
+                created++;
+                _logger.LogInformation(
+                    "Recovery: created node.assign-relay for CGNAT node {NodeId} missing relay assignment",
+                    node.Id);
             }
         }
 
