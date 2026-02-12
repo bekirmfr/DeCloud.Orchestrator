@@ -259,11 +259,13 @@ public class SystemVmReconciliationService : BackgroundService
 
     /// <summary>
     /// Ensure a node's obligation list reflects its current capabilities.
-    /// Handles two cases:
+    /// Handles three cases:
     ///   1. Legacy nodes with an empty obligations list (registered before the obligation system)
     ///   2. Capability drift (e.g., node gained a public IP and is now eligible for Relay)
-    /// New obligations are added as Pending. Existing obligations are never removed
-    /// (removal would require draining VMs, which is a separate operation).
+    ///   3. Adopting existing VMs — legacy nodes may already have running VMs (via RelayInfo/DhtInfo)
+    ///      that were deployed before the obligation system. These are adopted as Active instead
+    ///      of creating duplicate deployments.
+    /// Existing obligations are never removed (removal would require draining VMs).
     /// </summary>
     private async Task EnsureObligationsAsync(Node node, CancellationToken ct)
     {
@@ -278,11 +280,15 @@ public class SystemVmReconciliationService : BackgroundService
 
         foreach (var role in missingRoles)
         {
-            node.SystemVmObligations.Add(new SystemVmObligation
+            var adopted = TryAdoptExistingVm(node, role);
+            node.SystemVmObligations.Add(adopted);
+
+            if (adopted.Status == SystemVmStatus.Active)
             {
-                Role = role,
-                Status = SystemVmStatus.Pending
-            });
+                _logger.LogInformation(
+                    "Adopted existing {Role} VM {VmId} on node {NodeId} as Active obligation",
+                    role, adopted.VmId, node.Id);
+            }
         }
 
         await _dataStore.SaveNodeAsync(node);
@@ -293,6 +299,44 @@ public class SystemVmReconciliationService : BackgroundService
             node.Id,
             string.Join(", ", missingRoles),
             node.SystemVmObligations.Count);
+    }
+
+    /// <summary>
+    /// Check if a node already has a running VM for a role (deployed before the obligation
+    /// system existed). If so, adopt it as an Active obligation instead of creating a
+    /// duplicate Pending deployment.
+    /// </summary>
+    private static SystemVmObligation TryAdoptExistingVm(Node node, SystemVmRole role)
+    {
+        string? existingVmId = role switch
+        {
+            SystemVmRole.Relay when node.RelayInfo != null
+                && !string.IsNullOrEmpty(node.RelayInfo.RelayVmId)
+                => node.RelayInfo.RelayVmId,
+
+            SystemVmRole.Dht when node.DhtInfo != null
+                && !string.IsNullOrEmpty(node.DhtInfo.DhtVmId)
+                => node.DhtInfo.DhtVmId,
+
+            _ => null
+        };
+
+        if (existingVmId != null)
+        {
+            return new SystemVmObligation
+            {
+                Role = role,
+                VmId = existingVmId,
+                Status = SystemVmStatus.Active,
+                ActiveAt = DateTime.UtcNow
+            };
+        }
+
+        return new SystemVmObligation
+        {
+            Role = role,
+            Status = SystemVmStatus.Pending
+        };
     }
 
     // ════════════════════════════════════════════════════════════════════════
