@@ -4,6 +4,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using Org.BouncyCastle.Asn1.Ocsp;
 using System.Collections.Concurrent;
@@ -273,37 +274,36 @@ public class NodeService : INodeService
             node.Id);
 
         // =====================================================
-        // STEP 6: Relay Node Deployment & Assignment
+        // STEP 6: Compute system VM obligations & deploy what's ready
         // =====================================================
-        if (_relayNodeService.IsEligibleForRelay(node) && node.RelayInfo == null)
-        {
-            _logger.LogInformation(
-                "Node {NodeId} is eligible for relay - deploying relay VM",
-                node.Id);
+        // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
+        // based on its capabilities. The reconciliation loop converges toward it.
 
-            var vmService = _serviceProvider.GetRequiredService<IVmService>();
-            var relayVmId = await _relayNodeService.DeployRelayVmAsync(node, vmService);
-
-            if (relayVmId != null)
-            {
-                _logger.LogInformation(
-                    "Relay VM {VmId} deployed successfully for node {NodeId}",
-                    relayVmId, node.Id);
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "Failed to deploy relay VM for eligible node {NodeId}",
-                    node.Id);
-            }
-            await _dataStore.SaveNodeAsync(node);
-        }
-        else
+        var requiredRoles = ObligationEligibility.ComputeObligations(node);
+        node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
         {
-            _logger.LogInformation(
-                "Node {NodeId} is not eligible for relay",
-                node.Id);
+            Role = role,
+            Status = SystemVmStatus.Pending
+        }).ToList();
+
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Node {NodeId} obligations computed: [{Roles}]",
+            node.Id, string.Join(", ", requiredRoles));
+
+        // Deploy obligations with no dependencies immediately (e.g., DHT)
+        var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
+        if (reconciler != null)
+        {
+            await reconciler.ReconcileNodeAsync(node);
         }
+
+        // =====================================================
+        // STEP 6b: CGNAT relay assignment (separate from system VMs)
+        // =====================================================
+        // CGNAT nodes need to be assigned to an *existing* relay on another node.
+        // This is a different concern from deploying system VMs on this node.
 
         // Check if node is behind CGNAT and needs relay assignment
         if (node.HardwareInventory.Network.NatType != NatType.None)

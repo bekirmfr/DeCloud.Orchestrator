@@ -158,6 +158,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 // =====================================================
+// System VM Reconciliation (declarative, dependency-aware deployment)
+// =====================================================
+builder.Services.AddSingleton<Orchestrator.Services.SystemVm.SystemVmReconciliationService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Orchestrator.Services.SystemVm.SystemVmReconciliationService>());
+
+// =====================================================
 // Background Services
 // =====================================================
 builder.Services.AddHostedService<AdminUserInitializer>(); // Must run first!
