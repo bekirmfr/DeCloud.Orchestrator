@@ -47,7 +47,7 @@
             </div>
 
             <h1 class="login-title">Welcome to DeCloud</h1>
-            <p class="login-subtitle">Connect your wallet to access decentralized cloud computing</p>
+            <p class="login-subtitle">Enterprise-grade decentralized compute at your fingertips</p>
 
             <button class="connect-wallet-btn" id="connect-wallet-btn" onclick="connectWallet()">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -57,6 +57,22 @@
                 </svg>
                 Connect Wallet
             </button>
+
+            <div class="login-security-badge">
+                <span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    End-to-end encrypted
+                </span>
+                <span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                    Wallet-verified identity
+                </span>
+            </div>
 
             <div class="login-status" id="login-status"></div>
 
@@ -77,7 +93,7 @@
             </div>
 
             <nav class="nav-section">
-                <div class="nav-label">Overview</div>
+                <div class="nav-label">Command Center</div>
                 <a class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="7" height="9" rx="1" />
@@ -88,7 +104,7 @@
                     Dashboard
                 </a>
 
-                <div class="nav-label" style="margin-top: 24px;">Resources</div>
+                <div class="nav-label" style="margin-top: 24px;">Infrastructure</div>
                 <a class="nav-item" data-page="marketplace-templates" onclick="showPage('marketplace-templates')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path
@@ -122,7 +138,7 @@
                     Nodes
                 </a>
 
-                <div class="nav-label" style="margin-top: 24px;">Settings</div>
+                <div class="nav-label" style="margin-top: 24px;">Configuration</div>
                 <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path
@@ -186,7 +202,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Dashboard</h1>
-                        <p class="page-subtitle">Overview of your decentralized cloud resources</p>
+                        <p class="page-subtitle">Real-time overview of your compute infrastructure</p>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-secondary" onclick="refreshData()">
@@ -287,7 +303,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Virtual Machines</h1>
-                        <p class="page-subtitle">Manage your cloud instances</p>
+                        <p class="page-subtitle">Deploy, monitor, and manage compute instances</p>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-primary" onclick="openCreateVMModal()">
@@ -332,7 +348,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Nodes</h1>
-                        <p class="page-subtitle">Discover and compare compute nodes across the network</p>
+                        <p class="page-subtitle">Explore the decentralized compute network</p>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-secondary" onclick="loadNodes()">
@@ -432,7 +448,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">SSH Keys</h1>
-                        <p class="page-subtitle">Manage your SSH keys for VM access</p>
+                        <p class="page-subtitle">Secure access credentials for your instances</p>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-primary" onclick="openAddSSHKeyModal()">
@@ -474,7 +490,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">Settings</h1>
-                        <p class="page-subtitle">Configure your DeCloud dashboard</p>
+                        <p class="page-subtitle">Platform configuration and security</p>
                     </div>
                 </header>
 
@@ -509,7 +525,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">VM Templates</h1>
-                        <p class="page-subtitle">Browse and deploy pre-configured virtual machines</p>
+                        <p class="page-subtitle">One-click deployable infrastructure templates</p>
                     </div>
                     <div class="page-header-actions">
                         <div class="search-box">
@@ -562,7 +578,7 @@
                 <header class="page-header">
                     <div>
                         <h1 class="page-title">My Templates</h1>
-                        <p class="page-subtitle">Create and manage your VM templates</p>
+                        <p class="page-subtitle">Your published infrastructure blueprints</p>
                     </div>
                     <div class="page-header-actions">
                         <button class="btn btn-primary" onclick="window.myTemplates.showCreateModal()">
