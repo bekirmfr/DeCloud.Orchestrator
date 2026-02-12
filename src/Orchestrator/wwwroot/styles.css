@@ -927,51 +927,154 @@
 .sidebar-footer {
     padding: 16px;
     border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
+/* ── Balance Card ── */
+.balance-card {
+    background: linear-gradient(135deg, rgba(0, 212, 170, 0.06) 0%, rgba(0, 168, 255, 0.04) 100%);
+    border: 1px solid rgba(0, 212, 170, 0.15);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.balance-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.balance-header svg {
+    color: var(--accent-primary);
+    opacity: 0.7;
+}
+
+.balance-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.balance-amount {
+    font-size: 24px;
+    font-weight: 700;
+    font-family: var(--font-display);
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    line-height: 1;
+}
+
+.balance-token {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-primary);
+    background: rgba(0, 212, 170, 0.1);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    letter-spacing: 0.5px;
+}
+
+.balance-amount.low-balance {
+    color: var(--accent-danger);
+}
+
+.btn-deposit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 12px;
+    background: linear-gradient(135deg, var(--accent-primary), #00b894);
+    color: var(--bg-deep);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-deposit:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 212, 170, 0.25);
+}
+
+.btn-deposit:active {
+    transform: scale(0.98);
+}
+
+/* ── Wallet Badge ── */
 .wallet-badge {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px;
+    gap: 8px;
+    padding: 10px 12px;
     background: var(--bg-secondary);
-    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
     font-family: var(--font-mono);
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
+    transition: all var(--transition-fast);
 }
 
 .wallet-badge.connected {
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.3);
+    background: rgba(0, 212, 170, 0.06);
+    border-color: rgba(0, 212, 170, 0.2);
+    color: var(--text-secondary);
 }
 
-.wallet-badge.connected .wallet-dot {
-    background: #10b981;
+.wallet-badge #wallet-display {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .wallet-dot {
     width: 8px;
     height: 8px;
-    background: var(--accent-primary);
     border-radius: 50%;
-    animation: pulse 2s infinite;
+    background: var(--text-muted);
+    flex-shrink: 0;
 }
 
+.wallet-badge.connected .wallet-dot {
+    background: var(--accent-primary);
+    box-shadow: 0 0 8px rgba(0, 212, 170, 0.4);
+    animation: pulse-dot 2s infinite;
+}
 
 .disconnect-btn {
     background: none;
     border: none;
-    color: #ef4444;
-    font-size: 11px;
+    color: var(--text-muted);
     cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
     margin-left: auto;
 }
 
 .disconnect-btn:hover {
-    background: rgba(239, 68, 68, 0.1);
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--accent-danger);
 }
 
 /* Main Content */

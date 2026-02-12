@@ -763,7 +763,7 @@ export async function refreshBalanceDisplay() {
         const balance = await getBalance();
         const balanceEl = document.getElementById('user-balance');
         if (balanceEl && balance) {
-            balanceEl.textContent = `${balance.balance.toFixed(2)} ${balance.tokenSymbol}`;
+            balanceEl.textContent = `${balance.balance.toFixed(2)}`;
 
             // Low balance warning
             if (balance.balance < 5) {

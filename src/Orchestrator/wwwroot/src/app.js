@@ -987,7 +987,7 @@ function updateBalanceDisplay(balance) {
     const balanceContainer = document.getElementById('balance-container');
 
     if (balanceEl && balance) {
-        balanceEl.textContent = `${balance.balance.toFixed(2)} ${balance.tokenSymbol || 'USDC'}`;
+        balanceEl.textContent = `${balance.balance.toFixed(2)}`;
 
         // Show low balance warning (less than $5)
         if (balance.balance < 5) {
