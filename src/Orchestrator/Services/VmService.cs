@@ -64,7 +64,7 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
-        var isRelayVm = request.Spec.VmType == VmType.Relay;
+        var isSystemVm = request.VmType is VmType.Relay or VmType.Dht;
 
         // Validate user exists
         User? user = null;
@@ -74,7 +74,7 @@ public class VmService : IVmService
         }
 
         // Check quotas
-        if (user != null && !isRelayVm)
+        if (user != null && !isSystemVm)
         {
             if (user.Quotas.CurrentVms >= user.Quotas.MaxVms)
             {
@@ -90,7 +90,7 @@ public class VmService : IVmService
         }
 
         // Generate memorable password
-        var password = isRelayVm ? null : GenerateMemorablePassword();
+        var password = isSystemVm ? null : GenerateMemorablePassword();
 
         // Calculate pricing
         var hourlyRate = CalculateHourlyRate(request.Spec);
@@ -100,8 +100,8 @@ public class VmService : IVmService
             Id = Guid.NewGuid().ToString(),
             Name = request.Name,
             VmType = request.VmType,
-            OwnerId = isRelayVm ? null : userId,
-            OwnerWallet = isRelayVm ? null : user?.WalletAddress,
+            OwnerId = isSystemVm ? null : userId,
+            OwnerWallet = isSystemVm ? null : user?.WalletAddress,
             Spec = request.Spec,
             Status = VmStatus.Pending,
             Labels = request.Labels ?? [],
@@ -215,7 +215,7 @@ public class VmService : IVmService
         await _dataStore.SaveVmAsync(vm);
 
         // Update user quotas
-        if (!isRelayVm && user != null)
+        if (!isSystemVm && user != null)
         {
             user.Quotas.CurrentVms++;
             user.Quotas.CurrentVirtualCpuCores += request.Spec.VirtualCpuCores;
@@ -613,7 +613,8 @@ public class VmService : IVmService
         // ========================================
         var config = await _configService.GetConfigAsync();// .TierRequirements[vm.Spec.QualityTier];
         var tierConfig = config.Tiers[vm.Spec.QualityTier];
-        var pointCost = vm.Spec.VmType == VmType.Relay ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
+        var isSystemVmScheduling = vm.Spec.VmType is VmType.Relay or VmType.Dht;
+        var pointCost = isSystemVmScheduling ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
             (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
 
         // CRITICAL: Store point cost in VM spec before scheduling
@@ -895,8 +896,8 @@ public class VmService : IVmService
     /// </summary>
     private decimal CalculateHourlyRate(VmSpec spec, NodePricing? nodePricing = null)
     {
-        if (spec.VmType == VmType.Relay)
-            return 0.005m; // Flat rate for relay VMs
+        if (spec.VmType is VmType.Relay or VmType.Dht)
+            return 0.005m; // Flat rate for system VMs
 
         const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
         var cfg = _pricingConfig;

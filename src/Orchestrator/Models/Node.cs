@@ -68,6 +68,12 @@ public class Node
     public RelayNodeInfo? RelayInfo { get; set; }
 
     /// <summary>
+    /// DHT node configuration (null until DHT VM is deployed).
+    /// Every node runs a DHT VM — this tracks its state and libp2p peer identity.
+    /// </summary>
+    public DhtNodeInfo? DhtInfo { get; set; }
+
+    /// <summary>
     /// CGNAT node configuration (null if node has public IP)
     /// </summary>
     public bool IsBehindCgnat => HardwareInventory.Network.NatType != NatType.None;
@@ -370,7 +376,13 @@ public record NodeRegistrationResponse(
     /// Null if WireGuard is not enabled on orchestrator
     /// </summary>
     string OrchestratorWireGuardPublicKey,
-    TimeSpan HeartbeatInterval
+    TimeSpan HeartbeatInterval,
+    /// <summary>
+    /// libp2p multiaddrs of active DHT peers for bootstrap.
+    /// Format: "/ip4/{ip}/tcp/4001/p2p/{peerId}"
+    /// Empty list if no DHT peers are active yet (this node will be first).
+    /// </summary>
+    List<string> DhtBootstrapPeers
 );
 
 /// <summary>
@@ -668,6 +680,55 @@ public enum TunnelStatus
     Connected,
     Disconnected,
     Error
+}
+
+/// <summary>
+/// DHT node state tracked on the host node.
+/// Populated when the DHT system VM is deployed.
+/// </summary>
+public class DhtNodeInfo
+{
+    /// <summary>
+    /// VM ID of the DHT VM running on this node
+    /// </summary>
+    public string DhtVmId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// libp2p peer ID (e.g., "QmXyz..." or "12D3Koo...").
+    /// Set once the DHT VM reports its identity via qemu-guest-agent.
+    /// </summary>
+    public string? PeerId { get; set; }
+
+    /// <summary>
+    /// Address the DHT VM listens on (e.g., "10.20.1.2:4001" or "203.0.113.5:4001")
+    /// </summary>
+    public string ListenAddress { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Localhost HTTP API port for node agent → DHT VM queries
+    /// </summary>
+    public int ApiPort { get; set; } = 5080;
+
+    /// <summary>
+    /// Number of bootstrap peers provided at deployment time
+    /// </summary>
+    public int BootstrapPeerCount { get; set; }
+
+    /// <summary>
+    /// Number of currently connected peers in the Kademlia routing table
+    /// </summary>
+    public int ConnectedPeers { get; set; }
+
+    public DhtStatus Status { get; set; } = DhtStatus.Initializing;
+    public DateTime? LastHealthCheck { get; set; }
+}
+
+public enum DhtStatus
+{
+    Initializing,
+    Active,
+    Degraded,
+    Offline
 }
 
 /// <summary>
