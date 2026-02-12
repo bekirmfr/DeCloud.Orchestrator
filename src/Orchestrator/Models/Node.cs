@@ -73,6 +73,13 @@ public class Node
     public bool IsBehindCgnat => HardwareInventory.Network.NatType != NatType.None;
     public CgnatNodeInfo? CgnatInfo { get; set; }
 
+    /// <summary>
+    /// System VMs this node is obligated to run (DHT, Relay, BlockStore, Ingress).
+    /// Computed from node capabilities at registration. The reconciliation loop
+    /// converges each obligation toward Active status, respecting the dependency graph.
+    /// </summary>
+    public List<SystemVmObligation> SystemVmObligations { get; set; } = new();
+
     // Performance metrics
     public NodeMetrics? LatestMetrics { get; set; }
 
