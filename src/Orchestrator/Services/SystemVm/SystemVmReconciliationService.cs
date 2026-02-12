@@ -20,6 +20,7 @@ public class SystemVmReconciliationService : BackgroundService
 {
     private readonly DataStore _dataStore;
     private readonly IRelayNodeService _relayNodeService;
+    private readonly IDhtNodeService _dhtNodeService;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<SystemVmReconciliationService> _logger;
 
@@ -28,11 +29,13 @@ public class SystemVmReconciliationService : BackgroundService
     public SystemVmReconciliationService(
         DataStore dataStore,
         IRelayNodeService relayNodeService,
+        IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
         ILogger<SystemVmReconciliationService> logger)
     {
         _dataStore = dataStore;
         _relayNodeService = relayNodeService;
+        _dhtNodeService = dhtNodeService;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -197,11 +200,16 @@ public class SystemVmReconciliationService : BackgroundService
                 "{Role} VM {VmId} on node {NodeId} is Active",
                 obligation.Role, obligation.VmId, node.Id);
 
-            // For Relay: sync RelayInfo status to Active now that VM is Running
+            // Sync role-specific info to Active now that VM is Running
             if (obligation.Role == SystemVmRole.Relay && node.RelayInfo != null)
             {
                 node.RelayInfo.Status = RelayStatus.Active;
                 node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+            }
+            else if (obligation.Role == SystemVmRole.Dht && node.DhtInfo != null)
+            {
+                node.DhtInfo.Status = DhtStatus.Active;
+                node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
             }
         }
         else if (vm.Status == VmStatus.Error)
@@ -265,11 +273,10 @@ public class SystemVmReconciliationService : BackgroundService
         return await _relayNodeService.DeployRelayVmAsync(node, vmService, ct);
     }
 
-    private Task<string?> DeployDhtVmAsync(Node node, CancellationToken ct)
+    private async Task<string?> DeployDhtVmAsync(Node node, CancellationToken ct)
     {
-        // TODO: Implement DHT VM deployment when DhtService is available
-        _logger.LogDebug("DHT VM deployment not yet implemented for node {NodeId}", node.Id);
-        return Task.FromResult<string?>(null);
+        var vmService = _serviceProvider.GetRequiredService<IVmService>();
+        return await _dhtNodeService.DeployDhtVmAsync(node, vmService, ct);
     }
 
     private Task<string?> DeployBlockStoreVmAsync(Node node, CancellationToken ct)

@@ -75,6 +75,7 @@ public class NodeService : INodeService
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
     private readonly IRelayNodeService _relayNodeService;
+    private readonly IDhtNodeService _dhtNodeService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly IConfiguration _configuration;
@@ -91,6 +92,7 @@ public class NodeService : INodeService
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
         IRelayNodeService relayNodeService,
+        IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
         IConfiguration configuration)
@@ -104,6 +106,7 @@ public class NodeService : INodeService
         _loggerFactory = loggerFactory;
         _httpClient = httpClient;
         _relayNodeService = relayNodeService;
+        _dhtNodeService = dhtNodeService;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _configuration = configuration;
@@ -355,13 +358,17 @@ public class NodeService : INodeService
             }
         });
 
+        // Collect bootstrap peers for the DHT VM that will deploy on this node
+        var dhtBootstrapPeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
+
         return new NodeRegistrationResponse(
             node.Id,
             node.PerformanceEvaluation,
             apiKey,
             schedulingConfig,
             orchestratorPublicKey,
-            TimeSpan.FromSeconds(15));
+            TimeSpan.FromSeconds(15),
+            dhtBootstrapPeers);
     }
 
     private bool VerifyWalletSignature(string walletAddress, string message, string signature)

@@ -1,0 +1,1113 @@
+diff --git a/src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs b/src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs
+index 7bd4f21..30c4efe 100644
+--- a/src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs
++++ b/src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs
+@@ -1389,6 +1389,22 @@ public class LibvirtVmManager : IVmManager
+                     spec.Id, relaySubnet, relayCapacity, relayRegion);
+             }
+ 
++            // =====================================================
++            // STEP 5.6: DHT VM metadata (from orchestrator labels)
++            // =====================================================
++            if (spec.VmType == VmType.Dht)
++            {
++                variables["__NODE_ID__"] = spec.Labels?.GetValueOrDefault("node-id")
++                                        ?? _nodeMetadata.NodeId;
++                variables["__TIMESTAMP__"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
++
++                _logger.LogInformation(
++                    "VM {VmId}: Set DHT metadata - NodeId={NodeId}, AdvertiseIP={AdvIP}",
++                    spec.Id,
++                    variables["__NODE_ID__"],
++                    spec.Labels?.GetValueOrDefault("dht-advertise-ip") ?? "(from template)");
++            }
++
+             // =====================================================
+             // STEP 6: Process template using CloudInitTemplateService
+             // =====================================================
+diff --git a/src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs b/src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs
+index 8aae357..17e7173 100644
+--- a/src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs
++++ b/src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs
+@@ -158,6 +158,7 @@ public class CloudInitTemplateService : ICloudInitTemplateService
+                 template = await InjectGeneralExternalTemplatesAsync(template, ct);
+                 break;
+             case VmType.Dht:
++                template = await InjectDhtExternalTemplatesAsync(template, ct);
+                 break;
+             case VmType.Inference:
+                 // Future VM types can have their own external templates if needed
+@@ -301,6 +302,39 @@ public class CloudInitTemplateService : ICloudInitTemplateService
+         }
+     }
+ 
++    /// <summary>
++    /// Load and inject external DHT VM template files (health check, ready callback).
++    /// Mirrors InjectRelayExternalTemplatesAsync pattern.
++    /// </summary>
++    private async Task<string> InjectDhtExternalTemplatesAsync(
++        string template,
++        CancellationToken ct)
++    {
++        _logger.LogInformation("Loading external DHT VM templates...");
++
++        try
++        {
++            var healthCheck = await LoadExternalTemplateAsync("dht-health-check.sh", "dht-vm", ct);
++            var notifyReady = await LoadExternalTemplateAsync("dht-notify-ready.sh", "dht-vm", ct);
++
++            var result = ReplaceWithIndentation(template, "__DHT_HEALTH_CHECK__", healthCheck);
++            result = ReplaceWithIndentation(result, "__DHT_NOTIFY_READY__", notifyReady);
++
++            _logger.LogInformation(
++                "Injected DHT external templates: health-check ({HealthSize} chars), notify-ready ({ReadySize} chars)",
++                healthCheck.Length, notifyReady.Length);
++
++            return result;
++        }
++        catch (Exception ex)
++        {
++            _logger.LogError(ex, "Failed to load external DHT VM templates");
++            throw new InvalidOperationException(
++                "Failed to load DHT VM templates. Ensure all template files exist in " +
++                $"{Path.Combine(_templateBasePath, "dht-vm")}/", ex);
++        }
++    }
++
+     /// <summary>
+     /// Replace placeholder with content, preserving YAML indentation
+     /// </summary>
+@@ -570,23 +604,68 @@ public class CloudInitTemplateService : ICloudInitTemplateService
+         }
+     }
+ 
+-    private Task PopulateDhtVariablesAsync(
++    private async Task PopulateDhtVariablesAsync(
+         CloudInitTemplateVariables variables,
+         VmSpec spec,
+         CancellationToken ct)
+     {
+-        // DHT-specific configuration
+-        variables.Custom["DHT_PORT"] = "6881";
+-        variables.Custom["DHT_STORAGE_PATH"] = "/var/lib/decloud-dht/storage";
+-        variables.Custom["DHT_MAX_STORAGE_GB"] = "100";
++        // DHT libp2p configuration — ports and addresses come from orchestrator labels
++        variables.Custom["DHT_LISTEN_PORT"] = spec.Labels?.GetValueOrDefault("dht-listen-port", "4001") ?? "4001";
++        variables.Custom["DHT_API_PORT"] = spec.Labels?.GetValueOrDefault("dht-api-port", "5080") ?? "5080";
++        variables.Custom["DHT_ADVERTISE_IP"] = spec.Labels?.GetValueOrDefault("dht-advertise-ip") ?? "";
++        variables.Custom["DHT_BOOTSTRAP_PEERS"] = spec.Labels?.GetValueOrDefault("dht-bootstrap-peers") ?? "";
++        variables.Custom["DHT_REGION"] = spec.Labels?.GetValueOrDefault("node-region") ?? "default";
++
++        // Load architecture-specific DHT binary (pre-built during CI via build.sh)
++        var architecture = GetTargetArchitecture(spec);
++        var dhtBinaryB64 = await LoadDhtBinaryAsync(architecture, ct);
++        variables.Custom["DHT_NODE_BINARY_BASE64"] = dhtBinaryB64;
+ 
+         _logger.LogInformation(
+-            "Configured DHT variables for VM {VmId}: port={Port}, storage={Path}",
++            "Configured DHT variables for VM {VmId}: listenPort={ListenPort}, apiPort={ApiPort}, " +
++            "advertiseIp={AdvIP}, arch={Arch}, binarySize={BinaryKB}KB, bootstrapPeers={Peers}",
+             spec.Id,
+-            variables.Custom["DHT_PORT"],
+-            variables.Custom["DHT_STORAGE_PATH"]);
++            variables.Custom["DHT_LISTEN_PORT"],
++            variables.Custom["DHT_API_PORT"],
++            variables.Custom["DHT_ADVERTISE_IP"],
++            architecture,
++            dhtBinaryB64.Length / 1024,
++            string.IsNullOrEmpty(variables.Custom["DHT_BOOTSTRAP_PEERS"]) ? "(none — first node)" : "present");
++    }
+ 
+-        return Task.CompletedTask;
++    /// <summary>
++    /// Load the pre-built DHT binary (base64-encoded) from disk.
++    /// The .b64 files are built from Go source during CI/publish via dht-node-src/build.sh
++    /// and placed at: {_templateBasePath}/dht-vm/dht-node-{arch}.b64
++    /// </summary>
++    private async Task<string> LoadDhtBinaryAsync(string architecture, CancellationToken ct)
++    {
++        var fileName = $"dht-node-{architecture}.b64";
++        var filePath = Path.Combine(_templateBasePath, "dht-vm", fileName);
++
++        if (!File.Exists(filePath))
++        {
++            _logger.LogError(
++                "DHT binary not found at {Path}. " +
++                "Run 'bash CloudInit/Templates/dht-vm/dht-node-src/build.sh' to build it, " +
++                "or ensure it was built during CI/publish.",
++                filePath);
++            throw new FileNotFoundException(
++                $"DHT binary not found. Expected at: {filePath}. " +
++                "Build it with: bash CloudInit/Templates/dht-vm/dht-node-src/build.sh",
++                filePath);
++        }
++
++        var base64 = await File.ReadAllTextAsync(filePath, ct);
++
++        if (string.IsNullOrWhiteSpace(base64))
++            throw new InvalidOperationException($"DHT binary file is empty: {filePath}");
++
++        _logger.LogInformation(
++            "Loaded DHT binary: {Path} ({SizeKB}KB base64)",
++            filePath, base64.Length / 1024);
++
++        return base64.Trim();
+     }
+ 
+     private Task PopulateInferenceVariablesAsync(
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm-cloudinit.yaml b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm-cloudinit.yaml
+index 31c29eb..a934a5b 100644
+--- a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm-cloudinit.yaml
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm-cloudinit.yaml
+@@ -1,9 +1,11 @@
+ #cloud-config
+-
+-# DeCloud DHT VM Configuration
+-# For distributed hash table storage nodes
++# DeCloud DHT VM Cloud-Init Configuration
++# Runs a libp2p Kademlia DHT node for peer discovery,
++# key-value storage, and GossipSub event propagation.
++# Version: 3.0 (No Docker — direct binary via systemd)
+ 
+ hostname: __HOSTNAME__
++manage_etc_hosts: true
+ 
+ # Regenerate machine-id to prevent conflicts
+ bootcmd:
+@@ -15,7 +17,7 @@ disable_root: true
+ 
+ users:
+   - name: dht
+-    groups: [docker, sudo]
++    groups: [sudo]
+     sudo: ['ALL=(ALL) NOPASSWD:ALL']
+     shell: /bin/bash
+     lock_passwd: true
+@@ -25,115 +27,150 @@ __SSH_AUTHORIZED_KEYS__
+ 
+ ssh_pwauth: false
+ 
+-# DHT-specific packages
++# =====================================================
++# SYSTEM PACKAGES
++# =====================================================
+ packages:
+   - qemu-guest-agent
+-  - docker.io
+-  - docker-compose
+-  - python3
+-  - python3-pip
+-  - git
++  - curl
++  - jq
++  - net-tools
++  - openssl
+ 
+-# DHT configuration files
++# =====================================================
++# SYSTEM CONFIGURATION
++# =====================================================
+ write_files:
+-  # DHT node configuration
+-  - path: /etc/decloud-dht/config.json
++  # DHT binary (base64-encoded Go binary, decoded at boot)
++  - path: /opt/decloud-dht/dht-node.b64
++    permissions: '0644'
++    encoding: b64
++    content: __DHT_NODE_BINARY_BASE64__
++
++  # DHT environment file (read by systemd EnvironmentFile)
++  - path: /etc/decloud-dht/dht.env
++    permissions: '0644'
++    content: |
++      DHT_LISTEN_PORT=__DHT_LISTEN_PORT__
++      DHT_API_PORT=__DHT_API_PORT__
++      DHT_ADVERTISE_IP=__DHT_ADVERTISE_IP__
++      DHT_BOOTSTRAP_PEERS=__DHT_BOOTSTRAP_PEERS__
++      DHT_DATA_DIR=/var/lib/decloud-dht
++      DECLOUD_NODE_ID=__NODE_ID__
++      DECLOUD_REGION=__DHT_REGION__
++
++  # DHT metadata
++  - path: /etc/decloud/dht-metadata.json
+     permissions: '0644'
+     content: |
+       {
+-        "node_id": "__VM_ID__",
+-        "node_name": "__VM_NAME__",
+-        "dht_port": __DHT_PORT__,
+-        "storage_path": "__DHT_STORAGE_PATH__",
+-        "max_storage_gb": __DHT_MAX_STORAGE_GB__,
+-        "bootstrap_nodes": [
+-          "dht-bootstrap.decloud.io:6881"
+-        ],
+-        "enable_encryption": true,
+-        "enable_replication": true,
+-        "replication_factor": 3
++        "node_id": "__NODE_ID__",
++        "vm_id": "__VM_ID__",
++        "vm_name": "__VM_NAME__",
++        "region": "__DHT_REGION__",
++        "listen_port": __DHT_LISTEN_PORT__,
++        "api_port": __DHT_API_PORT__,
++        "advertise_ip": "__DHT_ADVERTISE_IP__",
++        "created_at": "__TIMESTAMP__",
++        "version": "3.0"
+       }
+ 
+-  # DHT systemd service
++  # DHT systemd service (runs binary directly, no Docker)
+   - path: /etc/systemd/system/decloud-dht.service
+     permissions: '0644'
+     content: |
+       [Unit]
+-      Description=DeCloud DHT Node
+-      After=network.target docker.service
+-      Requires=docker.service
+-      
++      Description=DeCloud DHT Node (libp2p Kademlia)
++      After=network-online.target
++      Wants=network-online.target
++
+       [Service]
+       Type=simple
+       User=dht
+-      WorkingDirectory=/opt/decloud-dht
+-      ExecStart=/usr/bin/docker-compose up
+-      ExecStop=/usr/bin/docker-compose down
++      EnvironmentFile=/etc/decloud-dht/dht.env
++      ExecStart=/usr/local/bin/dht-node
+       Restart=always
+-      RestartSec=10
+-      
++      RestartSec=5
++
++      # Hardening
++      ProtectSystem=strict
++      ReadWritePaths=/var/lib/decloud-dht
++      ProtectHome=true
++      NoNewPrivileges=true
++
+       [Install]
+       WantedBy=multi-user.target
+ 
+-  # Docker Compose for DHT node
+-  - path: /opt/decloud-dht/docker-compose.yml
++  # DHT ready callback service (mirrors relay's decloud-relay-nat-callback pattern)
++  - path: /etc/systemd/system/decloud-dht-callback.service
+     permissions: '0644'
+-    owner: dht:dht
+     content: |
+-      version: '3.8'
+-      
+-      services:
+-        dht-node:
+-          image: decloud/dht-node:latest
+-          container_name: dht-node-__VM_ID__
+-          restart: unless-stopped
+-          ports:
+-            - "__DHT_PORT__:__DHT_PORT__/tcp"
+-            - "__DHT_PORT__:__DHT_PORT__/udp"
+-          volumes:
+-            - dht-storage:__DHT_STORAGE_PATH__
+-            - /etc/decloud-dht/config.json:/config/config.json:ro
+-          environment:
+-            - NODE_ID=__VM_ID__
+-            - LOG_LEVEL=info
+-          networks:
+-            - dht-network
+-      
+-      volumes:
+-        dht-storage:
+-          driver: local
+-      
+-      networks:
+-        dht-network:
+-          driver: bridge
+-
+-# Runtime commands
++      [Unit]
++      Description=DeCloud DHT Ready Callback
++      After=decloud-dht.service network-online.target
++      Wants=decloud-dht.service network-online.target
++
++      [Service]
++      Type=oneshot
++      ExecStartPre=/bin/bash -c 'if [ -f /var/lib/decloud-dht/callback-complete ]; then exit 0; fi'
++      ExecStart=/usr/local/bin/dht-notify-ready.sh
++      RemainAfterExit=yes
++      StandardOutput=journal
++      StandardError=journal
++      Restart=on-failure
++      RestartSec=10s
++      StartLimitBurst=5
++      TimeoutStartSec=180s
++
++      [Install]
++      WantedBy=multi-user.target
++
++  # Health check script (loaded from external template)
++  - path: /usr/local/bin/dht-health-check.sh
++    permissions: '0755'
++    content: |
++      __DHT_HEALTH_CHECK__
++
++  # Ready callback script (loaded from external template)
++  - path: /usr/local/bin/dht-notify-ready.sh
++    permissions: '0755'
++    content: |
++      __DHT_NOTIFY_READY__
++
++# =====================================================
++# RUNTIME COMMANDS
++# =====================================================
+ runcmd:
+-  # Start QEMU guest agent
++  # Enable and start QEMU guest agent
+   - systemctl enable qemu-guest-agent
+   - systemctl start qemu-guest-agent
+-  
+-  # Create DHT directories
++
++  # Create directories
+   - mkdir -p /etc/decloud-dht
+-  - mkdir -p __DHT_STORAGE_PATH__
++  - mkdir -p /etc/decloud
++  - mkdir -p /var/lib/decloud-dht
++  - mkdir -p /opt/decloud-dht
+   - chown -R dht:dht /etc/decloud-dht
+-  - chown -R dht:dht __DHT_STORAGE_PATH__
++  - chown -R dht:dht /var/lib/decloud-dht
+   - chown -R dht:dht /opt/decloud-dht
+-  
+-  # Enable Docker
+-  - systemctl enable docker
+-  - systemctl start docker
+-  - usermod -aG docker dht
+-  
+-  # Pull DHT node image
+-  - docker pull decloud/dht-node:latest || true
+-  
++
++  # Decode and install the DHT binary
++  - base64 -d /opt/decloud-dht/dht-node.b64 > /usr/local/bin/dht-node
++  - chmod 755 /usr/local/bin/dht-node
++  - rm -f /opt/decloud-dht/dht-node.b64
++
+   # Start DHT service
+   - systemctl daemon-reload
+   - systemctl enable decloud-dht
+   - systemctl start decloud-dht
+-  
++
++  # Start ready callback service
++  - systemctl enable decloud-dht-callback
++  - systemctl start decloud-dht-callback
++
+   # Log completion
+-  - echo "DeCloud DHT node __VM_ID__ initialized" > /var/log/dht-bootstrap.log
++  - 'echo "DeCloud DHT node __VM_ID__ bootstrap complete at $(date)" >> /var/log/dht-bootstrap.log'
++  - 'echo "Region: __DHT_REGION__" >> /var/log/dht-bootstrap.log'
++  - 'echo "Advertise IP: __DHT_ADVERTISE_IP__" >> /var/log/dht-bootstrap.log'
+ 
+ final_message: "DeCloud DHT Node __VM_NAME__ is ready!"
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/.gitignore b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/.gitignore
+new file mode 100644
+index 0000000..0c665cb
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/.gitignore
+@@ -0,0 +1,4 @@
++# Built DHT binaries (generated by dht-node-src/build.sh)
++*.b64
++dht-node-amd64
++dht-node-arm64
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-health-check.sh b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-health-check.sh
+new file mode 100644
+index 0000000..dfee4b8
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-health-check.sh
+@@ -0,0 +1,31 @@
++#!/bin/bash
++#
++# DeCloud DHT Node Health Check
++# Queries the local HTTP API exposed by the DHT binary
++# Called by the node agent to monitor DHT VM health.
++#
++# Exit 0 = healthy, Exit 1 = unhealthy
++# Outputs JSON to stdout for the node agent to parse.
++#
++
++API_PORT="__DHT_API_PORT__"
++API_URL="http://127.0.0.1:${API_PORT}/health"
++
++RESPONSE=$(curl -s --max-time 5 "$API_URL" 2>/dev/null)
++CURL_EXIT=$?
++
++if [ $CURL_EXIT -ne 0 ]; then
++    echo '{"status":"unreachable","error":"curl failed"}'
++    exit 1
++fi
++
++echo "$RESPONSE"
++
++# Check status field
++STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null)
++
++if [ "$STATUS" = "active" ]; then
++    exit 0
++else
++    exit 1
++fi
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/build.sh b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/build.sh
+new file mode 100755
+index 0000000..2f23450
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/build.sh
+@@ -0,0 +1,67 @@
++#!/bin/bash
++#
++# Build script for DeCloud DHT Node binary
++# Cross-compiles for amd64 and arm64, then base64-encodes the output.
++#
++# Usage:
++#   ./build.sh              # Build for both architectures
++#   ./build.sh amd64        # Build for amd64 only
++#   ./build.sh arm64        # Build for arm64 only
++#
++# Output:
++#   ../dht-node-amd64.b64   (placed next to templates, not in source dir)
++#   ../dht-node-arm64.b64
++#
++# Requirements:
++#   - Go 1.23+ installed
++#   - Network access for initial dependency download (go mod tidy)
++#
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++OUTPUT_DIR="$(dirname "$SCRIPT_DIR")"
++ARCHITECTURES="${1:-amd64 arm64}"
++
++cd "$SCRIPT_DIR"
++
++echo "=== DeCloud DHT Node Build ==="
++echo "Source: $SCRIPT_DIR"
++echo "Output: $OUTPUT_DIR"
++echo ""
++
++# Ensure dependencies are resolved
++if [ ! -f go.sum ]; then
++    echo "Resolving Go dependencies..."
++    go mod tidy
++fi
++
++for ARCH in $ARCHITECTURES; do
++    BINARY_NAME="dht-node-${ARCH}"
++    B64_NAME="${BINARY_NAME}.b64"
++    BINARY_PATH="${OUTPUT_DIR}/${BINARY_NAME}"
++    B64_PATH="${OUTPUT_DIR}/${B64_NAME}"
++
++    echo "Building for linux/${ARCH}..."
++
++    CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" \
++        go build -trimpath -ldflags="-s -w" -o "${BINARY_PATH}" .
++
++    BINARY_SIZE=$(stat -c%s "${BINARY_PATH}" 2>/dev/null || stat -f%z "${BINARY_PATH}" 2>/dev/null)
++    echo "  Binary: ${BINARY_PATH} ($(( BINARY_SIZE / 1024 / 1024 ))MB)"
++
++    # Base64 encode
++    base64 -w0 "${BINARY_PATH}" > "${B64_PATH}"
++    B64_SIZE=$(stat -c%s "${B64_PATH}" 2>/dev/null || stat -f%z "${B64_PATH}" 2>/dev/null)
++    echo "  Base64: ${B64_PATH} ($(( B64_SIZE / 1024 / 1024 ))MB)"
++
++    # Clean up raw binary (only the .b64 is needed at runtime)
++    rm -f "${BINARY_PATH}"
++
++    echo "  Done."
++    echo ""
++done
++
++echo "=== Build complete ==="
++echo "Place the .b64 files alongside the cloud-init templates:"
++ls -lh "${OUTPUT_DIR}"/*.b64 2>/dev/null || echo "(no .b64 files found — build may have failed)"
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/go.mod b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/go.mod
+new file mode 100644
+index 0000000..03b3c22
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/go.mod
+@@ -0,0 +1,10 @@
++module github.com/decloud/dht-node
++
++go 1.23
++
++require (
++	github.com/libp2p/go-libp2p v0.38.2
++	github.com/libp2p/go-libp2p-kad-dht v0.28.1
++	github.com/libp2p/go-libp2p-pubsub v0.12.0
++	github.com/multiformats/go-multiaddr v0.14.0
++)
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/main.go b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/main.go
+new file mode 100644
+index 0000000..f1573ef
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-node-src/main.go
+@@ -0,0 +1,395 @@
++package main
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/json"
++	"fmt"
++	"log"
++	"net/http"
++	"os"
++	"os/signal"
++	"path/filepath"
++	"strings"
++	"sync"
++	"syscall"
++	"time"
++
++	"github.com/libp2p/go-libp2p"
++	dht "github.com/libp2p/go-libp2p-kad-dht"
++	pubsub "github.com/libp2p/go-libp2p-pubsub"
++	"github.com/libp2p/go-libp2p/core/crypto"
++	"github.com/libp2p/go-libp2p/core/host"
++	"github.com/libp2p/go-libp2p/core/peer"
++	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
++	multiaddr "github.com/multiformats/go-multiaddr"
++)
++
++const (
++	protocolPrefix = "/decloud"
++	keyFileName    = "identity.key"
++)
++
++// Config holds the DHT node configuration from environment variables.
++type Config struct {
++	ListenPort     string
++	APIPort        string
++	AdvertiseIP    string
++	BootstrapPeers string
++	DataDir        string
++	NodeID         string
++	Region         string
++}
++
++// NodeState tracks runtime state of the DHT node.
++type NodeState struct {
++	mu             sync.RWMutex
++	host           host.Host
++	dht            *dht.IpfsDHT
++	pubsub         *pubsub.PubSub
++	eventTopic     *pubsub.Topic
++	startTime      time.Time
++	connectedPeers int
++	status         string
++}
++
++func main() {
++	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
++	log.SetPrefix("[dht-node] ")
++
++	cfg := loadConfig()
++	log.Printf("Starting DeCloud DHT node (nodeId=%s, region=%s)", cfg.NodeID, cfg.Region)
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	// Load or generate persistent identity
++	privKey, err := loadOrCreateIdentity(cfg.DataDir)
++	if err != nil {
++		log.Fatalf("Failed to load identity: %v", err)
++	}
++
++	// Build libp2p host
++	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", cfg.ListenPort)
++	opts := []libp2p.Option{
++		libp2p.Identity(privKey),
++		libp2p.ListenAddrStrings(listenAddr),
++	}
++
++	if cfg.AdvertiseIP != "" {
++		extAddr := fmt.Sprintf("/ip4/%s/tcp/%s", cfg.AdvertiseIP, cfg.ListenPort)
++		extMA, err := multiaddr.NewMultiaddr(extAddr)
++		if err == nil {
++			opts = append(opts, libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
++				return append(addrs, extMA)
++			}))
++		}
++	}
++
++	h, err := libp2p.New(opts...)
++	if err != nil {
++		log.Fatalf("Failed to create libp2p host: %v", err)
++	}
++	defer h.Close()
++
++	log.Printf("Peer ID: %s", h.ID())
++	for _, addr := range h.Addrs() {
++		log.Printf("Listening on: %s/p2p/%s", addr, h.ID())
++	}
++
++	// Initialize Kademlia DHT in server mode
++	kadDHT, err := dht.New(ctx, h,
++		dht.Mode(dht.ModeServer),
++		dht.ProtocolPrefix(protocolPrefix),
++		dht.Datastore(nil), // in-memory datastore
++	)
++	if err != nil {
++		log.Fatalf("Failed to create DHT: %v", err)
++	}
++
++	if err := kadDHT.Bootstrap(ctx); err != nil {
++		log.Fatalf("Failed to bootstrap DHT: %v", err)
++	}
++
++	// Connect to bootstrap peers
++	connectBootstrapPeers(ctx, h, cfg.BootstrapPeers)
++
++	// Initialize GossipSub
++	ps, err := pubsub.NewGossipSub(ctx, h)
++	if err != nil {
++		log.Fatalf("Failed to create GossipSub: %v", err)
++	}
++
++	// Join the DeCloud events topic
++	topic, err := ps.Join(fmt.Sprintf("%s/events/%s", protocolPrefix, cfg.Region))
++	if err != nil {
++		log.Fatalf("Failed to join events topic: %v", err)
++	}
++
++	// Subscribe to receive events (required for topic participation)
++	sub, err := topic.Subscribe()
++	if err != nil {
++		log.Fatalf("Failed to subscribe to events topic: %v", err)
++	}
++	go handleEvents(ctx, sub)
++
++	// Start mDNS discovery for local peers
++	mdnsService := mdns.NewMdnsService(h, protocolPrefix, &mdnsNotifee{h: h, ctx: ctx})
++	if err := mdnsService.Start(); err != nil {
++		log.Printf("mDNS discovery failed to start (non-fatal): %v", err)
++	} else {
++		defer mdnsService.Close()
++	}
++
++	state := &NodeState{
++		host:      h,
++		dht:       kadDHT,
++		pubsub:    ps,
++		eventTopic: topic,
++		startTime: time.Now(),
++		status:    "active",
++	}
++
++	// Start background peer counter
++	go trackPeers(ctx, state)
++
++	// Start HTTP API server
++	go startAPIServer(cfg.APIPort, state)
++
++	log.Printf("DHT node is ready (peer ID: %s)", h.ID())
++
++	// Wait for shutdown signal
++	sigCh := make(chan os.Signal, 1)
++	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
++	<-sigCh
++
++	log.Println("Shutting down DHT node...")
++	state.mu.Lock()
++	state.status = "shutting_down"
++	state.mu.Unlock()
++
++	cancel()
++	kadDHT.Close()
++}
++
++func loadConfig() Config {
++	return Config{
++		ListenPort:     envOrDefault("DHT_LISTEN_PORT", "4001"),
++		APIPort:        envOrDefault("DHT_API_PORT", "5080"),
++		AdvertiseIP:    os.Getenv("DHT_ADVERTISE_IP"),
++		BootstrapPeers: os.Getenv("DHT_BOOTSTRAP_PEERS"),
++		DataDir:        envOrDefault("DHT_DATA_DIR", "/var/lib/decloud-dht"),
++		NodeID:         os.Getenv("DECLOUD_NODE_ID"),
++		Region:         envOrDefault("DECLOUD_REGION", "default"),
++	}
++}
++
++func envOrDefault(key, fallback string) string {
++	if v := os.Getenv(key); v != "" {
++		return v
++	}
++	return fallback
++}
++
++// loadOrCreateIdentity loads a persistent Ed25519 key or generates a new one.
++func loadOrCreateIdentity(dataDir string) (crypto.PrivKey, error) {
++	keyPath := filepath.Join(dataDir, keyFileName)
++
++	data, err := os.ReadFile(keyPath)
++	if err == nil {
++		privKey, err := crypto.UnmarshalPrivateKey(data)
++		if err == nil {
++			log.Printf("Loaded existing identity from %s", keyPath)
++			return privKey, nil
++		}
++		log.Printf("Failed to unmarshal existing key, generating new one: %v", err)
++	}
++
++	// Generate new Ed25519 key
++	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
++	if err != nil {
++		return nil, fmt.Errorf("failed to generate Ed25519 key: %w", err)
++	}
++
++	keyBytes, err := crypto.MarshalPrivateKey(privKey)
++	if err != nil {
++		return nil, fmt.Errorf("failed to marshal key: %w", err)
++	}
++
++	if err := os.MkdirAll(dataDir, 0o700); err != nil {
++		return nil, fmt.Errorf("failed to create data dir: %w", err)
++	}
++
++	if err := os.WriteFile(keyPath, keyBytes, 0o600); err != nil {
++		log.Printf("Warning: failed to persist identity key: %v", err)
++	} else {
++		log.Printf("Generated and saved new identity to %s", keyPath)
++	}
++
++	return privKey, nil
++}
++
++func connectBootstrapPeers(ctx context.Context, h host.Host, peersStr string) {
++	if peersStr == "" {
++		log.Println("No bootstrap peers configured (first node in network)")
++		return
++	}
++
++	peers := strings.Split(peersStr, ",")
++	var connected int
++	for _, p := range peers {
++		p = strings.TrimSpace(p)
++		if p == "" {
++			continue
++		}
++
++		ma, err := multiaddr.NewMultiaddr(p)
++		if err != nil {
++			log.Printf("Invalid bootstrap peer address %q: %v", p, err)
++			continue
++		}
++
++		pi, err := peer.AddrInfoFromP2pAddr(ma)
++		if err != nil {
++			log.Printf("Failed to parse peer info from %q: %v", p, err)
++			continue
++		}
++
++		if err := h.Connect(ctx, *pi); err != nil {
++			log.Printf("Failed to connect to bootstrap peer %s: %v", pi.ID.String()[:12], err)
++		} else {
++			log.Printf("Connected to bootstrap peer: %s", pi.ID.String()[:12])
++			connected++
++		}
++	}
++	log.Printf("Connected to %d/%d bootstrap peers", connected, len(peers))
++}
++
++func handleEvents(ctx context.Context, sub *pubsub.Subscription) {
++	for {
++		msg, err := sub.Next(ctx)
++		if err != nil {
++			if ctx.Err() != nil {
++				return
++			}
++			log.Printf("Error reading from events subscription: %v", err)
++			continue
++		}
++		// Log event receipt (could be extended to handle specific event types)
++		log.Printf("Received event from %s (%d bytes)", msg.GetFrom().String()[:12], len(msg.Data))
++	}
++}
++
++func trackPeers(ctx context.Context, state *NodeState) {
++	ticker := time.NewTicker(15 * time.Second)
++	defer ticker.Stop()
++
++	for {
++		select {
++		case <-ctx.Done():
++			return
++		case <-ticker.C:
++			state.mu.Lock()
++			state.connectedPeers = len(state.host.Network().Peers())
++			state.mu.Unlock()
++		}
++	}
++}
++
++// startAPIServer runs the HTTP health/status API.
++func startAPIServer(port string, state *NodeState) {
++	mux := http.NewServeMux()
++
++	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
++		state.mu.RLock()
++		defer state.mu.RUnlock()
++
++		resp := map[string]interface{}{
++			"status":         state.status,
++			"peerId":         state.host.ID().String(),
++			"connectedPeers": state.connectedPeers,
++			"uptime":         time.Since(state.startTime).String(),
++			"uptimeSeconds":  int(time.Since(state.startTime).Seconds()),
++			"addresses":      formatAddresses(state.host),
++			"routingTable":   state.dht.RoutingTable().Size(),
++		}
++
++		w.Header().Set("Content-Type", "application/json")
++		json.NewEncoder(w).Encode(resp)
++	})
++
++	mux.HandleFunc("/peers", func(w http.ResponseWriter, r *http.Request) {
++		state.mu.RLock()
++		defer state.mu.RUnlock()
++
++		peers := state.host.Network().Peers()
++		peerList := make([]string, len(peers))
++		for i, p := range peers {
++			peerList[i] = p.String()
++		}
++
++		w.Header().Set("Content-Type", "application/json")
++		json.NewEncoder(w).Encode(map[string]interface{}{
++			"count": len(peerList),
++			"peers": peerList,
++		})
++	})
++
++	mux.HandleFunc("/publish", func(w http.ResponseWriter, r *http.Request) {
++		if r.Method != http.MethodPost {
++			http.Error(w, "POST only", http.StatusMethodNotAllowed)
++			return
++		}
++
++		var payload struct {
++			Data string `json:"data"`
++		}
++		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
++			http.Error(w, "invalid JSON", http.StatusBadRequest)
++			return
++		}
++
++		state.mu.RLock()
++		topic := state.eventTopic
++		state.mu.RUnlock()
++
++		if err := topic.Publish(context.Background(), []byte(payload.Data)); err != nil {
++			http.Error(w, fmt.Sprintf("publish failed: %v", err), http.StatusInternalServerError)
++			return
++		}
++
++		w.Header().Set("Content-Type", "application/json")
++		json.NewEncoder(w).Encode(map[string]string{"status": "published"})
++	})
++
++	addr := fmt.Sprintf("0.0.0.0:%s", port)
++	log.Printf("HTTP API listening on %s", addr)
++	if err := http.ListenAndServe(addr, mux); err != nil {
++		log.Fatalf("HTTP API server failed: %v", err)
++	}
++}
++
++func formatAddresses(h host.Host) []string {
++	addrs := h.Addrs()
++	result := make([]string, len(addrs))
++	for i, a := range addrs {
++		result[i] = fmt.Sprintf("%s/p2p/%s", a, h.ID())
++	}
++	return result
++}
++
++// mdnsNotifee handles mDNS peer discovery.
++type mdnsNotifee struct {
++	h   host.Host
++	ctx context.Context
++}
++
++func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
++	if pi.ID == n.h.ID() {
++		return
++	}
++	log.Printf("mDNS: discovered peer %s", pi.ID.String()[:12])
++	if err := n.h.Connect(n.ctx, pi); err != nil {
++		log.Printf("mDNS: failed to connect to %s: %v", pi.ID.String()[:12], err)
++	}
++}
+diff --git a/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-notify-ready.sh b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-notify-ready.sh
+new file mode 100644
+index 0000000..91daf68
+--- /dev/null
++++ b/src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/dht-notify-ready.sh
+@@ -0,0 +1,132 @@
++#!/bin/bash
++#
++# DeCloud DHT Node Ready Callback
++# Version: 1.0
++#
++# Runs on DHT VM boot to:
++# 1. Wait for the DHT binary to start and report its peer ID
++# 2. Notify the node agent with the peer ID so it can report it to the orchestrator
++#
++# This mirrors the relay's notify-nat-ready.sh pattern.
++#
++
++set -e
++
++LOG_FILE="/var/log/decloud-dht-callback.log"
++MARKER_FILE="/var/lib/decloud-dht/callback-complete"
++
++log() {
++    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
++}
++
++# =====================================================
++# Check if callback already completed
++# =====================================================
++if [ -f "$MARKER_FILE" ]; then
++    log "DHT callback already completed - skipping"
++    exit 0
++fi
++
++log "Starting DHT ready callback..."
++
++API_PORT="__DHT_API_PORT__"
++VM_ID="__VM_ID__"
++
++# =====================================================
++# Detect gateway IP (node agent host)
++# =====================================================
++GATEWAY_IP=$(ip route | grep default | awk '{print $3}' | head -1)
++if [ -z "$GATEWAY_IP" ]; then
++    GATEWAY_IP="192.168.122.1"
++fi
++
++NODE_AGENT_URL="http://${GATEWAY_IP}:5100"
++log "Node agent URL: $NODE_AGENT_URL"
++
++# =====================================================
++# Wait for DHT binary to start and obtain peer ID
++# =====================================================
++log "Waiting for DHT node to start..."
++PEER_ID=""
++
++for i in {1..60}; do
++    HEALTH=$(curl -s --max-time 3 "http://127.0.0.1:${API_PORT}/health" 2>/dev/null)
++    if [ $? -eq 0 ]; then
++        PEER_ID=$(echo "$HEALTH" | jq -r '.peerId' 2>/dev/null)
++        CONNECTED=$(echo "$HEALTH" | jq -r '.connectedPeers' 2>/dev/null)
++
++        if [ -n "$PEER_ID" ] && [ "$PEER_ID" != "null" ]; then
++            log "DHT node started - peer ID: $PEER_ID (connected peers: $CONNECTED)"
++            echo "$PEER_ID" > /var/lib/decloud-dht/peer-id
++            break
++        fi
++    fi
++
++    if [ $((i % 10)) -eq 0 ]; then
++        log "  Still waiting for DHT node... (attempt $i/60)"
++    fi
++    sleep 2
++done
++
++if [ -z "$PEER_ID" ] || [ "$PEER_ID" = "null" ]; then
++    log "Failed to get peer ID after 120 seconds"
++    exit 1
++fi
++
++# =====================================================
++# Verify node agent is reachable
++# =====================================================
++log "Checking if node agent is reachable..."
++for i in {1..12}; do
++    if curl -s -m 2 "$NODE_AGENT_URL/health" >/dev/null 2>&1; then
++        log "Node agent is reachable"
++        break
++    fi
++
++    if [ $i -eq 12 ]; then
++        log "Node agent not reachable after 60 seconds - will retry"
++        exit 1
++    fi
++
++    sleep 5
++done
++
++# =====================================================
++# Compute authentication token
++# =====================================================
++MACHINE_ID="__HOST_MACHINE_ID__"
++MESSAGE="${VM_ID}:${PEER_ID}"
++TOKEN=$(echo -n "$MESSAGE" | openssl dgst -sha256 -hmac "$MACHINE_ID" -binary | base64)
++
++# =====================================================
++# Notify node agent with our peer ID
++# =====================================================
++log "Notifying node agent of DHT peer ID..."
++
++RESPONSE=$(curl -X POST "$NODE_AGENT_URL/api/dht/ready" \
++    -H "Content-Type: application/json" \
++    -H "X-DHT-Token: $TOKEN" \
++    -d "{
++        \"vmId\": \"$VM_ID\",
++        \"peerId\": \"$PEER_ID\"
++    }" \
++    --max-time 10 \
++    --retry 2 \
++    --retry-delay 5 \
++    -w "\nHTTP_CODE:%{http_code}" \
++    -s \
++    2>&1)
++
++HTTP_CODE=$(echo "$RESPONSE" | grep -oP 'HTTP_CODE:\K\d+')
++
++if [ "$HTTP_CODE" = "200" ]; then
++    log "Successfully notified node agent - DHT node is active"
++    mkdir -p "$(dirname "$MARKER_FILE")"
++    echo "DHT callback completed at $(date) - peer ID: $PEER_ID" > "$MARKER_FILE"
++    logger -t decloud-dht "DHT node active with peer ID $PEER_ID"
++    exit 0
++else
++    log "Failed to notify node agent (HTTP ${HTTP_CODE:-timeout})"
++    log "Response: $RESPONSE"
++    exit 1
++fi
+diff --git a/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj b/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
+index a51f600..f1d227d 100644
+--- a/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
++++ b/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
+@@ -18,8 +18,20 @@
+ 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+ 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+ 		</None>
++		<!-- Exclude Go source files and raw binaries from output (only .b64 files are needed) -->
++		<None Remove="CloudInit\Templates\dht-vm\dht-node-src\**" />
++		<Content Remove="CloudInit\Templates\dht-vm\dht-node-src\**" />
+ 	</ItemGroup>
+ 
++	<!-- Build DHT node binary from Go source during publish -->
++	<Target Name="BuildDhtNode" BeforeTargets="Publish" Condition="Exists('CloudInit/Templates/dht-vm/dht-node-src/main.go')">
++		<Message Importance="high" Text="Building DHT node binary from Go source..." />
++		<Exec Command="bash CloudInit/Templates/dht-vm/dht-node-src/build.sh"
++		      WorkingDirectory="$(MSBuildProjectDirectory)"
++		      ConsoleToMsBuild="true" />
++		<Message Importance="high" Text="DHT node binary build complete." />
++	</Target>
++
+ 	<ItemGroup>
+ 		<None Include="../../cli/**/*" Link="cli/%(RecursiveDir)%(Filename)%(Extension)" />
+ 	</ItemGroup>
