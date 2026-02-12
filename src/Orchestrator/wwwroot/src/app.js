@@ -95,13 +95,13 @@ const BANDWIDTH_TIERS = {
 };
 
 const VmAction = {
-        Start: 0,
-        Stop: 1,
-        Restart: 2,
-        Pause: 3,
-        Resume: 4,
-        ForceStop: 5
-    }
+    Start: 0,
+    Stop: 1,
+    Restart: 2,
+    Pause: 3,
+    Resume: 4,
+    ForceStop: 5
+}
 
 // ============================================
 // STATE
@@ -1043,18 +1043,18 @@ async function loadDashboardStats() {
             const utilizationPercent = stats.computePointUtilizationPercent || 0;
 
             // Show "X / Y points (Z% used)"
-            document.getElementById('stat-cpu').textContent = 
+            document.getElementById('stat-cpu').textContent =
                 `${availablePoints} / ${totalPoints} points`;
-            
+
             // Optional: Add a tooltip or secondary display showing percentage
             const cpuElement = document.getElementById('stat-cpu');
             cpuElement.title = `${utilizationPercent.toFixed(1)}% utilized (${usedPoints} points used)`;
 
             // Memory display
-            document.getElementById('stat-memory').textContent = 
+            document.getElementById('stat-memory').textContent =
                 `${((stats.availableMemoryGb || 0)).toFixed(1)} GB`;
             // Storage display
-            document.getElementById('stat-storage').textContent = 
+            document.getElementById('stat-storage').textContent =
                 `${((stats.availableStorageGb || 0)).toFixed(1)} GB`;
         }
     } catch (error) {
@@ -1083,7 +1083,7 @@ function renderVMsTable(vms) {
     if (!tbody) return;
 
     if (vms.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">No VMs found. Create your first VM to get started.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state" style="text-align: center; padding: 40px;">No VMs found. Create your first VM to get started.</td></tr>';
         return;
     }
 
@@ -1118,7 +1118,7 @@ function renderVMsTable(vms) {
         const tierBadge = tierBadges[vm.spec.qualityTier] || '';
 
         return `
-        <tr>
+        <tr data-status="${getStatusClass(vm.status)}">
             <td>
                 <div class="vm-name">
                     <div class="vm-status ${getStatusClass(vm.status)}"></div>
@@ -1191,14 +1191,14 @@ function renderVMsTable(vms) {
                     </button>
 
                     <!-- Start/Stop -->
-                    ${vm.status === 3 
-                        ? `<button class="btn btn-sm btn-warning" onclick="stopVM('${vm.id}')" title="Stop">
+                    ${vm.status === 3
+                ? `<button class="btn btn-sm btn-warning" onclick="stopVM('${vm.id}')" title="Stop">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                            </button>`
-                        : `<button class="btn btn-sm btn-success" onclick="startVM('${vm.id}')" title="Start">
+                : `<button class="btn btn-sm btn-success" onclick="startVM('${vm.id}')" title="Start">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                            </button>`
-                    }
+            }
 
                     <!-- Delete -->
                     <button class="btn btn-sm btn-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
@@ -1216,21 +1216,21 @@ function renderVMsTable(vms) {
 function renderDashboardVMs(vms) {
     const container = document.getElementById('recent-vms');
     if (!container) return;
-    
+
     const recentVMs = vms.slice(0, 5);
-    
+
     if (recentVMs.length === 0) {
         container.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">No virtual machines yet</p>';
         return;
     }
-    
+
     container.innerHTML = recentVMs.map(vm => {
         // Calculate memory in MB
         const memoryMB = (vm.spec?.memoryBytes / (1024 * 1024)) || 0;
-        
+
         // Calculate disk in GB - FIXED: diskBytes is already in bytes
         const diskGB = (vm.spec?.diskBytes / (1024 * 1024 * 1024)) || 0;
-        
+
         return `
             <div class="vm-card">
                 <div class="vm-card-header">
@@ -1415,12 +1415,12 @@ async function createVM() {
 
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
-    
+
     if (!name) {
         showToast('Please enter a VM name', 'error');
         return;
     }
-    
+
     try {
         const requestBody = {
             name: name,
@@ -1435,21 +1435,21 @@ async function createVM() {
                 zone: zone
             }
         };
-        
+
         // Add nodeId if user selected a specific node
         if (targetNodeId) {
             requestBody.nodeId = targetNodeId;
             console.log('[CreateVM] Deploying to selected node:', targetNodeId);
         }
-        
+
         const response = await api('/api/vms', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             const vmId = data.data.vmId;
             const password = data.data.password
@@ -1470,7 +1470,7 @@ async function createVM() {
             document.getElementById('vm-zone').disabled = true;  // ← DISABLE ZONE
             updateTierInfo();  // ← REFRESH TIER INFO
             updateBandwidthInfo();
-            
+
             await refreshData();
         } else {
             showToast(data.message || 'Failed to create VM', 'error');
@@ -1482,12 +1482,12 @@ async function createVM() {
 }
 
 async function startVM(vmId) {
-    
+
     if (!vmId) {
         showToast('Please enter a VM ID', 'error');
         return;
     }
-    
+
     try {
         const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
@@ -1496,9 +1496,9 @@ async function startVM(vmId) {
                 action: VmAction.Start
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showToast(`VM "${vmId}" started successfully!`, 'success');
         } else {
@@ -1511,12 +1511,12 @@ async function startVM(vmId) {
 }
 
 async function stopVM(vmId) {
-    
+
     if (!vmId) {
         showToast('Please enter a VM ID', 'error');
         return;
     }
-    
+
     try {
         const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
@@ -1525,9 +1525,9 @@ async function stopVM(vmId) {
                 action: VmAction.Stop
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showToast(`VM "${vmId}" stopped successfully!`, 'success');
         } else {
@@ -1540,12 +1540,12 @@ async function stopVM(vmId) {
 }
 
 async function restartVM(vmId) {
-    
+
     if (!vmId) {
         showToast('Please enter a VM ID', 'error');
         return;
     }
-    
+
     try {
         const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
@@ -1554,9 +1554,9 @@ async function restartVM(vmId) {
                 action: VmAction.Restart
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showToast(`VM "${vmId}" restarted successfully!`, 'success');
         } else {
@@ -1569,12 +1569,12 @@ async function restartVM(vmId) {
 }
 
 async function forceStopVM(vmId) {
-    
+
     if (!vmId) {
         showToast('Please enter a VM ID', 'error');
         return;
     }
-    
+
     try {
         const response = await api(`/api/${vmId}/action`, {
             method: 'POST',
@@ -1583,9 +1583,9 @@ async function forceStopVM(vmId) {
                 action: VmAction.ForceStop
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             showToast(`VM "${vmId}" force-stopped successfully!`, 'success');
         } else {
@@ -1601,9 +1601,9 @@ function updateTierInfo() {
     const tierSelect = document.getElementById('quality-tier');
     const tierId = parseInt(tierSelect.value);
     const tier = QUALITY_TIERS[tierId];
-    
+
     document.getElementById('tier-help-text').textContent = tier.name;
-    
+
     const tierInfo = document.getElementById('tier-info');
     tierInfo.innerHTML = `
         <div class="tier-description">${tier.description}</div>
@@ -1612,7 +1612,7 @@ function updateTierInfo() {
             <span class="tier-multiplier">Price: ${tier.priceMultiplier}x</span>
         </div>
         `;
-    
+
     updateEstimatedCost();
 }
 
@@ -2317,12 +2317,12 @@ function getServiceStatusClass(status) {
  */
 function getServiceStatusIcon(status) {
     switch (normalizeServiceStatus(status)) {
-        case 'ready':    return '<span class="svc-icon svc-ready">&#x2713;</span>';
+        case 'ready': return '<span class="svc-icon svc-ready">&#x2713;</span>';
         case 'checking': return '<span class="svc-icon svc-checking">&#x25CF;</span>';
-        case 'pending':  return '<span class="svc-icon svc-pending">&#x25CB;</span>';
+        case 'pending': return '<span class="svc-icon svc-pending">&#x25CB;</span>';
         case 'timedout': return '<span class="svc-icon svc-timedout">&#x26A0;</span>';
-        case 'failed':   return '<span class="svc-icon svc-failed">&#x2717;</span>';
-        default:         return '<span class="svc-icon svc-pending">&#x25CB;</span>';
+        case 'failed': return '<span class="svc-icon svc-failed">&#x2717;</span>';
+        default: return '<span class="svc-icon svc-pending">&#x25CB;</span>';
     }
 }
 

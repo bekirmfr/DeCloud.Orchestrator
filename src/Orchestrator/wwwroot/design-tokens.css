@@ -6,14 +6,14 @@
 
 :root {
     /* ==================== COLOR PALETTE ==================== */
-    
+
     /* Background Colors */
     --bg-deep: #0a0b0f;
     --bg-primary: #12141a;
     --bg-secondary: #1a1d26;
     --bg-elevated: #22262f;
     --bg-hover: #2a2f3a;
-    
+
     /* Accent Colors */
     --accent-primary: #00d4aa;
     --accent-secondary: #00a8ff;
@@ -21,27 +21,44 @@
     --accent-warning: #f59e0b;
     --accent-danger: #ef4444;
     --accent-success: #10b981;
-    
+
+    /* Semantic Status Colors */
+    --status-running: #00d4aa;
+    --status-error: #ef4444;
+    --status-pending: #f59e0b;
+    --status-offline: #6b7280;
+    --status-provisioning: #00a8ff;
+    --status-stopped: #9ca3af;
+
     /* Text Colors */
     --text-primary: #f0f2f5;
     --text-secondary: #9ca3af;
     --text-muted: #6b7280;
-    
+
     /* Border Colors */
     --border-subtle: rgba(255, 255, 255, 0.06);
     --border-default: rgba(255, 255, 255, 0.1);
     --border-hover: rgba(255, 255, 255, 0.15);
-    
+
     /* Glow Effects */
     --glow-primary: rgba(0, 212, 170, 0.15);
     --glow-secondary: rgba(0, 168, 255, 0.15);
-    
+    --glow-tertiary: rgba(139, 92, 246, 0.15);
+
+    /* Stat Card Gradients */
+    --stat-gradient-1: linear-gradient(135deg, rgba(0, 212, 170, 0.10) 0%, rgba(0, 168, 255, 0.04) 100%);
+    --stat-gradient-2: linear-gradient(135deg, rgba(0, 168, 255, 0.10) 0%, rgba(139, 92, 246, 0.04) 100%);
+    --stat-gradient-3: linear-gradient(135deg, rgba(139, 92, 246, 0.10) 0%, rgba(245, 158, 11, 0.04) 100%);
+    --stat-gradient-4: linear-gradient(135deg, rgba(245, 158, 11, 0.10) 0%, rgba(239, 68, 68, 0.04) 100%);
+    --stat-gradient-5: linear-gradient(135deg, rgba(16, 185, 129, 0.10) 0%, rgba(0, 212, 170, 0.04) 100%);
+
     /* ==================== TYPOGRAPHY ==================== */
-    
+
     /* Font Families */
     --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Cascadia Code', 'Consolas', monospace;
-    
+
     /* Font Sizes */
     --font-xs: 11px;
     --font-sm: 12px;
@@ -53,15 +70,15 @@
     --font-3xl: 24px;
     --font-4xl: 28px;
     --font-5xl: 32px;
-    
+
     /* Font Weights */
     --font-normal: 400;
     --font-medium: 500;
     --font-semibold: 600;
     --font-bold: 700;
-    
+
     /* ==================== SPACING ==================== */
-    
+
     --space-xs: 4px;
     --space-sm: 8px;
     --space-md: 12px;
@@ -70,34 +87,38 @@
     --space-2xl: 24px;
     --space-3xl: 32px;
     --space-4xl: 40px;
-    
+
     /* ==================== BORDER RADIUS ==================== */
-    
+
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 16px;
     --radius-xl: 24px;
     --radius-full: 9999px;
-    
+
     /* ==================== TRANSITIONS ==================== */
-    
+
     --transition-fast: 150ms ease;
     --transition-normal: 250ms ease;
     --transition-slow: 400ms cubic-bezier(0.16, 1, 0.3, 1);
-    
+
     /* ==================== SHADOWS ==================== */
-    
+
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
     --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
     --shadow-xl: 0 20px 60px rgba(0, 0, 0, 0.5);
-    
+
     /* Glow Shadows */
     --shadow-glow-primary: 0 0 20px var(--glow-primary);
     --shadow-glow-secondary: 0 0 20px var(--glow-secondary);
-    
+
+    /* Card Shadows */
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-card-hover: 0 10px 40px rgba(0, 0, 0, 0.2), 0 2px 10px rgba(0, 0, 0, 0.1);
+
     /* ==================== Z-INDEX SCALE ==================== */
-    
+
     --z-base: 0;
     --z-dropdown: 100;
     --z-sticky: 500;
@@ -132,34 +153,92 @@ body {
 /* ==================== UTILITY CLASSES ==================== */
 
 /* Text Utilities */
-.text-primary { color: var(--text-primary); }
-.text-secondary { color: var(--text-secondary); }
-.text-muted { color: var(--text-muted); }
-.text-accent { color: var(--accent-primary); }
+.text-primary {
+    color: var(--text-primary);
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.text-accent {
+    color: var(--accent-primary);
+}
 
 /* Background Utilities */
-.bg-deep { background: var(--bg-deep); }
-.bg-primary { background: var(--bg-primary); }
-.bg-secondary { background: var(--bg-secondary); }
-.bg-elevated { background: var(--bg-elevated); }
+.bg-deep {
+    background: var(--bg-deep);
+}
+
+.bg-primary {
+    background: var(--bg-primary);
+}
+
+.bg-secondary {
+    background: var(--bg-secondary);
+}
+
+.bg-elevated {
+    background: var(--bg-elevated);
+}
 
 /* Spacing Utilities */
-.p-sm { padding: var(--space-sm); }
-.p-md { padding: var(--space-md); }
-.p-lg { padding: var(--space-lg); }
-.p-xl { padding: var(--space-xl); }
+.p-sm {
+    padding: var(--space-sm);
+}
 
-.m-sm { margin: var(--space-sm); }
-.m-md { margin: var(--space-md); }
-.m-lg { margin: var(--space-lg); }
-.m-xl { margin: var(--space-xl); }
+.p-md {
+    padding: var(--space-md);
+}
+
+.p-lg {
+    padding: var(--space-lg);
+}
+
+.p-xl {
+    padding: var(--space-xl);
+}
+
+.m-sm {
+    margin: var(--space-sm);
+}
+
+.m-md {
+    margin: var(--space-md);
+}
+
+.m-lg {
+    margin: var(--space-lg);
+}
+
+.m-xl {
+    margin: var(--space-xl);
+}
 
 /* Border Radius Utilities */
-.rounded-sm { border-radius: var(--radius-sm); }
-.rounded-md { border-radius: var(--radius-md); }
-.rounded-lg { border-radius: var(--radius-lg); }
-.rounded-xl { border-radius: var(--radius-xl); }
-.rounded-full { border-radius: var(--radius-full); }
+.rounded-sm {
+    border-radius: var(--radius-sm);
+}
+
+.rounded-md {
+    border-radius: var(--radius-md);
+}
+
+.rounded-lg {
+    border-radius: var(--radius-lg);
+}
+
+.rounded-xl {
+    border-radius: var(--radius-xl);
+}
+
+.rounded-full {
+    border-radius: var(--radius-full);
+}
 
 /* ==================== COMMON COMPONENTS ==================== */
 
@@ -269,8 +348,15 @@ body {
 }
 
 @keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
 }
 
 /* Badges */

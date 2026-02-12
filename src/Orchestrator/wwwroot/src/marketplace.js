@@ -28,13 +28,13 @@ function setupNodeCardDelegation() {
         if (e.target.closest('button')) {
             return;
         }
-        
+
         const card = e.target.closest('.mp-node-card[data-node-id]');
         if (card) {
             openNodeDetail(card.dataset.nodeId);
         }
     });
-    
+
     // Expose functions globally for inline onclick handlers
     window.nodeMarketplace = {
         openNodeDetail,
@@ -179,7 +179,7 @@ function renderNodeCards(container, nodes) {
         const availStorageGB = ((node.availableStorageBytes || 0) / (1024 * 1024 * 1024)).toFixed(0);
 
         const uptimeClass = node.uptimePercentage >= 99 ? 'excellent' :
-                           node.uptimePercentage >= 95 ? 'good' : 'poor';
+            node.uptimePercentage >= 95 ? 'good' : 'poor';
 
         // Build tags HTML
         const tagsHtml = (node.tags || []).map(tag => {
@@ -209,7 +209,7 @@ function renderNodeCards(container, nodes) {
             : '<span style="color: var(--text-muted); font-style: italic;">No description provided</span>';
 
         return `
-            <div class="mp-node-card" data-node-id="${escapeHtmlFn(node.nodeId)}">
+            <div class="mp-node-card${node.isOnline ? '' : ' offline'}" data-node-id="${escapeHtmlFn(node.nodeId)}">
                 <div class="mp-card-header">
                     <div>
                         <div class="mp-node-name">
@@ -280,11 +280,11 @@ function renderNodeCards(container, nodes) {
                 <div class="mp-card-footer">
                     <div class="mp-price">
                         ${node.pricing && node.pricing.hasCustomPricing
-                            ? `<span class="mp-price-value">$${node.pricing.cpuPerHour.toFixed(3)}</span>
+                ? `<span class="mp-price-value">$${node.pricing.cpuPerHour.toFixed(3)}</span>
                                <span class="mp-price-unit">CPU/hr</span>`
-                            : `<span class="mp-price-value">Default</span>
+                : `<span class="mp-price-value">Default</span>
                                <span class="mp-price-unit">Platform rates</span>`
-                        }
+            }
                     </div>
                     <div class="mp-uptime">
                         <span class="mp-uptime-value ${uptimeClass}">${(node.uptimePercentage || 0).toFixed(2)}%</span>
@@ -328,7 +328,7 @@ export async function openNodeDetail(nodeId) {
             const availMemGB = ((node.availableMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(1);
             const availStorageGB = ((node.availableStorageBytes || 0) / (1024 * 1024 * 1024)).toFixed(0);
             const uptimeClass = node.uptimePercentage >= 99 ? 'excellent' :
-                               node.uptimePercentage >= 95 ? 'good' : 'poor';
+                node.uptimePercentage >= 95 ? 'good' : 'poor';
 
             title.textContent = escapeHtmlFn(node.operatorName || 'Node Details');
 
@@ -481,22 +481,22 @@ export async function openNodeDetail(nodeId) {
  */
 export function deployToNode(nodeId, nodeName) {
     console.log('[Marketplace] Deploying to node:', nodeId, nodeName);
-    
+
     // Pre-populate node selection
     const nodeIdInput = document.getElementById('vm-target-node-id');
     if (nodeIdInput) {
         nodeIdInput.value = nodeId;
     }
-    
+
     // Open VM creation modal
     if (window.openCreateVMModal) {
         window.openCreateVMModal();
-        
+
         // Small delay to ensure modal is open before showing banner
         setTimeout(() => {
             // Show node info banner
             showSelectedNodeBanner(nodeId, nodeName);
-            
+
             // Focus on VM name input
             const vmNameInput = document.getElementById('vm-name');
             if (vmNameInput) {
@@ -513,7 +513,7 @@ function showSelectedNodeBanner(nodeId, nodeName) {
     // Banner is already in the modal HTML, just update it
     const banner = document.getElementById('selected-node-banner');
     if (!banner) return;
-    
+
     banner.innerHTML = `
         <div>
             <strong>🎯 Deploying to:</strong> ${escapeHtmlFn(nodeName)}
@@ -531,7 +531,7 @@ function showSelectedNodeBanner(nodeId, nodeName) {
             Choose Different Node
         </button>
     `;
-    
+
     banner.style.cssText = `
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -553,12 +553,12 @@ export function clearNodeSelection() {
         window.app.state.selectedNodeId = null;
         window.app.state.selectedNodeName = null;
     }
-    
+
     const nodeIdInput = document.getElementById('vm-target-node-id');
     if (nodeIdInput) {
         nodeIdInput.value = '';
     }
-    
+
     const banner = document.getElementById('selected-node-banner');
     if (banner) {
         banner.style.display = 'none';
