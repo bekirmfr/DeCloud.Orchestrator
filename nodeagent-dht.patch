@@ -1087,10 +1087,10 @@ index 0000000..91daf68
 +    exit 1
 +fi
 diff --git a/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj b/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
-index a51f600..f1d227d 100644
+index a51f600..316dd29 100644
 --- a/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
 +++ b/src/DeCloud.NodeAgent/DeCloud.NodeAgent.csproj
-@@ -18,8 +18,20 @@
+@@ -18,8 +18,29 @@
  			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
  			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
  		</None>
@@ -1099,13 +1099,22 @@ index a51f600..f1d227d 100644
 +		<Content Remove="CloudInit\Templates\dht-vm\dht-node-src\**" />
  	</ItemGroup>
  
-+	<!-- Build DHT node binary from Go source during publish -->
-+	<Target Name="BuildDhtNode" BeforeTargets="Publish" Condition="Exists('CloudInit/Templates/dht-vm/dht-node-src/main.go')">
-+		<Message Importance="high" Text="Building DHT node binary from Go source..." />
-+		<Exec Command="bash CloudInit/Templates/dht-vm/dht-node-src/build.sh"
++	<!-- Build DHT node binary from Go source during publish (requires Go 1.23+) -->
++	<!-- Skips gracefully if Go is not installed — .b64 files can be pre-built in CI -->
++	<Target Name="CheckGoAvailable" BeforeTargets="BuildDhtNode">
++		<Exec Command="which go" IgnoreExitCode="true" ConsoleToMsBuild="true">
++			<Output TaskParameter="ExitCode" PropertyName="GoExitCode" />
++		</Exec>
++	</Target>
++	<Target Name="BuildDhtNode" BeforeTargets="Publish"
++	        Condition="Exists('CloudInit/Templates/dht-vm/dht-node-src/main.go')"
++	        DependsOnTargets="CheckGoAvailable">
++		<Message Condition="'$(GoExitCode)' != '0'" Importance="high"
++		         Text="Go not found — skipping DHT binary build. Pre-build with: bash CloudInit/Templates/dht-vm/dht-node-src/build.sh" />
++		<Exec Condition="'$(GoExitCode)' == '0'"
++		      Command="bash CloudInit/Templates/dht-vm/dht-node-src/build.sh"
 +		      WorkingDirectory="$(MSBuildProjectDirectory)"
 +		      ConsoleToMsBuild="true" />
-+		<Message Importance="high" Text="DHT node binary build complete." />
 +	</Target>
 +
  	<ItemGroup>
