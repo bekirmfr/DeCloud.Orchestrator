@@ -292,7 +292,7 @@
                     </div>
                     <div class="card-body">
                         <div id="recent-vms">
-                            <p style="text-align: center; color: #6b7280; padding: 20px;">Loading...</p>
+                            <div class="loading-spinner">Loading...</div>
                         </div>
                     </div>
                 </div>
@@ -333,7 +333,7 @@
                             </thead>
                             <tbody id="vms-table-body">
                                 <tr>
-                                    <td colspan="7" style="text-align: center; padding: 40px; color: #6b7280;">
+                                    <td colspan="7" class="text-muted" style="text-align: center; padding: 40px;">
                                         Loading virtual machines...
                                     </td>
                                 </tr>
@@ -427,7 +427,7 @@
                 <div id="mp-featured-section">
                     <h3 class="mp-section-title">Featured Nodes</h3>
                     <div class="mp-nodes-grid" id="mp-featured-nodes">
-                        <p style="text-align: center; color: #6b7280; padding: 40px; grid-column: 1 / -1;">Loading
+                        <p class="text-muted" style="text-align: center; padding: 40px; grid-column: 1 / -1;">Loading
                             featured nodes...</p>
                     </div>
                 </div>
@@ -475,7 +475,7 @@
                             </thead>
                             <tbody id="ssh-keys-table-body">
                                 <tr>
-                                    <td colspan="4" style="text-align: center; padding: 40px; color: #6b7280;">
+                                    <td colspan="4" class="text-muted" style="text-align: center; padding: 40px;">
                                         Loading SSH keys...
                                     </td>
                                 </tr>
@@ -500,7 +500,7 @@
                             <label class="form-label">Orchestrator URL</label>
                             <input type="text" class="form-input" id="settings-orchestrator-url"
                                 placeholder="http://localhost:5050">
-                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                            <p class="form-help">
                                 The backend server URL for DeCloud services
                             </p>
                         </div>
@@ -508,7 +508,7 @@
                             <label class="form-label">Connected Wallet</label>
                             <input type="text" class="form-input" id="settings-wallet"
                                 placeholder="Connect wallet to see address" disabled>
-                            <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                            <p class="form-help">
                                 Your Ethereum wallet address used for authentication
                             </p>
                         </div>
@@ -668,7 +668,7 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="vm-region" class="form-label">
-                            Region 🌍
+                            Region
                             <span class="label-hint">(Geographic location)</span>
                         </label>
                         <select id="vm-region" class="form-control" onchange="onVmRegionChange()">
@@ -745,7 +745,7 @@
                 <div class="form-group">
                     <label class="form-label">Key Name</label>
                     <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
-                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                    <p class="form-help">
                         A friendly name to identify this key
                     </p>
                 </div>
@@ -753,7 +753,7 @@
                     <label class="form-label">Public Key</label>
                     <textarea class="form-input" id="ssh-key-public" rows="5"
                         placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
-                    <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">
+                    <p class="form-help">
                         Paste your SSH public key (usually from ~/.ssh/id_rsa.pub)
                     </p>
                 </div>
@@ -778,7 +778,7 @@
                 </button>
             </div>
             <div class="modal-body" id="node-detail-body">
-                <p style="text-align: center; color: #6b7280; padding: 20px;">Loading...</p>
+                <div class="loading-spinner">Loading node details...</div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('node-detail-modal')">Close</button>
@@ -805,7 +805,7 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="window.templateDetail.closeTemplateDetail()">Close</button>
                 <button class="btn btn-primary" id="template-deploy-btn">
-                    🚀 Deploy This Template
+                    Deploy This Template
                 </button>
             </div>
         </div>
@@ -827,7 +827,15 @@
                 <input type="hidden" id="deploy-template-id" value="">
 
                 <div class="deploy-template-banner">
-                    <div class="banner-icon">📦</div>
+                    <div class="banner-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path
+                                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                            <line x1="12" y1="22.08" x2="12" y2="12" />
+                        </svg>
+                    </div>
                     <div class="banner-content">
                         <strong>Deploying:</strong> <span id="deploy-template-name-display">Template</span>
                     </div>
@@ -840,7 +848,7 @@
                 </div>
 
                 <div class="form-section">
-                    <h3 class="form-section-title">💻 Customize Specifications</h3>
+                    <h3 class="form-section-title">Customize Specifications</h3>
                     <p class="form-help">Adjust resources based on your needs (pre-filled with recommended values)</p>
 
                     <div class="form-row">
@@ -881,7 +889,7 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">
-                                Region 🌍
+                                Region
                                 <span class="label-hint">(Geographic location - important for privacy browsing)</span>
                             </label>
                             <select class="form-input" id="deploy-region"
@@ -916,7 +924,7 @@
                     onclick="window.templateDetail.closeDeployTemplateModal()">Cancel</button>
                 <button class="btn btn-primary" id="deploy-template-btn-submit"
                     onclick="window.templateDetail.deployFromTemplate()">
-                    🚀 Deploy Now
+                    Deploy Now
                 </button>
             </div>
         </div>
@@ -938,7 +946,7 @@
                 <!-- Loading -->
                 <div id="direct-access-loading" style="text-align: center; padding: 40px; display: none;">
                     <div class="spinner"></div>
-                    <p style="margin-top: 16px; color: #6b7280;">Loading direct access info...</p>
+                    <p class="text-muted" style="margin-top: 16px;">Loading direct access info...</p>
                 </div>
 
                 <!-- DNS Info -->
@@ -950,15 +958,17 @@
                 <!-- Quick Add & Custom Port -->
                 <div id="direct-access-quick-add" style="display: none; margin-top: 32px;"></div>
 
-                <div class="direct-access-help"
-                    style="margin-top: 32px; padding: 16px; background: #f9fafb; border-radius: 8px; border-left: 4px solid #3b82f6;">
-                    <h4 style="margin: 0 0 8px 0; color: #1f2937;">💡 About Direct Access</h4>
-                    <p style="margin: 0; color: #6b7280; font-size: 14px;">
+                <div class="direct-access-help">
+                    <h4>About Direct Access</h4>
+                    <p>
                         Direct Access allows TCP/UDP connections directly to your VM for services like SSH, databases,
                         game servers, and more.
                         Each service gets a unique public port (40000-65535) that forwards to your VM's internal port.
                     </p>
                 </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="window.closeDirectAccessModal()">Close</button>
             </div>
         </div>
     </div>

@@ -2071,6 +2071,29 @@
     justify-content: flex-end;
 }
 
+/* Direct Access Help Panel */
+.direct-access-help {
+    margin-top: 32px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--accent-secondary);
+}
+
+.direct-access-help h4 {
+    margin: 0 0 8px 0;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.direct-access-help p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
 /* Forms — base .form-input, .form-label defined in design-tokens.css */
 .form-group {
     margin-bottom: 20px;
@@ -4059,6 +4082,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
+}
+
+.earnings-card .btn {
+    flex-shrink: 0;
+    width: auto;
 }
 
 .earnings-info {
