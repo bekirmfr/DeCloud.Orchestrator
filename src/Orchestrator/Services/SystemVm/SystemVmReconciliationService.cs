@@ -7,14 +7,20 @@ namespace Orchestrator.Services.SystemVm;
 /// Background service that converges each node toward its desired system VM state.
 ///
 /// Every 30 seconds, for each online node:
-///   - Pending obligations with met dependencies → deploy
-///   - Deploying obligations → check if VM is Running + healthy → mark Active
-///   - Active obligations → nothing to do
-///   - Failed obligations → retry with exponential backoff
+///   1. Ensure obligations exist (backfill legacy nodes, detect new eligible roles)
+///   2. Pending obligations with met dependencies → deploy
+///   3. Deploying obligations → check if VM is Running + healthy → mark Active
+///   4. Active obligations → verify VM still exists (self-heal if gone)
+///   5. Failed obligations → retry with exponential backoff
 ///
 /// This is the Kubernetes controller pattern: declare desired state, let a loop
 /// converge toward it. Registration is fast (compute + store obligations, deploy
 /// what's immediately ready), and the loop handles everything else.
+///
+/// Self-healing covers:
+///   - Legacy nodes registered before the obligation system (empty obligations list)
+///   - Capability drift (node gains public IP → now eligible for Relay/Ingress)
+///   - Stale Active obligations whose VMs disappeared (node restart, agent update)
 /// </summary>
 public class SystemVmReconciliationService : BackgroundService
 {
@@ -54,9 +60,7 @@ public class SystemVmReconciliationService : BackgroundService
                 var nodes = await _dataStore.GetAllNodesAsync();
                 foreach (var node in nodes.Where(n => n.Status == NodeStatus.Online))
                 {
-                    if (node.SystemVmObligations.Count == 0)
-                        continue;
-
+                    await EnsureObligationsAsync(node, ct);
                     await ReconcileNodeAsync(node, ct);
                 }
             }
@@ -97,7 +101,7 @@ public class SystemVmReconciliationService : BackgroundService
                     break;
 
                 case SystemVmStatus.Active:
-                    // Already converged — nothing to do
+                    await VerifyActiveAsync(node, obligation, ct);
                     break;
 
                 case SystemVmStatus.Failed:
@@ -247,6 +251,116 @@ public class SystemVmReconciliationService : BackgroundService
         obligation.Status = SystemVmStatus.Pending;
         obligation.VmId = null;
         await TryDeployAsync(node, obligation, ct);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Obligation backfill & drift detection
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Ensure a node's obligation list reflects its current capabilities.
+    /// Handles two cases:
+    ///   1. Legacy nodes with an empty obligations list (registered before the obligation system)
+    ///   2. Capability drift (e.g., node gained a public IP and is now eligible for Relay)
+    /// New obligations are added as Pending. Existing obligations are never removed
+    /// (removal would require draining VMs, which is a separate operation).
+    /// </summary>
+    private async Task EnsureObligationsAsync(Node node, CancellationToken ct)
+    {
+        var requiredRoles = ObligationEligibility.ComputeObligations(node);
+        var existingRoles = new HashSet<SystemVmRole>(
+            node.SystemVmObligations.Select(o => o.Role));
+
+        var missingRoles = requiredRoles.Where(r => !existingRoles.Contains(r)).ToList();
+
+        if (missingRoles.Count == 0)
+            return;
+
+        foreach (var role in missingRoles)
+        {
+            node.SystemVmObligations.Add(new SystemVmObligation
+            {
+                Role = role,
+                Status = SystemVmStatus.Pending
+            });
+        }
+
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Backfilled obligations on node {NodeId}: [{Roles}] " +
+            "(total obligations: {Total})",
+            node.Id,
+            string.Join(", ", missingRoles),
+            node.SystemVmObligations.Count);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Active → verify VM still exists (self-heal if gone)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Verify that an Active obligation still has a running VM.
+    /// Handles node restarts, agent updates, or orphaned obligation state
+    /// where the database says Active but the VM no longer exists.
+    /// </summary>
+    private async Task VerifyActiveAsync(
+        Node node, SystemVmObligation obligation, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(obligation.VmId))
+        {
+            // Active with no VM ID — impossible state, reset
+            _logger.LogWarning(
+                "{Role} obligation on node {NodeId} is Active with no VM ID — resetting to Pending",
+                obligation.Role, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        var vm = await _dataStore.GetVmAsync(obligation.VmId);
+
+        if (vm == null)
+        {
+            _logger.LogWarning(
+                "{Role} VM {VmId} on node {NodeId} no longer exists — resetting to Pending for redeployment",
+                obligation.Role, obligation.VmId, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        if (vm.Status == VmStatus.Error)
+        {
+            _logger.LogWarning(
+                "{Role} VM {VmId} on node {NodeId} is in Error state — resetting to Pending",
+                obligation.Role, obligation.VmId, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        // VM exists and is not in error — still converged
+    }
+
+    /// <summary>
+    /// Reset an obligation back to Pending so the reconciliation loop
+    /// will redeploy it. Clears role-specific info that is stale.
+    /// </summary>
+    private void ResetObligation(Node node, SystemVmObligation obligation)
+    {
+        obligation.Status = SystemVmStatus.Pending;
+        obligation.VmId = null;
+        obligation.ActiveAt = null;
+        obligation.DeployedAt = null;
+
+        // Clear stale role-specific info so deployment creates fresh state
+        switch (obligation.Role)
+        {
+            case SystemVmRole.Dht:
+                node.DhtInfo = null;
+                break;
+            case SystemVmRole.Relay:
+                node.RelayInfo = null;
+                break;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
