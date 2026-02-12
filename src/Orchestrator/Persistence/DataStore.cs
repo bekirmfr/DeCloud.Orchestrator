@@ -1208,6 +1208,32 @@ public class DataStore
                 SizeGb = 3,
                 IsPublic = true,
                 CreatedAt = DateTime.UtcNow
+            },
+            // System VM images — use the standard ubuntu-24.04 base with
+            // role-specific configuration injected via cloud-init at deploy time.
+            new VmImage
+            {
+                Id = "ubuntu-24.04-dht",
+                Name = "Ubuntu 24.04 LTS (DHT Node)",
+                Description = "Base image for DHT system VMs — libp2p/Kademlia node deployed via cloud-init",
+                OsFamily = "linux",
+                OsName = "ubuntu",
+                Version = "24.04",
+                SizeGb = 4,
+                IsPublic = false,
+                CreatedAt = DateTime.UtcNow
+            },
+            new VmImage
+            {
+                Id = "ubuntu-24.04-relay",
+                Name = "Ubuntu 24.04 LTS (Relay Node)",
+                Description = "Base image for Relay system VMs — WireGuard relay deployed via cloud-init",
+                OsFamily = "linux",
+                OsName = "ubuntu",
+                Version = "24.04",
+                SizeGb = 4,
+                IsPublic = false,
+                CreatedAt = DateTime.UtcNow
             }
         };
 
