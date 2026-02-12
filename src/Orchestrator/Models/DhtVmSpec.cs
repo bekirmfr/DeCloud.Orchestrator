@@ -24,7 +24,9 @@ public static class DhtVmSpec
     };
 
     /// <summary>
-    /// DHT image packages and configuration
+    /// DHT image packages and configuration.
+    /// No Docker — the Go binary is embedded as base64 in cloud-init
+    /// and runs directly via systemd.
     /// </summary>
     public static class DhtImage
     {
@@ -32,14 +34,17 @@ public static class DhtVmSpec
 
         public static readonly string[] RequiredPackages =
         [
+            "qemu-guest-agent",
             "curl",
+            "jq",
             "net-tools",
-            "qemu-guest-agent"
+            "openssl"
         ];
 
         public static readonly string[] Services =
         [
-            "decloud-dht"
+            "decloud-dht",
+            "decloud-dht-callback"
         ];
     }
 }
