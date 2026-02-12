@@ -6,8 +6,9 @@ namespace Orchestrator.Services.SystemVm;
 /// Determines which system VM roles a node is obligated to run,
 /// based on its hardware capabilities.
 ///
-/// Called once during registration. The result is stored on the node
-/// and the reconciliation loop converges toward it.
+/// Called during registration to seed the initial obligation list, and by
+/// the reconciliation loop to detect missing obligations on legacy nodes
+/// or nodes whose capabilities have changed since registration.
 /// </summary>
 public static class ObligationEligibility
 {
