@@ -1,5 +1,3 @@
-﻿using Orchestrator.Services;
-
 namespace Orchestrator.Models;
 
 /// <summary>
@@ -66,28 +64,4 @@ public static class RelayVmSpec
         MaxConnections = 100,
     };
 
-    /// <summary>
-    /// Relay image packages and configuration
-    /// </summary>
-    public static class RelayImage
-    {
-        public const string BaseImage = "ubuntu:24.04";
-
-        public static readonly string[] RequiredPackages = new[]
-        {
-            "wireguard",
-            "wireguard-tools",
-            "nginx",
-            "iptables",
-            "curl",
-            "net-tools"
-        };
-
-        public static readonly string[] Services = new[]
-        {
-            "wireguard@wg0",
-            "nginx",
-            "decloud-relay-monitor"
-        };
-    }
 }
