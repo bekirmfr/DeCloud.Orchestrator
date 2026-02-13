@@ -36,15 +36,19 @@ public static class ObligationEligibility
         if (hasPublicIp && hasMinRelayCpu && hasMinRelayRam && hasMinBandwidth)
         {
             roles.Add(SystemVmRole.Relay);
-            roles.Add(SystemVmRole.Ingress);
+            // TODO: Ingress obligation disabled until DeployIngressVmAsync is implemented.
+            // Enabling it now causes an infinite retry loop in the reconciliation service.
+            // roles.Add(SystemVmRole.Ingress);
         }
 
-        var totalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
-        bool hasStorage = totalStorage >= MinBlockStoreStorage;
-        bool hasBlockStoreRam = node.HardwareInventory.Memory.TotalBytes >= MinBlockStoreRam;
-
-        if (hasStorage && hasBlockStoreRam)
-            roles.Add(SystemVmRole.BlockStore);
+        // TODO: BlockStore obligation disabled until DeployBlockStoreVmAsync is implemented.
+        // Enabling it now causes an infinite retry loop in the reconciliation service.
+        // var totalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
+        // bool hasStorage = totalStorage >= MinBlockStoreStorage;
+        // bool hasBlockStoreRam = node.HardwareInventory.Memory.TotalBytes >= MinBlockStoreRam;
+        //
+        // if (hasStorage && hasBlockStoreRam)
+        //     roles.Add(SystemVmRole.BlockStore);
 
         return roles;
     }

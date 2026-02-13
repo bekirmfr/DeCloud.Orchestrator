@@ -648,11 +648,11 @@ public class VmService : IVmService
         Node? selectedNode = null;
         if (!string.IsNullOrEmpty(targetNodeId))
         {
-            // Use specified node (for relay VMs)
+            // Use specified node (for system VM deployments: relay, DHT, etc.)
             selectedNode = await _dataStore.GetNodeAsync(targetNodeId);
             _logger.LogInformation(
-                "Using target node {NodeId} for VM {VmId} (relay deployment)",
-                targetNodeId, vm.Id);
+                "Using target node {NodeId} for VM {VmId} ({VmType} deployment)",
+                targetNodeId, vm.Id, vm.VmType);
         }
         else
         {
@@ -700,7 +700,7 @@ public class VmService : IVmService
         _logger.LogInformation(
             "Reserved resources for VM {VmId} on node {NodeId}: {Cpu}c, {Mem}MB, {Storage}GB, {Points} points ({Tier}). " +
             "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
-            vm.Id, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes, vm.Spec.DiskBytes, pointCost, vm.Spec.QualityTier,
+            vm.Id, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes / (1024 * 1024), vm.Spec.DiskBytes / (1024 * 1024 * 1024), pointCost, vm.Spec.QualityTier,
             selectedNode.ReservedResources.ComputePoints,
             selectedNode.TotalResources.ComputePoints,
             (double)selectedNode.ReservedResources.ComputePoints /
