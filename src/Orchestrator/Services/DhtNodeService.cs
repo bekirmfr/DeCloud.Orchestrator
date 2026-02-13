@@ -25,6 +25,7 @@ public interface IDhtNodeService
 public class DhtNodeService : IDhtNodeService
 {
     private readonly DataStore _dataStore;
+    private readonly IDhtCloudInitProvider _cloudInitProvider;
     private readonly ILogger<DhtNodeService> _logger;
 
     /// <summary>
@@ -38,9 +39,13 @@ public class DhtNodeService : IDhtNodeService
     /// </summary>
     private const int DhtApiPort = 5080;
 
-    public DhtNodeService(DataStore dataStore, ILogger<DhtNodeService> logger)
+    public DhtNodeService(
+        DataStore dataStore,
+        IDhtCloudInitProvider cloudInitProvider,
+        ILogger<DhtNodeService> logger)
     {
         _dataStore = dataStore;
+        _cloudInitProvider = cloudInitProvider;
         _logger = logger;
     }
 
@@ -65,7 +70,27 @@ public class DhtNodeService : IDhtNodeService
             var advertiseIp = GetAdvertiseIp(node);
 
             // ========================================
-            // STEP 3: Create DHT VM
+            // STEP 3: Render complete cloud-init with embedded DHT binary
+            // ========================================
+            var vmName = $"dht-{node.Region ?? "default"}-{node.Id[..8]}";
+
+            var cloudInit = await _cloudInitProvider.RenderCloudInitAsync(
+                new DhtCloudInitParams
+                {
+                    VmId = Guid.NewGuid().ToString(),
+                    VmName = vmName,
+                    NodeId = node.Id,
+                    Region = node.Region ?? "default",
+                    AdvertiseIp = advertiseIp,
+                    BootstrapPeers = string.Join(",", bootstrapPeers),
+                    Architecture = node.Architecture ?? "x86_64",
+                    ListenPort = DhtListenPort,
+                    ApiPort = DhtApiPort,
+                },
+                ct);
+
+            // ========================================
+            // STEP 4: Create DHT VM with full cloud-init (no NodeAgent templates needed)
             // ========================================
             var vmSpec = DhtVmSpec.Standard;
 
@@ -73,7 +98,7 @@ public class DhtNodeService : IDhtNodeService
                 userId: "system",
                 request: new CreateVmRequest
                 (
-                    Name: $"dht-{node.Region ?? "default"}-{node.Id[..8]}",
+                    Name: vmName,
                     Spec: vmSpec,
                     VmType: VmType.Dht,
                     NodeId: node.Id,
@@ -86,13 +111,14 @@ public class DhtNodeService : IDhtNodeService
                         { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
                         { "node-region", node.Region ?? "default" },
                         { "node-id", node.Id }
-                    }
+                    },
+                    CustomCloudInit: cloudInit
                 ),
                 node.Id
             );
 
             // ========================================
-            // STEP 4: Store DHT info on the node
+            // STEP 5: Store DHT info on the node
             // ========================================
             node.DhtInfo = new DhtNodeInfo
             {
@@ -106,8 +132,9 @@ public class DhtNodeService : IDhtNodeService
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
-                "DHT VM {VmId} deployed on node {NodeId} (advertise: {Addr}, bootstrap peers: {Count})",
-                dhtVm.VmId, node.Id, node.DhtInfo.ListenAddress, bootstrapPeers.Count);
+                "DHT VM {VmId} deployed on node {NodeId} (advertise: {Addr}, bootstrap peers: {Count}, arch: {Arch})",
+                dhtVm.VmId, node.Id, node.DhtInfo.ListenAddress, bootstrapPeers.Count,
+                node.Architecture ?? "x86_64");
 
             return dhtVm.VmId;
         }
