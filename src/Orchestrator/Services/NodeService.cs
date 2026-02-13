@@ -283,11 +283,23 @@ public class NodeService : INodeService
         // based on its capabilities. The reconciliation loop converges toward it.
 
         var requiredRoles = ObligationEligibility.ComputeObligations(node);
-        node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
+
+        // On re-registration, use the reconciliation service's adoption-aware
+        // obligation seeding instead of blindly overwriting. This prevents duplicate
+        // system VM creation when a node re-registers with existing VMs.
+        var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
+        if (node.SystemVmObligations.Count == 0)
         {
-            Role = role,
-            Status = SystemVmStatus.Pending
-        }).ToList();
+            // Fresh registration — seed obligations as Pending
+            node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
+            {
+                Role = role,
+                Status = SystemVmStatus.Pending
+            }).ToList();
+        }
+        // else: Re-registration — keep existing obligations.
+        // EnsureObligationsAsync (called by ReconcileNodeAsync) will backfill
+        // any missing roles and adopt existing VMs via TryAdoptExistingVmAsync.
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -296,7 +308,6 @@ public class NodeService : INodeService
             node.Id, string.Join(", ", requiredRoles));
 
         // Deploy obligations with no dependencies immediately (e.g., DHT)
-        var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
         if (reconciler != null)
         {
             await reconciler.ReconcileNodeAsync(node);

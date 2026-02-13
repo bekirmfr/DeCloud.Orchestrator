@@ -885,7 +885,7 @@ public class VmService : IVmService
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
-            "Relay VM {VmId} scheduled on node {NodeId}", vm.Id, selectedNode.Id);
+            "{VmType} VM {VmId} scheduled on node {NodeId}", vm.VmType, vm.Id, selectedNode.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
