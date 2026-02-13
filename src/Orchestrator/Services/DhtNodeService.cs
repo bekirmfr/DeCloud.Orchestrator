@@ -25,7 +25,7 @@ public interface IDhtNodeService
 public class DhtNodeService : IDhtNodeService
 {
     private readonly DataStore _dataStore;
-    private readonly IDhtCloudInitProvider _cloudInitProvider;
+    private readonly ISystemVmCloudInitProvider _cloudInitProvider;
     private readonly ILogger<DhtNodeService> _logger;
 
     /// <summary>
@@ -41,7 +41,7 @@ public class DhtNodeService : IDhtNodeService
 
     public DhtNodeService(
         DataStore dataStore,
-        IDhtCloudInitProvider cloudInitProvider,
+        ISystemVmCloudInitProvider cloudInitProvider,
         ILogger<DhtNodeService> logger)
     {
         _dataStore = dataStore;
@@ -74,7 +74,7 @@ public class DhtNodeService : IDhtNodeService
             // ========================================
             var vmName = $"dht-{node.Region ?? "default"}-{node.Id[..8]}";
 
-            var cloudInit = await _cloudInitProvider.RenderCloudInitAsync(
+            var cloudInit = await _cloudInitProvider.RenderDhtCloudInitAsync(
                 new DhtCloudInitParams
                 {
                     VmId = Guid.NewGuid().ToString(),

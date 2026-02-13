@@ -50,6 +50,7 @@ public class RelayNodeService : IRelayNodeService
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly ICentralIngressService _ingressService;
+    private readonly ISystemVmCloudInitProvider _cloudInitProvider;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
@@ -62,12 +63,14 @@ public class RelayNodeService : IRelayNodeService
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
         ICentralIngressService ingressService,
+        ISystemVmCloudInitProvider cloudInitProvider,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _ingressService = ingressService;
+        _cloudInitProvider = cloudInitProvider;
         _logger = logger;
     }
 
@@ -168,28 +171,44 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
 
             var vmSpec = DeterminRelayConfiguration(node);
+            var vmName = $"relay-{node.Region}-{node.Id[..8]}";
 
             // ========================================
-            // STEP 3: Create relay VM with WireGuard private key
+            // STEP 3: Render complete cloud-init with WireGuard config
             // ========================================
-            // The private key is passed to the VM via labels
-            // The VM deployment process will read this and configure WireGuard
+            var cloudInit = await _cloudInitProvider.RenderRelayCloudInitAsync(
+                new RelayCloudInitParams
+                {
+                    VmId = Guid.NewGuid().ToString(),
+                    VmName = vmName,
+                    NodeId = node.Id,
+                    Region = node.Region ?? "default",
+                    NodePublicIp = node.PublicIp,
+                    WireGuardPrivateKey = relayPrivateKey,
+                    RelaySubnet = relaySubnet,
+                    MaxConnections = vmSpec.MaxConnections,
+                });
+
+            // ========================================
+            // STEP 4: Create relay VM with full cloud-init (no NodeAgent templates needed)
+            // ========================================
             var relayVm = await vmService.CreateVmAsync(
                 userId: "system",
                 request: new CreateVmRequest
                 (
-                    Name: $"relay-{node.Region}-{node.Id[..8]}",
+                    Name: vmName,
                     Spec: vmSpec,
                     VmType: VmType.Relay,
                     NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
                         { "role", "relay" },
-                        { "wireguard-private-key", relayPrivateKey },  // Pass private key to VM
+                        { "wireguard-private-key", relayPrivateKey },
                         { "relay-region", node.Region ?? "default" },
                         { "node-public-ip", node.PublicIp },
                         { "relay-subnet", relaySubnet.ToString() }
-                    }
+                    },
+                    CustomCloudInit: cloudInit
                 ),
                 node.Id
             );
