@@ -280,13 +280,19 @@ public class SystemVmReconciliationService : BackgroundService
 
         foreach (var role in missingRoles)
         {
-            var adopted = TryAdoptExistingVm(node, role);
+            var adopted = await TryAdoptExistingVmAsync(node, role, ct);
             node.SystemVmObligations.Add(adopted);
 
             if (adopted.Status == SystemVmStatus.Active)
             {
                 _logger.LogInformation(
                     "Adopted existing {Role} VM {VmId} on node {NodeId} as Active obligation",
+                    role, adopted.VmId, node.Id);
+            }
+            else if (adopted.Status == SystemVmStatus.Deploying)
+            {
+                _logger.LogInformation(
+                    "Adopted existing {Role} VM {VmId} on node {NodeId} as Deploying (VM status: not yet Running)",
                     role, adopted.VmId, node.Id);
             }
         }
@@ -302,11 +308,14 @@ public class SystemVmReconciliationService : BackgroundService
     }
 
     /// <summary>
-    /// Check if a node already has a running VM for a role (deployed before the obligation
-    /// system existed). If so, adopt it as an Active obligation instead of creating a
-    /// duplicate Pending deployment.
+    /// Check if a node already has a VM for a role (deployed before the obligation
+    /// system existed). If so, adopt it — but only mark Active if the VM actually
+    /// exists in the datastore and is Running. VMs in other states are adopted as
+    /// Deploying so they flow through CheckDeploymentProgressAsync normally.
+    /// If the referenced VM no longer exists, fall back to Pending.
     /// </summary>
-    private static SystemVmObligation TryAdoptExistingVm(Node node, SystemVmRole role)
+    private async Task<SystemVmObligation> TryAdoptExistingVmAsync(
+        Node node, SystemVmRole role, CancellationToken ct)
     {
         string? existingVmId = role switch
         {
@@ -321,8 +330,49 @@ public class SystemVmReconciliationService : BackgroundService
             _ => null
         };
 
-        if (existingVmId != null)
+        if (existingVmId == null)
         {
+            return new SystemVmObligation
+            {
+                Role = role,
+                Status = SystemVmStatus.Pending
+            };
+        }
+
+        // Verify the VM actually exists before adopting
+        var vm = await _dataStore.GetVmAsync(existingVmId);
+        if (vm == null)
+        {
+            _logger.LogWarning(
+                "Node {NodeId} has {Role} VM ID {VmId} in role info but VM not found in datastore — creating Pending obligation",
+                node.Id, role, existingVmId);
+
+            // Clear stale role info pointing to a non-existent VM
+            if (role == SystemVmRole.Relay) node.RelayInfo = null;
+            if (role == SystemVmRole.Dht) node.DhtInfo = null;
+
+            return new SystemVmObligation
+            {
+                Role = role,
+                Status = SystemVmStatus.Pending
+            };
+        }
+
+        // VM exists — adopt based on actual status
+        if (vm.Status == VmStatus.Running)
+        {
+            // Sync role-specific status to Active
+            if (role == SystemVmRole.Relay && node.RelayInfo != null)
+            {
+                node.RelayInfo.Status = RelayStatus.Active;
+                node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+            }
+            else if (role == SystemVmRole.Dht && node.DhtInfo != null)
+            {
+                node.DhtInfo.Status = DhtStatus.Active;
+                node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+            }
+
             return new SystemVmObligation
             {
                 Role = role,
@@ -332,10 +382,30 @@ public class SystemVmReconciliationService : BackgroundService
             };
         }
 
+        if (vm.Status == VmStatus.Error)
+        {
+            _logger.LogWarning(
+                "Node {NodeId} has {Role} VM {VmId} in Error state — adopting as Failed",
+                node.Id, role, existingVmId);
+
+            return new SystemVmObligation
+            {
+                Role = role,
+                VmId = existingVmId,
+                Status = SystemVmStatus.Failed,
+                FailureCount = 1,
+                LastError = vm.StatusMessage ?? "VM in Error state at adoption"
+            };
+        }
+
+        // Provisioning, Stopped, or other non-terminal state — adopt as Deploying
+        // so CheckDeploymentProgressAsync handles the transition
         return new SystemVmObligation
         {
             Role = role,
-            Status = SystemVmStatus.Pending
+            VmId = existingVmId,
+            Status = SystemVmStatus.Deploying,
+            DeployedAt = DateTime.UtcNow
         };
     }
 
