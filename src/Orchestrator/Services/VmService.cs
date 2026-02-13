@@ -89,6 +89,17 @@ public class VmService : IVmService
             }
         }
 
+        // Validate required labels for system VMs before proceeding
+        if (isSystemVm)
+        {
+            var missing = GetMissingSystemVmLabels(request.VmType, request.Labels);
+            if (missing.Count > 0)
+            {
+                return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                    $"System VM missing required labels: {string.Join(", ", missing)}", "MISSING_LABELS");
+            }
+        }
+
         // Generate memorable password
         var password = isSystemVm ? null : GenerateMemorablePassword();
 
@@ -1068,5 +1079,24 @@ public class VmService : IVmService
             "tcp" or "both" => (CheckType.TcpPort, null),
             _ => (CheckType.TcpPort, null) // default to TCP for unknown protocols
         };
+    }
+
+    // =========================================================================
+    // System VM Label Validation
+    // =========================================================================
+
+    private static readonly Dictionary<VmType, string[]> RequiredSystemVmLabels = new()
+    {
+        [VmType.Relay] = ["role", "wireguard-private-key", "node-public-ip", "relay-subnet"],
+        [VmType.Dht] = ["role", "dht-listen-port", "dht-api-port", "dht-advertise-ip"]
+    };
+
+    private static List<string> GetMissingSystemVmLabels(VmType vmType, Dictionary<string, string>? labels)
+    {
+        if (!RequiredSystemVmLabels.TryGetValue(vmType, out var required))
+            return [];
+
+        var provided = labels ?? [];
+        return required.Where(key => !provided.ContainsKey(key)).ToList();
     }
 }

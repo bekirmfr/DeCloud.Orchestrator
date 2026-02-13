@@ -22,29 +22,4 @@ public static class DhtVmSpec
         ImageId = "ubuntu-24.04-dht",
         ComputePointCost = 1,
     };
-
-    /// <summary>
-    /// DHT image packages and configuration.
-    /// No Docker — the Go binary is embedded as base64 in cloud-init
-    /// and runs directly via systemd.
-    /// </summary>
-    public static class DhtImage
-    {
-        public const string BaseImage = "ubuntu:24.04";
-
-        public static readonly string[] RequiredPackages =
-        [
-            "qemu-guest-agent",
-            "curl",
-            "jq",
-            "net-tools",
-            "openssl"
-        ];
-
-        public static readonly string[] Services =
-        [
-            "decloud-dht",
-            "decloud-dht-callback"
-        ];
-    }
 }

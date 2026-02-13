@@ -112,8 +112,23 @@ public class VmsController : ControllerBase
             hostNode = await _dataStore.GetNodeAsync(vm.NodeId);
         }
 
+        // Redact sensitive labels before returning (secrets are only needed by node agent)
+        var safeLabels = new Dictionary<string, string>(vm.Labels.Count);
+        foreach (var kvp in vm.Labels)
+        {
+            safeLabels[kvp.Key] = SensitiveLabelKeys.Contains(kvp.Key) ? "[REDACTED]" : kvp.Value;
+        }
+        vm.Labels = safeLabels;
+
         return Ok(ApiResponse<VmDetailResponse>.Ok(new VmDetailResponse(vm, hostNode)));
     }
+
+    private static readonly HashSet<string> SensitiveLabelKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "wireguard-private-key",
+        "custom:cloud-init-vars",
+        "template:cloud-init-vars"
+    };
 
     /// <summary>
     /// Perform an action on a VM (start, stop, restart, etc.)
