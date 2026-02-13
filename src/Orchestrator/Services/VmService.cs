@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -209,6 +210,22 @@ public class VmService : IVmService
         if (vm.Services.Count == 0)
         {
             vm.Services = BuildDefaultServiceList();
+        }
+
+        // Validate required labels for system VMs before persisting.
+        // The NodeAgent reads these labels to render the cloud-init template;
+        // missing labels cause silent failures on the node.
+        if (isSystemVm)
+        {
+            var labelError = SystemVmLabelSchema.Validate(vm.VmType, vm.Labels);
+            if (labelError != null)
+            {
+                _logger.LogError(
+                    "System VM {VmId} ({VmType}) failed label validation: {Error}",
+                    vm.Id, vm.VmType, labelError);
+                return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                    labelError, "INVALID_LABELS");
+            }
         }
 
         // Save to DataStore with persistence
@@ -859,6 +876,12 @@ public class VmService : IVmService
         );
 
         await _commandService.DeliverCommandAsync(selectedNode.Id, command);
+
+        // SECURITY: Strip sensitive labels after command delivery.
+        // The node agent received them in the command payload; they must not persist
+        // in the orchestrator database or be exposed via API responses.
+        StripSensitiveLabels(vm.Labels);
+
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
@@ -1065,5 +1088,29 @@ public class VmService : IVmService
             "tcp" or "both" => (CheckType.TcpPort, null),
             _ => (CheckType.TcpPort, null) // default to TCP for unknown protocols
         };
+    }
+
+    /// <summary>
+    /// Labels that carry secrets needed only for the initial CreateVm command.
+    /// These are delivered to the node agent in the command payload and must be
+    /// stripped before the VM record is persisted to the database.
+    /// </summary>
+    private static readonly HashSet<string> SensitiveLabels = new(StringComparer.Ordinal)
+    {
+        "wireguard-private-key",
+    };
+
+    /// <summary>
+    /// Remove labels that contain secrets from the VM's label dictionary.
+    /// Called after the CreateVm command has been delivered to the node agent
+    /// so the secrets are never persisted in the orchestrator database or
+    /// exposed via API responses.
+    /// </summary>
+    private static void StripSensitiveLabels(Dictionary<string, string> labels)
+    {
+        foreach (var key in SensitiveLabels)
+        {
+            labels.Remove(key);
+        }
     }
 }
