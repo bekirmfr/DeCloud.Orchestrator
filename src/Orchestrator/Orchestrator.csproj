@@ -189,4 +189,6 @@
 		<BuildFrontend>false</BuildFrontend>
 	</PropertyGroup>
 
+	<!-- DHT binary build removed: NodeAgent owns system VM templates and binaries -->
+
 </Project>

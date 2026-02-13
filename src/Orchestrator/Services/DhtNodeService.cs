@@ -38,7 +38,9 @@ public class DhtNodeService : IDhtNodeService
     /// </summary>
     private const int DhtApiPort = 5080;
 
-    public DhtNodeService(DataStore dataStore, ILogger<DhtNodeService> logger)
+    public DhtNodeService(
+        DataStore dataStore,
+        ILogger<DhtNodeService> logger)
     {
         _dataStore = dataStore;
         _logger = logger;
@@ -64,8 +66,11 @@ public class DhtNodeService : IDhtNodeService
             // ========================================
             var advertiseIp = GetAdvertiseIp(node);
 
+            var vmName = $"dht-{node.Region ?? "default"}-{node.Id[..8]}";
+
             // ========================================
-            // STEP 3: Create DHT VM
+            // STEP 3: Create DHT VM — NodeAgent owns the cloud-init template
+            // Orchestrator passes config via Labels, NodeAgent renders locally
             // ========================================
             var vmSpec = DhtVmSpec.Standard;
 
@@ -73,7 +78,7 @@ public class DhtNodeService : IDhtNodeService
                 userId: "system",
                 request: new CreateVmRequest
                 (
-                    Name: $"dht-{node.Region ?? "default"}-{node.Id[..8]}",
+                    Name: vmName,
                     Spec: vmSpec,
                     VmType: VmType.Dht,
                     NodeId: node.Id,
@@ -85,7 +90,8 @@ public class DhtNodeService : IDhtNodeService
                         { "dht-advertise-ip", advertiseIp },
                         { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
                         { "node-region", node.Region ?? "default" },
-                        { "node-id", node.Id }
+                        { "node-id", node.Id },
+                        { "architecture", node.Architecture ?? "x86_64" }
                     }
                 ),
                 node.Id
@@ -106,8 +112,9 @@ public class DhtNodeService : IDhtNodeService
             await _dataStore.SaveNodeAsync(node);
 
             _logger.LogInformation(
-                "DHT VM {VmId} deployed on node {NodeId} (advertise: {Addr}, bootstrap peers: {Count})",
-                dhtVm.VmId, node.Id, node.DhtInfo.ListenAddress, bootstrapPeers.Count);
+                "DHT VM {VmId} deployed on node {NodeId} (advertise: {Addr}, bootstrap peers: {Count}, arch: {Arch})",
+                dhtVm.VmId, node.Id, node.DhtInfo.ListenAddress, bootstrapPeers.Count,
+                node.Architecture ?? "x86_64");
 
             return dhtVm.VmId;
         }

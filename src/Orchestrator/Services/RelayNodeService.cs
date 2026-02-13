@@ -168,34 +168,35 @@ public class RelayNodeService : IRelayNodeService
             // ========================================
 
             var vmSpec = DeterminRelayConfiguration(node);
+            var vmName = $"relay-{node.Region}-{node.Id[..8]}";
 
             // ========================================
-            // STEP 3: Create relay VM with WireGuard private key
+            // STEP 3: Create relay VM — NodeAgent owns the cloud-init template
+            // Orchestrator passes config via Labels, NodeAgent renders locally
             // ========================================
-            // The private key is passed to the VM via labels
-            // The VM deployment process will read this and configure WireGuard
             var relayVm = await vmService.CreateVmAsync(
                 userId: "system",
                 request: new CreateVmRequest
                 (
-                    Name: $"relay-{node.Region}-{node.Id[..8]}",
+                    Name: vmName,
                     Spec: vmSpec,
                     VmType: VmType.Relay,
                     NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
                         { "role", "relay" },
-                        { "wireguard-private-key", relayPrivateKey },  // Pass private key to VM
+                        { "wireguard-private-key", relayPrivateKey },
                         { "relay-region", node.Region ?? "default" },
                         { "node-public-ip", node.PublicIp },
-                        { "relay-subnet", relaySubnet.ToString() }
+                        { "relay-subnet", relaySubnet.ToString() },
+                        { "relay-capacity", vmSpec.MaxConnections.ToString() }
                     }
                 ),
                 node.Id
             );
 
             // ========================================
-            // STEP 4: Initialize relay configuration with public key
+            // STEP 4: Store relay configuration with public key
             // ========================================
             node.RelayInfo = new RelayNodeInfo
             {
