@@ -189,31 +189,6 @@
 		<BuildFrontend>false</BuildFrontend>
 	</PropertyGroup>
 
-	<!-- ============================================== -->
-	<!-- DHT NODE BINARY BUILD (Go cross-compile)      -->
-	<!-- Builds dht-node binary during 'dotnet publish' -->
-	<!-- Skips gracefully if Go is not installed        -->
-	<!-- (Docker build handles this in a separate stage) -->
-	<!-- ============================================== -->
-	<PropertyGroup>
-		<DhtNodeSrcDir>$([System.IO.Path]::Combine($(MSBuildProjectDirectory), '..', '..', 'dht-node'))</DhtNodeSrcDir>
-	</PropertyGroup>
-
-	<Target Name="CheckGoAvailable" BeforeTargets="BuildDhtNode">
-		<Exec Command="which go" IgnoreExitCode="true" ConsoleToMsBuild="true" StandardOutputImportance="low">
-			<Output TaskParameter="ExitCode" PropertyName="GoExitCode" />
-		</Exec>
-	</Target>
-
-	<Target Name="BuildDhtNode" BeforeTargets="Publish"
-	        Condition="Exists('$(DhtNodeSrcDir)/main.go')"
-	        DependsOnTargets="CheckGoAvailable">
-		<Message Condition="'$(GoExitCode)' != '0'" Importance="high"
-		         Text="Go not found — skipping DHT binary build. Pre-build with: cd dht-node &amp;&amp; bash build.sh" />
-		<Exec Condition="'$(GoExitCode)' == '0'"
-		      Command="DHT_OUTPUT_DIR=$(OutputPath)dht-node bash build.sh"
-		      WorkingDirectory="$(DhtNodeSrcDir)"
-		      ConsoleToMsBuild="true" />
-	</Target>
+	<!-- DHT binary build removed: NodeAgent owns system VM templates and binaries -->
 
 </Project>

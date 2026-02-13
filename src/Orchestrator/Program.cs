@@ -90,7 +90,6 @@ builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>
 builder.Services.AddScoped<NodePerformanceEvaluator>();
 builder.Services.AddScoped<NodeCapacityCalculator>();
 builder.Services.AddSingleton<IVmSchedulingService, VmSchedulingService>();
-builder.Services.AddSingleton<ISystemVmCloudInitProvider, SystemVmCloudInitProvider>();
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IDhtNodeService, DhtNodeService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
