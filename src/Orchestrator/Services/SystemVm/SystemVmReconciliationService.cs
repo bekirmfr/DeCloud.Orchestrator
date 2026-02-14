@@ -661,42 +661,14 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
-        // ════════════════════════════════════════════════════════════════════════
-        // Self-healing: redeploy isolated DHT VMs once bootstrap peers exist.
-        //
-        // DHT VMs deployed with 0 bootstrap peers are network-isolated — they
-        // can't discover other nodes via Kademlia (requires ≥1 peer) and mDNS
-        // only works same-subnet. Once other DHT nodes come online and their
-        // PeerIds are captured, redeploy the isolated VM so it boots with real
-        // bootstrap peers and joins the network.
-        //
-        // Safeguards:
-        //   - Only triggers when BootstrapPeerCount == 0 (won't touch connected VMs)
-        //   - Requires ≥2 min Active age (gives PeerId extraction time to work)
-        //   - GetBootstrapPeersAsync excludes this node, so the genesis node
-        //     won't redeploy until a second node's PeerId is captured
-        //   - RedeployDhtVmAsync only transitions to Deleting (does not reset
-        //     obligation), so re-entry is blocked by the Deleting handler above
-        //   - RedeployDhtVmAsync guards on vm.Status == Running (won't re-fire)
-        // ════════════════════════════════════════════════════════════════════════
-        if (obligation.Role == SystemVmRole.Dht
-            && node.DhtInfo != null
-            && node.DhtInfo.BootstrapPeerCount == 0
-            && obligation.ActiveAt.HasValue
-            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 2)
-        {
-            var availablePeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
-            if (availablePeers.Count > 0)
-            {
-                _logger.LogInformation(
-                    "DHT VM {VmId} on node {NodeId} was deployed with 0 bootstrap peers but " +
-                    "{PeerCount} peer(s) are now available — redeploying to join the network",
-                    obligation.VmId, node.Id, availablePeers.Count);
-
-                await RedeployDhtVmAsync(node, obligation, "Redeploying isolated DHT VM — bootstrap peers now available");
-                return;
-            }
-        }
+        // NOTE: An "isolated DHT VM" self-healing check was removed here.
+        // It redeployed genesis nodes (BootstrapPeerCount == 0) once other peers
+        // appeared, under the assumption that the genesis node was "network-isolated."
+        // This was wrong: in libp2p/Kademlia DHT, the genesis node IS the bootstrap
+        // peer — joining nodes connect TO it using its PeerId and listen address.
+        // Once connected, both nodes are in each other's routing tables. The genesis
+        // node doesn't need bootstrap peers because other nodes bootstrap FROM it.
+        // Redeploying it destroyed the network's seed node for no benefit.
 
         // ════════════════════════════════════════════════════════════════════════
         // Self-healing: redeploy DHT VMs deployed with wrong advertise IP.
