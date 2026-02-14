@@ -304,7 +304,49 @@ public class NodeService : INodeService
             node.Id);
 
         // =====================================================
-        // STEP 6: Compute system VM obligations & deploy what's ready
+        // STEP 6a: CGNAT relay assignment (BEFORE system VM deployment)
+        // =====================================================
+        // CGNAT nodes need to be assigned to an *existing* relay on another node.
+        // This MUST happen before DHT deployment so GetAdvertiseIp() returns the
+        // WireGuard tunnel IP instead of the unreachable public IP. Without this,
+        // the DHT VM gets the wrong dht-advertise-ip label and other nodes can't
+        // connect to it via the overlay network.
+
+        if (node.HardwareInventory.Network.NatType != NatType.None)
+        {
+            if (node.CgnatInfo == null)
+            {
+                _logger.LogInformation(
+                "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
+                node.Id, node.HardwareInventory.Network.NatType);
+
+                var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+
+                if (relay != null)
+                {
+                    await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "No available relay found for CGNAT node {NodeId}",
+                        node.Id);
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
+                node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
+
+                // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
+
+
+            }
+        }
+
+        // =====================================================
+        // STEP 6b: Compute system VM obligations & deploy what's ready
         // =====================================================
         // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
         // based on its capabilities. The reconciliation loop converges toward it.
@@ -358,46 +400,6 @@ public class NodeService : INodeService
         }
 
         await _dataStore.SaveNodeAsync(node);
-
-        // =====================================================
-        // STEP 6b: CGNAT relay assignment (separate from system VMs)
-        // =====================================================
-        // CGNAT nodes need to be assigned to an *existing* relay on another node.
-        // This is a different concern from deploying system VMs on this node.
-
-        // Check if node is behind CGNAT and needs relay assignment
-        if (node.HardwareInventory.Network.NatType != NatType.None)
-        {
-            if (node.CgnatInfo == null)
-            {
-                _logger.LogInformation(
-                "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
-                node.Id, node.HardwareInventory.Network.NatType);
-
-                var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
-
-                if (relay != null)
-                {
-                    await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
-                }
-                else
-                {
-                    _logger.LogWarning(
-                        "No available relay found for CGNAT node {NodeId}",
-                        node.Id);
-                }
-            }
-            else
-            {
-                _logger.LogInformation(
-                "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
-                node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
-
-                // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
-
-
-            }
-        }
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
@@ -1428,16 +1430,12 @@ public class NodeService : INodeService
 
                         if (node.DhtInfo == null && vm.IsFullyReady)
                         {
-                            var advertiseIp = node.IsBehindCgnat
-                                && node.CgnatInfo != null
-                                && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp)
-                                ? node.CgnatInfo.TunnelIp
-                                : node.PublicIp;
+                            var advertiseIp = DhtNodeService.GetAdvertiseIp(node);
 
                             node.DhtInfo = new DhtNodeInfo
                             {
                                 DhtVmId = vm.Id,
-                                ListenAddress = $"{advertiseIp}:4001",
+                                ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}",
                                 ApiPort = 5080,
                                 Status = DhtStatus.Active,
                                 LastHealthCheck = DateTime.UtcNow,
@@ -1460,6 +1458,37 @@ public class NodeService : INodeService
                                 _logger.LogInformation(
                                     "DHT peer ID captured for node {NodeId}: {PeerId}",
                                     nodeId, peerId);
+                            }
+                        }
+
+                        if (node.DhtInfo != null)
+                        {
+                            // Keep LastHealthCheck current — the reconciliation service
+                            // uses this to detect stale DHT VMs that stopped reporting.
+                            node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+
+                            // Correct stale ListenAddress if CGNAT was assigned after
+                            // the DHT VM was deployed (registration ordering bug).
+                            var expectedIp = DhtNodeService.GetAdvertiseIp(node);
+                            var expectedAddr = $"{expectedIp}:{DhtNodeService.DhtListenPort}";
+                            if (node.DhtInfo.ListenAddress != expectedAddr)
+                            {
+                                _logger.LogWarning(
+                                    "DHT ListenAddress mismatch on node {NodeId}: " +
+                                    "stored={Stored}, expected={Expected} — correcting",
+                                    nodeId, node.DhtInfo.ListenAddress, expectedAddr);
+                                node.DhtInfo.ListenAddress = expectedAddr;
+                                dhtInfoChanged = true;
+                            }
+
+                            // Extract connectedPeers from StatusMessage if the node
+                            // agent reports it (e.g., "peerId=... connectedPeers=3").
+                            var systemSvc = vm.Services.FirstOrDefault(s => s.Name == "System");
+                            var connectedPeers = ExtractConnectedPeers(systemSvc?.StatusMessage);
+                            if (connectedPeers.HasValue && node.DhtInfo.ConnectedPeers != connectedPeers.Value)
+                            {
+                                node.DhtInfo.ConnectedPeers = connectedPeers.Value;
+                                dhtInfoChanged = true;
                             }
                         }
 
@@ -2147,5 +2176,21 @@ public class NodeService : INodeService
             statusMessage, @"peerId=([A-Za-z0-9]{20,})");
 
         return match.Success ? match.Groups[1].Value : null;
+    }
+
+    /// <summary>
+    /// Extract connected peers count from a StatusMessage string.
+    /// Expected format: "connectedPeers=3" (anywhere in the message).
+    /// Returns null if not found (node agent may not report this yet).
+    /// </summary>
+    private static int? ExtractConnectedPeers(string? statusMessage)
+    {
+        if (string.IsNullOrEmpty(statusMessage))
+            return null;
+
+        var match = System.Text.RegularExpressions.Regex.Match(
+            statusMessage, @"connectedPeers=(\d+)");
+
+        return match.Success && int.TryParse(match.Groups[1].Value, out var count) ? count : null;
     }
 }

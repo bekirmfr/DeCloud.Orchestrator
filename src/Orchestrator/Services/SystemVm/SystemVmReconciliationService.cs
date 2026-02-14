@@ -483,16 +483,12 @@ public class SystemVmReconciliationService : BackgroundService
             candidate.Id, node.Id);
 
         // Reconstruct DhtInfo from the discovered VM
-        var advertiseIp = node.IsBehindCgnat
-            && node.CgnatInfo != null
-            && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp)
-            ? node.CgnatInfo.TunnelIp
-            : node.PublicIp;
+        var advertiseIp = DhtNodeService.GetAdvertiseIp(node);
 
         node.DhtInfo = new DhtNodeInfo
         {
             DhtVmId = candidate.Id,
-            ListenAddress = $"{advertiseIp}:4001",
+            ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}",
             ApiPort = 5080,
             Status = DhtStatus.Active,
             LastHealthCheck = DateTime.UtcNow,
@@ -575,26 +571,115 @@ public class SystemVmReconciliationService : BackgroundService
                     "{PeerCount} peer(s) are now available — redeploying to join the network",
                     obligation.VmId, node.Id, availablePeers.Count);
 
-                try
-                {
-                    var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
-                    await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
-                        TransitionContext.Manual("Redeploying isolated DHT VM — bootstrap peers now available"));
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "Failed to delete old DHT VM {VmId} on node {NodeId} — will retry next cycle",
-                        obligation.VmId, node.Id);
-                    return;
-                }
+                await RedeployDhtVmAsync(node, obligation, "Redeploying isolated DHT VM — bootstrap peers now available");
+                return;
+            }
+        }
 
-                ResetObligation(node, obligation);
+        // ════════════════════════════════════════════════════════════════════════
+        // Self-healing: redeploy DHT VMs deployed with wrong advertise IP.
+        //
+        // If a CGNAT node's DHT VM was deployed before relay assignment, it got
+        // the public IP as dht-advertise-ip instead of the WireGuard tunnel IP.
+        // The VM itself must be redeployed because the advertise IP is baked into
+        // cloud-init — other peers in the routing table have the wrong address.
+        //
+        // The heartbeat path corrects DhtInfo.ListenAddress, but the running VM
+        // still advertises the wrong IP in the libp2p DHT. Only a redeploy fixes it.
+        //
+        // Safeguards:
+        //   - Only triggers when ListenAddress doesn't match GetAdvertiseIp()
+        //   - Requires ≥3 min Active age (gives CGNAT relay assignment time)
+        //   - Won't fire for nodes without CgnatInfo (public nodes always match)
+        // ════════════════════════════════════════════════════════════════════════
+        if (obligation.Role == SystemVmRole.Dht
+            && node.DhtInfo != null
+            && obligation.ActiveAt.HasValue
+            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 3)
+        {
+            var expectedIp = DhtNodeService.GetAdvertiseIp(node);
+            var expectedAddr = $"{expectedIp}:{DhtNodeService.DhtListenPort}";
+            if (node.DhtInfo.ListenAddress != expectedAddr)
+            {
+                _logger.LogWarning(
+                    "DHT VM {VmId} on node {NodeId} has wrong advertise IP: " +
+                    "current={Current}, expected={Expected} — redeploying with correct address",
+                    obligation.VmId, node.Id, node.DhtInfo.ListenAddress, expectedAddr);
+
+                await RedeployDhtVmAsync(node, obligation,
+                    $"Redeploying DHT VM — wrong advertise IP ({node.DhtInfo.ListenAddress} → {expectedAddr})");
+                return;
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        // Self-healing: redeploy DHT VMs stuck with 0 connected peers.
+        //
+        // If a DHT VM was deployed with bootstrap peers but has 0 connected peers
+        // after a grace period, the bootstrap addresses were likely unreachable
+        // (wrong IP, port not forwarded, etc.). Redeploying picks up the latest
+        // peer list which may have correct addresses.
+        //
+        // ConnectedPeers is updated from heartbeat StatusMessage when the node
+        // agent reports "connectedPeers=N". When unavailable, this check is
+        // skipped (ConnectedPeers stays at 0 default, so we gate on
+        // LastHealthCheck being recent to avoid false positives on nodes that
+        // haven't reported yet).
+        //
+        // Safeguards:
+        //   - Requires BootstrapPeerCount > 0 (genesis nodes handled above)
+        //   - Requires ≥5 min Active age (generous grace for initial connection)
+        //   - Requires LastHealthCheck within 2 min (node is actively reporting)
+        //   - Only redeploys if new bootstrap peers are available (avoids churn)
+        // ════════════════════════════════════════════════════════════════════════
+        if (obligation.Role == SystemVmRole.Dht
+            && node.DhtInfo != null
+            && node.DhtInfo.BootstrapPeerCount > 0
+            && node.DhtInfo.ConnectedPeers == 0
+            && obligation.ActiveAt.HasValue
+            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 5
+            && node.DhtInfo.LastHealthCheck.HasValue
+            && (DateTime.UtcNow - node.DhtInfo.LastHealthCheck.Value).TotalMinutes <= 2)
+        {
+            var availablePeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
+            if (availablePeers.Count > 0)
+            {
+                _logger.LogWarning(
+                    "DHT VM {VmId} on node {NodeId} has {BootstrapCount} bootstrap peers but " +
+                    "0 connected peers after {Minutes:F0} min — redeploying with fresh peer list",
+                    obligation.VmId, node.Id, node.DhtInfo.BootstrapPeerCount,
+                    (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes);
+
+                await RedeployDhtVmAsync(node, obligation,
+                    "Redeploying DHT VM — 0 connected peers despite having bootstrap peers");
                 return;
             }
         }
 
         // VM exists and is not in error — still converged
+    }
+
+    /// <summary>
+    /// Delete a DHT VM and reset its obligation for redeployment.
+    /// Shared by all DHT self-healing paths.
+    /// </summary>
+    private async Task RedeployDhtVmAsync(Node node, SystemVmObligation obligation, string reason)
+    {
+        try
+        {
+            var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+            await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
+                TransitionContext.Manual(reason));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to delete old DHT VM {VmId} on node {NodeId} — will retry next cycle",
+                obligation.VmId, node.Id);
+            return;
+        }
+
+        ResetObligation(node, obligation);
     }
 
     /// <summary>
