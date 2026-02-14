@@ -74,6 +74,38 @@ public class DhtNodeService : IDhtNodeService
             // ========================================
             var vmSpec = DhtVmSpec.Standard;
 
+            // ========================================
+            // STEP 3b: Resolve WireGuard relay info for mesh enrollment
+            // ========================================
+            var wgLabels = await ResolveWireGuardLabelsAsync(node);
+
+            // Override advertise IP with WG tunnel IP for mesh connectivity
+            // This way DHT VMs communicate directly via WireGuard mesh,
+            // no host-level port forwarding needed.
+            if (wgLabels.TryGetValue("wg-tunnel-ip", out var wgTunnelIp))
+            {
+                advertiseIp = wgTunnelIp.Split('/')[0]; // Strip CIDR: "10.20.1.202/24" → "10.20.1.202"
+                _logger.LogInformation(
+                    "DHT VM on node {NodeId} will advertise WireGuard tunnel IP {TunnelIp}",
+                    node.Id, advertiseIp);
+            }
+
+            var labels = new Dictionary<string, string>
+            {
+                { "role", "dht" },
+                { "dht-listen-port", DhtListenPort.ToString() },
+                { "dht-api-port", DhtApiPort.ToString() },
+                { "dht-advertise-ip", advertiseIp },
+                { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
+                { "node-region", node.Region ?? "default" },
+                { "node-id", node.Id },
+                { "architecture", node.Architecture ?? "x86_64" }
+            };
+
+            // Merge WireGuard labels if relay is available
+            foreach (var (key, value) in wgLabels)
+                labels[key] = value;
+
             var dhtVm = await vmService.CreateVmAsync(
                 userId: "system",
                 request: new CreateVmRequest
@@ -82,17 +114,7 @@ public class DhtNodeService : IDhtNodeService
                     Spec: vmSpec,
                     VmType: VmType.Dht,
                     NodeId: node.Id,
-                    Labels: new Dictionary<string, string>
-                    {
-                        { "role", "dht" },
-                        { "dht-listen-port", DhtListenPort.ToString() },
-                        { "dht-api-port", DhtApiPort.ToString() },
-                        { "dht-advertise-ip", advertiseIp },
-                        { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
-                        { "node-region", node.Region ?? "default" },
-                        { "node-id", node.Id },
-                        { "architecture", node.Architecture ?? "x86_64" }
-                    }
+                    Labels: labels
                 ),
                 node.Id
             );
@@ -141,7 +163,8 @@ public class DhtNodeService : IDhtNodeService
             if (dhtObligation == null) continue;
             if (node.DhtInfo == null || string.IsNullOrEmpty(node.DhtInfo.PeerId)) continue;
 
-            var ip = GetAdvertiseIp(node);
+            // Use ListenAddress which contains the WG tunnel IP the DHT node advertises
+            var ip = node.DhtInfo.ListenAddress?.Split(':')[0] ?? GetAdvertiseIp(node);
             // libp2p multiaddr format
             peers.Add($"/ip4/{ip}/tcp/{DhtListenPort}/p2p/{node.DhtInfo.PeerId}");
         }
@@ -161,5 +184,114 @@ public class DhtNodeService : IDhtNodeService
             return node.CgnatInfo.TunnelIp;
 
         return node.PublicIp;
+    }
+
+    /// <summary>
+    /// Resolve WireGuard relay configuration for a DHT VM.
+    /// Returns labels to pass through to cloud-init via the VM spec.
+    ///
+    /// Public IP nodes: relay is co-located on the same node.
+    /// CGNAT nodes: relay info from CgnatInfo (registered during WireGuard enrollment).
+    /// </summary>
+    private async Task<Dictionary<string, string>> ResolveWireGuardLabelsAsync(Node node)
+    {
+        var labels = new Dictionary<string, string>();
+
+        try
+        {
+            // For CGNAT nodes: look up relay via AssignedRelayNodeId
+            if (node.IsBehindCgnat && node.CgnatInfo != null)
+            {
+                var allNodes = await _dataStore.GetAllNodesAsync();
+                var relayNode = allNodes.FirstOrDefault(n =>
+                    n.Id == node.CgnatInfo.AssignedRelayNodeId &&
+                    n.RelayInfo != null);
+
+                if (relayNode?.RelayInfo != null)
+                {
+                    var relay = relayNode.RelayInfo;
+                    labels["wg-relay-endpoint"] = relay.WireGuardEndpoint;
+                    labels["wg-relay-pubkey"] = relay.WireGuardPublicKey ?? "";
+                    labels["wg-relay-api"] = $"http://{relayNode.PublicIp}:8080";
+
+                    // DHT VM gets a unique tunnel IP derived from CGNAT host's last octet
+                    // Host .2 → DHT VM .202, Host .3 → .203, etc. (avoids collision with other hosts/VMs)
+                    var tunnelIp = node.CgnatInfo.TunnelIp;
+                    if (!string.IsNullOrEmpty(tunnelIp))
+                    {
+                        var parts = tunnelIp.Split('.');
+                        if (parts.Length == 4 && int.TryParse(parts[3], out var hostOctet))
+                        {
+                            var dhtOctet = Math.Min(200 + hostOctet, 253);
+                            labels["wg-tunnel-ip"] = $"{parts[0]}.{parts[1]}.{parts[2]}.{dhtOctet}/24";
+                        }
+                    }
+
+                    _logger.LogInformation(
+                        "DHT VM on CGNAT node {NodeId}: relay={Endpoint}, tunnelIp={TunnelIp}",
+                        node.Id, labels["wg-relay-endpoint"],
+                        labels.GetValueOrDefault("wg-tunnel-ip", "(missing)"));
+                    return labels;
+                }
+
+                _logger.LogWarning(
+                    "CGNAT node {NodeId} relay {RelayNodeId} not found — DHT VM will have no mesh",
+                    node.Id, node.CgnatInfo.AssignedRelayNodeId);
+                return labels;
+            }
+
+            // For public IP nodes: find the relay VM running on this node
+            var nodes = await _dataStore.GetAllNodesAsync();
+            var localRelay = nodes.FirstOrDefault(n =>
+                n.RelayInfo != null &&
+                n.Id == node.Id);
+
+            if (localRelay?.RelayInfo != null)
+            {
+                var relay = localRelay.RelayInfo;
+                labels["wg-relay-endpoint"] = relay.WireGuardEndpoint;
+                labels["wg-relay-pubkey"] = relay.WireGuardPublicKey ?? "";
+                labels["wg-relay-api"] = $"http://{node.PublicIp}:8080";
+                // Co-located DHT VM gets .199 in relay's subnet (relay is .254)
+                labels["wg-tunnel-ip"] = $"10.20.{relay.RelaySubnet}.199/24";
+
+                _logger.LogInformation(
+                    "DHT VM on public node {NodeId}: relay={Endpoint}, subnet={Subnet}",
+                    node.Id, relay.WireGuardEndpoint, relay.RelaySubnet);
+                return labels;
+            }
+
+            // No relay found — try to find any active relay in the same region
+            var regionRelay = nodes
+                .Where(n => n.RelayInfo != null &&
+                            n.Status == NodeStatus.Online &&
+                            n.Region == node.Region)
+                .FirstOrDefault();
+
+            if (regionRelay?.RelayInfo != null)
+            {
+                var relay = regionRelay.RelayInfo;
+                labels["wg-relay-endpoint"] = relay.WireGuardEndpoint;
+                labels["wg-relay-pubkey"] = relay.WireGuardPublicKey ?? "";
+                labels["wg-relay-api"] = $"http://{regionRelay.PublicIp}:8080";
+                // Regional fallback DHT VM gets .198 (avoids .199 used by co-located)
+                labels["wg-tunnel-ip"] = $"10.20.{relay.RelaySubnet}.198/24";
+
+                _logger.LogInformation(
+                    "DHT VM on node {NodeId}: using regional relay on {RelayNode}, subnet={Subnet}",
+                    node.Id, regionRelay.Id, relay.RelaySubnet);
+                return labels;
+            }
+
+            _logger.LogWarning(
+                "No relay found for DHT VM on node {NodeId} — VM will boot without WireGuard mesh",
+                node.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resolving WireGuard labels for DHT VM on node {NodeId}", node.Id);
+        }
+
+        return labels;
     }
 }
