@@ -176,9 +176,9 @@ public class SystemVmReconciliationService : BackgroundService
                     "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
                     obligation.Role, node.Id, existingVm.Id, existingVm.Status);
 
-                // If the existing VM is Running, adopt it instead of deploying a new one
                 if (existingVm.Status == VmStatus.Running)
                 {
+                    // VM is running — adopt it directly
                     obligation.VmId = existingVm.Id;
                     obligation.Status = SystemVmStatus.Active;
                     obligation.ActiveAt = DateTime.UtcNow;
@@ -186,6 +186,39 @@ public class SystemVmReconciliationService : BackgroundService
                     _logger.LogInformation(
                         "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
                         obligation.Role, existingVm.Id, node.Id);
+                }
+                else if (existingVm.Status == VmStatus.Deleting && existingVm.PowerState == VmPowerState.Running)
+                {
+                    // VM was incorrectly transitioned to Deleting (e.g., by a false-positive
+                    // self-healing check) but is still running on the node. Recover it by
+                    // transitioning back to Running, which re-registers ingress routes.
+                    _logger.LogWarning(
+                        "Recovering {Role} VM {VmId} on node {NodeId} from false-positive Deleting " +
+                        "(PowerState=Running) — transitioning back to Running",
+                        obligation.Role, existingVm.Id, node.Id);
+
+                    var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                    var recovered = await lifecycle.TransitionAsync(
+                        existingVm.Id,
+                        VmStatus.Running,
+                        new TransitionContext
+                        {
+                            Trigger = TransitionTrigger.Manual,
+                            Source = "SystemVmReconciliationService.TryDeployAsync",
+                            StatusMessage = "Recovered from false-positive Deleting state"
+                        });
+
+                    if (recovered)
+                    {
+                        obligation.VmId = existingVm.Id;
+                        obligation.Status = SystemVmStatus.Active;
+                        obligation.ActiveAt = DateTime.UtcNow;
+
+                        _logger.LogInformation(
+                            "Successfully recovered {Role} VM {VmId} on node {NodeId} — " +
+                            "status restored to Running, ingress re-registered",
+                            obligation.Role, existingVm.Id, node.Id);
+                    }
                 }
                 return;
             }
