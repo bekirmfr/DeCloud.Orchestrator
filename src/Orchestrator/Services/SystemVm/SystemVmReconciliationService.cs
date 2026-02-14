@@ -564,8 +564,12 @@ public class SystemVmReconciliationService : BackgroundService
             "DhtInfo was lost but VM is alive and passing health checks",
             candidate.Id, node.Id);
 
-        // Reconstruct DhtInfo from the discovered VM
-        var advertiseIp = DhtNodeService.GetAdvertiseIp(node);
+        // Reconstruct DhtInfo from the discovered VM.
+        // Prefer the advertise IP baked into the VM's labels (which may be a WG tunnel IP)
+        // over GetAdvertiseIp(node) which only handles CGNAT tunnel IPs, not the WG mesh
+        // override that DhtNodeService.DeployDhtVmAsync applies for co-located relay nodes.
+        var advertiseIp = candidate.Labels?.GetValueOrDefault("dht-advertise-ip")
+            ?? DhtNodeService.GetAdvertiseIp(node);
 
         node.DhtInfo = new DhtNodeInfo
         {
@@ -691,18 +695,27 @@ public class SystemVmReconciliationService : BackgroundService
             && obligation.ActiveAt.HasValue
             && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 3)
         {
-            var expectedIp = DhtNodeService.GetAdvertiseIp(node);
-            var expectedAddr = $"{expectedIp}:{DhtNodeService.DhtListenPort}";
-            if (node.DhtInfo.ListenAddress != expectedAddr)
-            {
-                _logger.LogWarning(
-                    "DHT VM {VmId} on node {NodeId} has wrong advertise IP: " +
-                    "current={Current}, expected={Expected} — redeploying with correct address",
-                    obligation.VmId, node.Id, node.DhtInfo.ListenAddress, expectedAddr);
+            // Get the advertise IP that was actually baked into the VM's cloud-init.
+            // DhtNodeService.DeployDhtVmAsync overrides GetAdvertiseIp() with the WG
+            // tunnel IP when a relay is co-located — we must check against the label
+            // that was set at deployment time, not recompute from node state.
+            var dhtVm = await _dataStore.GetVmAsync(obligation.VmId);
+            var deployedAdvIp = dhtVm?.Labels?.GetValueOrDefault("dht-advertise-ip");
 
-                await RedeployDhtVmAsync(node, obligation,
-                    $"Redeploying DHT VM — wrong advertise IP ({node.DhtInfo.ListenAddress} → {expectedAddr})");
-                return;
+            if (!string.IsNullOrEmpty(deployedAdvIp))
+            {
+                var expectedAddr = $"{deployedAdvIp}:{DhtNodeService.DhtListenPort}";
+                if (node.DhtInfo.ListenAddress != expectedAddr)
+                {
+                    _logger.LogWarning(
+                        "DHT VM {VmId} on node {NodeId} has wrong advertise IP: " +
+                        "current={Current}, expected={Expected} — redeploying with correct address",
+                        obligation.VmId, node.Id, node.DhtInfo.ListenAddress, expectedAddr);
+
+                    await RedeployDhtVmAsync(node, obligation,
+                        $"Redeploying DHT VM — wrong advertise IP ({node.DhtInfo.ListenAddress} → {expectedAddr})");
+                    return;
+                }
             }
         }
 
