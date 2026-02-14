@@ -247,6 +247,25 @@ public class SystemVmReconciliationService : BackgroundService
             "Retrying {Role} VM on node {NodeId} (attempt {Count}, backoff: {Backoff}s)",
             obligation.Role, node.Id, obligation.FailureCount + 1, backoffSeconds);
 
+        // Clean up the old failed VM before deploying a replacement.
+        // Without this, the old Error-state VM lingers with reserved resources,
+        // causing resource drift and duplicate VMs.
+        if (!string.IsNullOrEmpty(obligation.VmId))
+        {
+            try
+            {
+                var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
+                    TransitionContext.Manual("Cleaning up failed system VM before retry"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to clean up old {Role} VM {VmId} on node {NodeId} — proceeding with retry",
+                    obligation.Role, obligation.VmId, node.Id);
+            }
+        }
+
         // Reset and try again
         obligation.Status = SystemVmStatus.Pending;
         obligation.VmId = null;
