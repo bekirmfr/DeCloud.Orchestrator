@@ -636,7 +636,7 @@ public class SystemVmReconciliationService : BackgroundService
         {
             // Check for timeout — if the VM has been stuck in Deleting for >5 min,
             // reset the obligation so the auto-recovery or retry logic can handle it
-            if (vm.UpdatedAt.HasValue && (DateTime.UtcNow - vm.UpdatedAt.Value).TotalMinutes > 5)
+            if ((DateTime.UtcNow - vm.UpdatedAt).TotalMinutes > 5)
             {
                 _logger.LogWarning(
                     "{Role} VM {VmId} on node {NodeId} stuck in Deleting for >5 min — resetting obligation",
