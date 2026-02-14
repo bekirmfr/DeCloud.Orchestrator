@@ -21,6 +21,7 @@ namespace Orchestrator.Services.SystemVm;
 ///   - Legacy nodes registered before the obligation system (empty obligations list)
 ///   - Capability drift (node gains public IP → now eligible for Relay/Ingress)
 ///   - Stale Active obligations whose VMs disappeared (node restart, agent update)
+///   - Lost role info (DhtInfo/RelayInfo null after crash) with VM still running
 /// </summary>
 public class SystemVmReconciliationService : BackgroundService
 {
@@ -364,6 +365,16 @@ public class SystemVmReconciliationService : BackgroundService
             _ => null
         };
 
+        // ════════════════════════════════════════════════════════════════════════
+        // Fallback: role info lost (crash, DB corruption) but the system VM may
+        // still be running on the node. Search the datastore for a healthy VM of
+        // the correct type — only adopt if it's Running AND passing health checks.
+        // ════════════════════════════════════════════════════════════════════════
+        if (existingVmId == null)
+        {
+            existingVmId = await TryDiscoverHealthySystemVmAsync(node, role);
+        }
+
         if (existingVmId == null)
         {
             return new SystemVmObligation
@@ -441,6 +452,53 @@ public class SystemVmReconciliationService : BackgroundService
             Status = SystemVmStatus.Deploying,
             DeployedAt = DateTime.UtcNow
         };
+    }
+
+    /// <summary>
+    /// Fallback discovery when role info (DhtInfo/RelayInfo) is lost but a system VM
+    /// may still be running on the node. Searches the datastore for a Running VM of
+    /// the correct type that is confirmed alive via recent service health checks.
+    /// Reconstructs role info from the discovered VM so the system self-heals.
+    ///
+    /// Only DHT VMs can be fully reconstructed — Relay VMs require WireGuard keys
+    /// that aren't stored on the VM record, so they fall through to fresh deployment.
+    /// </summary>
+    private async Task<string?> TryDiscoverHealthySystemVmAsync(Node node, SystemVmRole role)
+    {
+        if (role != SystemVmRole.Dht) return null;
+
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+        var candidate = nodeVms.FirstOrDefault(v =>
+            v.Spec.VmType == VmType.Dht &&
+            v.Status == VmStatus.Running &&
+            v.IsFullyReady &&
+            v.Services.Any(s => s.LastCheckAt.HasValue &&
+                (DateTime.UtcNow - s.LastCheckAt.Value).TotalMinutes <= 5));
+
+        if (candidate == null) return null;
+
+        _logger.LogInformation(
+            "Discovered healthy DHT VM {VmId} on node {NodeId} via datastore fallback — " +
+            "DhtInfo was lost but VM is alive and passing health checks",
+            candidate.Id, node.Id);
+
+        // Reconstruct DhtInfo from the discovered VM
+        var advertiseIp = node.IsBehindCgnat
+            && node.CgnatInfo != null
+            && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp)
+            ? node.CgnatInfo.TunnelIp
+            : node.PublicIp;
+
+        node.DhtInfo = new DhtNodeInfo
+        {
+            DhtVmId = candidate.Id,
+            ListenAddress = $"{advertiseIp}:4001",
+            ApiPort = 5080,
+            Status = DhtStatus.Active,
+            LastHealthCheck = DateTime.UtcNow,
+        };
+
+        return candidate.Id;
     }
 
     // ════════════════════════════════════════════════════════════════════════

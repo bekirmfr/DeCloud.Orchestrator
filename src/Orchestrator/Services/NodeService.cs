@@ -1417,18 +1417,55 @@ public class NodeService : INodeService
                     // DHT VMs report their libp2p peer ID via the cloud-init readiness
                     // message (e.g., "peerId=12D3KooW..."). Persist it to the hosting
                     // node's DhtInfo so GetBootstrapPeersAsync() can construct multiaddrs.
-                    if (vm.Spec.VmType == VmType.Dht && node?.DhtInfo != null
-                        && string.IsNullOrEmpty(node.DhtInfo.PeerId))
+                    //
+                    // Self-heal: if DhtInfo was lost (crash, DB corruption) but the DHT
+                    // VM is still running and healthy, reconstruct DhtInfo from the VM.
+                    // The VM being present in heartbeat ActiveVms + IsFullyReady is proof
+                    // of life — the node agent is actively health-checking it.
+                    if (vm.Spec.VmType == VmType.Dht && node != null)
                     {
-                        var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
-                        var peerId = ExtractPeerId(systemService?.StatusMessage);
-                        if (peerId != null)
+                        var dhtInfoChanged = false;
+
+                        if (node.DhtInfo == null && vm.IsFullyReady)
                         {
-                            node.DhtInfo.PeerId = peerId;
+                            var advertiseIp = node.IsBehindCgnat
+                                && node.CgnatInfo != null
+                                && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp)
+                                ? node.CgnatInfo.TunnelIp
+                                : node.PublicIp;
+
+                            node.DhtInfo = new DhtNodeInfo
+                            {
+                                DhtVmId = vm.Id,
+                                ListenAddress = $"{advertiseIp}:4001",
+                                ApiPort = 5080,
+                                Status = DhtStatus.Active,
+                                LastHealthCheck = DateTime.UtcNow,
+                            };
+                            dhtInfoChanged = true;
+
+                            _logger.LogWarning(
+                                "Reconstructed lost DhtInfo for node {NodeId} from healthy DHT VM {VmId}",
+                                nodeId, vm.Id);
+                        }
+
+                        if (node.DhtInfo != null && string.IsNullOrEmpty(node.DhtInfo.PeerId))
+                        {
+                            var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
+                            var peerId = ExtractPeerId(systemService?.StatusMessage);
+                            if (peerId != null)
+                            {
+                                node.DhtInfo.PeerId = peerId;
+                                dhtInfoChanged = true;
+                                _logger.LogInformation(
+                                    "DHT peer ID captured for node {NodeId}: {PeerId}",
+                                    nodeId, peerId);
+                            }
+                        }
+
+                        if (dhtInfoChanged)
+                        {
                             await _dataStore.SaveNodeAsync(node);
-                            _logger.LogInformation(
-                                "DHT peer ID captured for node {NodeId}: {PeerId}",
-                                nodeId, peerId);
                         }
                     }
                 }
