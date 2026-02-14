@@ -1469,16 +1469,26 @@ public class NodeService : INodeService
 
                             // Correct stale ListenAddress if CGNAT was assigned after
                             // the DHT VM was deployed (registration ordering bug).
-                            var expectedIp = DhtNodeService.GetAdvertiseIp(node);
-                            var expectedAddr = $"{expectedIp}:{DhtNodeService.DhtListenPort}";
-                            if (node.DhtInfo.ListenAddress != expectedAddr)
+                            // BUT: don't overwrite WireGuard tunnel IPs (10.20.x.x) with host IPs.
+                            // The WG tunnel IP is set at deployment time and is the correct
+                            // advertise address for mesh connectivity.
+                            var currentAddr = node.DhtInfo.ListenAddress ?? "";
+                            var currentIp = currentAddr.Contains(':') ? currentAddr.Split(':')[0] : currentAddr;
+                            var isWgTunnelIp = currentIp.StartsWith("10.20.");
+
+                            if (!isWgTunnelIp)
                             {
-                                _logger.LogWarning(
-                                    "DHT ListenAddress mismatch on node {NodeId}: " +
-                                    "stored={Stored}, expected={Expected} — correcting",
-                                    nodeId, node.DhtInfo.ListenAddress, expectedAddr);
-                                node.DhtInfo.ListenAddress = expectedAddr;
-                                dhtInfoChanged = true;
+                                var expectedIp = DhtNodeService.GetAdvertiseIp(node);
+                                var expectedAddr = $"{expectedIp}:{DhtNodeService.DhtListenPort}";
+                                if (node.DhtInfo.ListenAddress != expectedAddr)
+                                {
+                                    _logger.LogWarning(
+                                        "DHT ListenAddress mismatch on node {NodeId}: " +
+                                        "stored={Stored}, expected={Expected} — correcting",
+                                        nodeId, node.DhtInfo.ListenAddress, expectedAddr);
+                                    node.DhtInfo.ListenAddress = expectedAddr;
+                                    dhtInfoChanged = true;
+                                }
                             }
 
                             // Extract connectedPeers from StatusMessage if the node
