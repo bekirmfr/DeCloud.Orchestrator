@@ -126,6 +126,21 @@ public class SystemVmReconciliationService : BackgroundService
         if (!SystemVmDependencies.AreDependenciesMet(obligation.Role, node.SystemVmObligations))
             return; // Dependencies not met yet — will try again next cycle
 
+        // Guard: skip if another obligation for the same role is already Deploying or Active.
+        // This prevents duplicate VMs when registration and the background loop race.
+        var alreadyDeployed = node.SystemVmObligations.Any(o =>
+            o != obligation &&
+            o.Role == obligation.Role &&
+            (o.Status == SystemVmStatus.Deploying || o.Status == SystemVmStatus.Active));
+
+        if (alreadyDeployed)
+        {
+            _logger.LogDebug(
+                "Skipping {Role} deploy on node {NodeId} — another obligation for this role is already Deploying/Active",
+                obligation.Role, node.Id);
+            return;
+        }
+
         _logger.LogInformation(
             "Deploying {Role} system VM on node {NodeId} (dependencies met)",
             obligation.Role, node.Id);

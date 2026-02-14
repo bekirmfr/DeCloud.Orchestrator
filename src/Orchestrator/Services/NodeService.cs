@@ -344,17 +344,20 @@ public class NodeService : INodeService
             }
         }
 
-        await _dataStore.SaveNodeAsync(node);
-
         _logger.LogInformation(
             "Node {NodeId} obligations computed: [{Roles}]",
             node.Id, string.Join(", ", requiredRoles));
 
-        // Deploy obligations with no dependencies immediately (e.g., DHT)
+        // Deploy obligations with no dependencies immediately (e.g., DHT).
+        // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
+        // the background SystemVmReconciliationService picks up Pending obligations
+        // from the datastore and deploys duplicates while we're about to deploy here.
         if (reconciler != null)
         {
             await reconciler.ReconcileNodeAsync(node);
         }
+
+        await _dataStore.SaveNodeAsync(node);
 
         // =====================================================
         // STEP 6b: CGNAT relay assignment (separate from system VMs)
