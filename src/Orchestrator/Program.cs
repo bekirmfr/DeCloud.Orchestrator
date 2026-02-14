@@ -10,8 +10,10 @@ using Orchestrator.Infrastructure;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
+using Orchestrator.Models.Growth;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Growth;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -124,6 +126,10 @@ builder.Services.AddSingleton<IReviewService, ReviewService>();
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.Configure<PricingConfig>(builder.Configuration.GetSection("Pricing"));
+// Growth Engine — Referrals, Promotions, Credits
+builder.Services.Configure<ReferralConfig>(builder.Configuration.GetSection("Referral"));
+builder.Services.AddSingleton<IPromotionService, PromotionService>();
+builder.Services.AddSingleton<IReferralService, ReferralService>();
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
 // Smart Port Allocation Services

@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
+using Orchestrator.Models.Growth;
 using System.Collections.Concurrent;
 
 namespace Orchestrator.Persistence;
@@ -68,6 +69,18 @@ public class DataStore
         _database?.GetCollection<TemplateCategory>("templateCategories");
     private IMongoCollection<MarketplaceReview>? ReviewsCollection =>
         _database?.GetCollection<MarketplaceReview>("marketplaceReviews");
+
+    // Growth Engine Collections
+    private IMongoCollection<Referral>? ReferralsCollection =>
+        _database?.GetCollection<Referral>("referrals");
+    private IMongoCollection<CreditGrant>? CreditGrantsCollection =>
+        _database?.GetCollection<CreditGrant>("creditGrants");
+    private IMongoCollection<PromoCampaign>? CampaignsCollection =>
+        _database?.GetCollection<PromoCampaign>("promoCampaigns");
+
+    // In-memory referral code mappings (userId -> code, code -> userId)
+    private readonly ConcurrentDictionary<string, string> _userToReferralCode = new();
+    private readonly ConcurrentDictionary<string, string> _referralCodeToUser = new();
 
     public DataStore(
         IMongoDatabase? database,
@@ -1777,6 +1790,172 @@ public class DataStore
         {
             _logger.LogError(ex, "Failed to delete review: {ReviewId}", reviewId);
             return false;
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Growth Engine — Referrals, Credits, Promotions
+    // ════════════════════════════════════════════════════════════════════════
+
+    public Task<string?> GetReferralCodeForUserAsync(string userId)
+    {
+        _userToReferralCode.TryGetValue(userId, out var code);
+        return Task.FromResult(code);
+    }
+
+    public Task<string?> GetUserByReferralCodeAsync(string code)
+    {
+        _referralCodeToUser.TryGetValue(code.ToUpper(), out var userId);
+        return Task.FromResult(userId);
+    }
+
+    public Task SaveReferralCodeAsync(string userId, string code)
+    {
+        var upperCode = code.ToUpper();
+        _userToReferralCode[userId] = upperCode;
+        _referralCodeToUser[upperCode] = userId;
+        return Task.CompletedTask;
+    }
+
+    public async Task SaveReferralAsync(Referral referral)
+    {
+        if (_useMongoDB)
+        {
+            try
+            {
+                await ReferralsCollection!.ReplaceOneAsync(
+                    r => r.Id == referral.Id,
+                    referral,
+                    new ReplaceOptions { IsUpsert = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save referral: {ReferralId}", referral.Id);
+            }
+        }
+    }
+
+    public async Task<Referral?> GetReferralByReferredUserAsync(string userId)
+    {
+        if (!_useMongoDB) return null;
+
+        try
+        {
+            return await ReferralsCollection!
+                .Find(r => r.ReferredUserId == userId)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get referral for referred user: {UserId}", userId);
+            return null;
+        }
+    }
+
+    public async Task<List<Referral>> GetReferralsByReferrerAsync(string userId)
+    {
+        if (!_useMongoDB) return new List<Referral>();
+
+        try
+        {
+            return await ReferralsCollection!
+                .Find(r => r.ReferrerUserId == userId)
+                .SortByDescending(r => r.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get referrals by referrer: {UserId}", userId);
+            return new List<Referral>();
+        }
+    }
+
+    public async Task SaveCreditGrantAsync(CreditGrant grant)
+    {
+        if (_useMongoDB)
+        {
+            try
+            {
+                await CreditGrantsCollection!.ReplaceOneAsync(
+                    g => g.Id == grant.Id,
+                    grant,
+                    new ReplaceOptions { IsUpsert = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save credit grant: {GrantId}", grant.Id);
+            }
+        }
+    }
+
+    public async Task<List<CreditGrant>> GetCreditGrantsForUserAsync(string userId)
+    {
+        if (!_useMongoDB) return new List<CreditGrant>();
+
+        try
+        {
+            return await CreditGrantsCollection!
+                .Find(g => g.UserId == userId)
+                .SortByDescending(g => g.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get credit grants for user: {UserId}", userId);
+            return new List<CreditGrant>();
+        }
+    }
+
+    public async Task SaveCampaignAsync(PromoCampaign campaign)
+    {
+        if (_useMongoDB)
+        {
+            try
+            {
+                await CampaignsCollection!.ReplaceOneAsync(
+                    c => c.Id == campaign.Id,
+                    campaign,
+                    new ReplaceOptions { IsUpsert = true });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to save campaign: {CampaignId}", campaign.Id);
+            }
+        }
+    }
+
+    public async Task<PromoCampaign?> GetCampaignByCodeAsync(string promoCode)
+    {
+        if (!_useMongoDB) return null;
+
+        try
+        {
+            return await CampaignsCollection!
+                .Find(c => c.PromoCode == promoCode && c.IsActive)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get campaign by code: {Code}", promoCode);
+            return null;
+        }
+    }
+
+    public async Task<List<PromoCampaign>> GetActiveCampaignsAsync()
+    {
+        if (!_useMongoDB) return new List<PromoCampaign>();
+
+        try
+        {
+            return await CampaignsCollection!
+                .Find(c => c.IsActive)
+                .SortByDescending(c => c.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get active campaigns");
+            return new List<PromoCampaign>();
         }
     }
 }

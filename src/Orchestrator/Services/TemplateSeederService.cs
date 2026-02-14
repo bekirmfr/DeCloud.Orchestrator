@@ -180,6 +180,30 @@ public class TemplateSeederService
                 Description = "Privacy-focused tools, VPNs, secure browsing, and censorship-resistant applications",
                 IconEmoji = "🔒",
                 DisplayOrder = 5
+            },
+            new TemplateCategory
+            {
+                Name = "Gaming",
+                Slug = "gaming",
+                Description = "Game servers for multiplayer games — Minecraft, Valheim, and more",
+                IconEmoji = "🎮",
+                DisplayOrder = 6
+            },
+            new TemplateCategory
+            {
+                Name = "Media & Storage",
+                Slug = "media-storage",
+                Description = "Media servers, file storage, and content management",
+                IconEmoji = "📦",
+                DisplayOrder = 7
+            },
+            new TemplateCategory
+            {
+                Name = "Automation",
+                Slug = "automation",
+                Description = "Workflow automation, CI/CD, and integration tools",
+                IconEmoji = "⚡",
+                DisplayOrder = 8
             }
         };
     }
@@ -188,13 +212,25 @@ public class TemplateSeederService
     {
         return new List<VmTemplate>
         {
+            // Original templates
             CreateStableDiffusionTemplate(),
             CreateStableDiffusionCpuTemplate(),
             CreatePostgreSqlTemplate(),
             CreateCodeServerTemplate(),
             CreatePrivateBrowserTemplate(),
             CreateShadowsocksProxyTemplate(),
-            CreateWebProxyBrowserTemplate()
+            CreateWebProxyBrowserTemplate(),
+            // High-demand new templates (Phase 2)
+            CreateOllamaTemplate(),
+            CreateMinecraftServerTemplate(),
+            CreateNextcloudTemplate(),
+            CreateJellyfinTemplate(),
+            CreateN8nTemplate(),
+            CreateWireGuardVpnTemplate(),
+            CreateRedisTemplate(),
+            CreateGiteaTemplate(),
+            CreateJupyterNotebookTemplate(),
+            CreateUpTimeKumaTemplate()
         };
     }
 
@@ -1615,6 +1651,984 @@ final_message: |
             Status = TemplateStatus.Published,
             IsFeatured = true,
 
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // HIGH-DEMAND TEMPLATES (Phase 2 — Growth Engine)
+    // ════════════════════════════════════════════════════════════════════════
+
+    private VmTemplate CreateOllamaTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Ollama + Open WebUI",
+            Slug = "ollama-webui",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "Private AI chatbot with Ollama and Open WebUI. Run Llama 3, Mistral, and other LLMs locally — no data leaves your VM.",
+            LongDescription = @"## Features
+- **Ollama** — Run open-source LLMs (Llama 3 8B, Mistral 7B, Gemma, etc.)
+- **Open WebUI** — Beautiful ChatGPT-like interface
+- **100% Private** — Your conversations never leave the VM
+- **No API keys needed** — Everything runs locally
+- **Multi-model support** — Switch between models instantly
+
+## Getting Started
+1. Wait for setup to complete (~5 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:8080` in your browser
+3. Create an account (local only, stays on your VM)
+4. Start chatting with AI!
+
+## Pre-installed Model
+- **Llama 3.2 3B** — Fast, capable, runs well on CPU
+- Download more models from the Open WebUI interface
+
+## Requirements
+- RAM: 8GB minimum (16GB recommended for larger models)
+- CPU: 4+ cores
+- No GPU required (but GPU accelerates inference significantly)",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/open-webui/open-webui",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 30L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "ai", "llm", "ollama", "chatbot", "private-ai", "llama", "mistral", "open-webui" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Ollama + Open WebUI — Private AI Chatbot
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - wget
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Ollama
+  - curl -fsSL https://ollama.com/install.sh | sh
+
+  # Start Ollama service
+  - systemctl enable ollama
+  - systemctl start ollama
+
+  # Pull a default model (lightweight, fast)
+  - ollama pull llama3.2:3b
+
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Run Open WebUI
+  - docker run -d --name open-webui --restart unless-stopped -p 8080:8080 --add-host=host.docker.internal:host-gateway -e OLLAMA_BASE_URL=http://host.docker.internal:11434 ghcr.io/open-webui/open-webui:main
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║        Ollama + Open WebUI - DeCloud Template                ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  WebUI:   https://${DECLOUD_DOMAIN}:8080                     ║
+    ║  Ollama:  http://localhost:11434                             ║
+    ║                                                               ║
+    ║  Models installed: llama3.2:3b                               ║
+    ║  Add more: ollama pull mistral                               ║
+    ║                                                               ║
+    ║  Your AI conversations are 100% private.                     ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  Ollama + Open WebUI is ready!
+
+  Access at: https://${DECLOUD_DOMAIN}:8080
+  Create an account on first visit.
+
+  Pre-installed model: llama3.2:3b
+  Add more: ollama pull mistral",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 8080, Protocol = "http", Description = "Open WebUI", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8080",
+            EstimatedCostPerHour = 0.08m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateMinecraftServerTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Minecraft Java Server",
+            Slug = "minecraft-server",
+            Version = "1.0.0",
+            Category = "gaming",
+            Description = "Minecraft Java Edition server with automatic world generation. Invite friends and play instantly — no port forwarding needed.",
+            LongDescription = @"## Features
+- Minecraft Java Edition server (latest version)
+- Automatic world generation
+- RCON console access for administration
+- Automatic restart on crash
+- Whitelist support
+
+## Getting Started
+1. Wait for setup to complete (~3 minutes)
+2. Connect in Minecraft: `${DECLOUD_DOMAIN}:25565`
+3. Server password is in MOTD (SSH in to view)
+
+## Server Properties
+- Default max players: 20
+- Difficulty: Normal
+- PVP: Enabled
+- View distance: 10 chunks",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://www.minecraft.net/en-us/download/server",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 20L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 30L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "gaming", "minecraft", "game-server", "multiplayer", "java" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Minecraft Java Server
+# DeCloud Template v1.0.0
+
+packages:
+  - openjdk-21-jre-headless
+  - wget
+  - screen
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Create minecraft user
+  - useradd -m -s /bin/bash minecraft
+
+  # Setup server directory
+  - mkdir -p /opt/minecraft
+  - cd /opt/minecraft
+
+  # Download latest Minecraft server
+  - wget -q -O /opt/minecraft/server.jar https://piston-data.mojang.com/v1/objects/4707d00eb834b446575d89a61a11b5d548d8c001/server.jar
+
+  # Accept EULA
+  - echo 'eula=true' > /opt/minecraft/eula.txt
+
+  # Create server.properties
+  - |
+    cat > /opt/minecraft/server.properties <<'EOF'
+    server-port=25565
+    max-players=20
+    difficulty=normal
+    pvp=true
+    view-distance=10
+    motd=DeCloud Minecraft Server
+    enable-rcon=true
+    rcon.port=25575
+    rcon.password=${DECLOUD_PASSWORD}
+    EOF
+
+  - chown -R minecraft:minecraft /opt/minecraft
+
+  # Create systemd service
+  - |
+    cat > /etc/systemd/system/minecraft.service <<'EOF'
+    [Unit]
+    Description=Minecraft Java Server
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=minecraft
+    WorkingDirectory=/opt/minecraft
+    ExecStart=/usr/bin/java -Xmx6G -Xms2G -jar server.jar nogui
+    Restart=on-failure
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+
+  - systemctl daemon-reload
+  - systemctl enable minecraft.service
+  - systemctl start minecraft.service
+
+final_message: |
+  Minecraft server is starting!
+
+  Connect in Minecraft: ${DECLOUD_DOMAIN}:25565
+  RCON password: ${DECLOUD_PASSWORD}",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 25565, Protocol = "tcp", Description = "Minecraft Game", IsPublic = true },
+                new TemplatePort { Port = 25575, Protocol = "tcp", Description = "RCON Console", IsPublic = false }
+            },
+
+            DefaultAccessUrl = "minecraft://${DECLOUD_DOMAIN}:25565",
+            EstimatedCostPerHour = 0.06m,
+            DefaultBandwidthTier = BandwidthTier.Standard,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateNextcloudTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Nextcloud",
+            Slug = "nextcloud",
+            Version = "1.0.0",
+            Category = "media-storage",
+            Description = "Self-hosted cloud storage and collaboration platform. Your own private Dropbox/Google Drive with no storage limits.",
+            LongDescription = @"## Features
+- File sync and share across all devices
+- Calendar, Contacts, Notes, Tasks
+- Document collaboration (OnlyOffice-ready)
+- Mobile and desktop apps
+- End-to-end encryption available
+
+## Getting Started
+1. Wait for setup (~5 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:8080`
+3. Login: admin / ${DECLOUD_PASSWORD}
+4. Install Nextcloud mobile/desktop apps and connect",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://nextcloud.com",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 100L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "cloud-storage", "nextcloud", "file-sharing", "collaboration", "self-hosted", "privacy" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Nextcloud — Private Cloud Storage
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - wget
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Create data directories
+  - mkdir -p /opt/nextcloud/data /opt/nextcloud/db
+
+  # Run Nextcloud with MariaDB via docker compose
+  - |
+    cat > /opt/nextcloud/docker-compose.yml <<'EOFCOMPOSE'
+    version: '3'
+    services:
+      db:
+        image: mariadb:11
+        container_name: nextcloud-db
+        restart: unless-stopped
+        environment:
+          MYSQL_ROOT_PASSWORD: ${DECLOUD_PASSWORD}
+          MYSQL_DATABASE: nextcloud
+          MYSQL_USER: nextcloud
+          MYSQL_PASSWORD: ${DECLOUD_PASSWORD}
+        volumes:
+          - /opt/nextcloud/db:/var/lib/mysql
+      app:
+        image: nextcloud:latest
+        container_name: nextcloud
+        restart: unless-stopped
+        ports:
+          - '8080:80'
+        environment:
+          MYSQL_HOST: db
+          MYSQL_DATABASE: nextcloud
+          MYSQL_USER: nextcloud
+          MYSQL_PASSWORD: ${DECLOUD_PASSWORD}
+          NEXTCLOUD_ADMIN_USER: admin
+          NEXTCLOUD_ADMIN_PASSWORD: ${DECLOUD_PASSWORD}
+          NEXTCLOUD_TRUSTED_DOMAINS: ${DECLOUD_DOMAIN}
+        volumes:
+          - /opt/nextcloud/data:/var/www/html
+        depends_on:
+          - db
+    EOFCOMPOSE
+
+  - cd /opt/nextcloud && docker compose up -d
+
+final_message: |
+  Nextcloud is ready!
+
+  Open: https://${DECLOUD_DOMAIN}:8080
+  Admin login: admin / ${DECLOUD_PASSWORD}",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 8080, Protocol = "http", Description = "Nextcloud WebUI", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8080",
+            EstimatedCostPerHour = 0.05m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateJellyfinTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Jellyfin Media Server",
+            Slug = "jellyfin",
+            Version = "1.0.0",
+            Category = "media-storage",
+            Description = "Free and open-source media server. Stream your movies, TV shows, and music from anywhere — your own private Netflix.",
+            LongDescription = @"## Features
+- Stream movies, TV shows, music, and photos
+- Transcoding for all devices
+- Beautiful web interface and mobile apps
+- No subscription fees (unlike Plex Pass)
+- Plugin ecosystem
+
+## Getting Started
+1. Wait for setup (~3 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:8096`
+3. Complete the setup wizard
+4. Upload media to `/opt/jellyfin/media/`",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://jellyfin.org",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 200L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "media-server", "jellyfin", "streaming", "movies", "music", "self-hosted" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Jellyfin Media Server
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/jellyfin/config /opt/jellyfin/cache /opt/jellyfin/media
+  - docker run -d --name jellyfin --restart unless-stopped -p 8096:8096 -v /opt/jellyfin/config:/config -v /opt/jellyfin/cache:/cache -v /opt/jellyfin/media:/media jellyfin/jellyfin:latest
+
+final_message: |
+  Jellyfin Media Server is ready!
+  Open: https://${DECLOUD_DOMAIN}:8096
+  Upload media to /opt/jellyfin/media/",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 8096, Protocol = "http", Description = "Jellyfin WebUI", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8096",
+            EstimatedCostPerHour = 0.05m,
+            DefaultBandwidthTier = BandwidthTier.Performance,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateN8nTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "n8n Workflow Automation",
+            Slug = "n8n-automation",
+            Version = "1.0.0",
+            Category = "automation",
+            Description = "Self-hosted workflow automation platform. Connect APIs, automate tasks, and build integrations — your own Zapier with full control.",
+            LongDescription = @"## Features
+- 400+ integrations (Slack, Google, GitHub, etc.)
+- Visual workflow builder
+- Custom code nodes (JavaScript/Python)
+- Webhook triggers
+- Self-hosted — your data stays private
+
+## Getting Started
+1. Wait for setup (~2 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:5678`
+3. Create your admin account
+4. Start building workflows!",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://n8n.io",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 2L * 1024 * 1024 * 1024,
+                DiskBytes = 20L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 30L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "automation", "n8n", "workflow", "zapier-alternative", "integrations", "self-hosted" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# n8n Workflow Automation
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/n8n/data
+  - docker run -d --name n8n --restart unless-stopped -p 5678:5678 -v /opt/n8n/data:/home/node/.n8n -e N8N_SECURE_COOKIE=false -e WEBHOOK_URL=https://${DECLOUD_DOMAIN}:5678/ n8nio/n8n:latest
+
+final_message: |
+  n8n is ready!
+  Open: https://${DECLOUD_DOMAIN}:5678
+  Create your admin account on first visit.",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 5678, Protocol = "http", Description = "n8n WebUI", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:5678",
+            EstimatedCostPerHour = 0.04m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateWireGuardVpnTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "WireGuard VPN Server",
+            Slug = "wireguard-vpn",
+            Version = "1.0.0",
+            Category = "privacy-security",
+            Description = "Personal VPN server using WireGuard. Fast, modern, and secure — browse privately from any device with auto-generated client configs.",
+            LongDescription = @"## Features
+- WireGuard VPN — fastest VPN protocol available
+- Auto-generated client configs (QR codes for mobile)
+- Web UI for managing clients
+- Kill switch support
+- Works on all devices (iOS, Android, Windows, Mac, Linux)
+
+## Getting Started
+1. Wait for setup (~2 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:51821`
+3. Login with password: `${DECLOUD_PASSWORD}`
+4. Click 'New Client' to create a VPN profile
+5. Scan QR code with WireGuard mobile app or download config",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/wg-easy/wg-easy",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 512 * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                RequiresGpu = false,
+                QualityTier = QualityTier.Burstable
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 1024 * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                RequiresGpu = false,
+                QualityTier = QualityTier.Burstable
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "vpn", "wireguard", "privacy", "security", "censorship-resistant" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# WireGuard VPN Server (wg-easy)
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/wireguard
+  - docker run -d --name wg-easy --restart unless-stopped -e WG_HOST=${DECLOUD_DOMAIN} -e PASSWORD=${DECLOUD_PASSWORD} -e WG_DEFAULT_DNS=1.1.1.1,8.8.8.8 -v /opt/wireguard:/etc/wireguard -p 51820:51820/udp -p 51821:51821/tcp --cap-add=NET_ADMIN --cap-add=SYS_MODULE --sysctl net.ipv4.ip_forward=1 --sysctl net.ipv4.conf.all.src_valid_mark=1 ghcr.io/wg-easy/wg-easy:latest
+
+final_message: |
+  WireGuard VPN is ready!
+  Management UI: https://${DECLOUD_DOMAIN}:51821
+  Password: ${DECLOUD_PASSWORD}
+  Click 'New Client' to create VPN profiles.",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 51820, Protocol = "udp", Description = "WireGuard VPN Tunnel", IsPublic = true },
+                new TemplatePort { Port = 51821, Protocol = "http", Description = "WireGuard Web UI", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:51821",
+            EstimatedCostPerHour = 0.02m,
+            DefaultBandwidthTier = BandwidthTier.Standard,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateRedisTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Redis Cache",
+            Slug = "redis",
+            Version = "1.0.0",
+            Category = "databases",
+            Description = "In-memory data store for caching, session management, and real-time analytics. Sub-millisecond latency.",
+            LongDescription = @"## Features
+- Redis 7 (latest stable)
+- Persistence enabled (RDB + AOF)
+- Password protected
+- Optimized memory configuration
+
+## Connection
+```
+redis-cli -h ${DECLOUD_DOMAIN} -p 6379 -a ${DECLOUD_PASSWORD}
+```",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://redis.io",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 1L * 1024 * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 20L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "database", "redis", "cache", "in-memory", "key-value" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Redis Cache Server
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/redis/data
+  - docker run -d --name redis --restart unless-stopped -p 6379:6379 -v /opt/redis/data:/data redis:7-alpine redis-server --requirepass ${DECLOUD_PASSWORD} --appendonly yes --maxmemory-policy allkeys-lru
+
+final_message: |
+  Redis is ready!
+  Connect: redis-cli -h ${DECLOUD_DOMAIN} -p 6379 -a ${DECLOUD_PASSWORD}",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 6379, Protocol = "tcp", Description = "Redis", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "redis://:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:6379",
+            EstimatedCostPerHour = 0.03m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateGiteaTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Gitea Git Server",
+            Slug = "gitea",
+            Version = "1.0.0",
+            Category = "dev-tools",
+            Description = "Lightweight, self-hosted Git service. Private repositories, issue tracking, and CI/CD — your own private GitHub.",
+            LongDescription = @"## Features
+- Git repository hosting (unlimited repos)
+- Issue tracking and project boards
+- Pull requests with code review
+- Built-in CI/CD (Gitea Actions)
+- OAuth2 authentication
+- Lightweight — runs on minimal resources
+
+## Getting Started
+1. Wait for setup (~2 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:3000`
+3. Complete initial setup
+4. Create your first repository!",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://gitea.io",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 2L * 1024 * 1024 * 1024,
+                DiskBytes = 20L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "git", "gitea", "version-control", "github-alternative", "dev-tools", "self-hosted" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Gitea Git Server
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - git
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/gitea/data /opt/gitea/config
+  - docker run -d --name gitea --restart unless-stopped -p 3000:3000 -p 2222:22 -v /opt/gitea/data:/data -v /opt/gitea/config:/etc/gitea -e GITEA__server__DOMAIN=${DECLOUD_DOMAIN} -e GITEA__server__ROOT_URL=https://${DECLOUD_DOMAIN}:3000 gitea/gitea:latest
+
+final_message: |
+  Gitea is ready!
+  Open: https://${DECLOUD_DOMAIN}:3000
+  Complete setup wizard on first visit.
+  Git SSH: ssh://git@${DECLOUD_DOMAIN}:2222",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 3000, Protocol = "http", Description = "Gitea WebUI", IsPublic = true },
+                new TemplatePort { Port = 2222, Protocol = "tcp", Description = "Git SSH", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:3000",
+            EstimatedCostPerHour = 0.04m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateJupyterNotebookTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Jupyter Notebook",
+            Slug = "jupyter-notebook",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "Interactive Python development environment for data science and ML. Pre-installed with NumPy, Pandas, Scikit-learn, and more.",
+            LongDescription = @"## Features
+- JupyterLab with Python 3.11
+- Pre-installed: NumPy, Pandas, Matplotlib, Scikit-learn, TensorFlow
+- Terminal access in browser
+- File upload/download
+- Git integration
+
+## Getting Started
+1. Wait for setup (~3 minutes)
+2. Open `https://${DECLOUD_DOMAIN}:8888`
+3. Token/password: `${DECLOUD_PASSWORD}`
+4. Start coding!",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://jupyter.org",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,
+                DiskBytes = 20L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "jupyter", "python", "data-science", "machine-learning", "notebook", "ai" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Jupyter Notebook / JupyterLab
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/jupyter/work
+  - docker run -d --name jupyter --restart unless-stopped -p 8888:8888 -v /opt/jupyter/work:/home/jovyan/work -e JUPYTER_TOKEN=${DECLOUD_PASSWORD} quay.io/jupyter/scipy-notebook:latest
+
+final_message: |
+  JupyterLab is ready!
+  Open: https://${DECLOUD_DOMAIN}:8888
+  Token: ${DECLOUD_PASSWORD}",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 8888, Protocol = "http", Description = "JupyterLab", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:8888",
+            EstimatedCostPerHour = 0.06m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateUpTimeKumaTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "Uptime Kuma",
+            Slug = "uptime-kuma",
+            Version = "1.0.0",
+            Category = "dev-tools",
+            Description = "Self-hosted monitoring tool. Track uptime of your websites, APIs, and services with beautiful dashboards and instant alerts.",
+            LongDescription = @"## Features
+- Monitor HTTP(s), TCP, Ping, DNS, and more
+- Beautiful status pages
+- Notifications via Slack, Discord, Telegram, Email, etc.
+- Multi-language support
+- 2FA authentication
+
+## Getting Started
+1. Wait for setup (~1 minute)
+2. Open `https://${DECLOUD_DOMAIN}:3001`
+3. Create admin account
+4. Add your first monitor!",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/louislam/uptime-kuma",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 512 * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                RequiresGpu = false,
+                QualityTier = QualityTier.Burstable
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 1024 * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                RequiresGpu = false,
+                QualityTier = QualityTier.Burstable
+            },
+
+            RequiresGpu = false,
+            Tags = new List<string> { "monitoring", "uptime", "status-page", "alerts", "self-hosted" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# Uptime Kuma — Self-hosted Monitoring
+# DeCloud Template v1.0.0
+
+packages:
+  - curl
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com | sh
+  - mkdir -p /opt/uptime-kuma/data
+  - docker run -d --name uptime-kuma --restart unless-stopped -p 3001:3001 -v /opt/uptime-kuma/data:/app/data louislam/uptime-kuma:latest
+
+final_message: |
+  Uptime Kuma is ready!
+  Open: https://${DECLOUD_DOMAIN}:3001
+  Create your admin account on first visit.",
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort { Port = 3001, Protocol = "http", Description = "Uptime Kuma", IsPublic = true }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:3001",
+            EstimatedCostPerHour = 0.02m,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsVerified = true,
+            PricingModel = TemplatePricingModel.Free,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
