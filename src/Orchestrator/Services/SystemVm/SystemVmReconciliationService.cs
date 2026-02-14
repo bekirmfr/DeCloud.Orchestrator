@@ -485,6 +485,57 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
+        // ════════════════════════════════════════════════════════════════════════
+        // Self-healing: redeploy isolated DHT VMs once bootstrap peers exist.
+        //
+        // DHT VMs deployed with 0 bootstrap peers are network-isolated — they
+        // can't discover other nodes via Kademlia (requires ≥1 peer) and mDNS
+        // only works same-subnet. Once other DHT nodes come online and their
+        // PeerIds are captured, redeploy the isolated VM so it boots with real
+        // bootstrap peers and joins the network.
+        //
+        // Safeguards:
+        //   - Only triggers when BootstrapPeerCount == 0 (won't touch connected VMs)
+        //   - Requires ≥2 min Active age (gives PeerId extraction time to work)
+        //   - GetBootstrapPeersAsync excludes this node, so the genesis node
+        //     won't redeploy until a second node's PeerId is captured
+        //   - ResetObligation clears DhtInfo, removing this node from the peer
+        //     list while it's being redeployed — prevents cascade (other nodes
+        //     won't see stale peers and won't themselves redeploy simultaneously)
+        // ════════════════════════════════════════════════════════════════════════
+        if (obligation.Role == SystemVmRole.Dht
+            && node.DhtInfo != null
+            && node.DhtInfo.BootstrapPeerCount == 0
+            && obligation.ActiveAt.HasValue
+            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 2)
+        {
+            var availablePeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
+            if (availablePeers.Count > 0)
+            {
+                _logger.LogInformation(
+                    "DHT VM {VmId} on node {NodeId} was deployed with 0 bootstrap peers but " +
+                    "{PeerCount} peer(s) are now available — redeploying to join the network",
+                    obligation.VmId, node.Id, availablePeers.Count);
+
+                try
+                {
+                    var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                    await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
+                        TransitionContext.Manual("Redeploying isolated DHT VM — bootstrap peers now available"));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to delete old DHT VM {VmId} on node {NodeId} — will retry next cycle",
+                        obligation.VmId, node.Id);
+                    return;
+                }
+
+                ResetObligation(node, obligation);
+                return;
+            }
+        }
+
         // VM exists and is not in error — still converged
     }
 
