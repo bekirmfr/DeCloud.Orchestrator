@@ -123,7 +123,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         [VmStatus.Running]       = [VmStatus.Stopping, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Stopping]      = [VmStatus.Stopped, VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Stopped]       = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Error],
-        [VmStatus.Deleting]      = [VmStatus.Deleted, VmStatus.Error],
+        [VmStatus.Deleting]      = [VmStatus.Deleted, VmStatus.Error, VmStatus.Running], // Running = recovery from false-positive delete
         [VmStatus.Migrating]     = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Error]         = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Stopped, VmStatus.Error],
         [VmStatus.Deleted]       = [] // Terminal state
@@ -243,7 +243,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         switch (to)
         {
             // ── Entering Running ──────────────────────────────────────
-            case VmStatus.Running when from is VmStatus.Provisioning or VmStatus.Stopped or VmStatus.Error or VmStatus.Stopping:
+            case VmStatus.Running when from is VmStatus.Provisioning or VmStatus.Stopped or VmStatus.Error or VmStatus.Stopping or VmStatus.Deleting:
                 await OnVmBecameRunningAsync(vm, context);
                 break;
 
