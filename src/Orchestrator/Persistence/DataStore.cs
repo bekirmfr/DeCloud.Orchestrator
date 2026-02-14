@@ -1209,29 +1209,30 @@ public class DataStore
                 IsPublic = true,
                 CreatedAt = DateTime.UtcNow
             },
-            // System VM images — use the standard ubuntu-24.04 base with
-            // role-specific configuration injected via cloud-init at deploy time.
+            // System VM images — role-specific config injected via cloud-init at deploy time.
+            // DHT uses Debian 12 (~2 GiB) instead of Ubuntu 24.04 (~3.5 GiB) to avoid
+            // overlay-smaller-than-backing boot failures and reduce download/storage overhead.
             new VmImage
             {
-                Id = "ubuntu-24.04-dht",
-                Name = "Ubuntu 24.04 LTS (DHT Node)",
+                Id = "debian-12-dht",
+                Name = "Debian 12 (DHT Node)",
                 Description = "Base image for DHT system VMs — libp2p/Kademlia node deployed via cloud-init",
                 OsFamily = "linux",
-                OsName = "ubuntu",
-                Version = "24.04",
-                SizeGb = 4,
+                OsName = "debian",
+                Version = "12",
+                SizeGb = 2,
                 IsPublic = false,
                 CreatedAt = DateTime.UtcNow
             },
             new VmImage
             {
-                Id = "ubuntu-24.04-relay",
-                Name = "Ubuntu 24.04 LTS (Relay Node)",
+                Id = "debian-12-relay",
+                Name = "Debian 12 (Relay Node)",
                 Description = "Base image for Relay system VMs — WireGuard relay deployed via cloud-init",
                 OsFamily = "linux",
-                OsName = "ubuntu",
-                Version = "24.04",
-                SizeGb = 4,
+                OsName = "debian",
+                Version = "12",
+                SizeGb = 2,
                 IsPublic = false,
                 CreatedAt = DateTime.UtcNow
             }

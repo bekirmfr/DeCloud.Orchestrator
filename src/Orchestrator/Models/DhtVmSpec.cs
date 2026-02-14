@@ -19,7 +19,7 @@ public static class DhtVmSpec
         MemoryBytes = 512L * 1024 * 1024,         // 512 MB
         DiskBytes = 2L * 1024 * 1024 * 1024,      // 2 GB
         QualityTier = QualityTier.Burstable,
-        ImageId = "ubuntu-24.04-dht",
+        ImageId = "debian-12-dht",
         ComputePointCost = 1,
     };
 
