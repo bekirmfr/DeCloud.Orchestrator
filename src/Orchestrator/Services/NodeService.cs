@@ -1430,7 +1430,11 @@ public class NodeService : INodeService
 
                         if (node.DhtInfo == null && vm.IsFullyReady)
                         {
-                            var advertiseIp = DhtNodeService.GetAdvertiseIp(node);
+                            // Prefer the advertise IP from the VM's deployment labels
+                            // (which contains the WG tunnel IP), falling back to the
+                            // host-level IP only if the label is missing.
+                            var advertiseIp = vm.Labels?.GetValueOrDefault("dht-advertise-ip")
+                                              ?? DhtNodeService.GetAdvertiseIp(node);
 
                             node.DhtInfo = new DhtNodeInfo
                             {
@@ -1443,8 +1447,8 @@ public class NodeService : INodeService
                             dhtInfoChanged = true;
 
                             _logger.LogWarning(
-                                "Reconstructed lost DhtInfo for node {NodeId} from healthy DHT VM {VmId}",
-                                nodeId, vm.Id);
+                                "Reconstructed lost DhtInfo for node {NodeId} from healthy DHT VM {VmId} (advertise: {Ip})",
+                                nodeId, vm.Id, advertiseIp);
                         }
 
                         if (node.DhtInfo != null && string.IsNullOrEmpty(node.DhtInfo.PeerId))
