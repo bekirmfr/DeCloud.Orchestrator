@@ -1412,6 +1412,25 @@ public class NodeService : INodeService
                 {
                     UpdateServiceReadiness(vm, reported.Services);
                     await _dataStore.SaveVmAsync(vm);
+
+                    // Extract DHT peer ID from System service StatusMessage.
+                    // DHT VMs report their libp2p peer ID via the cloud-init readiness
+                    // message (e.g., "peerId=12D3KooW..."). Persist it to the hosting
+                    // node's DhtInfo so GetBootstrapPeersAsync() can construct multiaddrs.
+                    if (vm.Spec.VmType == VmType.Dht && node?.DhtInfo != null
+                        && string.IsNullOrEmpty(node.DhtInfo.PeerId))
+                    {
+                        var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
+                        var peerId = ExtractPeerId(systemService?.StatusMessage);
+                        if (peerId != null)
+                        {
+                            node.DhtInfo.PeerId = peerId;
+                            await _dataStore.SaveNodeAsync(node);
+                            _logger.LogInformation(
+                                "DHT peer ID captured for node {NodeId}: {PeerId}",
+                                nodeId, peerId);
+                        }
+                    }
                 }
             }
             else if (!string.IsNullOrEmpty(reported.OwnerId))
@@ -2029,6 +2048,19 @@ public class NodeService : INodeService
 
             if (service.Status != newStatus)
             {
+                // Guard: Ready is a terminal success state — don't regress to TimedOut.
+                // This prevents a race where the node agent's timeout fires after the
+                // service already reached Ready (e.g., cloud-init done at 298s, but the
+                // node's 300s timer expired before the next heartbeat reported Ready).
+                if (service.Status == ServiceReadiness.Ready &&
+                    newStatus == ServiceReadiness.TimedOut)
+                {
+                    _logger.LogDebug(
+                        "VM {VmId} service '{ServiceName}' ignoring TimedOut — already Ready (ReadyAt: {ReadyAt})",
+                        vm.Id, service.Name, service.ReadyAt);
+                    continue;
+                }
+
                 var oldStatus = service.Status;
                 service.Status = newStatus;
                 service.LastCheckAt = DateTime.UtcNow;
@@ -2061,5 +2093,22 @@ public class NodeService : INodeService
                 "VM {VmId} all services ready ({Count} services)",
                 vm.Id, vm.Services.Count);
         }
+    }
+
+    /// <summary>
+    /// Extract a libp2p peer ID from a StatusMessage string.
+    /// Expected format: "peerId=12D3KooW..." (anywhere in the message).
+    /// Returns null if no peer ID is found.
+    /// </summary>
+    private static string? ExtractPeerId(string? statusMessage)
+    {
+        if (string.IsNullOrEmpty(statusMessage))
+            return null;
+
+        // Match "peerId=" followed by a libp2p peer ID (base58btc multihash, typically 12D3KooW... or Qm...)
+        var match = System.Text.RegularExpressions.Regex.Match(
+            statusMessage, @"peerId=([A-Za-z0-9]{20,})");
+
+        return match.Success ? match.Groups[1].Value : null;
     }
 }
