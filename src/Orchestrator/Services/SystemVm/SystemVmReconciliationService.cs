@@ -622,6 +622,46 @@ public class SystemVmReconciliationService : BackgroundService
         }
 
         // ════════════════════════════════════════════════════════════════════════
+        // Redeployment in progress: wait for node to confirm deletion.
+        //
+        // When a self-healing path triggers RedeployDhtVmAsync, the old VM is
+        // transitioned to Deleting but the obligation stays Active (not reset).
+        // This prevents the reconciliation loop from deploying a new VM while
+        // the old one still exists on the node agent — which would create
+        // orphaned records and duplicate-name rejections.
+        //
+        // Flow: Deleting → node confirms → Deleted → obligation resets → redeploy
+        // ════════════════════════════════════════════════════════════════════════
+        if (vm.Status == VmStatus.Deleting)
+        {
+            // Check for timeout — if the VM has been stuck in Deleting for >5 min,
+            // reset the obligation so the auto-recovery or retry logic can handle it
+            if (vm.UpdatedAt.HasValue && (DateTime.UtcNow - vm.UpdatedAt.Value).TotalMinutes > 5)
+            {
+                _logger.LogWarning(
+                    "{Role} VM {VmId} on node {NodeId} stuck in Deleting for >5 min — resetting obligation",
+                    obligation.Role, obligation.VmId, node.Id);
+                ResetObligation(node, obligation);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "{Role} VM {VmId} on node {NodeId} is Deleting — waiting for node confirmation",
+                    obligation.Role, obligation.VmId, node.Id);
+            }
+            return;
+        }
+
+        if (vm.Status == VmStatus.Deleted)
+        {
+            _logger.LogInformation(
+                "{Role} VM {VmId} on node {NodeId} deletion confirmed — resetting for redeployment",
+                obligation.Role, obligation.VmId, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
         // Self-healing: redeploy isolated DHT VMs once bootstrap peers exist.
         //
         // DHT VMs deployed with 0 bootstrap peers are network-isolated — they
@@ -635,9 +675,9 @@ public class SystemVmReconciliationService : BackgroundService
         //   - Requires ≥2 min Active age (gives PeerId extraction time to work)
         //   - GetBootstrapPeersAsync excludes this node, so the genesis node
         //     won't redeploy until a second node's PeerId is captured
-        //   - ResetObligation clears DhtInfo, removing this node from the peer
-        //     list while it's being redeployed — prevents cascade (other nodes
-        //     won't see stale peers and won't themselves redeploy simultaneously)
+        //   - RedeployDhtVmAsync only transitions to Deleting (does not reset
+        //     obligation), so re-entry is blocked by the Deleting handler above
+        //   - RedeployDhtVmAsync guards on vm.Status == Running (won't re-fire)
         // ════════════════════════════════════════════════════════════════════════
         if (obligation.Role == SystemVmRole.Dht
             && node.DhtInfo != null
@@ -707,26 +747,41 @@ public class SystemVmReconciliationService : BackgroundService
     }
 
     /// <summary>
-    /// Delete a DHT VM and reset its obligation for redeployment.
-    /// Shared by all DHT self-healing paths.
+    /// Begin redeployment of a DHT VM by transitioning it to Deleting.
+    /// The obligation is NOT reset here — it stays Active so VerifyActiveAsync
+    /// can track the delete flow: Deleting → node confirms → Deleted → reset → redeploy.
+    /// This prevents deploying a new VM while the old one still exists on the node.
     /// </summary>
     private async Task RedeployDhtVmAsync(Node node, SystemVmObligation obligation, string reason)
     {
+        // Guard: only redeploy VMs that are actually Running
+        var vm = await _dataStore.GetVmAsync(obligation.VmId);
+        if (vm == null || vm.Status != VmStatus.Running)
+        {
+            _logger.LogDebug(
+                "Skipping redeploy of {Role} VM {VmId} on node {NodeId} — VM is not Running (status: {Status})",
+                obligation.Role, obligation.VmId, node.Id, vm?.Status);
+            return;
+        }
+
         try
         {
             var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
             await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
                 TransitionContext.Manual(reason));
+
+            _logger.LogInformation(
+                "{Role} VM {VmId} on node {NodeId} transitioning to Deleting — " +
+                "obligation stays Active until node confirms deletion",
+                obligation.Role, obligation.VmId, node.Id);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "Failed to delete old DHT VM {VmId} on node {NodeId} — will retry next cycle",
-                obligation.VmId, node.Id);
-            return;
+                "Failed to transition {Role} VM {VmId} on node {NodeId} to Deleting — will retry next cycle",
+                obligation.Role, obligation.VmId, node.Id);
         }
-
-        ResetObligation(node, obligation);
+        // Obligation stays Active — VerifyActiveAsync handles the rest
     }
 
     /// <summary>
