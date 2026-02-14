@@ -1,8 +1,10 @@
 ﻿using System.Diagnostics;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
 
 namespace Orchestrator.Services;
 
@@ -37,6 +39,12 @@ public interface IWireGuardManager
     Task<string?> ExtractPublicKeyFromConfigAsync(string wgConfig, CancellationToken ct = default);
     Task<(string privateKey, string publicKey)> GenerateKeypairAsync(CancellationToken ct = default);
     bool IsValidWireGuardKey(string key);
+
+    /// <summary>
+    /// Cross-peer a newly-registered relay with all other active relays.
+    /// Calls each relay's add-relay-peer API to create bidirectional peering.
+    /// </summary>
+    Task CrossPeerRelaysAsync(Node newRelay, CancellationToken ct = default);
 }
 
 public class WireGuardManager : IWireGuardManager
@@ -48,15 +56,18 @@ public class WireGuardManager : IWireGuardManager
 
     private readonly ILogger<WireGuardManager> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly DataStore _dataStore;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private string? _cachedPublicKey;
 
     public WireGuardManager(
         ILogger<WireGuardManager> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        DataStore dataStore)
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _dataStore = dataStore;
     }
 
     public async Task<string> GetOrchestratorPublicKeyAsync(CancellationToken ct = default)
@@ -535,6 +546,144 @@ public class WireGuardManager : IWireGuardManager
         }
         catch
         {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Cross-peer a newly-registered relay with all other active relays.
+    /// For each existing active relay:
+    ///   1. Tell existing relay about the new relay (add-relay-peer)
+    ///   2. Tell new relay about the existing relay (add-relay-peer)
+    /// Uses HMAC authentication via relay's WireGuard private key.
+    /// </summary>
+    public async Task CrossPeerRelaysAsync(Node newRelay, CancellationToken ct = default)
+    {
+        if (newRelay.RelayInfo == null)
+        {
+            _logger.LogWarning("Cannot cross-peer: new relay {RelayId} has no RelayInfo", newRelay.Id);
+            return;
+        }
+
+        try
+        {
+            // Get all active relay nodes (excluding the new one)
+            var allNodes = await _dataStore.GetAllNodesAsync();
+            var existingRelays = allNodes
+                .Where(n => n.RelayInfo != null
+                         && n.RelayInfo.Status == RelayStatus.Active
+                         && n.Id != newRelay.Id
+                         && !string.IsNullOrEmpty(n.RelayInfo.WireGuardPublicKey)
+                         && !string.IsNullOrEmpty(n.RelayInfo.WireGuardEndpoint)
+                         && n.RelayInfo.RelaySubnet > 0)
+                .ToList();
+
+            if (existingRelays.Count == 0)
+            {
+                _logger.LogInformation(
+                    "No existing active relays to cross-peer with relay {RelayId} (subnet {Subnet})",
+                    newRelay.Id, newRelay.RelayInfo.RelaySubnet);
+                return;
+            }
+
+            _logger.LogInformation(
+                "Cross-peering relay {RelayId} (subnet {Subnet}) with {Count} existing relay(s)",
+                newRelay.Id, newRelay.RelayInfo.RelaySubnet, existingRelays.Count);
+
+            var successCount = 0;
+            var failureCount = 0;
+
+            foreach (var existingRelay in existingRelays)
+            {
+                try
+                {
+                    // 1. Tell existing relay about the new relay
+                    var addedOnExisting = await CallAddRelayPeerAsync(
+                        existingRelay, newRelay, ct);
+
+                    // 2. Tell new relay about the existing relay
+                    var addedOnNew = await CallAddRelayPeerAsync(
+                        newRelay, existingRelay, ct);
+
+                    if (addedOnExisting && addedOnNew)
+                    {
+                        successCount++;
+                        _logger.LogInformation(
+                            "✓ Cross-peered relay {NewRelay} ↔ {ExistingRelay}",
+                            newRelay.Id, existingRelay.Id);
+                    }
+                    else
+                    {
+                        failureCount++;
+                        _logger.LogWarning(
+                            "Partial cross-peer failure: {NewRelay} ↔ {ExistingRelay} " +
+                            "(onExisting={OnExisting}, onNew={OnNew})",
+                            newRelay.Id, existingRelay.Id, addedOnExisting, addedOnNew);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failureCount++;
+                    _logger.LogError(ex,
+                        "Error cross-peering relay {NewRelay} ↔ {ExistingRelay}",
+                        newRelay.Id, existingRelay.Id);
+                }
+            }
+
+            _logger.LogInformation(
+                "Cross-peering complete for relay {RelayId}: {Success} succeeded, {Failed} failed",
+                newRelay.Id, successCount, failureCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during cross-peering for relay {RelayId}", newRelay.Id);
+        }
+    }
+
+    /// <summary>
+    /// Call a relay's add-relay-peer endpoint to add another relay as its peer.
+    /// </summary>
+    private async Task<bool> CallAddRelayPeerAsync(
+        Node targetRelay, Node peerRelay, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var apiUrl = $"http://{targetRelay.PublicIp}:8080/api/relay/add-relay-peer";
+
+            var payload = new
+            {
+                public_key = peerRelay.RelayInfo!.WireGuardPublicKey,
+                endpoint = peerRelay.RelayInfo.WireGuardEndpoint,
+                allowed_ips = $"10.20.{peerRelay.RelayInfo.RelaySubnet}.0/24",
+                relay_id = peerRelay.Id
+            };
+
+            var content = new StringContent(
+                JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json");
+
+            var response = await client.PostAsync(apiUrl, content, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "Failed to add relay peer on {TargetRelay}: HTTP {Status} - {Error}",
+                    targetRelay.Id, response.StatusCode, error);
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error calling add-relay-peer on {TargetRelay} for peer {PeerRelay}",
+                targetRelay.Id, peerRelay.Id);
             return false;
         }
     }

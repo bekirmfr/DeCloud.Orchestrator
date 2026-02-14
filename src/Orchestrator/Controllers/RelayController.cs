@@ -109,6 +109,20 @@ public class RelayController : ControllerBase
             node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(node);
 
+            // Cross-peer with all other active relays (fire-and-forget)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _wireGuardManager.CrossPeerRelaysAsync(node, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Background cross-peering failed for relay {RelayId}", node.Id);
+                }
+            }, CancellationToken.None);
+
             return Ok(new
             {
                 success = true,
@@ -257,6 +271,36 @@ public class RelayController : ControllerBase
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
 
         return Convert.ToBase64String(hash);
+    }
+
+    [HttpGet("mesh-status")]
+    public async Task<IActionResult> GetMeshStatus()
+    {
+        var allNodes = await _dataStore.GetAllNodesAsync();
+        var relays = allNodes
+            .Where(n => n.RelayInfo != null && n.RelayInfo.Status == RelayStatus.Active)
+            .Select(n => new
+            {
+                relay_id = n.Id,
+                region = n.RelayInfo!.Region,
+                subnet = n.RelayInfo.RelaySubnet,
+                subnet_cidr = $"10.20.{n.RelayInfo.RelaySubnet}.0/24",
+                endpoint = n.RelayInfo.WireGuardEndpoint,
+                public_key_prefix = n.RelayInfo.WireGuardPublicKey?[..16] + "...",
+                connected_nodes = n.RelayInfo.ConnectedNodeIds.Count,
+                capacity = n.RelayInfo.MaxCapacity,
+                status = n.RelayInfo.Status.ToString()
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            total_relays = relays.Count,
+            expected_peerings = relays.Count > 1
+                ? relays.Count * (relays.Count - 1) / 2
+                : 0,
+            relays
+        });
     }
 }
 
