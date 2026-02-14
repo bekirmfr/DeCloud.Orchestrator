@@ -199,6 +199,16 @@ public class NodeService : INodeService
             "Node registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
             nodeId, request.MachineId, request.WalletAddress);
 
+        // =====================================================
+        // Check for existing node (re-registration scenario)
+        // =====================================================
+        // When a node re-registers (e.g., after orchestrator restart or agent
+        // restart), we must preserve system VM state from the existing record.
+        // Without this, re-registration overwrites DhtInfo, RelayInfo,
+        // SystemVmObligations, and ReservedResources with empty defaults,
+        // causing duplicate system VM deployments and resource drift.
+        var existingNode = await _dataStore.GetNodeAsync(nodeId);
+
         var node = new Node
         {
             Id = nodeId,
@@ -211,15 +221,32 @@ public class NodeService : INodeService
             HardwareInventory = request.HardwareInventory,
             // TotalResources will be set after performance evaluation
             TotalResources = new ResourceSnapshot(),
-            ReservedResources = new ResourceSnapshot(),
+            ReservedResources = existingNode?.ReservedResources ?? new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
-            RegisteredAt = request.RegisteredAt,
+            RegisteredAt = existingNode?.RegisteredAt ?? request.RegisteredAt,
             LastSeenAt = DateTime.UtcNow,
-            Pricing = request.Pricing ?? new NodePricing()
+            Pricing = request.Pricing ?? new NodePricing(),
+            // Preserve system VM state from existing node
+            SystemVmObligations = existingNode?.SystemVmObligations ?? new List<SystemVmObligation>(),
+            DhtInfo = existingNode?.DhtInfo,
+            RelayInfo = existingNode?.RelayInfo,
+            CgnatInfo = existingNode?.CgnatInfo,
         };
+
+        if (existingNode != null)
+        {
+            _logger.LogInformation(
+                "Node {NodeId} re-registering — preserved {ObligationCount} obligations, " +
+                "DhtInfo={HasDht}, RelayInfo={HasRelay}, Reserved={ReservedPoints} points",
+                nodeId,
+                node.SystemVmObligations.Count,
+                node.DhtInfo != null,
+                node.RelayInfo != null,
+                node.ReservedResources.ComputePoints);
+        }
 
         // =====================================================
         // STEP 5: Performance Evaluation & Capacity Calculation
