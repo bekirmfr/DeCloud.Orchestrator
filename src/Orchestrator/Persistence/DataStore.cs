@@ -1226,13 +1226,13 @@ public class DataStore
             },
             new VmImage
             {
-                Id = "ubuntu-24.04-relay",
-                Name = "Ubuntu 24.04 LTS (Relay Node)",
+                Id = "debian-12-relay",
+                Name = "Debian 12 (Relay Node)",
                 Description = "Base image for Relay system VMs — WireGuard relay deployed via cloud-init",
                 OsFamily = "linux",
-                OsName = "ubuntu",
-                Version = "24.04",
-                SizeGb = 4,
+                OsName = "debian",
+                Version = "12",
+                SizeGb = 2,
                 IsPublic = false,
                 CreatedAt = DateTime.UtcNow
             }

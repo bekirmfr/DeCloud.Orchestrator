@@ -988,12 +988,10 @@ public class VmService : IVmService
             "debian-12" => "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
             "fedora-40" => "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
             "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/alpine-virt-3.19.0-x86_64.qcow2",
-            // DHT uses Debian 12 (~2 GiB) — smaller than Ubuntu, systemd-compatible so cloud-init templates work as-is
-            "debian-12-dht" =>
+            // System VMs use Debian 12 (~2 GiB) — smaller than Ubuntu (~3.5 GiB), systemd-compatible
+            // so cloud-init templates work as-is. Both share the same cached base image.
+            "debian-12-dht" or "debian-12-relay" =>
                 "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-            // Relay uses Ubuntu 24.04 base; role-specific config is injected via cloud-init
-            "ubuntu-24.04-relay" =>
-                "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
             _ => null
         };
     }
