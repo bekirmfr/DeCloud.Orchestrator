@@ -156,6 +156,41 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
+        // Belt-and-suspenders: check the datastore for an existing VM of the same
+        // type on this node. Covers orphaned VMs not tracked by obligations (e.g.,
+        // after a failed redeployment where the node agent rejected the duplicate
+        // but the old VM was already transitioned to Deleting). Without this, the
+        // reconciliation loop creates new VM records that the node agent rejects,
+        // leaving orphaned ghost records in the orchestrator DB.
+        if (obligation.Role is SystemVmRole.Dht or SystemVmRole.Relay)
+        {
+            var vmType = obligation.Role == SystemVmRole.Dht ? VmType.Dht : VmType.Relay;
+            var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+            var existingVm = nodeVms.FirstOrDefault(v =>
+                v.Spec.VmType == vmType &&
+                v.Status is VmStatus.Running or VmStatus.Provisioning or VmStatus.Deleting);
+
+            if (existingVm != null)
+            {
+                _logger.LogDebug(
+                    "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
+                    obligation.Role, node.Id, existingVm.Id, existingVm.Status);
+
+                // If the existing VM is Running, adopt it instead of deploying a new one
+                if (existingVm.Status == VmStatus.Running)
+                {
+                    obligation.VmId = existingVm.Id;
+                    obligation.Status = SystemVmStatus.Active;
+                    obligation.ActiveAt = DateTime.UtcNow;
+
+                    _logger.LogInformation(
+                        "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
+                        obligation.Role, existingVm.Id, node.Id);
+                }
+                return;
+            }
+        }
+
         _logger.LogInformation(
             "Deploying {Role} system VM on node {NodeId} (dependencies met)",
             obligation.Role, node.Id);
@@ -626,49 +661,14 @@ public class SystemVmReconciliationService : BackgroundService
             }
         }
 
-        // ════════════════════════════════════════════════════════════════════════
-        // Self-healing: redeploy DHT VMs stuck with 0 connected peers.
-        //
-        // If a DHT VM was deployed with bootstrap peers but has 0 connected peers
-        // after a grace period, the bootstrap addresses were likely unreachable
-        // (wrong IP, port not forwarded, etc.). Redeploying picks up the latest
-        // peer list which may have correct addresses.
-        //
-        // ConnectedPeers is updated from heartbeat StatusMessage when the node
-        // agent reports "connectedPeers=N". When unavailable, this check is
-        // skipped (ConnectedPeers stays at 0 default, so we gate on
-        // LastHealthCheck being recent to avoid false positives on nodes that
-        // haven't reported yet).
-        //
-        // Safeguards:
-        //   - Requires BootstrapPeerCount > 0 (genesis nodes handled above)
-        //   - Requires ≥5 min Active age (generous grace for initial connection)
-        //   - Requires LastHealthCheck within 2 min (node is actively reporting)
-        //   - Only redeploys if new bootstrap peers are available (avoids churn)
-        // ════════════════════════════════════════════════════════════════════════
-        if (obligation.Role == SystemVmRole.Dht
-            && node.DhtInfo != null
-            && node.DhtInfo.BootstrapPeerCount > 0
-            && node.DhtInfo.ConnectedPeers == 0
-            && obligation.ActiveAt.HasValue
-            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 5
-            && node.DhtInfo.LastHealthCheck.HasValue
-            && (DateTime.UtcNow - node.DhtInfo.LastHealthCheck.Value).TotalMinutes <= 2)
-        {
-            var availablePeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
-            if (availablePeers.Count > 0)
-            {
-                _logger.LogWarning(
-                    "DHT VM {VmId} on node {NodeId} has {BootstrapCount} bootstrap peers but " +
-                    "0 connected peers after {Minutes:F0} min — redeploying with fresh peer list",
-                    obligation.VmId, node.Id, node.DhtInfo.BootstrapPeerCount,
-                    (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes);
-
-                await RedeployDhtVmAsync(node, obligation,
-                    "Redeploying DHT VM — 0 connected peers despite having bootstrap peers");
-                return;
-            }
-        }
+        // NOTE: A "0 connected peers despite having bootstrap peers" self-healing
+        // check was removed here. It caused a destructive loop: ConnectedPeers
+        // defaults to 0 and is only populated when the node agent StatusMessage
+        // includes "connectedPeers=N" — which many deployments never report.
+        // Each false-positive redeployment transitioned the running VM to Deleting
+        // (stripping ingress domains), then created a new VM record that the node
+        // agent rejected as a duplicate. The new DhtInfo also had ConnectedPeers=0,
+        // re-triggering the loop every 5 minutes.
 
         // VM exists and is not in error — still converged
     }
