@@ -21,6 +21,7 @@ namespace Orchestrator.Services.SystemVm;
 ///   - Legacy nodes registered before the obligation system (empty obligations list)
 ///   - Capability drift (node gains public IP → now eligible for Relay/Ingress)
 ///   - Stale Active obligations whose VMs disappeared (node restart, agent update)
+///   - Lost role info (DhtInfo/RelayInfo null after crash) with VM still running
 /// </summary>
 public class SystemVmReconciliationService : BackgroundService
 {
@@ -364,6 +365,16 @@ public class SystemVmReconciliationService : BackgroundService
             _ => null
         };
 
+        // ════════════════════════════════════════════════════════════════════════
+        // Fallback: role info lost (crash, DB corruption) but the system VM may
+        // still be running on the node. Search the datastore for a healthy VM of
+        // the correct type — only adopt if it's Running AND passing health checks.
+        // ════════════════════════════════════════════════════════════════════════
+        if (existingVmId == null)
+        {
+            existingVmId = await TryDiscoverHealthySystemVmAsync(node, role);
+        }
+
         if (existingVmId == null)
         {
             return new SystemVmObligation
@@ -443,6 +454,53 @@ public class SystemVmReconciliationService : BackgroundService
         };
     }
 
+    /// <summary>
+    /// Fallback discovery when role info (DhtInfo/RelayInfo) is lost but a system VM
+    /// may still be running on the node. Searches the datastore for a Running VM of
+    /// the correct type that is confirmed alive via recent service health checks.
+    /// Reconstructs role info from the discovered VM so the system self-heals.
+    ///
+    /// Only DHT VMs can be fully reconstructed — Relay VMs require WireGuard keys
+    /// that aren't stored on the VM record, so they fall through to fresh deployment.
+    /// </summary>
+    private async Task<string?> TryDiscoverHealthySystemVmAsync(Node node, SystemVmRole role)
+    {
+        if (role != SystemVmRole.Dht) return null;
+
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+        var candidate = nodeVms.FirstOrDefault(v =>
+            v.Spec.VmType == VmType.Dht &&
+            v.Status == VmStatus.Running &&
+            v.IsFullyReady &&
+            v.Services.Any(s => s.LastCheckAt.HasValue &&
+                (DateTime.UtcNow - s.LastCheckAt.Value).TotalMinutes <= 5));
+
+        if (candidate == null) return null;
+
+        _logger.LogInformation(
+            "Discovered healthy DHT VM {VmId} on node {NodeId} via datastore fallback — " +
+            "DhtInfo was lost but VM is alive and passing health checks",
+            candidate.Id, node.Id);
+
+        // Reconstruct DhtInfo from the discovered VM
+        var advertiseIp = node.IsBehindCgnat
+            && node.CgnatInfo != null
+            && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp)
+            ? node.CgnatInfo.TunnelIp
+            : node.PublicIp;
+
+        node.DhtInfo = new DhtNodeInfo
+        {
+            DhtVmId = candidate.Id,
+            ListenAddress = $"{advertiseIp}:4001",
+            ApiPort = 5080,
+            Status = DhtStatus.Active,
+            LastHealthCheck = DateTime.UtcNow,
+        };
+
+        return candidate.Id;
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // Active → verify VM still exists (self-heal if gone)
     // ════════════════════════════════════════════════════════════════════════
@@ -483,6 +541,57 @@ public class SystemVmReconciliationService : BackgroundService
                 obligation.Role, obligation.VmId, node.Id);
             ResetObligation(node, obligation);
             return;
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        // Self-healing: redeploy isolated DHT VMs once bootstrap peers exist.
+        //
+        // DHT VMs deployed with 0 bootstrap peers are network-isolated — they
+        // can't discover other nodes via Kademlia (requires ≥1 peer) and mDNS
+        // only works same-subnet. Once other DHT nodes come online and their
+        // PeerIds are captured, redeploy the isolated VM so it boots with real
+        // bootstrap peers and joins the network.
+        //
+        // Safeguards:
+        //   - Only triggers when BootstrapPeerCount == 0 (won't touch connected VMs)
+        //   - Requires ≥2 min Active age (gives PeerId extraction time to work)
+        //   - GetBootstrapPeersAsync excludes this node, so the genesis node
+        //     won't redeploy until a second node's PeerId is captured
+        //   - ResetObligation clears DhtInfo, removing this node from the peer
+        //     list while it's being redeployed — prevents cascade (other nodes
+        //     won't see stale peers and won't themselves redeploy simultaneously)
+        // ════════════════════════════════════════════════════════════════════════
+        if (obligation.Role == SystemVmRole.Dht
+            && node.DhtInfo != null
+            && node.DhtInfo.BootstrapPeerCount == 0
+            && obligation.ActiveAt.HasValue
+            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 2)
+        {
+            var availablePeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
+            if (availablePeers.Count > 0)
+            {
+                _logger.LogInformation(
+                    "DHT VM {VmId} on node {NodeId} was deployed with 0 bootstrap peers but " +
+                    "{PeerCount} peer(s) are now available — redeploying to join the network",
+                    obligation.VmId, node.Id, availablePeers.Count);
+
+                try
+                {
+                    var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                    await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
+                        TransitionContext.Manual("Redeploying isolated DHT VM — bootstrap peers now available"));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to delete old DHT VM {VmId} on node {NodeId} — will retry next cycle",
+                        obligation.VmId, node.Id);
+                    return;
+                }
+
+                ResetObligation(node, obligation);
+                return;
+            }
         }
 
         // VM exists and is not in error — still converged
