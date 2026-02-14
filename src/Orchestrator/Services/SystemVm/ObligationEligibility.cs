@@ -31,7 +31,12 @@ public static class ObligationEligibility
         bool hasPublicIp = node.HardwareInventory.Network.NatType == NatType.None;
         bool hasMinRelayCpu = node.TotalResources.ComputePoints >= MinRelayCores;
         bool hasMinRelayRam = node.HardwareInventory.Memory.TotalBytes >= MinRelayRam;
-        bool hasMinBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) >= MinRelayBandwidth;
+        // Treat null bandwidth as "not yet measured" — don't penalize nodes whose
+        // agent hasn't reported a speed test. Only enforce the threshold when a
+        // measurement exists (0 or positive). Blocking on null prevents all nodes
+        // without bandwidth data from ever getting a Relay obligation.
+        var bw = node.HardwareInventory.Network.BandwidthBitsPerSecond;
+        bool hasMinBandwidth = bw == null || bw >= MinRelayBandwidth;
 
         if (hasPublicIp && hasMinRelayCpu && hasMinRelayRam && hasMinBandwidth)
         {
