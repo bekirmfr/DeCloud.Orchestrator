@@ -31,7 +31,7 @@ public class DhtNodeService : IDhtNodeService
     /// libp2p listen port inside the DHT VM. The node agent forwards
     /// traffic from the host's overlay/public IP on this port to the VM.
     /// </summary>
-    private const int DhtListenPort = 4001;
+    public const int DhtListenPort = 4001;
 
     /// <summary>
     /// HTTP API port exposed by the DHT VM on localhost for the node agent to query.
@@ -153,8 +153,9 @@ public class DhtNodeService : IDhtNodeService
     /// Determine the IP that other nodes use to reach this node's DHT VM.
     /// Public nodes: use public IP.
     /// CGNAT nodes: use WireGuard tunnel IP (reachable via overlay).
+    /// Public so reconciliation and heartbeat processing can detect stale addresses.
     /// </summary>
-    private static string GetAdvertiseIp(Node node)
+    public static string GetAdvertiseIp(Node node)
     {
         if (node.IsBehindCgnat && node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
             return node.CgnatInfo.TunnelIp;
