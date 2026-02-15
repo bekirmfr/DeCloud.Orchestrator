@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-02-10
+**Last Updated:** 2026-02-15
 **Purpose:** Technical documentation of all major platform features and innovations
 
 ---
@@ -16,7 +16,8 @@
 7. [Resource Management](#resource-management)
 8. [Monitoring & Health](#monitoring--health)
 9. [Per-Service VM Readiness Tracking](#per-service-vm-readiness-tracking)
-10. [Future Features](#future-features)
+10. [DHT Infrastructure](#dht-infrastructure)
+11. [Future Features](#future-features)
 
 ---
 
@@ -1432,6 +1433,158 @@ The ARM domain XML (`GenerateLibvirtXmlMultiArch()` in `LibvirtVmManager.cs`) wa
 
 ---
 
+## DHT Infrastructure
+
+### Overview
+
+**Status:** ✅ Production-verified (2026-02-15)
+**Purpose:** Decentralized coordination layer using libp2p DHT nodes connected via WireGuard mesh
+
+DeCloud deploys dedicated DHT VMs that form a peer-to-peer coordination network over the relay's WireGuard mesh. Each DHT node runs a libp2p binary that discovers and connects to other DHT peers, creating a decentralized overlay independent of the central orchestrator.
+
+### Architecture
+
+```
+Orchestrator
+  ↓ (deploys DHT VMs with WG mesh labels)
+Node Agent (host)
+  ↓ (cloud-init provisions VM)
+DHT VM (QEMU/KVM)
+  ├─ WireGuard mesh enrollment (wg-mesh interface)
+  ├─ DHT bootstrap polling (orchestrator /api/dht/join)
+  └─ libp2p DHT binary (connects to peers over WG mesh)
+```
+
+**End-to-end flow:**
+1. Orchestrator deploys DHT VM with WG mesh labels (`wg-relay-endpoint`, `wg-relay-pubkey`, `wg-tunnel-ip`, `wg-relay-api`)
+2. Cloud-init writes labels to `/etc/decloud/wg-mesh.env` and runs `wg-mesh-enroll.sh`
+3. Enrollment script generates WG keypair, registers with relay, starts `wg-mesh` interface
+4. `dht-bootstrap-poll.sh` calls `POST /api/dht/join` on orchestrator to discover bootstrap peers
+5. DHT binary connects to peers over WireGuard mesh tunnel IPs (e.g., `10.20.1.199:4001`)
+6. DHT VM calls `POST /api/dht/ready` callback to report its peer ID
+
+### WireGuard Mesh Enrollment
+
+**Script:** `src/DeCloud.NodeAgent/CloudInit/Templates/shared/wg-mesh-enroll.sh`
+
+DHT VMs join the relay's WireGuard mesh to communicate with each other over private tunnel IPs. The enrollment script:
+
+1. **Sources environment** from `/etc/decloud/wg-mesh.env` (uses `set -a` for auto-export)
+2. **Generates WG keypair** via `wg genkey` / `wg pubkey`
+3. **Writes WG config** to `/etc/wireguard/wg-mesh.conf` with relay as peer
+4. **Registers with relay** using two-strategy approach:
+   - **Strategy 1:** NodeAgent proxy via virbr0 default gateway (`POST http://<gateway>:5100/api/relay/wg-mesh-enroll`)
+   - **Strategy 2:** Direct relay API fallback (`POST http://<relay-ip>:8080/api/relay/add-peer`)
+5. **Starts WG interface** via `wg-quick up wg-mesh`
+6. **Verifies connectivity** by pinging relay gateway over tunnel
+
+#### NodeAgent WG Mesh Enrollment Proxy
+
+**Controller:** `src/DeCloud.NodeAgent/Controllers/WgMeshEnrollController.cs`
+**Endpoint:** `POST /api/relay/wg-mesh-enroll`
+
+DHT VMs run inside QEMU with NAT networking (virbr0). Only UDP/51820 is NAT-forwarded from the host to the relay VM — port 8080 (relay API) is not reachable from inside other VMs. The NodeAgent proxy solves this by:
+
+1. DHT VM discovers NodeAgent via default gateway (virbr0 bridge IP, port 5100)
+2. NodeAgent finds relay VM's bridge IP via `IPortForwardingManager.GetRelayVmIpAsync()`
+3. NodeAgent forwards enrollment request to `http://<relay-bridge-ip>:8080/api/relay/add-peer`
+
+For CGNAT hosts without a local relay VM, the proxy discovers the relay's tunnel gateway IP (10.20.x.254) from the host's WireGuard interface addresses.
+
+```csharp
+// Two-strategy relay discovery
+// Strategy 1: Local relay VM (co-located on same host)
+var relayIp = await _portForwardingManager.GetRelayVmIpAsync(ct);
+
+// Strategy 2: Relay tunnel gateway (CGNAT host with WG tunnel)
+var relayTunnelIp = await DiscoverRelayTunnelGatewayAsync(ct);
+```
+
+### DHT Bootstrap Polling
+
+**Script:** `dht-bootstrap-poll.sh` (runs inside DHT VM)
+**Orchestrator endpoint:** `POST /api/dht/join`
+
+After WireGuard mesh enrollment, the DHT binary needs bootstrap peers to join the DHT network. The bootstrap poll script:
+
+1. Calls `POST /api/dht/join` on the orchestrator with the VM's peer ID and tunnel IP
+2. Orchestrator returns a list of known DHT peers (peer IDs + WG mesh addresses)
+3. DHT binary connects to peers over WireGuard tunnel (e.g., `10.20.1.199:4001`)
+
+### DHT Ready Callback
+
+**Controller:** `src/DeCloud.NodeAgent/Controllers/DhtCallbackController.cs`
+**Endpoint:** `POST /api/dht/ready`
+
+When the DHT binary starts and obtains a libp2p peer ID, the VM calls back to the NodeAgent:
+
+1. **Authentication:** HMAC-SHA256 token using machine ID as secret (`X-DHT-Token` header)
+2. **Service update:** Marks the VM's System service as `Ready` with `peerId=<libp2p-peer-id>`
+3. **Persistence:** Stores peer ID to `/var/lib/decloud/vms/{vmId}/dht-peer-id` for heartbeat reporting
+4. **Idempotency:** Updates peer ID even if service was already marked Ready (handles race with cloud-init readiness monitor)
+
+### Critical Bug Fixes (2026-02-15)
+
+Two bugs prevented WireGuard mesh enrollment from succeeding:
+
+#### Bug #1: Environment Variables Not Exported to Child Process
+
+**Symptom:** `wg-mesh-enroll.sh` logged `ERROR: Missing required env: WG_RELAY_ENDPOINT` despite `/etc/decloud/wg-mesh.env` containing correct values.
+
+**Root Cause:** Cloud-init runcmd used `bash -c 'source wg-mesh.env && bash wg-mesh-enroll.sh'`. The `source` command set shell variables in the parent `bash -c` context, but spawning `bash wg-mesh-enroll.sh` as a child process did not inherit them (shell variables are not exported by default).
+
+**Fix:**
+1. Modified `dht-vm-cloudinit.yaml` runcmd to use `set -a` (allexport) before sourcing
+2. Modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as a belt-and-suspenders approach
+
+```bash
+# Before (broken):
+bash -c 'source /etc/decloud/wg-mesh.env && bash /usr/local/bin/wg-mesh-enroll.sh'
+
+# After (fixed):
+bash -c 'set -a && source /etc/decloud/wg-mesh.env && set +a && /usr/local/bin/wg-mesh-enroll.sh'
+```
+
+#### Bug #2: Relay API Port 8080 Unreachable from DHT VM
+
+**Symptom:** Even with env vars fixed, `curl http://<relay-public-ip>:8080/api/relay/add-peer` from inside the DHT VM would fail because only UDP/51820 is NAT-forwarded.
+
+**Root Cause:** Both relay and DHT VMs use libvirt's `default` network (NAT via virbr0). The relay VM's port 8080 is only accessible from the host via the bridge IP, not from other VMs via the public IP.
+
+**Fix:** Created `WgMeshEnrollController` proxy on the NodeAgent. DHT VMs discover the NodeAgent via their default gateway (virbr0), and the NodeAgent proxies the enrollment request to the relay VM's bridge IP.
+
+### Production Verification
+
+Both DHT nodes confirmed connected after fixes:
+- **Node 1** (us-east-1): peerId `12D3KooWD8zw...B8n1`, advertiseIp `10.20.1.199`, connectedPeers: 1
+- **Node 2** (tr-south): peerId `12D3KooWHNLM...j8Yx`, advertiseIp `10.20.1.202`, connectedPeers: 1
+
+### Implementation Files
+
+**NodeAgent:**
+
+| File | Change |
+|------|--------|
+| `CloudInit/Templates/shared/wg-mesh-enroll.sh` | Self-sourcing env file + two-strategy registration (NodeAgent proxy first, direct fallback) |
+| `CloudInit/Templates/dht-vm-cloudinit.yaml` | Fixed runcmd to use `set -a` for env var export |
+| `Controllers/WgMeshEnrollController.cs` | **NEW** — Proxy endpoint for WG mesh enrollment |
+| `Controllers/DhtCallbackController.cs` | DHT ready callback with HMAC auth |
+
+**Orchestrator:**
+
+| File | Change |
+|------|--------|
+| `Services/DhtNodeService.cs` | DHT VM deployment with WG mesh labels |
+| `Controllers/DhtController.cs` | `/api/dht/join` endpoint for bootstrap peer discovery |
+
+**Relay VM:**
+
+| File | Change |
+|------|--------|
+| `CloudInit/Templates/relay-vm/relay-api.py` | `add_cgnat_peer` handles mesh enrollment; stale peer cleanup protects DHT peers (last octet >= 198) |
+
+---
+
 ## Future Features
 
 ### Phase 2: User Engagement
@@ -1452,7 +1605,6 @@ The ARM domain XML (`GenerateLibvirtXmlMultiArch()` in `LibvirtVmManager.cs`) wa
 ### Long-Term Vision
 - Mobile integration (two-tier architecture)
 - Smart contract coordination
-- DHT-based discovery
 - DeCloud Relay SDK (standalone product)
 
 ---
