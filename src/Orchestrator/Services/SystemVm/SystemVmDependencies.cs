@@ -14,9 +14,9 @@ namespace Orchestrator.Services.SystemVm;
 /// and calls back to the orchestrator to register its public key.
 ///
 /// The DHT→Relay dependency is conditional: it only applies when the node
-/// also has a Relay obligation. CGNAT-only nodes (no local relay) can deploy
-/// DHT immediately — AreDependenciesMet skips the Relay dep when there is no
-/// Relay obligation on the node.
+/// also has a Relay obligation. CGNAT-only nodes (no local relay) skip the
+/// Relay dependency in AreDependenciesMet, but still require a tunnel IP
+/// before DHT deployment (enforced by a separate guard in TryDeployAsync).
 /// </summary>
 public static class SystemVmDependencies
 {
