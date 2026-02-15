@@ -127,6 +127,22 @@ public class SystemVmReconciliationService : BackgroundService
         if (!SystemVmDependencies.AreDependenciesMet(obligation.Role, node.SystemVmObligations))
             return; // Dependencies not met yet — will try again next cycle
 
+        // Guard: CGNAT nodes must have a tunnel IP before deploying DHT.
+        // Without this, GetAdvertiseIp() returns the unreachable public IP,
+        // which gets baked into the DHT VM's cloud-init as dht-advertise-ip.
+        // The self-healing in VerifyActiveAsync catches this eventually, but
+        // preventing it avoids a wasted deploy cycle and a window where peers
+        // receive an unreachable address.
+        if (obligation.Role == SystemVmRole.Dht
+            && node.IsBehindCgnat
+            && string.IsNullOrEmpty(node.CgnatInfo?.TunnelIp))
+        {
+            _logger.LogDebug(
+                "Deferring DHT deploy on CGNAT node {NodeId} — tunnel IP not yet assigned",
+                node.Id);
+            return;
+        }
+
         // Guard: skip if another obligation for the same role is already Deploying or Active.
         // This prevents duplicate VMs when registration and the background loop race.
         var alreadyDeployed = node.SystemVmObligations.Any(o =>
