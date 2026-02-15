@@ -127,20 +127,6 @@ public class SystemVmReconciliationService : BackgroundService
         if (!SystemVmDependencies.AreDependenciesMet(obligation.Role, node.SystemVmObligations))
             return; // Dependencies not met yet — will try again next cycle
 
-        // CGNAT prerequisite: DHT deployment requires a relay tunnel IP so
-        // GetAdvertiseIp() returns the overlay address, not the unreachable
-        // public IP. The heartbeat's SyncCgnatStateFromHeartbeatAsync assigns
-        // relays within one cycle (15s) — just hold DHT in Pending until then.
-        if (obligation.Role == SystemVmRole.Dht
-            && node.IsBehindCgnat
-            && string.IsNullOrEmpty(node.CgnatInfo?.TunnelIp))
-        {
-            _logger.LogDebug(
-                "Deferring DHT deploy on CGNAT node {NodeId} — relay tunnel not assigned yet",
-                node.Id);
-            return;
-        }
-
         // Guard: skip if another obligation for the same role is already Deploying or Active.
         // This prevents duplicate VMs when registration and the background loop race.
         var alreadyDeployed = node.SystemVmObligations.Any(o =>
