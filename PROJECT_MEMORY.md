@@ -1,6 +1,6 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-02-10
+**Last Updated:** 2026-02-15
 **Status:** Phase 1 (Marketplace Foundation) COMPLETE — Moving to Phase 2 (User Engagement)
 
 ---
@@ -60,7 +60,7 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 ### VM Types
 1. **General VMs** - User workloads (AI, web apps, databases)
 2. **Relay VMs** - Auto-deployed for CGNAT node networking
-3. **DHT VMs** - Future: Decentralized coordination
+3. **DHT VMs** - Decentralized coordination via libp2p over WireGuard mesh (production-verified 2026-02-15)
 4. **Inference VMs** - Future: AI-specific optimizations
 
 ### Quality Tiers & Resource Allocation
@@ -130,6 +130,7 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ Web Proxy Browser template (Ultraviolet proxy with Cross-Origin Isolation)
 ✅ CentralIngress-aware port allocation (HTTP/WS ports handled by Caddy, only TCP/UDP gets iptables DNAT)
 ✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator side complete, NodeAgent pending)
+✅ DHT infrastructure: libp2p DHT nodes over WireGuard mesh with bootstrap polling and NodeAgent enrollment proxy
 
 ### Recent Achievements (2026-01-30)
 
@@ -653,7 +654,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 ❌ **Mandatory Staking System** - Contradicts "universal participation" principle  
 ❌ **Live Migration** - Technically hard, low user demand  
 ❌ **Team Workspaces** - Niche until user base grows  
-❌ **DHT-based Discovery** - Centralized marketplace works for MVP, can add DHT layer later  
+~~❌ **DHT-based Discovery**~~ → ✅ **Implemented (2026-02-15)** — DHT VMs deployed with libp2p over WireGuard mesh, bootstrap polling via orchestrator
 
 **Rationale:** Focus on **creation and community** features that drive network effects.
 
@@ -779,7 +780,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - **Mobile Tier:** WebAssembly tasks, ML inference, distributed storage
   - **Server Tier:** Full VM hosting (existing)
 - **Smart Contract Coordination:** Move toward true decentralization
-- **DHT VMs:** Decentralized state coordination
+- ✅ **DHT VMs:** Decentralized coordination — production-verified (2026-02-15)
 - **Storage VMs:** Distributed persistence layer
 
 ### Long-Term Vision
@@ -797,7 +798,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ---
 
-## Current Development Focus (2026-02-10)
+## Current Development Focus (2026-02-15)
 
 **All Phase 1 Goals Complete:**
 - ✅ Node Marketplace (Goal 1.1) - **COMPLETE (2026-01-30)**
@@ -868,6 +869,14 @@ Based on strategic analysis, these should be **deferred or rejected**:
   - Lifecycle integration: services reset to Pending on Running transition
   - ARM domain XML fixed: added serial, video (virtio), rng, guest-agent channel
   - **NodeAgent side:** Implementation spec created (`NODE_AGENT_READINESS_CHANGES.md`), pending development
+- ✅ DHT Infrastructure - **PRODUCTION-VERIFIED (2026-02-15)**
+  - DHT VMs deployed with WireGuard mesh enrollment over relay tunnel
+  - libp2p DHT binary connects peers via WG mesh tunnel IPs (10.20.x.x:4001)
+  - Bootstrap polling via orchestrator `POST /api/dht/join`
+  - DHT ready callback (`POST /api/dht/ready`) with HMAC-SHA256 auth
+  - NodeAgent WG mesh enrollment proxy (`POST /api/relay/wg-mesh-enroll`) — solves port 8080 unreachability from NAT'd VMs
+  - Two critical bugs fixed: shell env var export (`set -a`) + relay API proxy for NAT bypass
+  - Verified: both DHT nodes connected with `connectedPeers: 1` over WG mesh
 - ✅ Targeted Node Selection (Goal 2.2) - **COMPLETE (2026-01-30)**
   - Deploy VM button on marketplace cards, target node banner in creation modal
 - ✅ User Reviews Backend (Goal 2.3) - **COMPLETE (backend)**
@@ -902,6 +911,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Monitoring (heartbeats, metrics, events)
 - ✅ Centralized VM lifecycle management (state machine, consistent side effects)
 - ✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator complete)
+- ✅ DHT infrastructure (libp2p nodes over WireGuard mesh, bootstrap polling, NodeAgent enrollment proxy)
 
 **Phase 1 Complete - Marketplace Foundation:**
 - ✅ Node marketplace with search/filtering/featured nodes (Goal 1.1)
