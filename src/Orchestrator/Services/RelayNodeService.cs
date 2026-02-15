@@ -50,6 +50,7 @@ public class RelayNodeService : IRelayNodeService
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly ICentralIngressService _ingressService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<RelayNodeService> _logger;
 
     // Criteria for relay eligibility
@@ -62,12 +63,14 @@ public class RelayNodeService : IRelayNodeService
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
         ICentralIngressService ingressService,
+        IHttpClientFactory httpClientFactory,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _ingressService = ingressService;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -237,11 +240,11 @@ public class RelayNodeService : IRelayNodeService
     /// </summary>
     private async Task<int> AllocateRelaySubnetAsync()
     {
-        // Get all existing relay subnets
+        // Get all existing relay subnets — include ALL statuses (not just Active)
+        // to prevent subnet collisions with Initializing or Degraded relays.
         var usedSubnets = (await _dataStore.GetAllNodesAsync())
-            .Where(n => n.RelayInfo?.Status == RelayStatus.Active)
-            .Select(n => n.RelayInfo?.RelaySubnet)
-            .Where(s => s > 0)  // Filter out uninitialized (0)
+            .Where(n => n.RelayInfo != null && n.RelayInfo.RelaySubnet > 0)
+            .Select(n => n.RelayInfo!.RelaySubnet)
             .ToHashSet();
 
         // Find first available subnet (1-254)
@@ -370,8 +373,8 @@ public class RelayNodeService : IRelayNodeService
 
         try
         {
-            // Allocate tunnel IP for CGNAT node
-            var tunnelIp = AllocateTunnelIp(relayNode);
+            // Allocate tunnel IP for CGNAT node (scans used IPs to avoid collision)
+            var tunnelIp = await AllocateTunnelIpAsync(relayNode);
 
             // Generate WireGuard configuration
             var wgConfig = await GenerateWireGuardConfigAsync(cgnatNode, relayNode, tunnelIp, ct);
@@ -458,10 +461,13 @@ public class RelayNodeService : IRelayNodeService
     }
 
     /// <summary>
-    /// Allocate tunnel IP for CGNAT node within relay's subnet
-    /// Format: 10.20.{relaySubnet}.{2-253}
+    /// Allocate tunnel IP for CGNAT node within relay's subnet.
+    /// Scans ConnectedNodeIds to find actually-used octets, avoiding collisions
+    /// when nodes disconnect and rejoin (load-counter approach would reuse IPs).
+    /// Format: 10.20.{relaySubnet}.{2-197}
+    /// .198-.199 reserved for DHT VMs, .254 for relay gateway.
     /// </summary>
-    private string AllocateTunnelIp(Node relayNode)
+    private async Task<string> AllocateTunnelIpAsync(Node relayNode)
     {
         if (relayNode.RelayInfo == null)
         {
@@ -471,33 +477,50 @@ public class RelayNodeService : IRelayNodeService
         var relaySubnet = relayNode.RelayInfo.RelaySubnet;
         if (relaySubnet == 0)
         {
-            // Fallback for old relays without subnet assigned
-            relaySubnet = 0;
             _logger.LogWarning(
                 "Relay {RelayId} has no subnet assigned, using subnet 0",
                 relayNode.Id);
         }
 
-        // IPs in relay's subnet:
-        // .1 = orchestrator peer on this relay's subnet (not used)
-        // .254 = relay VM gateway
-        // .2 - .253 = available for CGNAT nodes (252 IPs)
-        var hostId = relayNode.RelayInfo.CurrentLoad + 2;
+        // Collect octets already in use by scanning connected nodes' tunnel IPs
+        var usedOctets = new HashSet<int>();
+        var prefix = $"10.20.{relaySubnet}.";
 
-        if (hostId > 253)
+        foreach (var connectedNodeId in relayNode.RelayInfo.ConnectedNodeIds)
         {
-            throw new InvalidOperationException(
-            $"Relay {relayNode.Id} (subnet 10.20.{relaySubnet}.0/24) has reached capacity " +
-            $"(252 CGNAT nodes per relay, currently: {relayNode.RelayInfo.CurrentLoad})");
+            var connectedNode = await _dataStore.GetNodeAsync(connectedNodeId);
+            var ip = connectedNode?.CgnatInfo?.TunnelIp;
+            if (ip != null && ip.StartsWith(prefix))
+            {
+                var lastOctet = ip[prefix.Length..];
+                if (int.TryParse(lastOctet, out var octet))
+                    usedOctets.Add(octet);
+            }
         }
 
-        var tunnelIp = $"10.20.{relaySubnet}.{hostId}";
+        // IPs in relay's subnet:
+        // .1 = reserved
+        // .2 - .197 = available for CGNAT nodes (196 IPs)
+        // .198-.199 = reserved for DHT VMs (regional fallback / co-located)
+        // .200-.253 = reserved for DHT VMs on CGNAT hosts (200 + hostOctet)
+        // .254 = relay VM gateway
+        for (int octet = 2; octet <= 197; octet++)
+        {
+            if (!usedOctets.Contains(octet))
+            {
+                var tunnelIp = $"10.20.{relaySubnet}.{octet}";
 
-        _logger.LogDebug(
-            "Allocated tunnel IP {TunnelIp} for CGNAT node on relay {RelayId} (subnet {Subnet}, load {Load})",
-            tunnelIp, relayNode.Id, relaySubnet, relayNode.RelayInfo.CurrentLoad);
+                _logger.LogDebug(
+                    "Allocated tunnel IP {TunnelIp} for CGNAT node on relay {RelayId} (subnet {Subnet}, used {Used}/{Max})",
+                    tunnelIp, relayNode.Id, relaySubnet, usedOctets.Count, 196);
 
-        return tunnelIp;
+                return tunnelIp;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Relay {relayNode.Id} (subnet 10.20.{relaySubnet}.0/24) has reached capacity " +
+            $"(196 CGNAT nodes per relay, currently: {usedOctets.Count} in use)");
     }
 
     private async Task<string> GenerateWireGuardConfigAsync(
@@ -688,7 +711,8 @@ PersistentKeepalive = 25";
                 "Registering CGNAT node {NodeId} with relay {RelayId} at {ApiUrl}",
                 cgnatNode.Id, relayNode.Id, relayApiUrl);
 
-            var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var httpClient = _httpClientFactory.CreateClient("RelayApi");
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
             var content = new StringContent(
                 System.Text.Json.JsonSerializer.Serialize(payload),
                 System.Text.Encoding.UTF8,
@@ -802,7 +826,8 @@ PersistentKeepalive = 25";
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(TimeSpan.FromSeconds(3));
 
-                var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                var httpClient = _httpClientFactory.CreateClient("RelayApi");
+                httpClient.Timeout = TimeSpan.FromSeconds(3);
                 var content = new StringContent(
                     System.Text.Json.JsonSerializer.Serialize(payload),
                     System.Text.Encoding.UTF8,
@@ -996,7 +1021,8 @@ PersistentKeepalive = 25";
             // ========================================
             try
             {
-                var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var httpClient = _httpClientFactory.CreateClient("RelayApi");
+                httpClient.Timeout = TimeSpan.FromSeconds(5);
                 var checkResponse = await httpClient.GetAsync(checkUrl, ct);
 
                 if (checkResponse.IsSuccessStatusCode)
@@ -1069,7 +1095,8 @@ PersistentKeepalive = 25";
                 description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
             };
 
-            var httpClient2 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var httpClient2 = _httpClientFactory.CreateClient("RelayApi");
+            httpClient2.Timeout = TimeSpan.FromSeconds(10);
             var content = new StringContent(
                 System.Text.Json.JsonSerializer.Serialize(payload),
                 System.Text.Encoding.UTF8,
