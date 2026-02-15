@@ -28,7 +28,7 @@ public static class SystemVmLabelSchema
             "node-region",
             "node-id",
             // wg-relay-endpoint, wg-relay-pubkey, wg-tunnel-ip, wg-relay-api
-            // are optional — resolved by DhtNodeService.ResolveWireGuardLabelsAsync
+            // are optional — resolved by DhtNodeService.ResolveWireGuardLabels
             // when a relay is available. DHT VMs can boot without WG mesh.
         ],
     };

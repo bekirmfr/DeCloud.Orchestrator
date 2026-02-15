@@ -54,9 +54,15 @@ public class DhtNodeService : IDhtNodeService
         try
         {
             // ========================================
+            // Fetch all nodes once — used by both bootstrap peer collection
+            // and WireGuard label resolution, avoiding redundant DB queries.
+            // ========================================
+            var allNodes = await _dataStore.GetAllNodesAsync();
+
+            // ========================================
             // STEP 1: Collect bootstrap peers from existing DHT nodes
             // ========================================
-            var bootstrapPeers = await GetBootstrapPeersAsync(excludeNodeId: node.Id);
+            var bootstrapPeers = CollectBootstrapPeers(allNodes, excludeNodeId: node.Id);
 
             _logger.LogInformation(
                 "DHT VM on node {NodeId} will bootstrap from {PeerCount} peers",
@@ -78,7 +84,7 @@ public class DhtNodeService : IDhtNodeService
             // ========================================
             // STEP 3b: Resolve WireGuard relay info for mesh enrollment
             // ========================================
-            var wgLabels = await ResolveWireGuardLabelsAsync(node);
+            var wgLabels = ResolveWireGuardLabels(node, allNodes);
 
             // Override advertise IP with WG tunnel IP for mesh connectivity
             // This way DHT VMs communicate directly via WireGuard mesh,
@@ -160,10 +166,23 @@ public class DhtNodeService : IDhtNodeService
         }
     }
 
+    /// <summary>
+    /// Interface method: fetches nodes from DB then delegates to the pure collector.
+    /// Used by DhtController.DhtJoin where no pre-fetched node list is available.
+    /// </summary>
     public async Task<List<string>> GetBootstrapPeersAsync(string? excludeNodeId = null)
     {
-        var peers = new List<string>();
         var nodes = await _dataStore.GetAllNodesAsync();
+        return CollectBootstrapPeers(nodes, excludeNodeId);
+    }
+
+    /// <summary>
+    /// Pure function: collect bootstrap peers from a pre-fetched node list.
+    /// Avoids redundant GetAllNodesAsync() calls during deployment.
+    /// </summary>
+    private static List<string> CollectBootstrapPeers(IEnumerable<Node> nodes, string? excludeNodeId = null)
+    {
+        var peers = new List<string>();
 
         foreach (var node in nodes)
         {
@@ -200,13 +219,13 @@ public class DhtNodeService : IDhtNodeService
     }
 
     /// <summary>
-    /// Resolve WireGuard relay configuration for a DHT VM.
+    /// Resolve WireGuard relay configuration for a DHT VM using a pre-fetched node list.
     /// Returns labels to pass through to cloud-init via the VM spec.
     ///
     /// Public IP nodes: relay is co-located on the same node.
     /// CGNAT nodes: relay info from CgnatInfo (registered during WireGuard enrollment).
     /// </summary>
-    private async Task<Dictionary<string, string>> ResolveWireGuardLabelsAsync(Node node)
+    private Dictionary<string, string> ResolveWireGuardLabels(Node node, IEnumerable<Node> allNodes)
     {
         var labels = new Dictionary<string, string>();
 
@@ -215,7 +234,6 @@ public class DhtNodeService : IDhtNodeService
             // For CGNAT nodes: look up relay via AssignedRelayNodeId
             if (node.IsBehindCgnat && node.CgnatInfo != null)
             {
-                var allNodes = await _dataStore.GetAllNodesAsync();
                 var relayNode = allNodes.FirstOrDefault(n =>
                     n.Id == node.CgnatInfo.AssignedRelayNodeId &&
                     n.RelayInfo != null);
@@ -235,8 +253,18 @@ public class DhtNodeService : IDhtNodeService
                         var parts = tunnelIp.Split('.');
                         if (parts.Length == 4 && int.TryParse(parts[3], out var hostOctet))
                         {
-                            var dhtOctet = Math.Min(200 + hostOctet, 253);
-                            labels["wg-tunnel-ip"] = $"{parts[0]}.{parts[1]}.{parts[2]}.{dhtOctet}/24";
+                            var dhtOctet = 200 + hostOctet;
+                            if (dhtOctet > 253)
+                            {
+                                _logger.LogWarning(
+                                    "DHT VM on CGNAT node {NodeId}: host octet {HostOctet} produces " +
+                                    "DHT octet {DhtOctet} (>253) — skipping WireGuard mesh enrollment",
+                                    node.Id, hostOctet, dhtOctet);
+                            }
+                            else
+                            {
+                                labels["wg-tunnel-ip"] = $"{parts[0]}.{parts[1]}.{parts[2]}.{dhtOctet}/24";
+                            }
                         }
                     }
 
@@ -254,8 +282,7 @@ public class DhtNodeService : IDhtNodeService
             }
 
             // For public IP nodes: find the relay VM running on this node
-            var nodes = await _dataStore.GetAllNodesAsync();
-            var localRelay = nodes.FirstOrDefault(n =>
+            var localRelay = allNodes.FirstOrDefault(n =>
                 n.RelayInfo != null &&
                 n.Id == node.Id);
 
@@ -275,7 +302,7 @@ public class DhtNodeService : IDhtNodeService
             }
 
             // No relay found — try to find any active relay in the same region
-            var regionRelay = nodes
+            var regionRelay = allNodes
                 .Where(n => n.RelayInfo != null &&
                             n.Status == NodeStatus.Online &&
                             n.Region == node.Region)
