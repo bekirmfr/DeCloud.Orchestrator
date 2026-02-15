@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 
@@ -90,6 +91,11 @@ public class DhtNodeService : IDhtNodeService
                     node.Id, advertiseIp);
             }
 
+            // ========================================
+            // STEP 3a: Generate auth token for DHT VM → orchestrator authentication
+            // ========================================
+            var authToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
             var labels = new Dictionary<string, string>
             {
                 { "role", "dht" },
@@ -97,6 +103,7 @@ public class DhtNodeService : IDhtNodeService
                 { "dht-api-port", DhtApiPort.ToString() },
                 { "dht-advertise-ip", advertiseIp },
                 { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
+                { "dht-auth-token", authToken },
                 { "node-region", node.Region ?? "default" },
                 { "node-id", node.Id },
                 { "architecture", node.Architecture ?? "x86_64" }
@@ -130,6 +137,12 @@ public class DhtNodeService : IDhtNodeService
                 BootstrapPeerCount = bootstrapPeers.Count,
                 Status = DhtStatus.Initializing,
             };
+
+            // Store auth token on the DHT obligation for /api/dht/join verification
+            var dhtObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.Dht);
+            if (dhtObligation != null)
+                dhtObligation.AuthToken = authToken;
 
             await _dataStore.SaveNodeAsync(node);
 

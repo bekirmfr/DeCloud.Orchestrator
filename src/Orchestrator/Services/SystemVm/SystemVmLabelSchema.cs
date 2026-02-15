@@ -24,6 +24,7 @@ public static class SystemVmLabelSchema
             "dht-listen-port",
             "dht-api-port",
             "dht-advertise-ip",
+            "dht-auth-token",
             "node-region",
             "node-id",
             // wg-relay-endpoint, wg-relay-pubkey, wg-tunnel-ip, wg-relay-api

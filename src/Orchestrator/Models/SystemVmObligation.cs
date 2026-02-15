@@ -24,6 +24,13 @@ public class SystemVmObligation
     public DateTime? ActiveAt { get; set; }
     public int FailureCount { get; set; }
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// HMAC secret used to authenticate system VM callbacks to the orchestrator.
+    /// Generated at deployment time, injected into the VM via cloud-init labels,
+    /// and verified on incoming API calls (e.g., POST /api/dht/join).
+    /// </summary>
+    public string? AuthToken { get; set; }
 }
 
 public enum SystemVmRole
