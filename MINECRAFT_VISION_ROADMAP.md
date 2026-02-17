@@ -1,8 +1,9 @@
 # DeCloud: The Minecraft Vision
 ## Building the World's First Emergent Compute Network
 
-**Version:** 1.0  
-**Status:** Roadmap & Implementation Guide  
+**Version:** 2.0
+**Last Updated:** 2026-02-17
+**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS — See status markers below
 **Philosophy:** Simple primitives → Complex outcomes → Community ownership
 
 ---
@@ -41,471 +42,205 @@ GOAL: World's largest decentralized compute network
 
 ---
 
-## 📊 CURRENT STATE ASSESSMENT
+## 📊 CURRENT STATE ASSESSMENT (Updated 2026-02-17)
 
-### What You Already Have ✅ (70% Minecraft-Ready)
+### What's Built ✅ (~85% Minecraft-Ready)
 
 #### 1. **Core Primitives** ✅
-```csharp
-// You have the "blocks"
+```
 - General VMs (basic compute)
-- Relay VMs (networking infrastructure)
-- DHT VMs (storage/discovery)
-- Inference VMs (AI workloads)
-- Quality Tiers (resource flexibility)
+- Relay VMs (auto-deployed networking infrastructure)
+- DHT VMs (libp2p decentralized coordination — production-verified)
+- Inference VMs (AI workloads with GPU passthrough)
+- Quality Tiers (Guaranteed/Standard/Balanced/Burstable)
+- Bandwidth Tiers (Basic/Standard/Performance/Unmetered with libvirt QoS)
 ```
 
 #### 2. **Self-Organizing Infrastructure** ✅
-```csharp
-// Relay auto-deployment = emergent behavior
-public async Task<string?> DeployRelayVmAsync(Node node)
-{
-    if (IsEligibleForRelay(node))
-    {
-        // Automatically deploy relay VM
-        // This enables CGNAT nodes without manual intervention
-        // PURE MINECRAFT-STYLE EMERGENCE
-    }
-}
+```
+- Relay auto-deployment for CGNAT nodes (60-80% of users)
+- SystemVm reconciliation (Kubernetes-style controller for relay, DHT, ingress VMs)
+- DHT mesh auto-enrollment over WireGuard tunnels
+- Smart port allocation with 3-hop DNAT forwarding
+- CentralIngress-aware routing (HTTP via Caddy, TCP/UDP via iptables)
 ```
 
 #### 3. **Permissionless Participation** ✅
-```csharp
-// Wallet = identity, no approval needed
+```
+- Wallet = identity, no approval needed
 - Node operators: Install agent, authenticate with wallet
 - Users: Connect wallet, deploy VMs
 - No KYC, no whitelist, no gatekeeping
 ```
 
 #### 4. **Economic Foundation** ✅
-```csharp
-// USDC payments, point-based resource allocation
-- Node operators earn for compute
-- Users pay per-second usage
-- Automated settlement on Polygon
+```
+- USDC payments on Polygon with escrow smart contract
+- Hybrid pricing: platform floor rates + node operator custom pricing
+- Bandwidth-aware billing with tier multipliers
+- Per-hour compute point pricing across quality tiers
 ```
 
-### What's Missing ❌ (30% To Build)
-
-#### 1. **Discovery Layer** ❌
+#### 5. **Discovery Layer** ✅ (was missing in v1.0)
 ```
-Current: Users don't know what nodes exist
-Needed: "Server list" equivalent for compute
-```
-
-#### 2. **Marketplace & Templates** ❌
-```
-Current: Raw VM creation only
-Needed: One-click deployments, shareable configs
+- Node marketplace with search, filtering, featured nodes
+- One-click "Deploy Here" from marketplace cards
+- Multi-criteria search (tags, region, GPU, price, uptime)
 ```
 
-#### 3. **Reputation System** ❌
+#### 6. **Marketplace & Templates** ✅ (was missing in v1.0)
 ```
-Current: No trust signals
-Needed: Node ratings, uptime history, user reviews
-```
-
-#### 4. **Community Content** ❌
-```
-Current: No user-created images/templates
-Needed: Marketplace for custom VM images, infrastructure patterns
+- VM template marketplace (6 seed templates, community submissions)
+- One-click deployments with cloud-init variable substitution
+- Paid templates with 85/15 author/platform revenue split
+- Draft → publish workflow for community templates
 ```
 
-#### 5. **Collaboration Features** ❌
+#### 7. **Reputation System** ✅ (was missing in v1.0)
+```
+- 30-day rolling uptime tracking via failed heartbeat detection
+- Universal review system (templates + nodes, eligibility-verified)
+- Denormalized rating aggregates
+- TotalVmsHosted + SuccessfulVmCompletions counters
+```
+
+#### 8. **Per-Service VM Readiness** ✅
+```
+- Distinguishes "VM Running" from "VM Ready for Service"
+- qemu-guest-agent probing (CloudInitDone, TcpPort, HttpGet, ExecCommand)
+- Auto-inference from template protocols
+- Orchestrator + NodeAgent both complete
+```
+
+### What's Still Missing ❌ (~15% To Build)
+
+#### 1. **Collaboration Features** ❌
 ```
 Current: Single-user VMs only
 Needed: Shared VMs, team workspaces, infrastructure sharing
 ```
 
-#### 6. **Visualization** ❌
+#### 2. **Visualization** ❌
 ```
 Current: No network map
 Needed: Live topology view, resource visualization
+```
+
+#### 3. **Advanced Economics** ❌
+```
+Current: Static pricing, no relay revenue sharing
+Needed: Dynamic pricing, relay revenue splits, staking/slashing
+```
+
+#### 4. **Weighted Trust Score** ❌
+```
+Current: Raw uptime percentage only
+Needed: Composite score (uptime 40% + performance 20% + ratings 25% + longevity 10%)
+```
+
+#### 5. **Frontend Polish** ❌
+```
+Current: Backend-complete features lacking frontend
+Needed: Trust badges, review prompts after VM termination, node operator dashboard
 ```
 
 ---
 
 ## 🗺️ IMPLEMENTATION ROADMAP
 
-### Phase 1: Discovery & Marketplace (Weeks 1-4)
+### Phase 1: Discovery & Marketplace (Weeks 1-4) — ✅ COMPLETE
 
 **Goal:** Let users discover and choose nodes like Minecraft server lists
+**Status:** All features shipped and production-tested as of 2026-02-09.
 
-#### Feature 1.1: Node Marketplace
+#### Feature 1.1: Node Marketplace ✅ COMPLETE (2026-01-30)
 
-```csharp
-// New model: Nodes advertise capabilities
-public class NodeAdvertisement
-{
-    public string NodeId { get; set; }
-    public string OperatorName { get; set; }
-    public string Description { get; set; }
-    
-    // Hardware specialization
-    public NodeCapabilities Capabilities { get; set; }
-    
-    // Trust signals
-    public decimal ReputationScore { get; set; }
-    public int TotalVmsHosted { get; set; }
-    public TimeSpan TotalUptime { get; set; }
-    
-    // Economic
-    public decimal PricePerComputePoint { get; set; }
-    
-    // Discovery
-    public List<string> Tags { get; set; } // "gpu", "high-memory", "eu-gdpr", "privacy"
-    public string Jurisdiction { get; set; }
-    public string Region { get; set; }
-}
+**Implemented in:** `NodeMarketplaceService.cs` (260 lines), `MarketplaceController.cs` (821 lines)
 
-public class NodeCapabilities
-{
-    public bool HasGpu { get; set; }
-    public string? GpuModel { get; set; }
-    public bool HasNvmeStorage { get; set; }
-    public bool HighBandwidth { get; set; } // >1Gbps
-    public bool IsRelay { get; set; }
-}
-```
+**What was built:**
+- `GET /api/marketplace/nodes` — Search with filters (tags, region, GPU, price, uptime, capacity)
+- `GET /api/marketplace/nodes/featured` — Top 10 nodes (>95% uptime, online, with description)
+- `GET /api/marketplace/nodes/{id}` — Node details with full hardware specs
+- `PATCH /api/marketplace/nodes/{id}/profile` — Operator profile management
+- Frontend: Rich marketplace UI with node cards, detail modals, multi-criteria search
+- One-click "Deploy Here" button pre-populates VM creation modal with target node
 
-**Implementation:**
+#### Feature 1.2: VM Template Marketplace ✅ COMPLETE (2026-02-09)
 
-```csharp
-// Orchestrator/Services/NodeMarketplaceService.cs
-public interface INodeMarketplaceService
-{
-    // Browse nodes
-    Task<List<NodeAdvertisement>> SearchNodesAsync(NodeSearchCriteria criteria);
-    
-    // Featured nodes (editorial picks)
-    Task<List<NodeAdvertisement>> GetFeaturedNodesAsync();
-    
-    // User can select specific node for VM
-    Task<VirtualMachine> DeployVmOnNodeAsync(string nodeId, VmSpec spec);
-}
+**Implemented in:** `TemplateService.cs` (715 lines), `TemplateSeederService.cs` (1,828 lines)
 
-public class NodeSearchCriteria
-{
-    public List<string>? Tags { get; set; }
-    public string? Region { get; set; }
-    public string? Jurisdiction { get; set; }
-    public decimal? MaxPricePerPoint { get; set; }
-    public decimal? MinReputationScore { get; set; }
-    public bool? RequiresGpu { get; set; }
-}
-```
+**What was built:**
+- Full template CRUD with community and platform-curated templates
+- 5 seed categories: AI & ML, Databases, Dev Tools, Web Apps, Privacy & Security
+- 6 seed templates: Stable Diffusion, PostgreSQL, VS Code Server, Private Browser (Neko), Shadowsocks, Web Proxy Browser (Ultraviolet)
+- Cloud-init variable substitution (${DECLOUD_VM_ID}, ${DECLOUD_PASSWORD}, etc.)
+- Paid templates with PerDeploy pricing (85/15 author/platform split via escrow)
+- Draft → publish workflow for community submissions
+- Security validation (fork bombs, rm -rf, untrusted curl|bash detection)
+- Frontend: marketplace-templates.js, my-templates.js, template-detail.js
 
-**Frontend:**
+**What the vision proposed vs what was actually built:**
 
-```javascript
-// Node Marketplace UI
-async function showNodeMarketplace() {
-    const nodes = await fetch('/api/marketplace/nodes').then(r => r.json());
-    
-    // Render like Minecraft server list
-    const html = nodes.map(node => `
-        <div class="node-card">
-            <div class="node-header">
-                <h3>${node.operatorName}</h3>
-                <span class="region-badge">${node.region}</span>
-            </div>
-            
-            <div class="node-capabilities">
-                ${node.capabilities.hasGpu ? '<span class="badge">🎮 GPU</span>' : ''}
-                ${node.capabilities.highBandwidth ? '<span class="badge">⚡ Fast Network</span>' : ''}
-                ${node.capabilities.hasNvmeStorage ? '<span class="badge">💾 NVMe</span>' : ''}
-            </div>
-            
-            <div class="node-stats">
-                <div class="stat">
-                    <span>Reputation</span>
-                    <span class="value">${node.reputationScore.toFixed(1)}/5.0</span>
-                </div>
-                <div class="stat">
-                    <span>VMs Hosted</span>
-                    <span class="value">${node.totalVmsHosted}</span>
-                </div>
-                <div class="stat">
-                    <span>Price</span>
-                    <span class="value">${node.pricePerComputePoint} USDC/pt/hr</span>
-                </div>
-            </div>
-            
-            <button onclick="deployOnNode('${node.nodeId}')">
-                Deploy Here
-            </button>
-        </div>
-    `).join('');
-    
-    document.getElementById('marketplace-container').innerHTML = html;
-}
-```
-
-#### Feature 1.2: VM Template Marketplace
-
-```csharp
-// User-created templates
-public class VmTemplate
-{
-    public string Id { get; set; }
-    public string Name { get; set; }
-    public string Description { get; set; }
-    public string CreatorWallet { get; set; }
-    public string CreatorName { get; set; }
-    
-    // Template spec
-    public VmSpec Spec { get; set; }
-    public string CloudInitTemplate { get; set; }
-    
-    // Discovery
-    public List<string> Tags { get; set; }
-    public string Category { get; set; } // "AI", "Privacy", "Gaming", "Development"
-    public string IconUrl { get; set; }
-    
-    // Social proof
-    public int Downloads { get; set; }
-    public decimal Rating { get; set; }
-    public List<Review> Reviews { get; set; }
-    
-    // Monetization (optional)
-    public decimal? Price { get; set; } // Creator can charge for premium templates
-}
-
-public class Review
-{
-    public string UserWallet { get; set; }
-    public decimal Rating { get; set; }
-    public string Comment { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
-```
-
-**Example Templates Users Could Share:**
-
-```yaml
-# Whisper AI Transcription Server
-name: "Whisper AI Server"
-description: "One-click OpenAI Whisper for audio transcription"
-category: "AI"
-spec:
-  cpu: 4
-  memory: 8GB
-  gpu: true
-cloud-init: |
-  # Auto-install Whisper, expose API on port 8000
-  docker run -d -p 8000:8000 openai/whisper-large
+| Vision Proposed | Actually Built | Delta |
+|---|---|---|
+| `VmTemplate` model with tags, ratings, pricing | Full model + categories, slugs, specs, readiness checks | Exceeded |
+| `SearchTemplatesAsync` interface | Full CRUD + search + filter + featured + deploy | Exceeded |
+| 3 example templates (Whisper, Nextcloud, Minecraft) | 6 production templates (SD, PostgreSQL, VS Code, Neko, Shadowsocks, Ultraviolet) | Different set, same spirit |
+| Simple review system | Universal ReviewService with eligibility proofs, denormalized aggregates | Exceeded |
 
 ---
 
-# Private Nextcloud
-name: "Private Cloud Storage"
-description: "Nextcloud with end-to-end encryption"
-category: "Privacy"
-spec:
-  cpu: 2
-  memory: 4GB
-  disk: 100GB
-cloud-init: |
-  # Install Nextcloud, configure SSL, enable encryption
-
----
-
-# Minecraft Server
-name: "Minecraft Java Server"
-description: "Pre-configured Minecraft server (1.20.4)"
-category: "Gaming"
-spec:
-  cpu: 4
-  memory: 6GB
-cloud-init: |
-  # Download Minecraft server, auto-configure, open ports
-```
-
-**Implementation:**
-
-```csharp
-// Orchestrator/Services/TemplateMarketplaceService.cs
-public interface ITemplateMarketplaceService
-{
-    // Browse templates
-    Task<List<VmTemplate>> SearchTemplatesAsync(TemplateSearchCriteria criteria);
-    
-    // User submits template
-    Task<VmTemplate> CreateTemplateAsync(VmTemplate template, string userWallet);
-    
-    // Deploy from template
-    Task<VirtualMachine> DeployFromTemplateAsync(string templateId, string userWallet);
-    
-    // Rate template
-    Task AddReviewAsync(string templateId, Review review);
-}
-```
-
----
-
-### Phase 2: Reputation & Trust (Weeks 5-8)
+### Phase 2: Reputation & Trust (Weeks 5-8) — ⚠️ 70% COMPLETE (IN PROGRESS)
 
 **Goal:** Build trust signals so users can choose reliable nodes
+**Status:** Core backend complete. Weighted trust score algorithm and frontend polish remaining.
 
-#### Feature 2.1: Comprehensive Reputation System
+#### Feature 2.1: Reputation System ✅ BACKEND COMPLETE (2026-01-30)
 
-```csharp
-// Orchestrator/Models/NodeReputation.cs
-public class NodeReputation
-{
-    public string NodeId { get; set; }
-    
-    // Uptime tracking
-    public decimal UptimePercentage { get; set; } // Last 30 days
-    public int ConsecutiveDaysOnline { get; set; }
-    public DateTime LastOffline { get; set; }
-    
-    // Performance metrics
-    public decimal AverageResponseTime { get; set; } // Attestation response time
-    public decimal AverageVmBootTime { get; set; }
-    public int FailedVmDeployments { get; set; }
-    
-    // Job completion
-    public int TotalVmsHosted { get; set; }
-    public int ActiveVms { get; set; }
-    public decimal AverageVmLifetime { get; set; } // How long VMs typically run
-    
-    // User ratings
-    public decimal UserRating { get; set; } // 0-5 stars
-    public int TotalReviews { get; set; }
-    public List<UserReview> Reviews { get; set; }
-    
-    // Trust score (0-100)
-    public decimal TrustScore { get; set; }
-    
-    // Slashing history
-    public decimal TotalSlashed { get; set; }
-    public List<SlashingEvent> SlashingHistory { get; set; }
-}
+**Implemented in:** `NodeReputationService.cs` (352 lines), `NodeReputationMaintenanceService.cs`
 
-public class UserReview
-{
-    public string UserWallet { get; set; }
-    public string VmId { get; set; }
-    public decimal Rating { get; set; }
-    public string Comment { get; set; }
-    public DateTime CreatedAt { get; set; }
-    
-    // Verified review (user actually deployed VM on this node)
-    public bool Verified { get; set; }
-}
+**What was built:**
+- 30-day rolling uptime tracking via failed heartbeat detection (15s precision)
+- `FailedHeartbeatsByDay` dictionary with auto-cleanup (30-day window)
+- `TotalVmsHosted` and `SuccessfulVmCompletions` lifetime counters
+- Hourly maintenance service for recalculation and data cleanup
+- Integrated with `NodeHealthMonitorService` (30s detection cycle)
 
-public class SlashingEvent
-{
-    public DateTime Timestamp { get; set; }
-    public string Reason { get; set; } // "Downtime", "Failed attestation", "User complaint"
-    public decimal AmountSlashed { get; set; }
-}
-```
+**What's still missing from the vision:**
 
-**Trust Score Algorithm:**
+| Vision Proposed | Status |
+|---|---|
+| Uptime tracking (30-day rolling) | ✅ Implemented |
+| `ConsecutiveDaysOnline` | ❌ Not tracked |
+| `AverageResponseTime`, `AverageVmBootTime` | ❌ Not tracked |
+| `FailedVmDeployments` counter | ❌ Not tracked |
+| Weighted trust score (0-100) | ❌ Only raw uptime % exists |
+| `SlashingHistory` / `TotalSlashed` | ❌ No slashing mechanism |
+| Trust score algorithm (40% uptime + 20% perf + 25% ratings + 10% longevity) | ❌ Not implemented |
 
-```csharp
-public class ReputationCalculator
-{
-    public decimal CalculateTrustScore(NodeReputation reputation)
-    {
-        var score = 0m;
-        
-        // Uptime (40 points max)
-        score += reputation.UptimePercentage * 0.4m;
-        
-        // Performance (20 points max)
-        var perfScore = CalculatePerformanceScore(reputation);
-        score += perfScore * 0.2m;
-        
-        // User ratings (25 points max)
-        if (reputation.TotalReviews >= 10)
-        {
-            score += (reputation.UserRating / 5.0m) * 25m;
-        }
-        else
-        {
-            // Penalty for few reviews
-            score += (reputation.UserRating / 5.0m) * 25m * (reputation.TotalReviews / 10.0m);
-        }
-        
-        // Longevity (10 points max)
-        score += Math.Min(reputation.ConsecutiveDaysOnline / 30.0m, 1.0m) * 10m;
-        
-        // Penalties
-        score -= reputation.FailedVmDeployments * 0.1m;
-        score -= reputation.SlashingHistory.Count * 5m;
-        
-        // Clamp to 0-100
-        return Math.Max(0, Math.Min(100, score));
-    }
-}
-```
+#### Feature 2.2: User Reviews ✅ BACKEND COMPLETE (2026-02-09)
 
-#### Feature 2.2: User Reviews After VM Termination
+**Implemented in:** `ReviewService.cs` (223 lines)
 
-```csharp
-// After VM terminates, prompt user for review
-public interface IReviewService
-{
-    Task<ReviewPrompt?> GetPendingReviewAsync(string userWallet);
-    Task SubmitReviewAsync(string vmId, string nodeId, Review review);
-}
+**What was built:**
+- Universal review system for templates AND nodes
+- 1-5 star ratings with eligibility verification (proof of deployment/usage)
+- One review per user per resource enforcement
+- Denormalized rating aggregates (AverageRating, TotalReviews, RatingDistribution)
+- API endpoints: submit review, get reviews, check user's existing review
 
-public class ReviewPrompt
-{
-    public string VmId { get; set; }
-    public string VmName { get; set; }
-    public string NodeId { get; set; }
-    public string NodeOperatorName { get; set; }
-    public DateTime VmTerminatedAt { get; set; }
-    public TimeSpan VmLifetime { get; set; }
-}
-```
-
-**Frontend:**
-
-```javascript
-// After VM deleted, show review modal
-async function deleteVM(vmId, name) {
-    if (!confirm(`Delete VM "${name}"?`)) return;
-    
-    await fetch(`/api/vm/${vmId}`, { method: 'DELETE' });
-    
-    // Show review modal
-    showReviewModal(vmId, name);
-}
-
-function showReviewModal(vmId, vmName) {
-    const modal = `
-        <div class="review-modal">
-            <h3>How was your experience with "${vmName}"?</h3>
-            
-            <div class="star-rating">
-                <span onclick="setRating(1)">⭐</span>
-                <span onclick="setRating(2)">⭐</span>
-                <span onclick="setRating(3)">⭐</span>
-                <span onclick="setRating(4)">⭐</span>
-                <span onclick="setRating(5)">⭐</span>
-            </div>
-            
-            <textarea id="review-comment" placeholder="Share your experience (optional)"></textarea>
-            
-            <button onclick="submitReview('${vmId}')">Submit Review</button>
-            <button onclick="closeModal()">Skip</button>
-        </div>
-    `;
-    
-    showModal(modal);
-}
-```
+**What's still missing:**
+- ❌ Frontend: review prompt modal after VM termination
+- ❌ Frontend: node rating aggregates display in marketplace
+- ❌ Frontend: trust badges ("99.9% uptime", "100+ VMs hosted")
+- ❌ `ReviewService.UpdateReviewAsync` throws `NotImplementedException`
 
 ---
 
-### Phase 3: Collaboration & Multiplayer (Weeks 9-12)
+### Phase 3: Collaboration & Multiplayer (Weeks 9-12) — ❌ NOT STARTED
 
 **Goal:** Enable teams to work together, like Minecraft multiplayer
+**Status:** No implementation exists. All designs below are aspirational.
 
 #### Feature 3.1: Shared VMs (Multi-Wallet Access)
 
@@ -655,9 +390,10 @@ public enum WorkspaceRole
 
 ---
 
-### Phase 4: Visualization & Discovery (Weeks 13-16)
+### Phase 4: Visualization & Discovery (Weeks 13-16) — ❌ NOT STARTED
 
 **Goal:** Make the network "visible" like Minecraft's F3 screen
+**Status:** No implementation exists. Node details are available via text-based marketplace UI only.
 
 #### Feature 4.1: Live Network Map
 
@@ -725,9 +461,10 @@ async function showNodeDetails(nodeId) {
 
 ---
 
-### Phase 5: Advanced Economics (Weeks 17-20)
+### Phase 5: Advanced Economics (Weeks 17-20) — ⚠️ 15% COMPLETE
 
 **Goal:** Create specialized roles and economic differentiation
+**Status:** Static pricing and USDC escrow exist. Dynamic pricing, relay revenue sharing, and staking/slashing are not implemented.
 
 #### Feature 5.1: Node Specialization Pricing
 
@@ -906,110 +643,55 @@ Economic differentiation: Not competing on price, competing on capability
 
 ## 🧩 TECHNICAL IMPLEMENTATION PRIORITIES
 
-### Priority 1: Foundation (Weeks 1-4)
-- [ ] Node marketplace backend (search, filtering, advertisements)
-- [ ] Template marketplace backend (create, browse, deploy)
-- [ ] Reputation calculation service
-- [ ] Frontend: Node browser UI
-- [ ] Frontend: Template marketplace UI
+### Priority 1: Foundation (Weeks 1-4) — ✅ COMPLETE
+- [x] Node marketplace backend (search, filtering, advertisements) — `NodeMarketplaceService.cs`
+- [x] Template marketplace backend (create, browse, deploy) — `TemplateService.cs`, `TemplateSeederService.cs`
+- [x] Reputation calculation service — `NodeReputationService.cs`
+- [x] Frontend: Node browser UI — `marketplace.js`
+- [x] Frontend: Template marketplace UI — `marketplace-templates.js`, `template-detail.js`
 
-### Priority 2: Trust (Weeks 5-8)
-- [ ] Uptime tracking system
-- [ ] User review system (post-VM termination)
-- [ ] Slashing mechanism
-- [ ] Trust score calculation
-- [ ] Frontend: Reputation dashboard
+### Priority 2: Trust (Weeks 5-8) — ⚠️ 70% COMPLETE
+- [x] Uptime tracking system — `NodeReputationService.cs` (30-day rolling, 15s precision)
+- [x] User review system (post-VM termination) — `ReviewService.cs` (backend only)
+- [ ] Slashing mechanism — Deferred: no evidence of spam/quality issues yet
+- [ ] Weighted trust score calculation — Only raw uptime % exists
+- [ ] Frontend: Reputation dashboard — Not started
+- [ ] Frontend: Trust badges — Not started
+- [ ] Frontend: Review prompt after VM deletion — Not started
+- [ ] Frontend: Node rating aggregates display — Not started
 
-### Priority 3: Collaboration (Weeks 9-12)
+### Priority 3: Collaboration (Weeks 9-12) — ❌ NOT STARTED
 - [ ] Shared VMs (multi-wallet access)
 - [ ] Workspace system
 - [ ] Infrastructure templates (multi-VM)
 - [ ] Frontend: Team collaboration UI
 
-### Priority 4: Discovery (Weeks 13-16)
+### Priority 4: Discovery (Weeks 13-16) — ❌ NOT STARTED
 - [ ] Network topology API
 - [ ] Live map visualization (D3.js/Three.js)
-- [ ] Node explorer
+- [ ] Node explorer (text-based detail exists in marketplace; no map)
 - [ ] Resource heatmap
 
-### Priority 5: Economics (Weeks 17-20)
-- [ ] Dynamic pricing engine
-- [ ] Relay revenue sharing
-- [ ] Node staking system
-- [ ] Settlement automation
+### Priority 5: Economics (Weeks 17-20) — ⚠️ 15% COMPLETE
+- [ ] Dynamic pricing engine — Only static floor + operator pricing exists
+- [ ] Relay revenue sharing — Documented but not coded
+- [ ] Node staking system — Deferred until XDE token launch + 50 nodes + 3 months data
+- [x] Settlement automation — `DeCloudEscrow.sol` + `OnChainSettlementService.cs`
 
 ---
 
-## 🚀 QUICK WINS (Week 1)
+## 🚀 QUICK WINS (Week 1) — ✅ ALL COMPLETE
 
-Start with these high-impact, low-effort features:
+All quick wins from the original vision have been implemented:
 
-### 1. Node Tags & Filtering
+### 1. Node Tags & Filtering ✅
+Implemented in `NodeMarketplaceService.cs`. Nodes have `Tags`, `Description`, and `BasePrice` fields. Multi-criteria search supports tags, region, GPU, price range, and uptime filtering.
 
-```csharp
-// Add to Node model
-public class Node
-{
-    // ... existing fields ...
-    public List<string> Tags { get; set; } = new();
-    public string? Description { get; set; }
-}
+### 2. Featured Templates ✅
+6 production-ready seed templates via `TemplateSeederService.cs` with semantic versioning. Featured templates endpoint returns top-rated templates. Exceeded the vision's "hardcode 5" by building a full dynamic marketplace.
 
-// Simple filtering
-public async Task<List<Node>> SearchNodesAsync(List<string> tags)
-{
-    return _dataStore.Nodes.Values
-        .Where(n => tags.All(tag => n.Tags.Contains(tag)))
-        .ToList();
-}
-```
-
-### 2. Featured Templates
-
-```csharp
-// Hardcode 5 popular templates
-public static class FeaturedTemplates
-{
-    public static List<VmTemplate> GetFeatured() => new()
-    {
-        new() {
-            Name = "Nextcloud",
-            Description = "Private cloud storage",
-            Tags = new() { "privacy", "storage" },
-            Spec = new() { VirtualCpuCores = 2, MemoryBytes = 4GB }
-        },
-        new() {
-            Name = "Stable Diffusion",
-            Description = "AI image generation",
-            Tags = new() { "ai", "gpu" },
-            Spec = new() { VirtualCpuCores = 4, MemoryBytes = 16GB, RequiresGpu = true }
-        },
-        // ... more templates
-    };
-}
-```
-
-### 3. Simple Uptime Tracking
-
-```csharp
-// Track when nodes last heartbeat
-public class UptimeTracker
-{
-    public async Task RecordHeartbeatAsync(string nodeId)
-    {
-        var node = await GetNodeAsync(nodeId);
-        node.LastHeartbeat = DateTime.UtcNow;
-        
-        // Calculate uptime percentage (last 30 days)
-        var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
-        var heartbeats = await GetHeartbeatHistory(nodeId, thirtyDaysAgo);
-        
-        // Expected: 1 heartbeat every 15 seconds = 5760 per day
-        var expectedHeartbeats = 30 * 24 * 4; // 2880 (simplified)
-        node.Reputation.UptimePercentage = (heartbeats.Count / (decimal)expectedHeartbeats) * 100;
-    }
-}
-```
+### 3. Simple Uptime Tracking ✅
+`NodeReputationService.cs` tracks uptime via failed heartbeat detection (more accurate than the proposed heartbeat-counting approach). 30-day rolling window with auto-cleanup. Integrated with marketplace search filtering.
 
 ---
 
@@ -1077,23 +759,56 @@ Your relay architecture is already more sophisticated than anything in Minecraft
 
 ---
 
-## 🚦 NEXT IMMEDIATE STEPS
+## 🏗️ BUILT BEYOND THE ORIGINAL VISION
 
-**This Week:**
-1. Add node tags and description fields
-2. Create 10 featured templates (hardcoded)
-3. Build simple node marketplace UI
+These significant features were implemented but were NOT in the original Minecraft Vision roadmap. They strengthen the foundation and reflect organic platform evolution:
 
-**Next Month:**
-1. Implement full template marketplace
-2. Add basic reputation tracking
-3. Launch community Discord
+| Feature | Status | Description |
+|---|---|---|
+| **Relay Infrastructure** | Production | Auto-deployed WireGuard relay VMs for CGNAT bypass (~60-80% of nodes) |
+| **DHT Infrastructure** | Production | libp2p DHT nodes over WireGuard mesh (2 nodes live, bootstrap polling) |
+| **SystemVm Reconciliation** | Production | Kubernetes-style controller managing relay, DHT, and ingress system VMs |
+| **VM Lifecycle State Machine** | Production | `VmLifecycleManager.cs` — centralized transitions, side effects, crash-safe |
+| **Bandwidth QoS Tiers** | Production | 4-tier bandwidth limiting enforced at libvirt level (Basic/Standard/Performance/Unmetered) |
+| **Hybrid Pricing (Model C)** | Production | Platform floor rates + operator custom pricing with server-side enforcement |
+| **Smart Port Allocation** | Production | 3-hop DNAT forwarding for CGNAT, direct for public nodes, 40000-65535 range |
+| **CentralIngress-Aware Ports** | Production | HTTP/WS ports skip iptables (handled by Caddy), only TCP/UDP gets DNAT |
+| **Per-Service VM Readiness** | Production | qemu-guest-agent probing (CloudInitDone, TcpPort, HttpGet, ExecCommand) |
+| **Web Proxy Browser (Ultraviolet)** | Production | Privacy browsing template with Cross-Origin Isolation fix |
+| **ARM Architecture Support** | Production | Raspberry Pi support with dual-arch domain XML |
+| **CLI Tool** | Production | `decloud` v1.3.0 — wallet auth, VM management, diagnostics |
+| **USDC Escrow Contract** | Production | `DeCloudEscrow.sol` on Polygon — deposits, settlement, payouts |
+
+---
+
+## 🚦 NEXT IMMEDIATE STEPS (Updated 2026-02-17)
+
+**Current Focus: Phase 2 — User Engagement & Retention**
+
+**This Sprint:**
+1. ~~Add node tags and description fields~~ ✅ Done
+2. ~~Create featured templates~~ ✅ Done (6 seed templates)
+3. ~~Build node marketplace UI~~ ✅ Done
+4. Node operator dashboard (Priority 2.1) — earnings, uptime, relay stats
+5. Frontend trust badges ("99.9% uptime", "100+ VMs hosted")
+6. Review prompt modal after VM termination
+
+**This Month:**
+1. ~~Implement full template marketplace~~ ✅ Done
+2. ~~Add basic reputation tracking~~ ✅ Done
+3. Grow seed templates to 10-15 (then community to 50+)
+4. Wire up node rating aggregates in marketplace display
+5. Weighted trust score algorithm
 
 **This Quarter:**
-1. Ship all Priority 1 & 2 features
-2. Onboard 100 nodes
-3. Get 1,000 users
+1. ~~Ship all Priority 1 features~~ ✅ Done
+2. Complete remaining Priority 2 items (frontend polish, trust score)
+3. Onboard 50+ active node operators
+4. Evaluate Phase 3 (collaboration) based on user demand
+
+**Deferred (awaiting prerequisites):**
+- Staking/slashing: Needs XDE token launch, 50+ nodes, 3+ months reputation data
+- Relay revenue sharing: Needs billing infrastructure maturity
+- Dynamic pricing: Needs market data from operational marketplace
 
 **This is how you build the Minecraft of compute.**
-
-Let's go! 🎮🚀
