@@ -14,6 +14,22 @@ const ESCROW_AUTHOR_ABI = [
     "function nodeWithdrawAmount(uint256 amount) external"
 ];
 
+];
+
+// ── Enum mappings (C# enums serialize as integers) ──────────────────────
+const VISIBILITY_TO_INT = { 'Public': 0, 'Private': 1 };
+const VISIBILITY_TO_STR = { 0: 'Public', 1: 'Private', 'Public': 'Public', 'Private': 'Private' };
+
+const PRICING_TO_INT = { 'Free': 0, 'PerDeploy': 1 };
+const PRICING_TO_STR = { 0: 'Free', 1: 'PerDeploy', 'Free': 'Free', 'PerDeploy': 'PerDeploy' };
+
+const STATUS_TO_STR = {
+    0: 'Draft', 1: 'Published', 2: 'Archived',
+    'Draft': 'Draft', 'Published': 'Published', 'Archived': 'Archived'
+};
+
+function api(endpoint, options = {}) {
+
 function api(endpoint, options = {}) {
     if (!window.api) throw new Error('API function not available');
     return window.api(endpoint, options);
@@ -82,12 +98,15 @@ function renderMyTemplates() {
 }
 
 function createMyTemplateCard(template) {
-    const statusClass = template.status === 'Published' ? 'status-published' :
-                       template.status === 'Draft' ? 'status-draft' : 'status-archived';
-    const statusLabel = template.status || 'Draft';
+    const status = STATUS_TO_STR[template.status] ?? 'Draft';
+    const statusClass = status === 'Published' ? 'status-published' :
+                       status === 'Draft' ? 'status-draft' : 'status-archived';
+    const statusLabel = status;
 
-    const visibilityIcon = template.visibility === 'Private' ? '🔒' : '🌐';
-    const priceText = template.pricingModel === 'PerDeploy' && template.templatePrice > 0
+    const visibility = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
+    const visibilityIcon = visibility === 'Private' ? '🔒' : '🌐';
+    const pricing = PRICING_TO_STR[template.pricingModel] ?? 'Free';
+    const priceText = pricing === 'PerDeploy' && template.templatePrice > 0
         ? `${template.templatePrice} USDC`
         : 'Free';
 
@@ -99,7 +118,7 @@ function createMyTemplateCard(template) {
         <div class="my-template-card">
             <div class="my-template-header">
                 <span class="template-status-badge ${statusClass}">${statusLabel}</span>
-                <span class="template-visibility-badge">${visibilityIcon} ${template.visibility || 'Public'}</span>
+                <span class="template-visibility-badge">${visibilityIcon} ${visibility}</span>
             </div>
             <div class="my-template-body">
                 <h3 class="my-template-name">${escapeHtml(template.name)}</h3>
@@ -111,7 +130,7 @@ function createMyTemplateCard(template) {
                 </div>
             </div>
             <div class="my-template-actions">
-                ${template.status === 'Draft' ? `
+                ${status === 'Draft' ? `
                     <button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${template.id}')">
                         Publish
                     </button>
@@ -430,8 +449,8 @@ function buildTemplatePayload() {
             diskBytes: Math.max(minDiskGb, 20) * 1024 * 1024 * 1024
         },
         exposedPorts: collectPorts(),
-        visibility: document.getElementById('ct-visibility').value,
-        pricingModel: document.getElementById('ct-pricing').value,
+        visibility: VISIBILITY_TO_INT[document.getElementById('ct-visibility').value] ?? 0,
+        pricingModel: PRICING_TO_INT[document.getElementById('ct-pricing').value] ?? 0,
         templatePrice: parseFloat(document.getElementById('ct-price').value) || 0,
         authorRevenueWallet: document.getElementById('ct-revenue-wallet').value.trim() || null,
         sourceUrl: document.getElementById('ct-source-url').value.trim() || null
@@ -515,8 +534,8 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-min-disk').value = Math.round((minSpec.diskBytes || 10737418240) / (1024 * 1024 * 1024));
 
     // Visibility & pricing
-    document.getElementById('ct-visibility').value = template.visibility || 'Public';
-    document.getElementById('ct-pricing').value = template.pricingModel || 'Free';
+    document.getElementById('ct-visibility').value = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
+    document.getElementById('ct-pricing').value = PRICING_TO_STR[template.pricingModel] ?? 'Free';
     document.getElementById('ct-price').value = template.templatePrice || 0;
     document.getElementById('ct-revenue-wallet').value = template.authorRevenueWallet || '';
     onPricingChange();
