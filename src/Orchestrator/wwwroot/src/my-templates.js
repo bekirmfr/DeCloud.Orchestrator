@@ -14,8 +14,6 @@ const ESCROW_AUTHOR_ABI = [
     "function nodeWithdrawAmount(uint256 amount) external"
 ];
 
-];
-
 // ── Enum mappings (C# enums serialize as integers) ──────────────────────
 const VISIBILITY_TO_INT = { 'Public': 0, 'Private': 1 };
 const VISIBILITY_TO_STR = { 0: 'Public', 1: 'Private', 'Public': 'Public', 'Private': 'Private' };
