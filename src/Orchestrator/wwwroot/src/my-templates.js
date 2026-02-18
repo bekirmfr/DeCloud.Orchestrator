@@ -27,8 +27,6 @@ const STATUS_TO_STR = {
 };
 
 function api(endpoint, options = {}) {
-
-function api(endpoint, options = {}) {
     if (!window.api) throw new Error('API function not available');
     return window.api(endpoint, options);
 }
