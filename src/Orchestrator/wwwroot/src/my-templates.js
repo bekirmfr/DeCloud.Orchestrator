@@ -26,6 +26,18 @@ const STATUS_TO_STR = {
     'Draft': 'Draft', 'Published': 'Published', 'Archived': 'Archived'
 };
 
+const QUALITY_TIER_TO_INT = { 'Guaranteed': 0, 'Standard': 1, 'Balanced': 2, 'Burstable': 3 };
+const QUALITY_TIER_TO_STR = {
+    0: 'Guaranteed', 1: 'Standard', 2: 'Balanced', 3: 'Burstable',
+    'Guaranteed': 'Guaranteed', 'Standard': 'Standard', 'Balanced': 'Balanced', 'Burstable': 'Burstable'
+};
+
+const BANDWIDTH_TIER_TO_INT = { 'Basic': 0, 'Standard': 1, 'Performance': 2, 'Unmetered': 3 };
+const BANDWIDTH_TIER_TO_STR = {
+    0: 'Basic', 1: 'Standard', 2: 'Performance', 3: 'Unmetered',
+    'Basic': 'Basic', 'Standard': 'Standard', 'Performance': 'Performance', 'Unmetered': 'Unmetered'
+};
+
 function api(endpoint, options = {}) {
     if (!window.api) throw new Error('API function not available');
     return window.api(endpoint, options);
@@ -271,6 +283,28 @@ function createTemplateModal() {
                             <input type="number" class="form-input" id="ct-min-disk" value="10" min="5">
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Minimum Quality Tier</label>
+                            <select class="form-input" id="ct-min-quality-tier">
+                                <option value="3">Burstable (Lowest Cost)</option>
+                                <option value="2">Balanced</option>
+                                <option value="1" selected>Standard</option>
+                                <option value="0">Guaranteed (Premium)</option>
+                            </select>
+                            <p class="form-help">Worst allowed tier — higher tiers are always permitted at deploy time.</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Default Bandwidth Tier</label>
+                            <select class="form-input" id="ct-default-bandwidth-tier">
+                                <option value="0">Basic (10 Mbps) — $0.002/hr</option>
+                                <option value="1">Standard (50 Mbps) — $0.008/hr</option>
+                                <option value="2">Performance (200 Mbps) — $0.020/hr</option>
+                                <option value="3" selected>Unmetered — $0.040/hr</option>
+                            </select>
+                            <p class="form-help">Pre-selected bandwidth tier when deploying this template.</p>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label class="filter-label">
                             <input type="checkbox" id="ct-requires-gpu">
@@ -351,6 +385,8 @@ function resetCreateForm() {
     document.getElementById('ct-min-memory').value = '512';
     document.getElementById('ct-min-disk').value = '10';
     document.getElementById('ct-requires-gpu').checked = false;
+    document.getElementById('ct-min-quality-tier').value = '1';
+    document.getElementById('ct-default-bandwidth-tier').value = '3';
     document.getElementById('ct-visibility').value = 'Public';
     document.getElementById('ct-pricing').value = 'Free';
     document.getElementById('ct-price').value = '0';
@@ -437,14 +473,19 @@ function buildTemplatePayload() {
         minimumSpec: {
             virtualCpuCores: minCpu,
             memoryBytes: minMemMb * 1024 * 1024,
-            diskBytes: minDiskGb * 1024 * 1024 * 1024
+            diskBytes: minDiskGb * 1024 * 1024 * 1024,
+            qualityTier: parseInt(document.getElementById('ct-min-quality-tier').value) ?? 1,
+            bandwidthTier: parseInt(document.getElementById('ct-default-bandwidth-tier').value) ?? 3
         },
         recommendedSpec: {
             virtualCpuCores: Math.max(minCpu, 2),
             memoryBytes: Math.max(minMemMb, 2048) * 1024 * 1024,
-            diskBytes: Math.max(minDiskGb, 20) * 1024 * 1024 * 1024
+            diskBytes: Math.max(minDiskGb, 20) * 1024 * 1024 * 1024,
+            qualityTier: parseInt(document.getElementById('ct-min-quality-tier').value) ?? 1,
+            bandwidthTier: parseInt(document.getElementById('ct-default-bandwidth-tier').value) ?? 3
         },
         exposedPorts: collectPorts(),
+        defaultBandwidthTier: parseInt(document.getElementById('ct-default-bandwidth-tier').value) || 3,
         visibility: VISIBILITY_TO_INT[document.getElementById('ct-visibility').value] ?? 0,
         pricingModel: PRICING_TO_INT[document.getElementById('ct-pricing').value] ?? 0,
         templatePrice: parseFloat(document.getElementById('ct-price').value) || 0,
@@ -528,6 +569,10 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-min-cpu').value = minSpec.virtualCpuCores || 1;
     document.getElementById('ct-min-memory').value = Math.round((minSpec.memoryBytes || 536870912) / (1024 * 1024));
     document.getElementById('ct-min-disk').value = Math.round((minSpec.diskBytes || 10737418240) / (1024 * 1024 * 1024));
+
+    // Quality & bandwidth tiers
+    document.getElementById('ct-min-quality-tier').value = minSpec.qualityTier ?? 1;
+    document.getElementById('ct-default-bandwidth-tier').value = template.defaultBandwidthTier ?? 3;
 
     // Visibility & pricing
     document.getElementById('ct-visibility').value = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
