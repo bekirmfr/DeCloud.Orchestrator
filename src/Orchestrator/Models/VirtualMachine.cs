@@ -14,6 +14,12 @@ public class VirtualMachine
     public string Name { get; set; } = string.Empty;
     public VmType VmType { get; set; } = VmType.General;
 
+    /// <summary>
+    /// Subdomain tier: Free (suffixed) or Premium (exact vanity name).
+    /// All VMs start as Free. Premium is claimed via upgrade flow.
+    /// </summary>
+    public SubdomainTier SubdomainTier { get; set; } = SubdomainTier.Free;
+
     // Ownership
     public string? OwnerId { get; set; } = string.Empty;        // User/tenant ID
     public string? OwnerWallet
@@ -330,6 +336,28 @@ public enum VmType
     Inference
 }
 
+/// <summary>
+/// Subdomain tier determines how VM subdomains are generated.
+/// Free: base name + unique suffix (e.g., "my-app-a1b2")
+/// Premium: exact name as-is, globally unique (e.g., "my-app") — future upgrade flow
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum SubdomainTier
+{
+    /// <summary>
+    /// Default tier. Name gets a unique hex suffix appended.
+    /// Uniqueness checked per-owner. Assigned at VM creation.
+    /// </summary>
+    Free,
+
+    /// <summary>
+    /// Premium vanity subdomain. Name used as-is (no suffix).
+    /// Uniqueness enforced globally across all users.
+    /// Claimed via separate upgrade flow on VM dashboard.
+    /// </summary>
+    Premium
+}
+
 // DTOs for API
 public record CreateVmRequest(
     string Name,
@@ -375,6 +403,7 @@ public record VmListResponse(
 public record VmSummary(
     string Id,
     string Name,
+    SubdomainTier SubdomainTier,
     VmStatus Status,
     VmPowerState PowerState,
     string? NodeId,

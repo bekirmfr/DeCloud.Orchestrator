@@ -51,11 +51,11 @@ public class CentralIngressOptions
     public int DefaultTargetPort { get; set; } = 80;
 
     /// <summary>
-    /// Pattern for generating subdomains from VM info
-    /// Placeholders: {name}, {id}, {id8}, {owner8}
-    /// Default: "{name}" → myapp.vms.decloud.io
+    /// Pattern for generating subdomains from VM info.
+    /// VM names are already canonical (DNS-safe + unique suffix from VmNameService),
+    /// so the default pattern is just "{name}".
     /// </summary>
-    public string SubdomainPattern { get; set; } = "{name}-{id4}";
+    public string SubdomainPattern { get; set; } = "{name}";
 
     /// <summary>
     /// Whether to auto-register VMs when they start

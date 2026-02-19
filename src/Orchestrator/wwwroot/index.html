@@ -624,7 +624,8 @@
 
                 <div class="form-group">
                     <label class="form-label">VM Name</label>
-                    <input type="text" class="form-input" id="vm-name" placeholder="my-vm-01">
+                    <input type="text" class="form-input" id="vm-name" placeholder="my-awesome-vm" maxlength="40" oninput="previewVmName(this, 'vm-name-preview')">
+                    <p class="form-help" id="vm-name-preview"></p>
                 </div>
                 <!-- Quality Tier Section (NEW) -->
                 <div class="form-group">
@@ -843,8 +844,8 @@
 
                 <div class="form-group">
                     <label class="form-label">VM Name</label>
-                    <input type="text" class="form-input" id="deploy-vm-name" placeholder="my-awesome-vm">
-                    <p class="form-help">Choose a unique name for your VM</p>
+                    <input type="text" class="form-input" id="deploy-vm-name" placeholder="my-awesome-vm" maxlength="40" oninput="previewVmName(this, 'deploy-vm-name-preview')">
+                    <p class="form-help" id="deploy-vm-name-preview">A unique suffix will be appended automatically</p>
                 </div>
 
                 <div class="form-section">

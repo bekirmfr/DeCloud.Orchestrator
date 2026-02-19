@@ -121,26 +121,10 @@ public class CentralIngressService : ICentralIngressService
 
     public string GenerateSubdomain(VirtualMachine vm)
     {
-        var pattern = _options.SubdomainPattern;
-
-        // Replace placeholders
-        var subdomain = pattern
-            .Replace("{name}", SanitizeForSubdomain(vm.Name))
-            .Replace("{id}", vm.Id)
-            .Replace("{id8}", vm.Id.Length >= 8 ? vm.Id[..8] : vm.Id)
-            .Replace("{id4}", vm.Id.Length >= 4 ? vm.Id[..4] : vm.Id);
-
-        // Ensure valid subdomain
-        subdomain = SanitizeForSubdomain(subdomain);
-
-        // Handle collisions by appending ID fragment
-        var fullSubdomain = $"{subdomain}.{_options.BaseDomain}";
-        if (_routes.Values.Any(r => r.Subdomain == fullSubdomain && r.VmId != vm.Id))
-        {
-            var idSuffix = vm.Id.Length >= 6 ? vm.Id[..6] : vm.Id;
-            subdomain = $"{subdomain}-{idSuffix}";
-        }
-
+        // VM names are now canonical (DNS-safe + unique suffix) from VmNameService.
+        // Use the name directly as the subdomain — no extra sanitization or
+        // collision handling needed.
+        var subdomain = SanitizeForSubdomain(vm.Name);
         return $"{subdomain}.{_options.BaseDomain}";
     }
 
