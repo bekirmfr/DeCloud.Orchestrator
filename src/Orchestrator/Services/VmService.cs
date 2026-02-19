@@ -115,6 +115,7 @@ public class VmService : IVmService
             Id = Guid.NewGuid().ToString(),
             Name = canonicalName,
             VmType = request.VmType,
+            SubdomainTier = SubdomainTier.Free,
             OwnerId = isSystemVm ? null : userId,
             OwnerWallet = isSystemVm ? null : user?.WalletAddress,
             Spec = request.Spec,
@@ -409,6 +410,7 @@ public class VmService : IVmService
             return new VmSummary(
                 Id: v.Id,
                 Name: v.Name,
+                SubdomainTier: v.SubdomainTier,
                 Status: v.Status,
                 PowerState: v.PowerState,
                 NodeId: v.NodeId,
