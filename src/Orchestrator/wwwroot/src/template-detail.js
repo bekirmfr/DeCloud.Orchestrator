@@ -817,7 +817,7 @@ function escapeHtml(text) {
  */
 function showToast(type, message) {
     if (window.showToast) {
-        window.showToast(type, message);
+        window.showToast(message, type);
     } else {
         console.log(`[Toast] ${type}: ${message}`);
     }
