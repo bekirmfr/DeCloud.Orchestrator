@@ -33,6 +33,7 @@ public class VmService : IVmService
     private readonly ICentralIngressService _ingressService;
     private readonly INetworkLatencyTracker _latencyTracker;
     private readonly ITemplateService _templateService;
+    private readonly IVmNameService _nameService;
     private readonly PricingConfig _pricingConfig;
     private readonly ILogger<VmService> _logger;
     private readonly IServiceProvider _serviceProvider;
@@ -46,6 +47,7 @@ public class VmService : IVmService
         ICentralIngressService ingressService,
         INetworkLatencyTracker latencyTracker,
         ITemplateService templateService,
+        IVmNameService nameService,
         IOptions<PricingConfig> pricingConfig,
         ILogger<VmService> logger,
         IServiceProvider serviceProvider)
@@ -58,6 +60,7 @@ public class VmService : IVmService
         _ingressService = ingressService;
         _latencyTracker = latencyTracker;
         _templateService = templateService;
+        _nameService = nameService;
         _pricingConfig = pricingConfig.Value;
         _logger = logger;
         _serviceProvider = serviceProvider;
@@ -66,6 +69,17 @@ public class VmService : IVmService
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
         var isSystemVm = request.VmType is VmType.Relay or VmType.Dht;
+
+        // ════════════════════════════════════════════════════════════════════════
+        // VM Name Pipeline: sanitize → validate → unique suffix → uniqueness check
+        // System VMs (relay, DHT) pass through as-is (names are code-generated)
+        // ════════════════════════════════════════════════════════════════════════
+        var (canonicalName, nameError) = await _nameService.GenerateCanonicalNameAsync(request.Name, userId);
+        if (canonicalName == null)
+        {
+            return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                nameError ?? "Invalid VM name", "INVALID_NAME");
+        }
 
         // Validate user exists
         User? user = null;
@@ -99,7 +113,7 @@ public class VmService : IVmService
         var vm = new VirtualMachine
         {
             Id = Guid.NewGuid().ToString(),
-            Name = request.Name,
+            Name = canonicalName,
             VmType = request.VmType,
             OwnerId = isSystemVm ? null : userId,
             OwnerWallet = isSystemVm ? null : user?.WalletAddress,
@@ -113,7 +127,7 @@ public class VmService : IVmService
             },
             NetworkConfig = new VmNetworkConfig
             {
-                Hostname = SanitizeHostname(request.Name)
+                Hostname = canonicalName
             },
             NetworkMetrics = VmNetworkMetrics.CreateDefault(),
         };
@@ -966,14 +980,6 @@ public class VmService : IVmService
     {
         var random = RandomNumberGenerator.GetInt32(2, 254);
         return $"10.100.0.{random}";
-    }
-
-    private static string SanitizeHostname(string name)
-    {
-        return new string(name.ToLower()
-            .Where(c => char.IsLetterOrDigit(c) || c == '-')
-            .Take(63)
-            .ToArray());
     }
 
     private string? GetImageUrl(string imageId)

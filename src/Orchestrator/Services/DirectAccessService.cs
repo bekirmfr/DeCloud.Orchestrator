@@ -744,9 +744,9 @@ public class DirectAccessService
             targetDescription = $"node {node.Id}";
         }
 
-        // Generate subdomain (similar to ingress pattern)
-        var id4 = vm.Id.Length >= 4 ? vm.Id.Substring(0, 4) : vm.Id;
-        var subdomain = $"{SanitizeVmName(vm.Name)}-{id4}";
+        // VM names are now canonical (DNS-safe + unique suffix) from VmNameService.
+        // Use the name directly as the subdomain.
+        var subdomain = SanitizeVmName(vm.Name);
         var dnsName = $"{subdomain}.direct.stackfi.tech";
 
         _logger.LogInformation(

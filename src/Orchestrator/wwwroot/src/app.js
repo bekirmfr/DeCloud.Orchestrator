@@ -1402,6 +1402,60 @@ async function onVmRegionChange() {
     }
 }
 
+/**
+ * Sanitize a raw VM name to DNS-safe format (mirrors server-side VmNameService.Sanitize).
+ */
+function sanitizeVmName(raw) {
+    if (!raw || !raw.trim()) return '';
+    let result = raw.toLowerCase().replace(/[\s_]/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+    if (result.length > 40) result = result.substring(0, 40).replace(/-+$/, '');
+    return result;
+}
+
+/**
+ * Validate a sanitized VM name (mirrors server-side VmNameService.Validate).
+ * Returns null on success or an error message string.
+ */
+function validateVmName(sanitized) {
+    if (!sanitized) return 'VM name is required';
+    if (sanitized.length < 2) return 'VM name must be at least 2 characters';
+    if (sanitized.length > 40) return 'VM name must be at most 40 characters';
+    if (!/^[a-z]/.test(sanitized)) return 'VM name must start with a letter';
+    if (sanitized.endsWith('-')) return 'VM name must not end with a hyphen';
+    if (!/^[a-z][a-z0-9-]*[a-z0-9]$/.test(sanitized)) return 'VM name must contain only lowercase letters, numbers, and hyphens';
+    return null;
+}
+
+// Expose naming utils globally for module-based scripts (template-detail.js, etc.)
+window.sanitizeVmName = sanitizeVmName;
+window.validateVmName = validateVmName;
+
+/**
+ * Live preview of the canonical VM name as the user types.
+ * Shows the sanitized name + example suffix.
+ */
+function previewVmName(inputEl, previewElId) {
+    const previewEl = document.getElementById(previewElId);
+    if (!previewEl) return;
+
+    const raw = inputEl.value;
+    if (!raw.trim()) {
+        previewEl.textContent = '';
+        previewEl.style.color = '';
+        return;
+    }
+
+    const sanitized = sanitizeVmName(raw);
+    const error = validateVmName(sanitized);
+    if (error) {
+        previewEl.textContent = error;
+        previewEl.style.color = 'var(--color-error, #e53e3e)';
+    } else {
+        previewEl.textContent = `Your VM will be named: ${sanitized}-xxxx`;
+        previewEl.style.color = 'var(--color-text-secondary, #a0aec0)';
+    }
+}
+
 async function createVM() {
     const name = document.getElementById('vm-name').value.trim();
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
@@ -1416,8 +1470,11 @@ async function createVM() {
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
 
-    if (!name) {
-        showToast('Please enter a VM name', 'error');
+    // Client-side name validation (server is the authority, this is for UX)
+    const sanitized = sanitizeVmName(name);
+    const nameError = validateVmName(sanitized);
+    if (nameError) {
+        showToast(nameError, 'error');
         return;
     }
 

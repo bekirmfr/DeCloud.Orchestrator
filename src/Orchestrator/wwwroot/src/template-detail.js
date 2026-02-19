@@ -488,8 +488,11 @@ export async function deployFromTemplate() {
     const region = document.getElementById('deploy-region')?.value || null;
     const zone = document.getElementById('deploy-zone')?.value || null;
 
-    if (!vmName) {
-        alert('Please enter a VM name');
+    // Client-side name validation (mirrors server-side VmNameService)
+    const sanitized = window.sanitizeVmName ? window.sanitizeVmName(vmName) : vmName;
+    const nameError = window.validateVmName ? window.validateVmName(sanitized) : (!vmName ? 'Please enter a VM name' : null);
+    if (nameError) {
+        alert(nameError);
         return;
     }
 
