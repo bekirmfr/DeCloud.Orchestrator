@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
@@ -8,7 +8,7 @@ namespace Orchestrator.Controllers;
 
 /// <summary>
 /// API controller for central ingress management.
-/// Handles automatic subdomain assignment and routing for *.{baseDomain}
+/// Handles automatic subdomain assignment, routing for *.{baseDomain}, and custom domains.
 /// </summary>
 [ApiController]
 [Route("api/central-ingress")]
@@ -76,7 +76,7 @@ public class CentralIngressController : ControllerBase
             DefaultUrl: route?.Status == CentralRouteStatus.Active ? route.PublicUrl : _ingressService.GetVmUrl(vm),
             DefaultPort: route?.TargetPort ?? vm.IngressConfig?.DefaultPort ?? 80,
             DefaultEnabled: route?.Status == CentralRouteStatus.Active,
-            CustomDomains: vm.IngressConfig?.CustomDomains ?? new List<string>(),
+            CustomDomains: MapCustomDomains(vm.IngressConfig?.CustomDomains),
             NodePublicIp: nodePublicIp
         );
 
@@ -141,7 +141,7 @@ public class CentralIngressController : ControllerBase
             DefaultUrl: route.PublicUrl,
             DefaultPort: route.TargetPort,
             DefaultEnabled: true,
-            CustomDomains: vm.IngressConfig?.CustomDomains ?? new List<string>(),
+            CustomDomains: MapCustomDomains(vm.IngressConfig?.CustomDomains),
             NodePublicIp: nodePublicIp
         );
 
@@ -178,7 +178,7 @@ public class CentralIngressController : ControllerBase
             DefaultUrl: null,
             DefaultPort: vm.IngressConfig?.DefaultPort ?? 80,
             DefaultEnabled: false,
-            CustomDomains: vm.IngressConfig?.CustomDomains ?? new List<string>(),
+            CustomDomains: MapCustomDomains(vm.IngressConfig?.CustomDomains),
             NodePublicIp: null
         );
 
@@ -224,7 +224,7 @@ public class CentralIngressController : ControllerBase
             DefaultUrl: route?.PublicUrl,
             DefaultPort: request.Port,
             DefaultEnabled: route?.Status == CentralRouteStatus.Active,
-            CustomDomains: vm.IngressConfig?.CustomDomains ?? new List<string>(),
+            CustomDomains: MapCustomDomains(vm.IngressConfig?.CustomDomains),
             NodePublicIp: null
         );
 
@@ -300,5 +300,215 @@ public class CentralIngressController : ControllerBase
             url = $"https://{subdomain}",
             baseDomain = _ingressService.BaseDomain
         }));
+    }
+
+    // =========================================================================
+    // Custom Domain Endpoints
+    // =========================================================================
+
+    /// <summary>
+    /// Add a custom domain to a VM
+    /// </summary>
+    [HttpPost("vm/{vmId}/domains")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<CustomDomainResponse>>> AddCustomDomain(
+        string vmId,
+        [FromBody] AddCustomDomainRequest request)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<CustomDomainResponse>.Fail("UNAUTHORIZED", "User not authenticated"));
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return NotFound(ApiResponse<CustomDomainResponse>.Fail("VM_NOT_FOUND", "VM not found"));
+
+        if (vm.OwnerId != userId && !vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        if (!_ingressService.IsEnabled)
+            return BadRequest(ApiResponse<CustomDomainResponse>.Fail("INGRESS_DISABLED", "Central ingress not enabled"));
+
+        if (string.IsNullOrWhiteSpace(request.Domain))
+            return BadRequest(ApiResponse<CustomDomainResponse>.Fail("INVALID_DOMAIN", "Domain is required"));
+
+        _logger.LogInformation("Adding custom domain {Domain} to VM {VmId}", request.Domain, vmId);
+
+        var cd = await _ingressService.AddCustomDomainAsync(vmId, request.Domain, request.TargetPort);
+
+        if (cd == null)
+        {
+            return BadRequest(ApiResponse<CustomDomainResponse>.Fail(
+                "ADD_FAILED",
+                "Failed to add custom domain. It may be invalid, already in use, or the per-VM limit (5) reached."));
+        }
+
+        var baseDomain = _ingressService.BaseDomain ?? "your-platform.com";
+
+        return Ok(ApiResponse<CustomDomainResponse>.Ok(new CustomDomainResponse(
+            Id: cd.Id,
+            Domain: cd.Domain,
+            TargetPort: cd.TargetPort,
+            Status: cd.Status,
+            PublicUrl: cd.Status == CustomDomainStatus.Active ? $"https://{cd.Domain}" : null,
+            CreatedAt: cd.CreatedAt,
+            VerifiedAt: cd.VerifiedAt,
+            DnsTarget: baseDomain,
+            DnsInstructions: $"Add a CNAME record: {cd.Domain} → {baseDomain}"
+        )));
+    }
+
+    /// <summary>
+    /// List custom domains for a VM
+    /// </summary>
+    [HttpGet("vm/{vmId}/domains")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<List<CustomDomainResponse>>>> GetCustomDomains(string vmId)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<List<CustomDomainResponse>>.Fail("UNAUTHORIZED", "User not authenticated"));
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return NotFound(ApiResponse<List<CustomDomainResponse>>.Fail("VM_NOT_FOUND", "VM not found"));
+
+        if (vm.OwnerId != userId && !vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        var domains = await _ingressService.GetCustomDomainsAsync(vmId);
+        var baseDomain = _ingressService.BaseDomain ?? "your-platform.com";
+
+        var response = domains.Select(cd => new CustomDomainResponse(
+            Id: cd.Id,
+            Domain: cd.Domain,
+            TargetPort: cd.TargetPort,
+            Status: cd.Status,
+            PublicUrl: cd.Status == CustomDomainStatus.Active ? $"https://{cd.Domain}" : null,
+            CreatedAt: cd.CreatedAt,
+            VerifiedAt: cd.VerifiedAt,
+            DnsTarget: baseDomain,
+            DnsInstructions: $"Add a CNAME record: {cd.Domain} → {baseDomain}"
+        )).ToList();
+
+        return Ok(ApiResponse<List<CustomDomainResponse>>.Ok(response));
+    }
+
+    /// <summary>
+    /// Verify DNS for a custom domain and activate it
+    /// </summary>
+    [HttpPost("vm/{vmId}/domains/{domainId}/verify")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<CustomDomainResponse>>> VerifyCustomDomain(
+        string vmId, string domainId)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<CustomDomainResponse>.Fail("UNAUTHORIZED", "User not authenticated"));
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return NotFound(ApiResponse<CustomDomainResponse>.Fail("VM_NOT_FOUND", "VM not found"));
+
+        if (vm.OwnerId != userId && !vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        if (vm.Status != VmStatus.Running)
+            return BadRequest(ApiResponse<CustomDomainResponse>.Fail("VM_NOT_RUNNING", "VM must be running to verify DNS"));
+
+        _logger.LogInformation("Verifying DNS for domain {DomainId} on VM {VmId}", domainId, vmId);
+
+        var cd = await _ingressService.VerifyCustomDomainDnsAsync(vmId, domainId);
+
+        if (cd == null)
+            return NotFound(ApiResponse<CustomDomainResponse>.Fail("DOMAIN_NOT_FOUND", "Custom domain not found"));
+
+        var baseDomain = _ingressService.BaseDomain ?? "your-platform.com";
+
+        return Ok(ApiResponse<CustomDomainResponse>.Ok(new CustomDomainResponse(
+            Id: cd.Id,
+            Domain: cd.Domain,
+            TargetPort: cd.TargetPort,
+            Status: cd.Status,
+            PublicUrl: cd.Status == CustomDomainStatus.Active ? $"https://{cd.Domain}" : null,
+            CreatedAt: cd.CreatedAt,
+            VerifiedAt: cd.VerifiedAt,
+            DnsTarget: baseDomain,
+            DnsInstructions: cd.Status != CustomDomainStatus.Active
+                ? $"DNS verification failed. Ensure a CNAME record exists: {cd.Domain} → {baseDomain}"
+                : null
+        )));
+    }
+
+    /// <summary>
+    /// Remove a custom domain from a VM
+    /// </summary>
+    [HttpDelete("vm/{vmId}/domains/{domainId}")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<bool>>> RemoveCustomDomain(string vmId, string domainId)
+    {
+        var userId = User.FindFirst("sub")?.Value ?? User.FindFirst("wallet")?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<bool>.Fail("UNAUTHORIZED", "User not authenticated"));
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return NotFound(ApiResponse<bool>.Fail("VM_NOT_FOUND", "VM not found"));
+
+        if (vm.OwnerId != userId && !vm.OwnerWallet.Equals(userId, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        _logger.LogInformation("Removing custom domain {DomainId} from VM {VmId}", domainId, vmId);
+
+        var success = await _ingressService.RemoveCustomDomainAsync(vmId, domainId);
+
+        if (!success)
+            return NotFound(ApiResponse<bool>.Fail("DOMAIN_NOT_FOUND", "Custom domain not found"));
+
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    /// <summary>
+    /// Caddy on-demand TLS ask endpoint.
+    /// Called by Caddy before issuing a certificate for a custom domain.
+    /// Returns 200 if the domain is registered and active, 404 otherwise.
+    /// </summary>
+    [HttpGet("domain-check")]
+    [AllowAnonymous]
+    public ActionResult DomainCheck([FromQuery] string domain)
+    {
+        if (string.IsNullOrEmpty(domain))
+            return NotFound();
+
+        if (_ingressService.IsCustomDomainRegistered(domain))
+            return Ok();
+
+        return NotFound();
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private List<CustomDomainResponse> MapCustomDomains(List<CustomDomain>? domains)
+    {
+        if (domains == null || domains.Count == 0)
+            return new List<CustomDomainResponse>();
+
+        var baseDomain = _ingressService.BaseDomain ?? "your-platform.com";
+
+        return domains.Select(cd => new CustomDomainResponse(
+            Id: cd.Id,
+            Domain: cd.Domain,
+            TargetPort: cd.TargetPort,
+            Status: cd.Status,
+            PublicUrl: cd.Status == CustomDomainStatus.Active ? $"https://{cd.Domain}" : null,
+            CreatedAt: cd.CreatedAt,
+            VerifiedAt: cd.VerifiedAt,
+            DnsTarget: baseDomain,
+            DnsInstructions: cd.Status != CustomDomainStatus.Active
+                ? $"Add a CNAME record: {cd.Domain} → {baseDomain}"
+                : null
+        )).ToList();
     }
 }

@@ -2,6 +2,7 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.RegularExpressions;
 
 namespace Orchestrator.Services;
@@ -86,6 +87,35 @@ public interface ICentralIngressService
     /// Called when a VM is deleted
     /// </summary>
     Task OnVmDeletedAsync(string vmId, CancellationToken ct = default);
+
+    // =========================================================================
+    // Custom Domain Management
+    // =========================================================================
+
+    /// <summary>
+    /// Add a custom domain to a VM
+    /// </summary>
+    Task<CustomDomain?> AddCustomDomainAsync(string vmId, string domain, int targetPort, CancellationToken ct = default);
+
+    /// <summary>
+    /// Remove a custom domain from a VM
+    /// </summary>
+    Task<bool> RemoveCustomDomainAsync(string vmId, string domainId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Verify DNS for a custom domain and activate it
+    /// </summary>
+    Task<CustomDomain?> VerifyCustomDomainDnsAsync(string vmId, string domainId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Get all custom domains for a VM
+    /// </summary>
+    Task<List<CustomDomain>> GetCustomDomainsAsync(string vmId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Check if a custom domain is registered and active (used by Caddy on-demand TLS)
+    /// </summary>
+    bool IsCustomDomainRegistered(string domain);
 }
 
 public class CentralIngressService : ICentralIngressService
@@ -97,7 +127,10 @@ public class CentralIngressService : ICentralIngressService
 
     // In-memory route cache (also persisted in DataStore)
     private readonly ConcurrentDictionary<string, CentralIngressRoute> _routes = new();
+    // Custom domains cache keyed by lowercase domain name for fast on-demand TLS lookups
+    private readonly ConcurrentDictionary<string, CustomDomain> _customDomains = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _reloadLock = new(1, 1);
+    private const int MaxCustomDomainsPerVm = 5;
 
     // Subdomain validation
     private static readonly Regex SubdomainRegex = new(
@@ -334,11 +367,17 @@ public class CentralIngressService : ICentralIngressService
                 .Where(r => r.Status == CentralRouteStatus.Active)
                 .ToList();
 
-            var success = await _caddyManager.ReloadAllRoutesAsync(activeRoutes, ct);
+            var activeCustomDomains = _customDomains.Values
+                .Where(d => d.Status == CustomDomainStatus.Active)
+                .ToList();
+
+            var success = await _caddyManager.ReloadAllRoutesAsync(activeRoutes, activeCustomDomains, ct);
 
             if (success)
             {
-                _logger.LogInformation("✓ Central ingress reloaded with {Count} routes", activeRoutes.Count);
+                _logger.LogInformation(
+                    "✓ Central ingress reloaded with {RouteCount} routes + {DomainCount} custom domains",
+                    activeRoutes.Count, activeCustomDomains.Count);
             }
 
             return success;
@@ -382,8 +421,20 @@ public class CentralIngressService : ICentralIngressService
             {
                 route.Status = CentralRouteStatus.Active;
                 route.UpdatedAt = DateTime.UtcNow;
-                await ReloadAllAsync(ct);
             }
+        }
+
+        // Re-activate paused custom domains for this VM
+        var reactivated = false;
+        foreach (var cd in _customDomains.Values.Where(d => d.VmId == vmId && d.Status == CustomDomainStatus.Paused))
+        {
+            cd.Status = CustomDomainStatus.Active;
+            reactivated = true;
+        }
+
+        if (reactivated || _routes.ContainsKey(vmId))
+        {
+            await ReloadAllAsync(ct);
         }
     }
 
@@ -402,15 +453,224 @@ public class CentralIngressService : ICentralIngressService
             {
                 route.Status = CentralRouteStatus.Paused;
                 route.UpdatedAt = DateTime.UtcNow;
-                await ReloadAllAsync(ct);
             }
+        }
+
+        // Pause active custom domains for this VM
+        foreach (var cd in _customDomains.Values.Where(d => d.VmId == vmId && d.Status == CustomDomainStatus.Active))
+        {
+            cd.Status = CustomDomainStatus.Paused;
+        }
+
+        await ReloadAllAsync(ct);
+
+        // Persist paused status
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm?.IngressConfig?.CustomDomains != null)
+        {
+            foreach (var cd in vm.IngressConfig.CustomDomains.Where(d => d.Status == CustomDomainStatus.Active))
+            {
+                cd.Status = CustomDomainStatus.Paused;
+            }
+            await _dataStore.SaveVmAsync(vm);
         }
     }
 
     public async Task OnVmDeletedAsync(string vmId, CancellationToken ct = default)
     {
-        _logger.LogDebug("VM {VmId} deleted - removing route", vmId);
+        _logger.LogDebug("VM {VmId} deleted - removing route and custom domains", vmId);
+
+        // Remove all custom domains for this VM from cache
+        var domainsToRemove = _customDomains.Values.Where(d => d.VmId == vmId).ToList();
+        foreach (var cd in domainsToRemove)
+        {
+            _customDomains.TryRemove(cd.Domain.ToLowerInvariant(), out _);
+        }
+
         await UnregisterVmAsync(vmId, ct);
+    }
+
+    // =========================================================================
+    // Custom Domain Management
+    // =========================================================================
+
+    private static readonly Regex DomainRegex = new(
+        @"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public async Task<CustomDomain?> AddCustomDomainAsync(
+        string vmId, string domain, int targetPort, CancellationToken ct = default)
+    {
+        if (!IsEnabled)
+        {
+            _logger.LogWarning("Central ingress not enabled");
+            return null;
+        }
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+        {
+            _logger.LogWarning("VM {VmId} not found", vmId);
+            return null;
+        }
+
+        // Sanitize domain
+        domain = domain.Trim().ToLowerInvariant();
+
+        // Validate format
+        if (!DomainRegex.IsMatch(domain))
+        {
+            _logger.LogWarning("Invalid domain format: {Domain}", domain);
+            return null;
+        }
+
+        // Reject platform base domain
+        if (!string.IsNullOrEmpty(_options.BaseDomain) &&
+            domain.EndsWith($".{_options.BaseDomain}", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Cannot add platform subdomain as custom domain: {Domain}", domain);
+            return null;
+        }
+
+        // Reject IP addresses
+        if (IPAddress.TryParse(domain, out _))
+        {
+            _logger.LogWarning("Cannot use IP address as custom domain: {Domain}", domain);
+            return null;
+        }
+
+        // Check global uniqueness
+        if (_customDomains.ContainsKey(domain))
+        {
+            _logger.LogWarning("Domain {Domain} already registered", domain);
+            return null;
+        }
+
+        // Enforce per-VM limit
+        vm.IngressConfig ??= new VmIngressConfig();
+        if (vm.IngressConfig.CustomDomains.Count >= MaxCustomDomainsPerVm)
+        {
+            _logger.LogWarning("VM {VmId} has reached max custom domains ({Max})", vmId, MaxCustomDomainsPerVm);
+            return null;
+        }
+
+        // Validate port
+        if (targetPort < 1 || targetPort > 65535)
+            targetPort = 80;
+
+        var customDomain = new CustomDomain
+        {
+            VmId = vmId,
+            Domain = domain,
+            OwnerWallet = vm.OwnerWallet,
+            TargetPort = targetPort,
+            Status = CustomDomainStatus.PendingDns,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Persist
+        vm.IngressConfig.CustomDomains.Add(customDomain);
+        await _dataStore.SaveVmAsync(vm);
+
+        // Add to cache
+        _customDomains[domain] = customDomain;
+
+        _logger.LogInformation("Custom domain added: {Domain} → VM {VmId} (PendingDns)", domain, vmId);
+
+        return customDomain;
+    }
+
+    public async Task<bool> RemoveCustomDomainAsync(string vmId, string domainId, CancellationToken ct = default)
+    {
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm?.IngressConfig?.CustomDomains == null)
+            return false;
+
+        var cd = vm.IngressConfig.CustomDomains.FirstOrDefault(d => d.Id == domainId);
+        if (cd == null)
+            return false;
+
+        // Remove from cache
+        _customDomains.TryRemove(cd.Domain.ToLowerInvariant(), out _);
+
+        // Remove from VM
+        vm.IngressConfig.CustomDomains.Remove(cd);
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogInformation("Custom domain removed: {Domain} from VM {VmId}", cd.Domain, vmId);
+
+        // Reload Caddy to remove the route
+        if (cd.Status == CustomDomainStatus.Active)
+        {
+            await ReloadAllAsync(ct);
+        }
+
+        return true;
+    }
+
+    public async Task<CustomDomain?> VerifyCustomDomainDnsAsync(
+        string vmId, string domainId, CancellationToken ct = default)
+    {
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm?.IngressConfig?.CustomDomains == null)
+            return null;
+
+        var cd = vm.IngressConfig.CustomDomains.FirstOrDefault(d => d.Id == domainId);
+        if (cd == null)
+            return null;
+
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(cd.Domain, ct);
+
+            if (addresses.Length == 0)
+            {
+                _logger.LogWarning("DNS lookup returned no addresses for {Domain}", cd.Domain);
+                cd.Status = CustomDomainStatus.Error;
+                await _dataStore.SaveVmAsync(vm);
+                _customDomains[cd.Domain.ToLowerInvariant()] = cd;
+                return cd;
+            }
+
+            // DNS resolves — activate the domain
+            // (Caddy on-demand TLS will verify the domain further during cert issuance)
+            cd.Status = CustomDomainStatus.Active;
+            cd.VerifiedAt = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(vm);
+
+            // Update cache
+            _customDomains[cd.Domain.ToLowerInvariant()] = cd;
+
+            _logger.LogInformation(
+                "Custom domain DNS verified: {Domain} resolves to {IPs}",
+                cd.Domain, string.Join(", ", addresses.Select(a => a.ToString())));
+
+            // Reload Caddy to add the route
+            await ReloadAllAsync(ct);
+
+            return cd;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "DNS verification failed for {Domain}", cd.Domain);
+            cd.Status = CustomDomainStatus.Error;
+            await _dataStore.SaveVmAsync(vm);
+            _customDomains[cd.Domain.ToLowerInvariant()] = cd;
+            return cd;
+        }
+    }
+
+    public async Task<List<CustomDomain>> GetCustomDomainsAsync(string vmId, CancellationToken ct = default)
+    {
+        var vm = await _dataStore.GetVmAsync(vmId);
+        return vm?.IngressConfig?.CustomDomains ?? new List<CustomDomain>();
+    }
+
+    public bool IsCustomDomainRegistered(string domain)
+    {
+        if (string.IsNullOrEmpty(domain)) return false;
+        return _customDomains.TryGetValue(domain.ToLowerInvariant(), out var cd)
+               && cd.Status == CustomDomainStatus.Active;
     }
 
     // =========================================================================

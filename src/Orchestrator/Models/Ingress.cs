@@ -187,9 +187,35 @@ public class VmIngressConfig
     public bool DefaultSubdomainEnabled { get; set; } = true;
 
     /// <summary>
-    /// Custom domains configured for this VM (via node-level Caddy)
+    /// Custom domains configured for this VM
     /// </summary>
-    public List<string> CustomDomains { get; set; } = new();
+    public List<CustomDomain> CustomDomains { get; set; } = new();
+}
+
+/// <summary>
+/// A custom domain mapped to a VM for HTTP/HTTPS access
+/// </summary>
+public class CustomDomain
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string VmId { get; set; } = "";
+    public string Domain { get; set; } = "";
+    public string OwnerWallet { get; set; } = "";
+    public int TargetPort { get; set; } = 80;
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public CustomDomainStatus Status { get; set; } = CustomDomainStatus.PendingDns;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? VerifiedAt { get; set; }
+}
+
+public enum CustomDomainStatus
+{
+    PendingDns,
+    Active,
+    Paused,
+    Error
 }
 
 #region DTOs
@@ -198,13 +224,30 @@ public record SetVmIngressPortRequest(
     int Port
 );
 
+public record AddCustomDomainRequest(
+    string Domain,
+    int TargetPort = 80
+);
+
+public record CustomDomainResponse(
+    string Id,
+    string Domain,
+    int TargetPort,
+    CustomDomainStatus Status,
+    string? PublicUrl,
+    DateTime CreatedAt,
+    DateTime? VerifiedAt,
+    string? DnsTarget,
+    string? DnsInstructions
+);
+
 public record VmIngressResponse(
     string VmId,
     string VmName,
     string? DefaultUrl,
     int DefaultPort,
     bool DefaultEnabled,
-    List<string> CustomDomains,
+    List<CustomDomainResponse> CustomDomains,
     string? NodePublicIp
 );
 
