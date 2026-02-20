@@ -3,16 +3,7 @@
 // Create, manage, and publish user-owned VM templates
 // ============================================================================
 
-import { ethers } from 'ethers';
-
 let myTemplates = [];
-
-// Escrow ABI for author earnings (nodeWithdraw / nodePendingPayouts)
-const ESCROW_AUTHOR_ABI = [
-    "function nodePendingPayouts(address) view returns (uint256)",
-    "function nodeWithdraw() external",
-    "function nodeWithdrawAmount(uint256 amount) external"
-];
 
 // ── Enum mappings (C# enums serialize as integers) ──────────────────────
 const VISIBILITY_TO_INT = { 'Public': 0, 'Private': 1 };
@@ -637,97 +628,6 @@ export async function deleteTemplate(templateId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EARNINGS / WITHDRAWAL
-// ═══════════════════════════════════════════════════════════════════════════
-
-export async function loadEarnings() {
-    const container = document.getElementById('my-templates-earnings');
-    if (!container) return;
-
-    try {
-        const signer = window.ethersSigner ? window.ethersSigner() : null;
-        if (!signer) {
-            container.innerHTML = '<p class="text-muted">Connect wallet to view earnings</p>';
-            return;
-        }
-
-        // Get deposit config for contract address
-        const configResponse = await api('/api/payment/deposit-info');
-        if (!configResponse.ok) {
-            container.innerHTML = '<p class="text-muted">Payment system unavailable</p>';
-            return;
-        }
-        const configResult = await configResponse.json();
-        const config = configResult.data || configResult;
-
-        if (!config.escrowContractAddress) {
-            container.innerHTML = '<p class="text-muted">Escrow contract not configured</p>';
-            return;
-        }
-
-        const escrow = new ethers.Contract(
-            config.escrowContractAddress,
-            ESCROW_AUTHOR_ABI,
-            signer
-        );
-
-        const address = await signer.getAddress();
-        const pendingRaw = await escrow.nodePendingPayouts(address);
-        const pending = ethers.formatUnits(pendingRaw, 6); // USDC 6 decimals
-
-        container.innerHTML = `
-            <div class="earnings-card">
-                <div class="earnings-info">
-                    <span class="earnings-label">Pending Earnings</span>
-                    <span class="earnings-value">${parseFloat(pending).toFixed(2)} USDC</span>
-                </div>
-                <button class="btn btn-sm btn-primary"
-                    onclick="window.myTemplates.withdrawEarnings()"
-                    ${parseFloat(pending) <= 0 ? 'disabled' : ''}>
-                    Withdraw
-                </button>
-            </div>
-        `;
-    } catch (error) {
-        console.error('[My Templates] Failed to load earnings:', error);
-        container.innerHTML = '<p class="text-muted">Unable to load earnings</p>';
-    }
-}
-
-export async function withdrawEarnings() {
-    try {
-        const signer = window.ethersSigner ? window.ethersSigner() : null;
-        if (!signer) {
-            showToast('error', 'Wallet not connected');
-            return;
-        }
-
-        const configResponse = await api('/api/payment/deposit-info');
-        const configResult = await configResponse.json();
-        const config = configResult.data || configResult;
-
-        const escrow = new ethers.Contract(
-            config.escrowContractAddress,
-            ESCROW_AUTHOR_ABI,
-            signer
-        );
-
-        showToast('info', 'Please confirm the withdrawal in your wallet...');
-        const tx = await escrow.nodeWithdraw();
-        showToast('info', 'Waiting for confirmation...');
-        await tx.wait();
-        showToast('success', 'Withdrawal successful!');
-        await loadEarnings();
-    } catch (error) {
-        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-            showToast('warning', 'Transaction rejected');
-        } else {
-            showToast('error', `Withdrawal failed: ${error.message}`);
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -739,7 +639,5 @@ window.myTemplates = {
     publishTemplate,
     deleteTemplate,
     addPort,
-    onPricingChange,
-    withdrawEarnings,
-    loadEarnings
+    onPricingChange
 };
