@@ -1,158 +1,181 @@
-# VM Naming Pipeline — Implementation Plan
+# Custom Domain Routing — Implementation Plan
 
 ## Goal
+Users can add custom domains (e.g., `my.awesome.app`) to their VMs via the dashboard. Navigating to `https://my.awesome.app` routes to the VM, with automatic TLS via Let's Encrypt.
 
-Replace the current ad-hoc VM naming (raw user input + scattered sanitization) with a
-single pipeline that produces a **canonical, DNS-safe, unique name** at creation time.
+## Architecture Decision
+
+Custom domains route through the **CentralIngress** system (Caddy on the Orchestrator), not per-node Caddy. This is the same path the auto-generated subdomains use:
 
 ```
-User input: "My Awesome VM!"
-     ↓ sanitize
-"my-awesome-vm"
-     ↓ validate (length, format)
-OK
-     ↓ append short unique suffix
-"my-awesome-vm-a1b2"
-     ↓ uniqueness check (per-user in MongoDB)
-OK → this IS the VM name everywhere (display, hostname, subdomain, cloud-init)
+https://my.awesome.app → Caddy (Orchestrator) → NodeAgent:5100 → VM
 ```
 
-## Design Decisions
+**TLS strategy:**
+- Wildcard subdomains (`*.vms.stackfi.tech`): DNS-01 challenge (existing, unchanged)
+- Custom domains: Caddy **on-demand TLS** with an ask endpoint — Caddy calls our API to verify the domain is registered before issuing a certificate via HTTP-01
 
-- **Suffix is always appended.** Even if the base name is unique today, appending a
-  4-char hex suffix prevents future collisions and makes names visually distinct.
-  System VMs (relay, DHT) already follow this pattern (`relay-us-east-a1b2c3d4`).
-- **The canonical name is DNS-safe by construction.** Downstream sanitizers become
-  no-ops (kept as safety nets, not relied upon).
-- **Uniqueness is per-owner.** Different users may have the same VM name —
-  the suffix makes the full canonical name globally unique for subdomains.
-- **Max base name length: 40 chars.** With suffix `-xxxx` = 45 chars, well under
-  the 63-char DNS label limit.
+**DNS requirement for users:**
+- CNAME: `my.awesome.app → vms.stackfi.tech` (preferred)
+- OR A record: `my.awesome.app → <orchestrator IP>`
+
+---
 
 ## Changes
 
-### 1. New file: `VmNameService.cs` (Orchestrator)
+### 1. Models — `src/Orchestrator/Models/Ingress.cs`
 
-Location: `src/Orchestrator/Services/VmNameService.cs`
-
-```
-public class VmNameService
+Add `CustomDomain` class:
+```csharp
+public class CustomDomain
 {
-    string SanitizeName(string raw)
-      → lowercase, [^a-z0-9-] → hyphen, collapse --, trim -, max 40 chars
-      → empty → "vm"
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string VmId { get; set; } = "";
+    public string Domain { get; set; } = "";         // e.g., "my.awesome.app"
+    public string OwnerWallet { get; set; } = "";
+    public int TargetPort { get; set; } = 80;
+    public CustomDomainStatus Status { get; set; } = CustomDomainStatus.PendingDns;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? VerifiedAt { get; set; }
+}
 
-    (bool Valid, string? Error) ValidateName(string sanitized)
-      → min 2 chars, max 40 chars
-      → must start with letter
-      → must not start/end with hyphen
-      → must match ^[a-z][a-z0-9-]*[a-z0-9]$
-
-    async Task<string> GenerateUniqueNameAsync(string sanitized, string ownerId)
-      → try 4-char hex suffix (first 4 of new Guid)
-      → check DataStore for name collision (owner + name)
-      → retry up to 3 times with different suffix
-      → return "{sanitized}-{suffix}"
+public enum CustomDomainStatus { PendingDns, Active, Paused, Error }
 ```
 
-### 2. Modify: `VmService.CreateVmAsync()` (Orchestrator)
+Add DTOs:
+```csharp
+public record AddCustomDomainRequest(string Domain, int TargetPort = 80);
+public record CustomDomainResponse(string Id, string Domain, int TargetPort,
+    CustomDomainStatus Status, string? PublicUrl, DateTime CreatedAt, DateTime? VerifiedAt,
+    string? DnsTarget, string? DnsInstructions);
+```
 
-File: `src/Orchestrator/Services/VmService.cs`
+Update `VmIngressConfig.CustomDomains` from `List<string>` to `List<CustomDomain>`.
 
-- Inject `VmNameService`
-- At the top of `CreateVmAsync`, before constructing the VM object:
-  ```
-  var sanitized = _nameService.SanitizeName(request.Name);
-  var validation = _nameService.ValidateName(sanitized);
-  if (!validation.Valid)
-      return new CreateVmResponse("", VmStatus.Pending, validation.Error, "INVALID_NAME");
+### 2. Service — `src/Orchestrator/Services/CentralIngressService.cs`
 
-  var canonicalName = await _nameService.GenerateUniqueNameAsync(sanitized, userId);
-  ```
-- Replace `Name = request.Name` with `Name = canonicalName`
-- Replace `Hostname = SanitizeHostname(request.Name)` with `Hostname = canonicalName`
-- Remove the private `SanitizeHostname()` method (no longer needed)
+Add to `ICentralIngressService`:
+```csharp
+Task<CustomDomain?> AddCustomDomainAsync(string vmId, string domain, int targetPort, CancellationToken ct);
+Task<bool> RemoveCustomDomainAsync(string vmId, string domainId, CancellationToken ct);
+Task<CustomDomain?> VerifyCustomDomainDnsAsync(string vmId, string domainId, CancellationToken ct);
+Task<List<CustomDomain>> GetCustomDomainsAsync(string vmId, CancellationToken ct);
+bool IsCustomDomainRegistered(string domain);
+```
 
-### 3. Modify: System VM naming (Orchestrator)
+Add in-memory lookup: `ConcurrentDictionary<string, CustomDomain> _customDomains` keyed by lowercase domain.
 
-Files: `DhtNodeService.cs`, `RelayNodeService.cs`
+**AddCustomDomainAsync:**
+1. Validate VM exists, user owns it, VM is Running
+2. Sanitize domain (lowercase, trim)
+3. Validate format (valid FQDN, not an IP, not the platform's own base domain)
+4. Check global uniqueness (no other VM uses this domain)
+5. Enforce limit (max 5 per VM)
+6. Create `CustomDomain` with status `PendingDns`
+7. Save to `vm.IngressConfig.CustomDomains`, persist VM
+8. Add to `_customDomains` lookup
 
-- System VMs already produce clean names (`relay-us-east-a1b2c3d4`)
-- These bypass `VmNameService` — they call `CreateVmAsync` with `userId: "system"`
-- Add an early-return in the naming pipeline: if `userId == "system"`, skip
-  sanitization/suffix generation and use the name as-is. System VM names are
-  constructed by code, not user input.
+**VerifyCustomDomainDnsAsync:**
+1. DNS lookup (`Dns.GetHostAddressesAsync`)
+2. Verify resolves to orchestrator IP, or CNAME to base domain
+3. If valid → set status `Active`, reload Caddy
+4. If invalid → return error with instructions
 
-### 4. Modify: `VmsController.Create()` (Orchestrator)
+**Lifecycle hooks update:**
+- `OnVmStartedAsync`: Reactivate Active custom domains → reload Caddy
+- `OnVmStoppedAsync`: Set Active → Paused → reload Caddy
+- `OnVmDeletedAsync`: Remove all custom domains → reload Caddy
 
-File: `src/Orchestrator/Controllers/VmsController.cs`
+### 3. CaddyManager — `src/Orchestrator/Services/CentralCaddyManager.cs`
 
-- No changes needed — validation happens inside `VmService.CreateVmAsync()`.
-  The controller already returns BadRequest on empty VmId response.
+Update `ReloadAllRoutesAsync` to also accept custom domains:
+```csharp
+Task<bool> ReloadAllRoutesAsync(
+    IEnumerable<CentralIngressRoute> routes,
+    IEnumerable<CustomDomain> customDomains,
+    CancellationToken ct);
+```
 
-### 5. Modify: `MarketplaceController.DeployTemplate()` (Orchestrator)
+In `BuildFullConfigWithPreservedRoutesAsync`:
+- For each active custom domain, build a route identical to `BuildRouteConfig` but matching the custom domain hostname
+- Need the VM's route info (NodePublicIp, VmId) → lookup from `_routes`
 
-File: `src/Orchestrator/Controllers/MarketplaceController.cs`
+**TLS config — add on-demand TLS policy:**
+```json
+{
+  "automation": {
+    "on_demand_tls": {
+      "ask": "http://localhost:5050/api/central-ingress/domain-check"
+    },
+    "policies": [
+      {
+        "subjects": ["*.vms.stackfi.tech"],
+        "issuers": [{ "module": "acme", "challenges": { "dns": { ... } } }]
+      },
+      {
+        "issuers": [{ "module": "acme", "email": "..." }]
+      }
+    ]
+  }
+}
+```
+The second policy (no `subjects`) is the catch-all that uses `on_demand_tls.ask` for per-domain verification. Caddy calls the ask URL before issuing a cert for any domain not covered by the wildcard policy.
 
-- No changes needed — the name flows through `BuildVmRequestFromTemplateAsync` →
-  `CreateVmAsync`, where the pipeline runs.
+### 4. Controller — `src/Orchestrator/Controllers/CentralIngressController.cs`
 
-### 6. Modify: `CentralIngressService.GenerateSubdomain()` (Orchestrator)
+Add endpoints:
+```
+POST   /api/central-ingress/vm/{vmId}/domains             — Add custom domain
+GET    /api/central-ingress/vm/{vmId}/domains             — List custom domains for VM
+POST   /api/central-ingress/vm/{vmId}/domains/{id}/verify — Verify DNS & activate
+DELETE /api/central-ingress/vm/{vmId}/domains/{id}        — Remove custom domain
+GET    /api/central-ingress/domain-check?domain=...       — Caddy on-demand TLS ask (anonymous)
+```
 
-File: `src/Orchestrator/Services/CentralIngressService.cs`
+The `domain-check` endpoint returns 200 if domain is registered + active, 404 otherwise. Must be `[AllowAnonymous]` since Caddy calls it internally.
 
-- Change subdomain pattern default from `"{name}-{id4}"` to `"{name}"`
-  The name already contains a unique suffix, so appending `{id4}` would be redundant.
-- Keep `SanitizeForSubdomain()` as a safety net, but the input is already clean.
-- Remove the collision-handling code (lines 138-142) — uniqueness is guaranteed
-  by the naming pipeline.
+### 5. Frontend — `wwwroot/src/app.js`, `index.html`, `styles.css`
 
-### 7. Modify: `DirectAccessService` DNS naming (Orchestrator)
+Add "Custom Domains" button on each VM row (next to Direct Access), opening a modal:
 
-File: `src/Orchestrator/Services/DirectAccessService.cs`
+**Modal contents:**
+- Domain list table: Domain, Port, Status badge, Actions (Verify/Remove)
+- Add domain form: domain text input + port number input + Add button
+- DNS instructions panel: shows CNAME/A record target with copy button
 
-- Change subdomain from `"{SanitizeVmName(vm.Name)}-{id4}"` to `vm.Name`
-  directly (already DNS-safe, already unique).
-- Keep `SanitizeVmName()` as safety net.
+**Status badges:**
+- PendingDns → yellow "DNS Pending" badge + "Verify DNS" button
+- Active → green "Active" badge + clickable URL
+- Paused → gray "Paused" badge
+- Error → red "Error" badge
 
-### 8. No changes to NodeAgent
+---
 
-The NodeAgent receives the canonical name in the CreateVm payload (`spec.Name`).
-It already uses this for:
-- Cloud-init `__VM_NAME__` / `__HOSTNAME__` → now DNS-safe, no injection risk
-- `metadata.json` persistence
-- Heartbeat reporting
-- SQLite storage
-
-The name arrives already sanitized and unique — no NodeAgent changes needed.
-
-### 9. Frontend validation (optional, UX improvement)
-
-File: `src/Orchestrator/wwwroot/src/app.js`
-
-- Add client-side preview: show the sanitized name as the user types
-  (e.g., "My Awesome VM!" → preview: "my-awesome-vm-xxxx")
-- Add basic regex validation to match server-side rules
-- This is cosmetic — the server is the authority.
-
-## Files Changed
+## File Change Summary
 
 | File | Change |
 |------|--------|
-| `Services/VmNameService.cs` | **NEW** — centralized naming pipeline |
-| `Services/VmService.cs` | Inject VmNameService, use canonical name, remove SanitizeHostname |
-| `Program.cs` | Register VmNameService in DI |
-| `Services/CentralIngressService.cs` | Simplify subdomain pattern, remove collision code |
-| `Services/DirectAccessService.cs` | Use vm.Name directly for DNS subdomain |
-| `Models/Ingress.cs` | Update default SubdomainPattern |
-| `wwwroot/src/app.js` | Client-side name preview + validation (optional) |
+| `Models/Ingress.cs` | Add `CustomDomain`, `CustomDomainStatus`, DTOs; change `VmIngressConfig.CustomDomains` type |
+| `Services/CentralIngressService.cs` | Add custom domain CRUD, DNS verification, lifecycle integration, `_customDomains` cache |
+| `Services/CentralCaddyManager.cs` | Accept custom domains in reload, generate routes, on-demand TLS config |
+| `Controllers/CentralIngressController.cs` | Add 5 endpoints for custom domain management |
+| `wwwroot/src/app.js` | Custom domains modal + CRUD UI |
+| `wwwroot/index.html` | Modal HTML + button in VM table |
+| `wwwroot/styles.css` | Modal styles + status badges |
 
-## Not Changed
+No changes to NodeAgent — custom domain traffic reaches the NodeAgent via the same proxy path as subdomain traffic.
 
-| File | Reason |
-|------|--------|
-| `DhtNodeService.cs` | System VMs already produce clean names |
-| `RelayNodeService.cs` | System VMs already produce clean names |
-| `VmsController.cs` | Validation handled by VmService |
-| `MarketplaceController.cs` | Name flows through existing pipeline |
-| All NodeAgent files | Receives already-clean name |
+---
+
+## User Flow
+
+1. User has running VM at `my-app-a1b2.vms.stackfi.tech`
+2. Clicks "Custom Domains" button on VM row → modal opens
+3. Types `my.awesome.app`, port 80, clicks "Add Domain"
+4. Domain saved as `PendingDns` — modal shows DNS instructions:
+   > Point your domain to DeCloud:
+   > **CNAME** `my.awesome.app` → `vms.stackfi.tech`
+5. User configures DNS at their registrar
+6. User clicks "Verify DNS" → system resolves domain
+7. DNS valid → status becomes `Active`, Caddy route + TLS auto-provisioned
+8. `https://my.awesome.app` now routes to the VM
