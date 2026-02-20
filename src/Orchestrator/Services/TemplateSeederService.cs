@@ -194,7 +194,8 @@ public class TemplateSeederService
             CreateCodeServerTemplate(),
             CreatePrivateBrowserTemplate(),
             CreateShadowsocksProxyTemplate(),
-            CreateWebProxyBrowserTemplate()
+            CreateWebProxyBrowserTemplate(),
+            CreateOllamaOpenWebUiTemplate()
         };
     }
 
@@ -1813,6 +1814,317 @@ final_message: |
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
             IsFeatured = false,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // AI Chatbot (Ollama + Open WebUI) — Self-hosted ChatGPT alternative
+    // ════════════════════════════════════════════════════════════════════════
+
+    private VmTemplate CreateOllamaOpenWebUiTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "AI Chatbot (Ollama + Open WebUI)",
+            Slug = "ai-chatbot-ollama",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, Gemma) locally with a beautiful chat interface. No data leaves your server.",
+            LongDescription = @"## Your Own Private ChatGPT
+
+Deploy a fully self-hosted AI chatbot that runs entirely on your VM. No API keys, no data sharing, no censorship — just you and the AI.
+
+## Features
+- **Beautiful Chat UI** — Open WebUI provides a ChatGPT-like experience
+- **Multiple Models** — Switch between Llama 3.2, Mistral, Gemma, CodeLlama, and more
+- **100% Private** — All inference runs locally, no data leaves the VM
+- **GPU Accelerated** — Automatically uses NVIDIA GPU if available, falls back to CPU
+- **Model Management** — Pull, delete, and switch models from the web interface
+- **Conversation History** — All chats stored locally on the VM
+- **File Upload** — Attach documents for RAG-style Q&A
+- **Code Generation** — Syntax-highlighted code with copy button
+- **Markdown Rendering** — Rich text formatting in responses
+
+## Getting Started
+1. Wait for initial setup to complete (~5-10 minutes for model download)
+2. Open `https://${DECLOUD_DOMAIN}` in your browser
+3. Log in with username `user` and your generated password
+4. Select **llama3.2:3b** from the model dropdown
+5. Start chatting!
+
+## Pre-installed Model
+- **Llama 3.2 3B** — Fast, capable general-purpose model (2GB download)
+  - Great for conversation, writing, coding assistance
+  - Runs well on both CPU (slower) and GPU (fast)
+
+## Pull More Models via SSH
+```bash
+# Larger, more capable models (require more RAM)
+docker exec ollama ollama pull llama3.2        # 3B default
+docker exec ollama ollama pull mistral         # 7B, great all-rounder
+docker exec ollama ollama pull gemma2:9b       # 9B, Google's model
+docker exec ollama ollama pull codellama       # 7B, optimized for code
+docker exec ollama ollama pull llama3.1:70b    # 70B, needs 40GB+ RAM + GPU
+
+# List installed models
+docker exec ollama ollama list
+```
+
+## GPU vs CPU Performance
+| Model | GPU (RTX 3060) | CPU (8-core) |
+|-------|---------------|-------------|
+| Llama 3.2 3B | ~30 tokens/sec | ~5-8 tokens/sec |
+| Mistral 7B | ~20 tokens/sec | ~2-4 tokens/sec |
+| Gemma 9B | ~15 tokens/sec | ~1-3 tokens/sec |
+
+## Architecture
+```
+nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
+```
+
+## Why DeCloud for AI?
+- **Censorship-Free** — No content filters imposed by cloud providers
+- **Privacy** — Your prompts and data never leave the VM
+- **No API Costs** — Run unlimited queries, no per-token billing
+- **Custom Models** — Load any GGUF model, fine-tuned or community
+- **Always Available** — No rate limits, no waitlists, no downtime",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/open-webui/open-webui",
+            License = "MIT",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
+                DiskBytes = 30L * 1024 * 1024 * 1024,    // 30 GB
+                RequiresGpu = false
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
+                DiskBytes = 50L * 1024 * 1024 * 1024,    // 50 GB
+                RequiresGpu = false
+            },
+
+            RequiresGpu = false,
+            GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
+
+            Tags = new List<string> { "ai", "chatbot", "ollama", "open-webui", "llm", "llama", "mistral", "self-hosted", "private-ai", "chatgpt-alternative" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
+# DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
+
+packages:
+  - curl
+  - wget
+  - nginx
+  - apache2-utils
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Create persistent data directories
+  - mkdir -p /opt/ollama /opt/open-webui
+
+  # ── GPU Detection & NVIDIA Container Toolkit ──
+  - |
+    GPU_FLAG=""""
+    if lspci | grep -i nvidia > /dev/null 2>&1; then
+      echo ""NVIDIA GPU detected — installing container toolkit...""
+      apt-get update
+      apt-get install -y ubuntu-drivers-common
+      ubuntu-drivers autoinstall || true
+
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+      apt-get update
+      apt-get install -y nvidia-container-toolkit
+      nvidia-ctk runtime configure --runtime=docker
+      systemctl restart docker
+      GPU_FLAG=""--gpus=all""
+      echo ""GPU_MODE=true"" > /opt/ollama/gpu-status
+      echo ""GPU acceleration enabled""
+    else
+      echo ""No GPU detected — running in CPU-only mode""
+      echo ""GPU_MODE=false"" > /opt/ollama/gpu-status
+    fi
+
+    # ── Start Ollama container ──
+    docker run -d \
+      --name ollama \
+      --restart unless-stopped \
+      $GPU_FLAG \
+      -v /opt/ollama:/root/.ollama \
+      -p 11434:11434 \
+      ollama/ollama:latest
+
+    # Wait for Ollama API to be ready
+    echo ""Waiting for Ollama to start...""
+    for i in $(seq 1 60); do
+      if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo ""Ollama is ready!""
+        break
+      fi
+      sleep 2
+    done
+
+    # Pull default model (llama3.2:3b — fast, capable, 2GB)
+    echo ""Pulling llama3.2:3b model (this takes 2-5 minutes)...""
+    docker exec ollama ollama pull llama3.2:3b
+
+  # ── Start Open WebUI container ──
+  - |
+    docker run -d \
+      --name open-webui \
+      --restart unless-stopped \
+      --add-host=host.docker.internal:host-gateway \
+      -v /opt/open-webui:/app/backend/data \
+      -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+      -e WEBUI_AUTH=false \
+      -e ENABLE_SIGNUP=false \
+      -e DEFAULT_MODELS=llama3.2:3b \
+      -e ENABLE_COMMUNITY_SHARING=false \
+      -p 3000:8080 \
+      ghcr.io/open-webui/open-webui:main
+
+  # ── Nginx reverse proxy with basic auth ──
+  - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
+  - |
+    cat > /etc/nginx/sites-available/ai-chatbot <<'EOFNGINX'
+    server {
+        listen 8080;
+        server_name _;
+
+        client_max_body_size 100M;
+
+        auth_basic ""AI Chatbot"";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        # Health endpoint (no auth) — for readiness checks
+        location /health {
+            proxy_pass http://127.0.0.1:3000/health;
+            auth_basic off;
+        }
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection ""upgrade"";
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+        }
+    }
+    EOFNGINX
+
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/ai-chatbot /etc/nginx/sites-enabled/ai-chatbot
+  - nginx -t && systemctl restart nginx
+  - systemctl enable nginx
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║    AI Chatbot (Ollama + Open WebUI) - DeCloud Template       ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  Chat UI:  https://${DECLOUD_DOMAIN}                         ║
+    ║  Username: user                                               ║
+    ║  Password: ${DECLOUD_PASSWORD}                               ║
+    ║                                                               ║
+    ║  Default Model: llama3.2:3b                                  ║
+    ║                                                               ║
+    ║  Pull more models:                                            ║
+    ║    docker exec ollama ollama pull mistral                     ║
+    ║    docker exec ollama ollama pull codellama                   ║
+    ║    docker exec ollama ollama pull gemma2:9b                   ║
+    ║                                                               ║
+    ║  Services:                                                    ║
+    ║    docker ps                  (running containers)            ║
+    ║    docker logs -f ollama      (Ollama logs)                   ║
+    ║    docker logs -f open-webui  (Open WebUI logs)               ║
+    ║                                                               ║
+    ║  100% Private — no data leaves this server.                   ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  AI Chatbot is starting up!
+
+  Open WebUI: https://${DECLOUD_DOMAIN}
+  Username: user / Password: ${DECLOUD_PASSWORD}
+
+  Default model: llama3.2:3b (pre-pulled on first boot)
+
+  Pull more models via SSH:
+    docker exec ollama ollama pull mistral
+    docker exec ollama ollama pull codellama
+
+  No data leaves your server. 100% private AI.",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["DEFAULT_MODELS"] = "llama3.2:3b"
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "Open WebUI Chat Interface",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health",
+                        TimeoutSeconds = 600 // Docker pull + model download on first boot
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
+            DefaultUsername = "user",
+            UseGeneratedPassword = true,
+
+            EstimatedCostPerHour = 0.15m, // $0.15/hour — moderate workload
+
+            DefaultBandwidthTier = BandwidthTier.Basic, // AI chat is low bandwidth
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
             IsVerified = true,
             IsCommunity = false,
             PricingModel = TemplatePricingModel.Free,
