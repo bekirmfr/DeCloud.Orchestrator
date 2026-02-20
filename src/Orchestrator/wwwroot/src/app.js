@@ -20,6 +20,7 @@ import {
     setAuthToken,
     getBalance,
     showDepositModal,
+    showBalanceModal,
     refreshBalanceDisplay,
     isInitialized as isPaymentInitialized
 } from './payment.js';
@@ -941,9 +942,6 @@ function showPage(pageName) {
         initMarketplaceTemplates();
     } else if (pageName === 'my-templates') {
         initMyTemplates();
-        if (window.myTemplates && window.myTemplates.loadEarnings) {
-            window.myTemplates.loadEarnings();
-        }
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     }
@@ -1003,10 +1001,10 @@ function updateBalanceDisplay(balance) {
 }
 
 /**
- * Handle deposit button click
+ * Handle balance card click - opens balance detail modal
  */
-function handleDepositClick() {
-    console.debug('[Payment] Deposit button clicked');
+function handleBalanceCardClick() {
+    console.debug('[Payment] Balance card clicked');
     if (!ethersSigner) {
         console.warn('[Payment] Please connect your wallet first.');
         showToast('Please connect your wallet first', 'error');
@@ -1019,7 +1017,7 @@ function handleDepositClick() {
         return;
     }
 
-    showDepositModal();
+    showBalanceModal();
 }
 
 async function loadDashboardStats() {
@@ -2485,7 +2483,7 @@ window.saveSettings = saveSettings;
 window.refreshData = refreshData;
 window.showToast = showToast;
 window.ethersSigner = () => ethersSigner;
-window.handleDepositClick = handleDepositClick;
+window.handleBalanceCardClick = handleBalanceCardClick;
 window.loadUserBalance = loadUserBalance;
 window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;

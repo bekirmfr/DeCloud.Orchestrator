@@ -780,6 +780,347 @@ export async function refreshBalanceDisplay() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BALANCE MODAL
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Escrow ABI for author earnings
+const ESCROW_AUTHOR_ABI = [
+    "function nodePendingPayouts(address) view returns (uint256)",
+    "function nodeWithdraw() external",
+    "function nodeWithdrawAmount(uint256 amount) external"
+];
+
+/**
+ * Show the balance detail modal
+ */
+export async function showBalanceModal() {
+    let modal = document.getElementById('balance-modal');
+    if (!modal) {
+        createBalanceModal();
+        modal = document.getElementById('balance-modal');
+    }
+
+    modal.classList.add('active');
+    await loadBalanceModalData();
+}
+
+/**
+ * Hide the balance modal
+ */
+export function hideBalanceModal() {
+    const modal = document.getElementById('balance-modal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+window.closeBalanceModal = function () {
+    hideBalanceModal();
+};
+
+/**
+ * Create the balance modal DOM element
+ */
+function createBalanceModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'balance-modal';
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) hideBalanceModal();
+    });
+
+    modal.innerHTML = `
+        <div class="modal-content balance-modal-content">
+            <div class="modal-header">
+                <h2>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -3px; margin-right: 8px; color: var(--accent-primary);">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/>
+                        <path d="M12 18V6"/>
+                    </svg>
+                    Balance
+                </h2>
+                <button onclick="window.closeBalanceModal()" class="close-btn">&times;</button>
+            </div>
+
+            <div class="modal-body balance-modal-body">
+                <!-- Primary Balance -->
+                <div class="bm-balance-hero" id="bm-balance-hero">
+                    <span class="bm-balance-label">Available Balance</span>
+                    <div class="bm-balance-value-row">
+                        <span class="bm-balance-value" id="bm-available-balance">--</span>
+                        <span class="bm-balance-token">USDC</span>
+                    </div>
+                </div>
+
+                <!-- Balance Breakdown -->
+                <div class="bm-breakdown">
+                    <div class="bm-breakdown-row">
+                        <span class="bm-breakdown-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                            Confirmed
+                        </span>
+                        <span class="bm-breakdown-value" id="bm-confirmed">--</span>
+                    </div>
+                    <div class="bm-breakdown-row" id="bm-pending-row" style="display: none;">
+                        <span class="bm-breakdown-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            Pending Deposits
+                        </span>
+                        <span class="bm-breakdown-value bm-pending" id="bm-pending">--</span>
+                    </div>
+                    <div class="bm-breakdown-row" id="bm-usage-row" style="display: none;">
+                        <span class="bm-breakdown-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            Unpaid Usage
+                        </span>
+                        <span class="bm-breakdown-value bm-usage" id="bm-usage">--</span>
+                    </div>
+                </div>
+
+                <!-- Divider -->
+                <div class="bm-divider"></div>
+
+                <!-- Template Earnings -->
+                <div class="bm-earnings-section" id="bm-earnings-section">
+                    <div class="bm-earnings-header">
+                        <span class="bm-section-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                            Template Earnings
+                        </span>
+                    </div>
+                    <div class="bm-earnings-body" id="bm-earnings-body">
+                        <div class="bm-earnings-loading">
+                            <div class="bm-spinner"></div>
+                            <span>Loading earnings...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Divider -->
+                <div class="bm-divider"></div>
+
+                <!-- Actions -->
+                <div class="bm-actions">
+                    <button class="bm-btn bm-btn-deposit" onclick="window.openDepositFromBalance()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Deposit
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+}
+
+/**
+ * Open deposit modal from within the balance modal
+ */
+window.openDepositFromBalance = function () {
+    hideBalanceModal();
+    showDepositModal();
+};
+
+/**
+ * Load all data into the balance modal
+ */
+async function loadBalanceModalData() {
+    // Load balance and earnings in parallel
+    await Promise.all([
+        loadBalanceBreakdown(),
+        loadEarningsSection()
+    ]);
+}
+
+/**
+ * Load balance breakdown data
+ */
+async function loadBalanceBreakdown() {
+    const heroEl = document.getElementById('bm-available-balance');
+    const confirmedEl = document.getElementById('bm-confirmed');
+    const pendingEl = document.getElementById('bm-pending');
+    const pendingRow = document.getElementById('bm-pending-row');
+    const usageEl = document.getElementById('bm-usage');
+    const usageRow = document.getElementById('bm-usage-row');
+    const balanceHero = document.getElementById('bm-balance-hero');
+
+    try {
+        const balance = await getBalance();
+
+        if (!balance) return;
+
+        // Available balance
+        heroEl.textContent = balance.balance.toFixed(2);
+
+        // Low balance state
+        if (balance.balance < 5) {
+            balanceHero.classList.add('bm-low');
+        } else {
+            balanceHero.classList.remove('bm-low');
+        }
+
+        // Confirmed
+        confirmedEl.textContent = `${balance.confirmedBalance.toFixed(2)} USDC`;
+
+        // Pending deposits
+        if (balance.pendingDeposits > 0) {
+            pendingRow.style.display = 'flex';
+            pendingEl.textContent = `+${balance.pendingDeposits.toFixed(2)} USDC`;
+        } else {
+            pendingRow.style.display = 'none';
+        }
+
+        // Unpaid usage
+        if (balance.unpaidUsage > 0) {
+            usageRow.style.display = 'flex';
+            usageEl.textContent = `-${balance.unpaidUsage.toFixed(2)} USDC`;
+        } else {
+            usageRow.style.display = 'none';
+        }
+
+    } catch (error) {
+        console.warn('[Balance Modal] Failed to load balance:', error.message);
+        heroEl.textContent = '--';
+    }
+}
+
+/**
+ * Load template earnings from blockchain
+ */
+async function loadEarningsSection() {
+    const container = document.getElementById('bm-earnings-body');
+    if (!container) return;
+
+    try {
+        const signer = window.ethersSigner ? window.ethersSigner() : null;
+        if (!signer) {
+            container.innerHTML = '<span class="bm-earnings-note">Connect wallet to view earnings</span>';
+            return;
+        }
+
+        // Get deposit config for contract address
+        const configResponse = await fetch('/api/payment/deposit-info', {
+            headers: {
+                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!configResponse.ok) {
+            container.innerHTML = '<span class="bm-earnings-note">Unavailable</span>';
+            return;
+        }
+
+        const configResult = await configResponse.json();
+        const config = configResult.data || configResult;
+
+        if (!config.escrowContractAddress) {
+            container.innerHTML = '<span class="bm-earnings-note">Not configured</span>';
+            return;
+        }
+
+        const escrow = new ethers.Contract(
+            config.escrowContractAddress,
+            ESCROW_AUTHOR_ABI,
+            signer
+        );
+
+        const address = await signer.getAddress();
+        const pendingRaw = await escrow.nodePendingPayouts(address);
+        const pending = parseFloat(ethers.formatUnits(pendingRaw, 6));
+
+        container.innerHTML = `
+            <div class="bm-earnings-row">
+                <div class="bm-earnings-info">
+                    <span class="bm-earnings-amount">${pending.toFixed(2)} USDC</span>
+                    <span class="bm-earnings-sublabel">Pending Earnings</span>
+                </div>
+                <button class="bm-btn bm-btn-withdraw" onclick="window.withdrawFromBalanceModal()" ${pending <= 0 ? 'disabled' : ''}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Withdraw
+                </button>
+            </div>
+        `;
+    } catch (error) {
+        console.error('[Balance Modal] Failed to load earnings:', error);
+        container.innerHTML = '<span class="bm-earnings-note">Unable to load earnings</span>';
+    }
+}
+
+/**
+ * Withdraw earnings from the balance modal
+ */
+window.withdrawFromBalanceModal = async function () {
+    try {
+        const signer = window.ethersSigner ? window.ethersSigner() : null;
+        if (!signer) {
+            showToast?.('error', 'Wallet not connected');
+            return;
+        }
+
+        const configResponse = await fetch('/api/payment/deposit-info', {
+            headers: {
+                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        const configResult = await configResponse.json();
+        const config = configResult.data || configResult;
+
+        const escrow = new ethers.Contract(
+            config.escrowContractAddress,
+            ESCROW_AUTHOR_ABI,
+            signer
+        );
+
+        // Disable button during transaction
+        const btn = document.querySelector('.bm-btn-withdraw');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<div class="bm-spinner-sm"></div> Confirming...`;
+        }
+
+        const tx = await escrow.nodeWithdraw();
+        if (btn) btn.innerHTML = `<div class="bm-spinner-sm"></div> Waiting...`;
+        await tx.wait();
+
+        showToast?.('success', 'Withdrawal successful!');
+
+        // Refresh both earnings and balance
+        await Promise.all([
+            loadEarningsSection(),
+            loadBalanceBreakdown(),
+            refreshBalanceDisplay()
+        ]);
+    } catch (error) {
+        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+            showToast?.('warning', 'Transaction rejected');
+        } else {
+            showToast?.('error', `Withdrawal failed: ${error.message}`);
+        }
+        // Restore button state
+        await loadEarningsSection();
+    }
+};
+
+// Helper to safely call showToast (may come from app.js)
+function showToast(type, message) {
+    if (window.showToast) {
+        window.showToast(message, type);
+    } else {
+        console.log(`[Toast ${type}] ${message}`);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 

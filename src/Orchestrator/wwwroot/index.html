@@ -157,7 +157,7 @@
             </nav>
 
             <div class="sidebar-footer">
-                <div id="balance-container" class="balance-card" style="display: none;">
+                <div id="balance-container" class="balance-card balance-card-clickable" style="display: none;" onclick="handleBalanceCardClick()" title="View balance details">
                     <div class="balance-header">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2">
@@ -166,19 +166,14 @@
                             <path d="M12 18V6" />
                         </svg>
                         <span class="balance-label">Balance</span>
+                        <svg class="balance-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
                     </div>
                     <div class="balance-row">
                         <span id="user-balance" class="balance-amount">0.00</span>
                         <span class="balance-token">USDC</span>
                     </div>
-                    <button onclick="handleDepositClick()" class="btn-deposit" title="Deposit USDC">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        Deposit
-                    </button>
                 </div>
                 <div class="wallet-badge" id="wallet-badge">
                     <div class="wallet-dot"></div>
@@ -586,14 +581,6 @@
                         </button>
                     </div>
                 </header>
-
-                <!-- Earnings Section -->
-                <div class="section-card" style="margin-bottom: 24px;">
-                    <h3 style="margin-bottom: 12px;">Template Earnings</h3>
-                    <div id="my-templates-earnings">
-                        <p class="text-muted">Loading earnings...</p>
-                    </div>
-                </div>
 
                 <!-- My Templates Grid -->
                 <div class="my-templates-grid" id="my-templates-grid">
