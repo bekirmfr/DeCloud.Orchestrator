@@ -1161,6 +1161,17 @@ function renderVMsTable(vms) {
                         </svg>
                     </button>
 
+                    <!-- Custom Domains -->
+                    <button class="btn btn-sm btn-secondary"
+                            onclick="window.openCustomDomainsModal('${vm.id}', '${vm.name}')"
+                            title="Custom Domains">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="2" y1="12" x2="22" y2="12"/>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                        </svg>
+                    </button>
+
                     <!-- Terminal -->
                     <button class="btn btn-sm" 
                             onclick="openTerminal('${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
@@ -2479,3 +2490,270 @@ window.loadUserBalance = loadUserBalance;
 window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;
 window.clearNodeFilters = clearNodeFilters;
+
+// ============================================
+// CUSTOM DOMAINS
+// ============================================
+
+const DOMAIN_STATUS_LABELS = {
+    PendingDns: { text: 'DNS Pending', class: 'status-pending' },
+    Active: { text: 'Active', class: 'status-running' },
+    Paused: { text: 'Paused', class: 'status-stopped' },
+    Error: { text: 'Error', class: 'status-error' }
+};
+
+async function openCustomDomainsModal(vmId, vmName) {
+    const modal = document.getElementById('custom-domains-modal');
+    const title = document.getElementById('custom-domains-modal-title');
+    const listContainer = document.getElementById('custom-domains-list');
+    const addContainer = document.getElementById('custom-domains-add');
+    const loadingEl = document.getElementById('custom-domains-loading');
+
+    if (!modal) return;
+
+    modal.dataset.vmId = vmId;
+    title.textContent = `Custom Domains - ${vmName}`;
+
+    modal.style.display = 'flex';
+    loadingEl.style.display = 'block';
+    listContainer.style.display = 'none';
+    addContainer.style.display = 'none';
+
+    try {
+        const response = await api(`/api/central-ingress/vm/${vmId}/domains`);
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to load domains');
+        }
+
+        const domains = result.data || [];
+
+        renderCustomDomainsList(domains, vmId);
+        renderCustomDomainsAddForm(vmId);
+
+        loadingEl.style.display = 'none';
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    } catch (error) {
+        loadingEl.style.display = 'none';
+        listContainer.innerHTML = `<p class="text-muted" style="text-align: center; padding: 20px;">Failed to load domains: ${escapeHtml(error.message)}</p>`;
+        listContainer.style.display = 'block';
+        renderCustomDomainsAddForm(vmId);
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeCustomDomainsModal() {
+    const modal = document.getElementById('custom-domains-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+function renderCustomDomainsList(domains, vmId) {
+    const container = document.getElementById('custom-domains-list');
+
+    if (!domains || domains.length === 0) {
+        container.innerHTML = `
+            <div class="direct-access-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+                <h3>No Custom Domains</h3>
+                <p>Add a custom domain below to route your own domain to this VM.</p>
+            </div>
+        `;
+        container.style.display = 'block';
+        return;
+    }
+
+    const html = `
+        <table class="ports-table">
+            <thead>
+                <tr>
+                    <th>Domain</th>
+                    <th>Port</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${domains.map(d => {
+                    const statusInfo = DOMAIN_STATUS_LABELS[d.status] || DOMAIN_STATUS_LABELS.Error;
+                    return `
+                    <tr>
+                        <td>
+                            ${d.status === 'Active' && d.publicUrl
+                                ? `<a href="${escapeHtml(d.publicUrl)}" target="_blank" class="domain-link">${escapeHtml(d.domain)}</a>`
+                                : `<code>${escapeHtml(d.domain)}</code>`
+                            }
+                        </td>
+                        <td><code>${d.targetPort}</code></td>
+                        <td><span class="status-badge ${statusInfo.class}">${statusInfo.text}</span></td>
+                        <td>
+                            <div class="table-actions">
+                                ${d.status === 'PendingDns' || d.status === 'Error' ? `
+                                    <button class="btn btn-sm btn-primary" onclick="window.verifyCustomDomain('${vmId}', '${d.id}')" title="Verify DNS">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                            <polyline points="22 4 12 14.01 9 11.01"/>
+                                        </svg>
+                                        Verify
+                                    </button>
+                                ` : ''}
+                                <button class="btn btn-sm btn-danger" onclick="window.removeCustomDomain('${vmId}', '${d.id}', '${escapeHtml(d.domain)}')" title="Remove">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="18" y1="6" x2="6" y2="18"/>
+                                        <line x1="6" y1="6" x2="18" y2="18"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    ${d.status === 'PendingDns' || d.status === 'Error' ? `
+                    <tr>
+                        <td colspan="4">
+                            <div class="dns-instructions">
+                                <span class="dns-instructions-label">DNS Setup:</span>
+                                <code>CNAME ${escapeHtml(d.domain)} &rarr; ${escapeHtml(d.dnsTarget || '')}</code>
+                                <button class="btn-icon" onclick="copyToClipboard('${escapeHtml(d.dnsTarget || '')}')" title="Copy DNS target">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    ` : ''}
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+
+    container.innerHTML = html;
+    container.style.display = 'block';
+}
+
+function renderCustomDomainsAddForm(vmId) {
+    const container = document.getElementById('custom-domains-add');
+
+    container.innerHTML = `
+        <div class="custom-port-section">
+            <h4>Add Custom Domain</h4>
+            <div class="custom-port-form">
+                <input type="text" id="custom-domain-input" placeholder="my.awesome.app" style="flex: 2;" />
+                <input type="number" id="custom-domain-port" placeholder="Port (80)" min="1" max="65535" value="80" style="flex: 0.5;" />
+                <button class="btn btn-primary" onclick="window.addCustomDomain('${vmId}')">
+                    Add Domain
+                </button>
+            </div>
+        </div>
+    `;
+
+    container.style.display = 'block';
+}
+
+window.addCustomDomain = async function(vmId) {
+    const domainInput = document.getElementById('custom-domain-input');
+    const portInput = document.getElementById('custom-domain-port');
+
+    const domain = domainInput.value.trim();
+    const targetPort = parseInt(portInput.value) || 80;
+
+    if (!domain) {
+        showToast('Please enter a domain name', 'error');
+        return;
+    }
+
+    try {
+        showToast('Adding custom domain...', 'info');
+
+        const response = await api(`/api/central-ingress/vm/${vmId}/domains`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain, targetPort })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to add domain');
+        }
+
+        showToast(`Domain ${domain} added! Configure DNS and click Verify.`, 'success');
+        domainInput.value = '';
+
+        // Refresh modal
+        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
+        await openCustomDomainsModal(vmId, vmName);
+    } catch (error) {
+        showToast('Failed to add domain: ' + error.message, 'error');
+    }
+};
+
+window.verifyCustomDomain = async function(vmId, domainId) {
+    try {
+        showToast('Verifying DNS...', 'info');
+
+        const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}/verify`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.error || 'Verification failed');
+        }
+
+        const domain = result.data;
+        if (domain.status === 'Active') {
+            showToast(`Domain ${domain.domain} verified and active!`, 'success');
+        } else {
+            showToast(`DNS verification failed for ${domain.domain}. Check your CNAME record.`, 'error');
+        }
+
+        // Refresh modal
+        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
+        await openCustomDomainsModal(vmId, vmName);
+    } catch (error) {
+        showToast('DNS verification failed: ' + error.message, 'error');
+    }
+};
+
+window.removeCustomDomain = async function(vmId, domainId, domainName) {
+    if (!confirm(`Remove custom domain ${domainName}?`)) {
+        return;
+    }
+
+    try {
+        showToast('Removing domain...', 'info');
+
+        const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to remove');
+        }
+
+        showToast(`Domain ${domainName} removed`, 'success');
+
+        // Refresh modal
+        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
+        await openCustomDomainsModal(vmId, vmName);
+    } catch (error) {
+        showToast('Failed to remove domain: ' + error.message, 'error');
+    }
+};
+
+window.openCustomDomainsModal = openCustomDomainsModal;
+window.closeCustomDomainsModal = closeCustomDomainsModal;

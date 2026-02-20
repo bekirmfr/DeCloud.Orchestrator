@@ -974,6 +974,47 @@
         </div>
     </div>
 
+    <!-- Custom Domains Modal -->
+    <div class="modal-overlay" id="custom-domains-modal" style="display: none;">
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h2 class="modal-title" id="custom-domains-modal-title">Custom Domains</h2>
+                <button class="modal-close" onclick="window.closeCustomDomainsModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading -->
+                <div id="custom-domains-loading" style="text-align: center; padding: 40px; display: none;">
+                    <div class="spinner"></div>
+                    <p class="text-muted" style="margin-top: 16px;">Loading custom domains...</p>
+                </div>
+
+                <!-- Domain List -->
+                <div id="custom-domains-list" style="display: none;"></div>
+
+                <!-- Add Domain Form -->
+                <div id="custom-domains-add" style="display: none; margin-top: 24px;"></div>
+
+                <!-- DNS Instructions -->
+                <div class="direct-access-help" style="margin-top: 24px;">
+                    <h4>How Custom Domains Work</h4>
+                    <p>
+                        Map your own domain to this VM for HTTPS access. Add your domain below,
+                        then configure a CNAME record at your DNS provider. Once DNS propagates,
+                        click "Verify DNS" to activate the domain with automatic TLS.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="window.closeCustomDomainsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main Application Script - Vite will handle this -->
     <script type="module" src="/src/app.js"></script>
     <script type="module" src="/src/direct-access.js"></script>

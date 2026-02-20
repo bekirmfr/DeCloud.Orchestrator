@@ -16,7 +16,7 @@ public interface ICentralCaddyManager
     Task<bool> InitializeWildcardConfigAsync(CancellationToken ct = default);
     Task<bool> UpsertRouteAsync(CentralIngressRoute route, CancellationToken ct = default);
     Task<bool> RemoveRouteAsync(string subdomain, CancellationToken ct = default);
-    Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, CancellationToken ct = default);
+    Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, IEnumerable<CustomDomain>? customDomains = null, CancellationToken ct = default);
     Task<string?> GetWildcardCertStatusAsync(CancellationToken ct = default);
 }
 
@@ -105,14 +105,18 @@ public class CentralCaddyManager : ICentralCaddyManager
         }
     }
 
-    public async Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, CancellationToken ct = default)
+    public async Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, IEnumerable<CustomDomain>? customDomains = null, CancellationToken ct = default)
     {
         try
         {
             var routeList = routes.Where(r => r.Status == CentralRouteStatus.Active).ToList();
-            _logger.LogInformation("Reloading central ingress with {Count} VM routes", routeList.Count);
+            var domainList = customDomains?.Where(d => d.Status == CustomDomainStatus.Active).ToList()
+                             ?? new List<CustomDomain>();
+            _logger.LogInformation(
+                "Reloading central ingress with {RouteCount} VM routes + {DomainCount} custom domains",
+                routeList.Count, domainList.Count);
 
-            var config = await BuildFullConfigWithPreservedRoutesAsync(routeList, ct);
+            var config = await BuildFullConfigWithPreservedRoutesAsync(routeList, domainList, ct);
             return await ApplyConfigAsync(config, ct);
         }
         catch (Exception ex)
@@ -171,16 +175,27 @@ public class CentralCaddyManager : ICentralCaddyManager
     /// </summary>
     private async Task<object> BuildFullConfigWithPreservedRoutesAsync(
         List<CentralIngressRoute> vmRoutes,
+        List<CustomDomain> customDomains,
         CancellationToken ct)
     {
         // Get current configuration from Caddy
         var existingRoutes = await GetExistingNonVmRoutesAsync(ct);
 
-        // Build VM routes
+        // Build VM subdomain routes
         var caddyVmRoutes = vmRoutes
             .Where(r => !string.IsNullOrEmpty(r.VmPrivateIp) && !string.IsNullOrEmpty(r.NodePublicIp))
             .Select(BuildRouteConfig)
             .ToList();
+
+        // Build custom domain routes — each custom domain maps to a VM's existing route info
+        var vmRouteLookup = vmRoutes.ToDictionary(r => r.VmId, r => r);
+        foreach (var cd in customDomains)
+        {
+            if (vmRouteLookup.TryGetValue(cd.VmId, out var vmRoute))
+            {
+                caddyVmRoutes.Add(BuildCustomDomainRouteConfig(cd, vmRoute));
+            }
+        }
 
         // Add catch-all for unmatched VM subdomains
         caddyVmRoutes.Add(BuildCatchAllRoute());
@@ -189,8 +204,8 @@ public class CentralCaddyManager : ICentralCaddyManager
         var allRoutes = existingRoutes.Concat(caddyVmRoutes).ToList();
 
         _logger.LogInformation(
-            "Combined routes: {InfraRoutes} infrastructure + {VmRoutes} VM routes = {Total} total",
-            existingRoutes.Count, caddyVmRoutes.Count, allRoutes.Count);
+            "Combined routes: {InfraRoutes} infrastructure + {VmRoutes} VM + {CustomDomains} custom = {Total} total",
+            existingRoutes.Count, vmRoutes.Count, customDomains.Count, allRoutes.Count);
 
         return new
         {
@@ -229,7 +244,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                         }
                     }
                 },
-                tls = BuildTlsConfig()
+                tls = BuildTlsConfig(customDomains.Any())
             }
         };
     }
@@ -263,7 +278,7 @@ public class CentralCaddyManager : ICentralCaddyManager
 
             foreach (var route in routes.EnumerateArray())
             {
-                // Check if this is a VM route (contains our VM domain pattern)
+                // Check if this is a VM route (contains our VM domain pattern or VM proxy rewrite)
                 var isVmRoute = false;
 
                 if (route.TryGetProperty("match", out var matchArray) && matchArray.ValueKind == JsonValueKind.Array)
@@ -275,7 +290,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                             foreach (var host in hostArray.EnumerateArray())
                             {
                                 var hostStr = host.GetString() ?? "";
-                                // Check if this host matches VM pattern
+                                // Check if this host matches VM pattern or wildcard
                                 if (hostStr.Contains(vmDomainPattern) || hostStr.StartsWith("*."))
                                 {
                                     isVmRoute = true;
@@ -284,6 +299,26 @@ public class CentralCaddyManager : ICentralCaddyManager
                             }
                         }
                         if (isVmRoute) break;
+                    }
+                }
+
+                // Also check if route has a rewrite handler targeting VM proxy (custom domain routes)
+                if (!isVmRoute && route.TryGetProperty("handle", out var handleArray) &&
+                    handleArray.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var handler in handleArray.EnumerateArray())
+                    {
+                        if (handler.TryGetProperty("handler", out var handlerName) &&
+                            handlerName.GetString() == "rewrite" &&
+                            handler.TryGetProperty("uri", out var uriProp))
+                        {
+                            var uri = uriProp.GetString() ?? "";
+                            if (uri.Contains("/api/vms/") && uri.Contains("/proxy/http/"))
+                            {
+                                isVmRoute = true;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -407,6 +442,58 @@ public class CentralCaddyManager : ICentralCaddyManager
     }
 
     /// <summary>
+    /// Build route configuration for a custom domain pointing to a VM
+    /// </summary>
+    private object BuildCustomDomainRouteConfig(CustomDomain customDomain, CentralIngressRoute vmRoute)
+    {
+        return new
+        {
+            match = new[]
+            {
+                new { host = new[] { customDomain.Domain } }
+            },
+            handle = new object[]
+            {
+                new
+                {
+                    handler = "rewrite",
+                    uri = $"/api/vms/{customDomain.VmId}/proxy/http/{customDomain.TargetPort}{{http.request.uri}}"
+                },
+                new
+                {
+                    handler = "reverse_proxy",
+                    upstreams = new[]
+                    {
+                        new { dial = $"{vmRoute.NodePublicIp}:5100" }
+                    },
+                    headers = new
+                    {
+                        request = new
+                        {
+                            set = new Dictionary<string, string[]>
+                            {
+                                ["Host"] = new[] { "{http.request.host}" },
+                                ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
+                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
+                                ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
+                                ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
+                            }
+                        }
+                    },
+                    transport = new
+                    {
+                        protocol = "http",
+                        read_buffer_size = 4096,
+                        versions = new[] { "1.1" }
+                    },
+                    flush_interval = 0
+                }
+            },
+            terminal = true
+        };
+    }
+
+    /// <summary>
     /// Build catch-all route for unmatched subdomains
     /// </summary>
     private object BuildCatchAllRoute()
@@ -435,9 +522,9 @@ public class CentralCaddyManager : ICentralCaddyManager
     }
 
     /// <summary>
-    /// Build TLS configuration for wildcard certificate
+    /// Build TLS configuration for wildcard certificate + on-demand TLS for custom domains
     /// </summary>
-    private object? BuildTlsConfig()
+    private object? BuildTlsConfig(bool hasCustomDomains = false)
     {
         if (string.IsNullOrEmpty(_options.AcmeEmail) || string.IsNullOrEmpty(_options.DnsApiToken))
         {
@@ -473,30 +560,64 @@ public class CentralCaddyManager : ICentralCaddyManager
             _ => (object?)null
         };
 
-        return new
+        var acmeCa = _options.UseAcmeStaging
+            ? "https://acme-staging-v02.api.letsencrypt.org/directory"
+            : "https://acme-v02.api.letsencrypt.org/directory";
+
+        // Wildcard policy for *.baseDomain using DNS-01 challenge
+        var wildcardPolicy = new Dictionary<string, object>
         {
-            automation = new
+            ["subjects"] = new[] { $"*.{_options.BaseDomain}" },
+            ["issuers"] = new object[]
             {
-                policies = new[]
+                new
                 {
-                    new
-                    {
-                        subjects = new[] { $"*.{_options.BaseDomain}" },
-                        issuers = new[]
-                        {
-                            new
-                            {
-                                module = "acme",
-                                ca = _options.UseAcmeStaging
-                                    ? "https://acme-staging-v02.api.letsencrypt.org/directory"
-                                    : "https://acme-v02.api.letsencrypt.org/directory",
-                                email = _options.AcmeEmail,
-                                challenges = new { dns = dnsChallenge }
-                            }
-                        }
-                    }
+                    module = "acme",
+                    ca = acmeCa,
+                    email = _options.AcmeEmail,
+                    challenges = new { dns = dnsChallenge }
                 }
             }
         };
+
+        var policies = new List<object> { wildcardPolicy };
+
+        // On-demand TLS policy for custom domains (catch-all, no subjects)
+        // Caddy uses HTTP-01 challenge and calls our ask endpoint to verify the domain
+        if (hasCustomDomains)
+        {
+            var onDemandPolicy = new Dictionary<string, object>
+            {
+                ["issuers"] = new object[]
+                {
+                    new
+                    {
+                        module = "acme",
+                        ca = acmeCa,
+                        email = _options.AcmeEmail,
+                    }
+                },
+                ["on_demand"] = true
+            };
+            policies.Add(onDemandPolicy);
+        }
+
+        var automation = new Dictionary<string, object>
+        {
+            ["policies"] = policies
+        };
+
+        // Add on-demand TLS ask endpoint when custom domains exist
+        if (hasCustomDomains)
+        {
+            automation["on_demand_tls"] = new
+            {
+                ask = "http://localhost:5050/api/central-ingress/domain-check",
+                interval = "5m",
+                burst = 5
+            };
+        }
+
+        return new { automation };
     }
 }

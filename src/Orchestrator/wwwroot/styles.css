@@ -4389,3 +4389,40 @@
     border-color: var(--border-hover);
     box-shadow: var(--shadow-md);
 }
+
+/* ============================================
+   CUSTOM DOMAINS
+   ============================================ */
+
+.domain-link {
+    color: var(--accent-primary);
+    text-decoration: none;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+.domain-link:hover {
+    text-decoration: underline;
+}
+
+.dns-instructions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(234, 179, 8, 0.08);
+    border: 1px solid rgba(234, 179, 8, 0.2);
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
+
+.dns-instructions-label {
+    color: #eab308;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.dns-instructions code {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
