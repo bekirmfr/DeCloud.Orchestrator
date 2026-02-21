@@ -205,12 +205,6 @@ public class ScoringWeightsConfig
     /// Weight for geographical proximity (0.0 - 1.0)
     /// </summary>
     public double Locality { get; set; } = 0.15;
-
-    /// <summary>
-    /// Weight for GPU preference bonus (0.0 - 1.0).
-    /// Only active when GpuMode == PrefersGpu; otherwise score is neutral.
-    /// </summary>
-    public double GpuPreference { get; set; } = 0.20;
 }
 
 /// <summary>
@@ -429,5 +423,4 @@ public class NodeScores
     public double LoadScore { get; set; }
     public double ReputationScore { get; set; }
     public double LocalityScore { get; set; }
-    public double GpuPreferenceScore { get; set; }
 }

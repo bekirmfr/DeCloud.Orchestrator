@@ -70,7 +70,7 @@ public class TemplateService : ITemplateService
         {
             var templates = await _dataStore.GetTemplatesAsync(
                 category: query.Category,
-                gpuMode: query.GpuMode,
+                requiresGpu: query.RequiresGpu,
                 tags: query.Tags,
                 featuredOnly: query.FeaturedOnly,
                 sortBy: query.SortBy);
