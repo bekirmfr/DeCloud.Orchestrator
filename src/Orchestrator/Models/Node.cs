@@ -174,6 +174,16 @@ public class HardwareInventory
     public List<GpuInfo> Gpus { get; set; } = new();
     public NetworkInfo Network { get; set; } = new();
     public DateTime CollectedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Container runtimes available on this node (e.g., "docker", "podman")
+    /// </summary>
+    public List<string> ContainerRuntimes { get; set; } = new();
+
+    /// <summary>
+    /// True if any GPU supports container-based sharing (Docker + NVIDIA Container Toolkit)
+    /// </summary>
+    public bool SupportsGpuContainers { get; set; }
 }
 
 public class CpuInfo
@@ -249,6 +259,12 @@ public class GpuInfo
     public bool IsIommuEnabled { get; set; }
     public string IommuGroup { get; set; } = string.Empty;
     public bool IsAvailableForPassthrough { get; set; }
+
+    /// <summary>
+    /// True if GPU can be shared via Docker + NVIDIA Container Toolkit.
+    /// Set when Docker daemon and nvidia runtime are detected.
+    /// </summary>
+    public bool IsAvailableForContainerSharing { get; set; }
 
     // Current utilization
     public double GpuUsagePercent { get; set; }

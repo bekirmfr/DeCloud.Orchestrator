@@ -392,13 +392,31 @@ public class VmSchedulingService : IVmSchedulingService
         }
 
         // =====================================================
-        // FILTER 5: Load Average
+        // FILTER 5: GPU Requirement
+        // =====================================================
+        if (spec.RequiresGpu)
+        {
+            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
+                return "VM requires GPU but node has no GPU available";
+
+            // Accept nodes with either VFIO passthrough OR container-based GPU sharing
+            var hasPassthrough = node.HardwareInventory.Gpus
+                .Any(g => g.IsAvailableForPassthrough);
+            var hasContainerSharing = node.HardwareInventory.SupportsGpuContainers &&
+                node.HardwareInventory.Gpus.Any(g => g.IsAvailableForContainerSharing);
+
+            if (!hasPassthrough && !hasContainerSharing)
+                return "VM requires GPU but no GPU is available (neither passthrough nor container sharing) on this node";
+        }
+
+        // =====================================================
+        // FILTER 6: Load Average
         // =====================================================
         if (node.LatestMetrics?.LoadAverage > config.Limits.MaxLoadAverage)
             return $"Load too high ({node.LatestMetrics.LoadAverage:F2} > {config.Limits.MaxLoadAverage})";
 
         // =====================================================
-        // FILTER 6: Minimum Free Memory
+        // FILTER 7: Minimum Free Memory
         // =====================================================
         var freeMemoryMb = (node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes) / (1024 * 1024);
         if (freeMemoryMb < config.Limits.MinFreeMemoryMb)
