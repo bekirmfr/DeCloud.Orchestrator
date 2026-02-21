@@ -60,8 +60,6 @@ public class Node
 
     // Capabilities
     public List<string> SupportedImages { get; set; } = new();
-    public bool SupportsGpu { get; set; }
-    public GpuInfo? GpuInfo { get; set; }
 
     /// <summary>
     /// Relay node configuration (null if node is not a relay)
