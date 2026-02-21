@@ -1859,7 +1859,7 @@ Deploy a fully self-hosted AI chatbot that runs entirely on your VM. No API keys
 ## Getting Started
 1. Wait for initial setup to complete (~5-10 minutes for model download)
 2. Open `https://${DECLOUD_DOMAIN}` in your browser
-3. Log in with email `admin@localhost` and your generated password
+3. Log in with username `user` and your generated password
 4. Select **llama3.2:3b** from the model dropdown
 5. Start chatting!
 
@@ -1890,7 +1890,7 @@ docker exec ollama ollama list
 
 ## Architecture
 ```
-nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)
+nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
 ```
 
 ## Why DeCloud for AI?
@@ -1929,12 +1929,13 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)
             CloudInitTemplate = @"#cloud-config
 
 # AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
-# DeCloud Template v1.1.0 — GPU auto-detection, native Open WebUI auth
+# DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
 
 packages:
   - curl
   - wget
   - nginx
+  - apache2-utils
   - qemu-guest-agent
 
 runcmd:
@@ -2013,31 +2014,19 @@ runcmd:
       -p 3000:8080 \
       ghcr.io/open-webui/open-webui:latest
 
-    # Wait for Open WebUI to be healthy
-    echo ""Waiting for Open WebUI to start...""
-    for i in $(seq 1 90); do
-      if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
-        echo ""Open WebUI is ready!""
-        break
-      fi
-      sleep 2
-    done
-
-    # Create admin user with generated password
-    echo ""Creating admin user...""
-    curl -sf -X POST http://localhost:3000/api/v1/auths/signup \
-      -H 'Content-Type: application/json' \
-      -d '{""name"":""Admin"",""email"":""admin@localhost"",""password"":""${DECLOUD_PASSWORD}""}' > /dev/null 2>&1 \
-      && echo ""Admin user created successfully"" \
-      || echo ""Admin user creation failed — sign up at https://${DECLOUD_DOMAIN}""
-
-  # ── Nginx reverse proxy (Open WebUI handles auth natively) ──
+  # ── Nginx reverse proxy with basic auth ──
+  - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
   - |
     cat > /etc/nginx/sites-available/ai-chatbot <<'EOFNGINX'
+    # Skip basic auth when the request carries a Bearer token (Open WebUI JWT)
+    map $http_authorization $auth_type {
+        default          ""AI Chatbot"";
+        ""~^Bearer ""    off;
+    }
+
     server {
         listen 8080;
         server_name _;
-
         client_max_body_size 100M;
         auth_basic off;
 
@@ -2074,7 +2063,7 @@ runcmd:
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
     ║  Chat UI:  https://${DECLOUD_DOMAIN}                         ║
-    ║  Email:    admin@localhost                                    ║
+    ║  Username: user                                               ║
     ║  Password: ${DECLOUD_PASSWORD}                               ║
     ║                                                               ║
     ║  Default Model: llama3.2:3b                                  ║
@@ -2098,7 +2087,7 @@ final_message: |
   AI Chatbot is starting up!
 
   Open WebUI: https://${DECLOUD_DOMAIN}
-  Email: admin@localhost / Password: ${DECLOUD_PASSWORD}
+  Username: user / Password: ${DECLOUD_PASSWORD}
 
   Default model: llama3.2:3b (pre-pulled on first boot)
 
@@ -2131,7 +2120,7 @@ final_message: |
             },
 
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
-            DefaultUsername = "admin@localhost",
+            DefaultUsername = "user",
             UseGeneratedPassword = true,
 
             EstimatedCostPerHour = 0.15m, // $0.15/hour — moderate workload
