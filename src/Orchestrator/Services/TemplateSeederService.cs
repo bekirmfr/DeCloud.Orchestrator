@@ -2006,11 +2006,12 @@ runcmd:
       -v /opt/open-webui:/app/backend/data \
       -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
       -e WEBUI_AUTH=true \
+      -e WEBUI_SECRET_KEY=${DECLOUD_PASSWORD} \
       -e ENABLE_SIGNUP=true \
       -e DEFAULT_MODELS=llama3.2:3b \
       -e ENABLE_COMMUNITY_SHARING=false \
       -p 3000:8080 \
-      ghcr.io/open-webui/open-webui:main
+      ghcr.io/open-webui/open-webui:latest
 
     # Wait for Open WebUI to be healthy
     echo ""Waiting for Open WebUI to start...""
@@ -2038,6 +2039,7 @@ runcmd:
         server_name _;
 
         client_max_body_size 100M;
+        auth_basic off;
 
         location /health {
             proxy_pass http://127.0.0.1:3000/health;
