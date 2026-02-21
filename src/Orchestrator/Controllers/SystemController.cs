@@ -106,7 +106,7 @@ public class SystemController : ControllerBase
         decimal cpuRate = 0.005m * spec.VirtualCpuCores;
         decimal memoryRate = 0.002m * (spec.MemoryBytes / (1024m * 1024m * 1024m)); // per GB
         decimal storageRate = 0.0001m * (spec.DiskBytes / (1024m * 1024m * 1024m)); // per GB
-        decimal gpuRate = spec.RequiresGpu ? 0.10m : 0;
+        decimal gpuRate = spec.GpuMode != GpuMode.Cpu ? 0.10m : 0;
 
         var hourlyTotal = cpuRate + memoryRate + storageRate + gpuRate;
         var dailyTotal = hourlyTotal * 24;

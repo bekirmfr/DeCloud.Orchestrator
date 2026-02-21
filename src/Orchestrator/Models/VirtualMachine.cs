@@ -150,7 +150,23 @@ public class VmSpec
     //[BsonIgnore]
     //[JsonIgnore]
     //public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
-    public bool RequiresGpu { get; set; }
+    /// <summary>
+    /// GPU requirement level: Cpu (none), PrefersGpu (optional), RequiresGpu (mandatory).
+    /// Controls both scheduling (hard filter vs preference) and GPU resolution.
+    /// </summary>
+    public GpuMode GpuMode { get; set; } = GpuMode.Cpu;
+
+    /// <summary>
+    /// Backward-compatible accessor. Returns true when GpuMode is RequiresGpu.
+    /// Setting true maps to RequiresGpu; false maps to Cpu.
+    /// </summary>
+    [Obsolete("Use GpuMode instead. Kept for JSON backward compatibility.")]
+    public bool RequiresGpu
+    {
+        get => GpuMode == GpuMode.RequiresGpu;
+        set => GpuMode = value ? GpuMode.RequiresGpu : GpuMode.Cpu;
+    }
+
     public string? GpuModel { get; set; }
 
     /// <summary>
@@ -357,6 +373,36 @@ public enum DeploymentMode
 {
     VirtualMachine = 0,
     Container = 1
+}
+
+/// <summary>
+/// GPU requirement level for a workload.
+/// Cpu: No GPU needed (default)
+/// PrefersGpu: GPU optional — runs on CPU but benefits from GPU. Scheduler prefers GPU nodes but doesn't require them.
+/// RequiresGpu: GPU mandatory — scheduler hard-filters to GPU-capable nodes only.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum GpuMode
+{
+    /// <summary>
+    /// No GPU needed. Scheduler ignores GPU availability.
+    /// </summary>
+    Cpu = 0,
+
+    /// <summary>
+    /// GPU optional. Runs on CPU but significantly benefits from GPU acceleration.
+    /// Scheduler scores GPU nodes higher but does not hard-filter.
+    /// If placed on a GPU node, GPU resolution assigns passthrough or container mode.
+    /// Example: Ollama — works on CPU, dramatically faster on GPU.
+    /// </summary>
+    PrefersGpu = 1,
+
+    /// <summary>
+    /// GPU mandatory. Workload cannot function without GPU.
+    /// Scheduler hard-filters to nodes with available GPU (passthrough or container sharing).
+    /// Example: vLLM, Stable Diffusion — useless without GPU.
+    /// </summary>
+    RequiresGpu = 2
 }
 
 /// <summary>

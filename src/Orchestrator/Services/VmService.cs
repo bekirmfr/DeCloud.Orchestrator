@@ -842,8 +842,12 @@ public class VmService : IVmService
         // ========================================
         string? gpuPciAddress = null;
         var deploymentMode = vm.Spec.DeploymentMode;
+        var nodeHasGpu = selectedNode.HardwareInventory.Gpus.Count > 0;
 
-        if (vm.Spec.RequiresGpu && selectedNode.HardwareInventory.Gpus.Count > 0)
+        // GPU resolution runs for both RequiresGpu and PrefersGpu when the node has a GPU.
+        // For PrefersGpu, the scheduler already scored GPU nodes higher, so if we landed
+        // on a GPU node we should use it. If we landed on a non-GPU node, skip gracefully.
+        if (vm.Spec.GpuMode != GpuMode.Cpu && nodeHasGpu)
         {
             // Check if node supports VFIO passthrough
             var passthroughGpu = selectedNode.HardwareInventory.Gpus
@@ -868,7 +872,7 @@ public class VmService : IVmService
                     "VM {VmId} assigned GPU {GpuModel} via container sharing on node {NodeId} (no IOMMU, using Docker --gpus)",
                     vm.Id, containerGpu?.Model ?? "unknown", selectedNode.Id);
             }
-            else
+            else if (vm.Spec.GpuMode == GpuMode.RequiresGpu)
             {
                 _logger.LogWarning(
                     "VM {VmId} requires GPU but no available GPU (passthrough or container) found on node {NodeId}",

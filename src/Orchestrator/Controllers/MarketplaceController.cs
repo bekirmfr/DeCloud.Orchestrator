@@ -53,7 +53,7 @@ public class MarketplaceController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<List<VmTemplate>>> GetTemplates(
         [FromQuery] string? category = null,
-        [FromQuery] bool? requiresGpu = null,
+        [FromQuery] GpuMode? gpuMode = null,
         [FromQuery] string? tags = null,
         [FromQuery] string? search = null,
         [FromQuery] bool featured = false,
@@ -65,7 +65,7 @@ public class MarketplaceController : ControllerBase
             var query = new TemplateQuery
             {
                 Category = category,
-                RequiresGpu = requiresGpu,
+                GpuMode = gpuMode,
                 Tags = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(),
                 SearchTerm = search,
                 FeaturedOnly = featured,
@@ -194,7 +194,7 @@ public class MarketplaceController : ControllerBase
                 SourceUrl = request.SourceUrl,
                 MinimumSpec = request.MinimumSpec ?? new VmSpec(),
                 RecommendedSpec = request.RecommendedSpec ?? new VmSpec(),
-                RequiresGpu = request.RequiresGpu,
+                GpuMode = request.GpuMode,
                 GpuRequirement = request.GpuRequirement,
                 CloudInitTemplate = request.CloudInitTemplate,
                 DefaultEnvironmentVariables = request.DefaultEnvironmentVariables ?? new(),
@@ -788,7 +788,7 @@ public class CreateTemplateRequest
     public string? SourceUrl { get; set; }
     public VmSpec? MinimumSpec { get; set; }
     public VmSpec? RecommendedSpec { get; set; }
-    public bool RequiresGpu { get; set; }
+    public GpuMode GpuMode { get; set; } = GpuMode.Cpu;
     public string? GpuRequirement { get; set; }
     public string CloudInitTemplate { get; set; } = string.Empty;
     public Dictionary<string, string>? DefaultEnvironmentVariables { get; set; }
