@@ -64,11 +64,6 @@ public class Node
     public GpuInfo? GpuInfo { get; set; }
 
     /// <summary>
-    /// Overall GPU setup status for this node.
-    /// Tracks whether automated GPU configuration (VFIO or Container Toolkit) has been performed.
-    /// </summary>
-    public GpuSetupStatus GpuSetupStatus { get; set; } = GpuSetupStatus.NotNeeded;
-    /// <summary>
     /// Relay node configuration (null if node is not a relay)
     /// </summary>
     public RelayNodeInfo? RelayInfo { get; set; }
@@ -272,60 +267,10 @@ public class GpuInfo
     /// </summary>
     public bool IsAvailableForContainerSharing { get; set; }
 
-    /// <summary>
-    /// Tracks the automated GPU setup lifecycle on this GPU.
-    /// Updated by GpuSetupService when ConfigureGpu commands are sent/acknowledged.
-    /// </summary>
-    public GpuSetupStatus SetupStatus { get; set; } = GpuSetupStatus.NotNeeded;
-
     // Current utilization
     public double GpuUsagePercent { get; set; }
     public double MemoryUsagePercent { get; set; }
     public int? TemperatureCelsius { get; set; }
-}
-
-/// <summary>
-/// Tracks the automated GPU setup lifecycle on a node.
-/// The orchestrator sends ConfigureGpu commands and tracks progress through these states.
-/// </summary>
-public enum GpuSetupStatus
-{
-    /// <summary>No GPU detected or GPU already fully configured</summary>
-    NotNeeded,
-
-    /// <summary>GPU detected but neither VFIO nor Container Toolkit is ready. Setup will be queued.</summary>
-    Pending,
-
-    /// <summary>ConfigureGpu command sent to node agent, awaiting acknowledgment</summary>
-    InProgress,
-
-    /// <summary>GPU is configured and ready for workloads (passthrough, container sharing, or both)</summary>
-    Completed,
-
-    /// <summary>Setup failed — may need manual intervention. Error details in node event log.</summary>
-    Failed,
-
-    /// <summary>IOMMU was enabled in grub/modules but a host reboot is required to activate it</summary>
-    RebootRequired
-}
-
-/// <summary>
-/// Specifies which GPU sharing mode the node agent should configure.
-/// Sent as part of the ConfigureGpu command payload.
-/// </summary>
-public enum GpuSetupMode
-{
-    /// <summary>
-    /// Let the node agent pick the best mode based on hardware capabilities.
-    /// Prefers ContainerToolkit (immediate, no reboot) and optionally enables VFIO if IOMMU is available.
-    /// </summary>
-    Auto,
-
-    /// <summary>Configure IOMMU + VFIO kernel modules for full GPU passthrough to VMs</summary>
-    VfioPassthrough,
-
-    /// <summary>Install NVIDIA drivers + NVIDIA Container Toolkit for Docker --gpus support</summary>
-    ContainerToolkit
 }
 
 public class NetworkInfo
@@ -604,7 +549,6 @@ public enum NodeCommandType
     CollectDiagnostics,
     AllocatePort,      // Smart Port Allocation: Allocate public port for VM
     RemovePort,        // Smart Port Allocation: Remove port mapping
-    ConfigureGpu       // GPU Setup: Configure VFIO passthrough or NVIDIA Container Toolkit
 }
 
 public record CommandAcknowledgment(

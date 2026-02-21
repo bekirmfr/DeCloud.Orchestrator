@@ -95,7 +95,6 @@ builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IDhtNodeService, DhtNodeService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
-builder.Services.AddSingleton<IGpuSetupService, GpuSetupService>();
 builder.Services.AddSingleton<INodeService, NodeService>();
 builder.Services.AddSingleton<IVmNameService, VmNameService>();
 builder.Services.AddSingleton<IVmService, VmService>();
