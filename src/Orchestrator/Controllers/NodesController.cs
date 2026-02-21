@@ -343,8 +343,8 @@ public class NodesController : ControllerBase
                 {
                     Region = g.Key,
                     NodeCount = g.Count(),
-                    AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.TotalResources.ComputePoints),
-                    HasGpu = g.Any(n => !string.IsNullOrEmpty(n.GpuInfo?.Model))
+                    AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
+                    HasGpu = g.Any(n => n.HardwareInventory.SupportsGpu)
                 })
                 .OrderByDescending(r => r.NodeCount)
                 .ToList();
@@ -387,7 +387,7 @@ public class NodesController : ControllerBase
                     Zone = g.Key,
                     NodeCount = g.Count(),
                     AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
-                    HasGpu = g.Any(n => !string.IsNullOrEmpty(n.GpuInfo?.Model))
+                    HasGpu = g.Any(n => n.HardwareInventory.SupportsGpu)
                 })
                 .OrderByDescending(z => z.NodeCount)
                 .ToList();
