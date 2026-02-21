@@ -1923,6 +1923,7 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
 
             RequiresGpu = false,
             GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
+            ContainerImage = "ollama/ollama:latest",
 
             Tags = new List<string> { "ai", "chatbot", "ollama", "open-webui", "llm", "llama", "mistral", "self-hosted", "private-ai", "chatgpt-alternative" },
 

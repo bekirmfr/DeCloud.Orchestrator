@@ -842,8 +842,16 @@ public class VmService : IVmService
         // ========================================
         string? gpuPciAddress = null;
         var deploymentMode = vm.Spec.DeploymentMode;
+        var nodeHasGpu = selectedNode.HardwareInventory.Gpus.Count > 0;
 
-        if (vm.Spec.RequiresGpu && selectedNode.HardwareInventory.Gpus.Count > 0)
+        // Resolve GPU mode for both GPU-required and GPU-optional workloads.
+        // GPU-optional templates (RequiresGpu=false) with a ContainerImage should
+        // still get GPU access when deployed on a GPU-capable node (e.g. WSL2 nodes
+        // that support container sharing but not VFIO passthrough).
+        var wantsGpu = vm.Spec.RequiresGpu ||
+                       (!string.IsNullOrEmpty(vm.Spec.ContainerImage) && nodeHasGpu);
+
+        if (wantsGpu && nodeHasGpu)
         {
             // Check if node supports VFIO passthrough
             var passthroughGpu = selectedNode.HardwareInventory.Gpus
@@ -868,7 +876,7 @@ public class VmService : IVmService
                     "VM {VmId} assigned GPU {GpuModel} via container sharing on node {NodeId} (no IOMMU, using Docker --gpus)",
                     vm.Id, containerGpu?.Model ?? "unknown", selectedNode.Id);
             }
-            else
+            else if (vm.Spec.RequiresGpu)
             {
                 _logger.LogWarning(
                     "VM {VmId} requires GPU but no available GPU (passthrough or container) found on node {NodeId}",
