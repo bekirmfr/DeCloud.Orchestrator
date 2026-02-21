@@ -1417,7 +1417,7 @@ public class DataStore
 
     public async Task<List<VmTemplate>> GetTemplatesAsync(
         string? category = null,
-        bool? requiresGpu = null,
+        GpuMode? gpuMode = null,
         List<string>? tags = null,
         bool featuredOnly = false,
         string sortBy = "popular")
@@ -1436,9 +1436,9 @@ public class DataStore
 
             if (!string.IsNullOrEmpty(category))
                 filters.Add(filterBuilder.Eq(t => t.Category, category));
-            
-            if (requiresGpu.HasValue)
-                filters.Add(filterBuilder.Eq(t => t.RequiresGpu, requiresGpu.Value));
+
+            if (gpuMode.HasValue)
+                filters.Add(filterBuilder.Eq(t => t.GpuMode, gpuMode.Value));
             
             if (featuredOnly)
                 filters.Add(filterBuilder.Eq(t => t.IsFeatured, true));

@@ -174,7 +174,7 @@ public class VmSchedulingService : IVmSchedulingService
                 "Node {NodeId} ({Architecture}, {Region}/{Zone}) - " +
                 "Score: {TotalScore:F2}, Capacity: {CapacityScore:F2}, " +
                 "Load: {LoadScore:F2}, Reputation: {ReputationScore:F2}, " +
-                "Locality: {LocalityScore:F2}, Rejection: {RejectionReason}",
+                "Locality: {LocalityScore:F2}, GpuPref: {GpuPrefScore:F2}, Rejection: {RejectionReason}",
                 node.Id,
                 node.Architecture,
                 node.Region,
@@ -184,6 +184,7 @@ public class VmSchedulingService : IVmSchedulingService
                 scored.Scores.LoadScore,
                 scored.Scores.ReputationScore,
                 scored.Scores.LocalityScore,
+                scored.Scores.GpuPreferenceScore,
                 scored.RejectionReason ?? "None");
 
             scoredNodes.Add(scored);
@@ -392,9 +393,10 @@ public class VmSchedulingService : IVmSchedulingService
         }
 
         // =====================================================
-        // FILTER 5: GPU Requirement
+        // FILTER 5: GPU Requirement (hard filter for RequiresGpu only)
+        // PrefersGpu is handled via scoring bonus, not hard filter.
         // =====================================================
-        if (spec.RequiresGpu)
+        if (spec.GpuMode == GpuMode.RequiresGpu)
         {
             if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
                 return "VM requires GPU but node has no GPU available";
@@ -507,12 +509,33 @@ public class VmSchedulingService : IVmSchedulingService
             preferredRegion,
             preferredZone);
 
+        // =====================================================
+        // GPU PREFERENCE SCORE (0.0 - 1.0)
+        // Only meaningful for PrefersGpu workloads.
+        // GPU node = 1.0, non-GPU node = 0.0, other modes = neutral 0.5.
+        // =====================================================
+        double gpuPreferenceScore;
+        if (spec.GpuMode == GpuMode.PrefersGpu)
+        {
+            var nodeHasUsableGpu = node.HardwareInventory.SupportsGpu &&
+                node.HardwareInventory.Gpus.Count > 0 &&
+                (node.HardwareInventory.Gpus.Any(g => g.IsAvailableForPassthrough) ||
+                 (node.HardwareInventory.SupportsGpuContainers &&
+                  node.HardwareInventory.Gpus.Any(g => g.IsAvailableForContainerSharing)));
+            gpuPreferenceScore = nodeHasUsableGpu ? 1.0 : 0.0;
+        }
+        else
+        {
+            gpuPreferenceScore = 0.5; // Neutral for Cpu and RequiresGpu modes
+        }
+
         return new NodeScores
         {
             CapacityScore = capacityScore,
             LoadScore = loadScore,
             ReputationScore = reputationScore,
-            LocalityScore = localityScore
+            LocalityScore = localityScore,
+            GpuPreferenceScore = gpuPreferenceScore
         };
     }
 
@@ -577,7 +600,8 @@ public class VmSchedulingService : IVmSchedulingService
         return (scores.CapacityScore * weights.Capacity) +
                (scores.LoadScore * weights.Load) +
                (scores.ReputationScore * weights.Reputation) +
-               (scores.LocalityScore * weights.Locality);
+               (scores.LocalityScore * weights.Locality) +
+               (scores.GpuPreferenceScore * weights.GpuPreference);
     }
 
     // ============================================================================
