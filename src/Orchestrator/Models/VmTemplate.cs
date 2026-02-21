@@ -127,6 +127,14 @@ public class VmTemplate
     public string? GpuRequirement { get; set; }
 
     /// <summary>
+    /// Docker container image for container-based GPU deployment.
+    /// When set, nodes without IOMMU (e.g. WSL2) will deploy this as a Docker container
+    /// with --gpus all instead of a full VM with VFIO passthrough.
+    /// Example: "ollama/ollama:latest", "vllm/vllm-openai:latest"
+    /// </summary>
+    public string? ContainerImage { get; set; }
+
+    /// <summary>
     /// Required node capabilities (e.g., ["nvme", "high-bandwidth"])
     /// </summary>
     public List<string> RequiredCapabilities { get; set; } = new();

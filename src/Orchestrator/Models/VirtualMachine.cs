@@ -153,6 +153,18 @@ public class VmSpec
     public bool RequiresGpu { get; set; }
     public string? GpuModel { get; set; }
 
+    /// <summary>
+    /// Deployment mode: VirtualMachine (default) or Container (GPU sharing).
+    /// Auto-selected by scheduler when node supports GPU containers but not VFIO passthrough.
+    /// </summary>
+    public DeploymentMode DeploymentMode { get; set; } = DeploymentMode.VirtualMachine;
+
+    /// <summary>
+    /// Container image for Container deployment mode (e.g., "ollama/ollama:latest").
+    /// Populated from template or user request.
+    /// </summary>
+    public string? ContainerImage { get; set; }
+
     // ========================================
     // COMPUTE POINT COST TRACKING
     // ========================================
@@ -334,6 +346,17 @@ public enum VmType
     Relay,
     Dht,
     Inference
+}
+
+/// <summary>
+/// How a workload is deployed on a node.
+/// VirtualMachine: KVM/QEMU VM via libvirt (default, full isolation)
+/// Container: Docker container with GPU sharing (for nodes without IOMMU, e.g. WSL2)
+/// </summary>
+public enum DeploymentMode
+{
+    VirtualMachine = 0,
+    Container = 1
 }
 
 /// <summary>

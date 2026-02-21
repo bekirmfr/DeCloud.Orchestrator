@@ -399,10 +399,14 @@ public class VmSchedulingService : IVmSchedulingService
             if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
                 return "VM requires GPU but node has no GPU available";
 
-            var availableGpu = node.HardwareInventory.Gpus
-                .FirstOrDefault(g => g.IsAvailableForPassthrough);
-            if (availableGpu == null)
-                return "VM requires GPU but no GPU is available for passthrough on this node";
+            // Accept nodes with either VFIO passthrough OR container-based GPU sharing
+            var hasPassthrough = node.HardwareInventory.Gpus
+                .Any(g => g.IsAvailableForPassthrough);
+            var hasContainerSharing = node.HardwareInventory.SupportsGpuContainers &&
+                node.HardwareInventory.Gpus.Any(g => g.IsAvailableForContainerSharing);
+
+            if (!hasPassthrough && !hasContainerSharing)
+                return "VM requires GPU but no GPU is available (neither passthrough nor container sharing) on this node";
         }
 
         // =====================================================

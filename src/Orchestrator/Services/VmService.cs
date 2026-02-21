@@ -208,6 +208,12 @@ public class VmService : IVmService
                     }
                 }
 
+                // Set container image from template (for GPU container deployment)
+                if (!string.IsNullOrEmpty(template.ContainerImage))
+                {
+                    vm.Spec.ContainerImage = template.ContainerImage;
+                }
+
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
@@ -832,28 +838,46 @@ public class VmService : IVmService
         }
 
         // ========================================
-        // STEP 7: Resolve GPU PCI address (if GPU required)
+        // STEP 7: Resolve GPU and deployment mode
         // ========================================
         string? gpuPciAddress = null;
+        var deploymentMode = vm.Spec.DeploymentMode;
+
         if (vm.Spec.RequiresGpu && selectedNode.HardwareInventory.Gpus.Count > 0)
         {
-            var availableGpu = selectedNode.HardwareInventory.Gpus
+            // Check if node supports VFIO passthrough
+            var passthroughGpu = selectedNode.HardwareInventory.Gpus
                 .FirstOrDefault(g => g.IsAvailableForPassthrough);
-            gpuPciAddress = availableGpu?.PciAddress;
 
-            if (gpuPciAddress != null)
+            if (passthroughGpu != null)
             {
+                // Use VFIO passthrough (bare-metal Linux with IOMMU)
+                gpuPciAddress = passthroughGpu.PciAddress;
+                deploymentMode = DeploymentMode.VirtualMachine;
                 _logger.LogInformation(
-                    "VM {VmId} assigned GPU {GpuModel} at PCI {PciAddress} on node {NodeId}",
-                    vm.Id, availableGpu!.Model, gpuPciAddress, selectedNode.Id);
+                    "VM {VmId} assigned GPU {GpuModel} via VFIO passthrough at PCI {PciAddress} on node {NodeId}",
+                    vm.Id, passthroughGpu.Model, gpuPciAddress, selectedNode.Id);
+            }
+            else if (selectedNode.HardwareInventory.SupportsGpuContainers)
+            {
+                // Fallback to container-based GPU sharing (WSL2, no IOMMU)
+                deploymentMode = DeploymentMode.Container;
+                var containerGpu = selectedNode.HardwareInventory.Gpus
+                    .FirstOrDefault(g => g.IsAvailableForContainerSharing);
+                _logger.LogInformation(
+                    "VM {VmId} assigned GPU {GpuModel} via container sharing on node {NodeId} (no IOMMU, using Docker --gpus)",
+                    vm.Id, containerGpu?.Model ?? "unknown", selectedNode.Id);
             }
             else
             {
                 _logger.LogWarning(
-                    "VM {VmId} requires GPU but no available GPU found on node {NodeId}",
+                    "VM {VmId} requires GPU but no available GPU (passthrough or container) found on node {NodeId}",
                     vm.Id, selectedNode.Id);
             }
         }
+
+        // Store resolved deployment mode
+        vm.Spec.DeploymentMode = deploymentMode;
 
         // ========================================
         // STEP 8: Create command with ALL required fields
@@ -877,6 +901,8 @@ public class VmService : IVmService
                 BaseImageUrl = imageUrl,
                 SshPublicKey = sshPublicKey ?? "",
                 GpuPciAddress = gpuPciAddress,
+                DeploymentMode = (int)deploymentMode,
+                ContainerImage = vm.Spec.ContainerImage,
                 Network = new
                 {
                     MacAddress = "",
