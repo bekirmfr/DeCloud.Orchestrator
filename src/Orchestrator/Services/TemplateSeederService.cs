@@ -2014,13 +2014,19 @@ runcmd:
   - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
   - |
     cat > /etc/nginx/sites-available/ai-chatbot <<'EOFNGINX'
+    # Skip basic auth when the request carries a Bearer token (Open WebUI JWT)
+    map $http_authorization $auth_type {
+        default          ""AI Chatbot"";
+        ""~^Bearer ""    off;
+    }
+
     server {
         listen 8080;
         server_name _;
 
         client_max_body_size 100M;
 
-        auth_basic ""AI Chatbot"";
+        auth_basic $auth_type;
         auth_basic_user_file /etc/nginx/.htpasswd;
 
         # Health endpoint (no auth) — for readiness checks
