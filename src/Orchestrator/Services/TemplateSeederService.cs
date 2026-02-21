@@ -1838,7 +1838,7 @@ final_message: |
         {
             Name = "AI Chatbot (Ollama + Open WebUI)",
             Slug = "ai-chatbot-ollama",
-            Version = "1.0.0",
+            Version = "1.1.0",
             Category = "ai-ml",
             Description = "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, Gemma) locally with a beautiful chat interface. No data leaves your server.",
             LongDescription = @"## Your Own Private ChatGPT
@@ -2028,7 +2028,6 @@ runcmd:
         listen 8080;
         server_name _;
         client_max_body_size 100M;
-        auth_basic off;
 
         location /health {
             proxy_pass http://127.0.0.1:3000/health;
