@@ -195,7 +195,8 @@ public class TemplateSeederService
             CreatePrivateBrowserTemplate(),
             CreateShadowsocksProxyTemplate(),
             CreateWebProxyBrowserTemplate(),
-            CreateOllamaOpenWebUiTemplate()
+            CreateOllamaOpenWebUiTemplate(),
+            CreateVllmInferenceServerTemplate()
         };
     }
 
@@ -1955,8 +1956,10 @@ runcmd:
       apt-get install -y ubuntu-drivers-common
       ubuntu-drivers autoinstall || true
 
-      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      if [ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]; then
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+          | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+      fi
       curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
         | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
         | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
@@ -2127,6 +2130,362 @@ final_message: |
             EstimatedCostPerHour = 0.15m, // $0.15/hour — moderate workload
 
             DefaultBandwidthTier = BandwidthTier.Basic, // AI chat is low bandwidth
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // vLLM Inference Server — OpenAI-compatible GPU inference API
+    // ════════════════════════════════════════════════════════════════════════
+
+    private VmTemplate CreateVllmInferenceServerTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "vLLM Inference Server",
+            Slug = "vllm-inference-server",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "Production-ready LLM inference server with OpenAI-compatible API. Serve Llama, Mistral, Qwen, and other models with GPU acceleration.",
+            LongDescription = @"## Production LLM Inference API
+
+Deploy a GPU-accelerated LLM inference server powered by [vLLM](https://docs.vllm.ai/) — the industry standard for high-throughput model serving. Exposes an **OpenAI-compatible API** so any application or SDK that works with OpenAI will work with your server.
+
+## Features
+- **OpenAI-compatible API** — Drop-in replacement for `https://api.openai.com/v1`
+- **GPU Accelerated** — Optimized CUDA kernels, PagedAttention for efficient VRAM usage
+- **Multiple Models** — Serve any HuggingFace model (Llama 3, Mistral, Qwen 2.5, Gemma 2, etc.)
+- **Quantization Support** — AWQ/GPTQ quantized models for 8GB GPUs
+- **Continuous Batching** — High throughput under concurrent requests
+- **Streaming** — Full SSE streaming support for chat completions
+- **API Key Auth** — Secured with your generated password as the API key
+- **No Data Sharing** — 100% self-hosted, no telemetry
+
+## Getting Started
+1. Wait for initial setup to complete (~5-10 minutes for model download)
+2. Your API is available at `https://${DECLOUD_DOMAIN}/v1`
+3. API key: your generated password (`${DECLOUD_PASSWORD}`)
+
+## Usage Examples
+
+### curl
+```bash
+curl https://${DECLOUD_DOMAIN}/v1/chat/completions \
+  -H ""Authorization: Bearer ${DECLOUD_PASSWORD}"" \
+  -H ""Content-Type: application/json"" \
+  -d '{
+    ""model"": ""Qwen/Qwen2.5-3B-Instruct"",
+    ""messages"": [{""role"": ""user"", ""content"": ""Hello!""}]
+  }'
+```
+
+### Python (OpenAI SDK)
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url=""https://${DECLOUD_DOMAIN}/v1"",
+    api_key=""${DECLOUD_PASSWORD}""
+)
+
+response = client.chat.completions.create(
+    model=""Qwen/Qwen2.5-3B-Instruct"",
+    messages=[{""role"": ""user"", ""content"": ""Hello!""}],
+    stream=True
+)
+for chunk in response:
+    print(chunk.choices[0].delta.content, end="""")
+```
+
+## Default Model
+- **Qwen 2.5 3B Instruct** — Fast, capable, fits in 8GB VRAM
+  - Good for chat, code, reasoning
+  - ~30-40 tokens/sec on RTX 3060/4060
+
+## Switching Models via SSH
+```bash
+# Edit the model and restart
+nano /opt/vllm/model.env    # Change MODEL_ID
+systemctl restart vllm
+
+# Popular models for 8GB VRAM (use quantized):
+# - Qwen/Qwen2.5-3B-Instruct (default, 3B)
+# - meta-llama/Llama-3.2-3B-Instruct (3B)
+# - mistralai/Mistral-7B-Instruct-v0.3 (7B, needs quantization)
+# - TheBloke/Mistral-7B-Instruct-v0.2-AWQ (7B AWQ, fits 8GB)
+```
+
+## Architecture
+```
+nginx (:8080) → API Key Auth → vLLM OpenAI Server (:8000)
+```
+
+## Why vLLM on DeCloud?
+- **No API Costs** — Unlimited tokens, pay only for compute
+- **Privacy** — Your prompts never leave the VM
+- **Low Latency** — Direct GPU inference, no shared infrastructure
+- **Full Control** — Any model, any configuration, no content filters",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/vllm-project/vllm",
+            License = "Apache-2.0",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
+                DiskBytes = 40L * 1024 * 1024 * 1024,    // 40 GB
+                RequiresGpu = true,
+                GpuModel = "NVIDIA"
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 32L * 1024 * 1024 * 1024,  // 32 GB
+                DiskBytes = 80L * 1024 * 1024 * 1024,    // 80 GB
+                RequiresGpu = true,
+                GpuModel = "NVIDIA"
+            },
+
+            RequiresGpu = true,
+            GpuRequirement = "NVIDIA GPU with CUDA support and 8GB+ VRAM (RTX 3060/4060 or better)",
+            ContainerImage = "vllm/vllm-openai:latest",
+            RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
+
+            Tags = new List<string> { "ai", "llm", "inference", "vllm", "openai-api", "gpu", "llama", "mistral", "qwen", "api-server", "self-hosted" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# vLLM Inference Server — OpenAI-compatible GPU LLM serving
+# DeCloud Template v1.0.0 — GPU required, API key auth via nginx
+
+packages:
+  - curl
+  - wget
+  - nginx
+  - apache2-utils
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Create persistent directories
+  - mkdir -p /opt/vllm /opt/hf-cache
+
+  # Store model configuration
+  - |
+    cat > /opt/vllm/model.env <<'ENVEOF'
+    MODEL_ID=Qwen/Qwen2.5-3B-Instruct
+    MAX_MODEL_LEN=4096
+    GPU_MEMORY_UTILIZATION=0.90
+    ENVEOF
+
+  # ── GPU Setup & NVIDIA Container Toolkit ──
+  - |
+    if ! lspci | grep -i nvidia > /dev/null 2>&1; then
+      echo ""ERROR: No NVIDIA GPU detected. vLLM requires a GPU.""
+      echo ""GPU_DETECTED=false"" > /opt/vllm/gpu-status
+      exit 1
+    fi
+
+    echo ""NVIDIA GPU detected — installing container toolkit...""
+    apt-get update
+    apt-get install -y ubuntu-drivers-common
+    ubuntu-drivers autoinstall || true
+
+    if [ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]; then
+      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    fi
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    apt-get update
+    apt-get install -y nvidia-container-toolkit
+    nvidia-ctk runtime configure --runtime=docker
+    systemctl restart docker
+    echo ""GPU_DETECTED=true"" > /opt/vllm/gpu-status
+    echo ""GPU acceleration enabled""
+
+  # ── Create vLLM systemd service ──
+  - |
+    cat > /etc/systemd/system/vllm.service <<'SVCEOF'
+    [Unit]
+    Description=vLLM Inference Server
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    Type=simple
+    EnvironmentFile=/opt/vllm/model.env
+    ExecStartPre=-/usr/bin/docker rm -f vllm-server
+    ExecStart=/usr/bin/docker run --rm \
+      --name vllm-server \
+      --gpus all \
+      --ipc=host \
+      -v /opt/hf-cache:/root/.cache/huggingface \
+      -p 8000:8000 \
+      vllm/vllm-openai:latest \
+      --model ${MODEL_ID} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION} \
+      --trust-remote-code
+    ExecStop=/usr/bin/docker stop vllm-server
+    Restart=on-failure
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+    SVCEOF
+
+    systemctl daemon-reload
+    systemctl enable vllm
+    systemctl start vllm
+
+  # Wait for vLLM to load model and become ready
+  - |
+    echo ""Waiting for vLLM to load model (this may take 5-10 minutes)...""
+    for i in $(seq 1 180); do
+      if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+        echo ""vLLM is ready!""
+        break
+      fi
+      sleep 5
+    done
+
+  # ── Nginx reverse proxy with API key auth ──
+  - htpasswd -bc /etc/nginx/.htpasswd apikey ${DECLOUD_PASSWORD}
+  - |
+    cat > /etc/nginx/sites-available/vllm-api <<'EOFNGINX'
+    # API key validation: accept Bearer token matching the generated password
+    map $http_authorization $api_key_valid {
+        default                   0;
+        ""~^Bearer ${DECLOUD_PASSWORD}$"" 1;
+    }
+
+    server {
+        listen 8080;
+        server_name _;
+
+        client_max_body_size 10M;
+
+        # Health endpoint (no auth) — for readiness checks
+        location /health {
+            proxy_pass http://127.0.0.1:8000/health;
+        }
+
+        # All other requests require API key
+        location / {
+            if ($api_key_valid = 0) {
+                return 401 '{ ""error"": { ""message"": ""Invalid API key"", ""type"": ""invalid_request_error"" } }';
+            }
+
+            proxy_pass http://127.0.0.1:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+            proxy_set_header Connection """";
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+        }
+    }
+    EOFNGINX
+
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/vllm-api /etc/nginx/sites-enabled/vllm-api
+  - nginx -t && systemctl restart nginx
+  - systemctl enable nginx
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║    vLLM Inference Server - DeCloud Template                  ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  API Endpoint:  https://${DECLOUD_DOMAIN}/v1                 ║
+    ║  API Key:       ${DECLOUD_PASSWORD}                          ║
+    ║  Model:         Qwen/Qwen2.5-3B-Instruct                    ║
+    ║                                                               ║
+    ║  Test it:                                                     ║
+    ║    curl https://${DECLOUD_DOMAIN}/v1/models \                ║
+    ║      -H ""Authorization: Bearer ${DECLOUD_PASSWORD}""          ║
+    ║                                                               ║
+    ║  Switch model:                                                ║
+    ║    nano /opt/vllm/model.env                                  ║
+    ║    systemctl restart vllm                                     ║
+    ║                                                               ║
+    ║  Logs:                                                        ║
+    ║    journalctl -u vllm -f                                     ║
+    ║    docker logs -f vllm-server                                 ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  vLLM Inference Server is starting up!
+
+  API Endpoint: https://${DECLOUD_DOMAIN}/v1
+  API Key: ${DECLOUD_PASSWORD}
+
+  Model: Qwen/Qwen2.5-3B-Instruct (loading on first boot)
+
+  Test:
+    curl https://${DECLOUD_DOMAIN}/v1/models -H ""Authorization: Bearer ${DECLOUD_PASSWORD}""
+
+  100% private — your prompts never leave this server.",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["MODEL_ID"] = "Qwen/Qwen2.5-3B-Instruct",
+                ["MAX_MODEL_LEN"] = "4096",
+                ["GPU_MEMORY_UTILIZATION"] = "0.90"
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "vLLM OpenAI-compatible API",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health",
+                        TimeoutSeconds = 900 // Model download + loading can take a while
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}/v1",
+            UseGeneratedPassword = true,
+
+            EstimatedCostPerHour = 0.25m, // GPU workload
+
+            DefaultBandwidthTier = BandwidthTier.Basic, // API traffic is low bandwidth
 
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
