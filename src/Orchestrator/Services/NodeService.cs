@@ -79,6 +79,7 @@ public class NodeService : INodeService
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly IConfiguration _configuration;
+    private readonly IGpuSetupService _gpuSetupService;
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
 
@@ -95,7 +96,8 @@ public class NodeService : INodeService
         IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IGpuSetupService gpuSetupService)
     {
         _dataStore = dataStore;
         _schedulingService = schedulingService;
@@ -110,6 +112,7 @@ public class NodeService : INodeService
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _configuration = configuration;
+        _gpuSetupService = gpuSetupService;
     }
 
     // ============================================================================
@@ -401,6 +404,27 @@ public class NodeService : INodeService
 
         await _dataStore.SaveNodeAsync(node);
 
+        // =====================================================
+        // STEP 7: Automated GPU Setup (Hybrid Approach)
+        // =====================================================
+        // If the node reports GPU hardware but no working mode (passthrough or
+        // container sharing), automatically send a ConfigureGpu command.
+        // - IOMMU already enabled → configure VFIO passthrough
+        // - No IOMMU → install NVIDIA drivers + Container Toolkit (immediate, no reboot)
+        // - GPU already configured → no-op
+        try
+        {
+            await _gpuSetupService.EvaluateAndQueueSetupAsync(node, ct);
+            await _dataStore.SaveNodeAsync(node); // Persist GPU setup status
+        }
+        catch (Exception ex)
+        {
+            // GPU setup is non-blocking — node registration succeeds even if setup fails
+            _logger.LogWarning(ex,
+                "GPU setup evaluation failed for node {NodeId} — node registration continues",
+                node.Id);
+        }
+
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.NodeRegistered,
@@ -413,7 +437,8 @@ public class NodeService : INodeService
                 ["region"] = node.Region,
                 ["machineId"] = node.MachineId,
                 ["wallet"] = node.WalletAddress,
-                ["resources"] = JsonSerializer.Serialize(node.TotalResources)
+                ["resources"] = JsonSerializer.Serialize(node.TotalResources),
+                ["gpuSetupStatus"] = node.GpuSetupStatus.ToString()
             }
         });
 
@@ -591,15 +616,43 @@ public class NodeService : INodeService
             commandId, nodeId, ack.Success);
 
         // ====================================================================
+        // STEP 1: Complete command in registry (single atomic lookup)
+        // ====================================================================
+        _dataStore.TryCompleteCommand(commandId, out var registration);
+
+        // ====================================================================
+        // HANDLE NODE-LEVEL COMMANDS (no VM involved)
+        // ====================================================================
+
+        // ConfigureGpu targets the node itself, not a VM — handle before VM lookup.
+        if (registration?.CommandType == NodeCommandType.ConfigureGpu)
+        {
+            var node = await _dataStore.GetNodeAsync(nodeId);
+            if (node != null)
+            {
+                await _gpuSetupService.ProcessSetupAcknowledgmentAsync(node, ack);
+                _logger.LogInformation(
+                    "ConfigureGpu command {CommandId} acknowledged by node {NodeId}: Success={Success}, Status={Status}",
+                    commandId, nodeId, ack.Success, node.GpuSetupStatus);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "ConfigureGpu ack for non-existent node {NodeId}, command {CommandId}",
+                    nodeId, commandId);
+            }
+            return true;
+        }
+
+        // ====================================================================
         // MULTI-STRATEGY VM LOOKUP (in order of reliability)
         // ====================================================================
 
         VirtualMachine? affectedVm = null;
         string lookupMethod = "none";
-        CommandRegistration? registration = null;
 
-        // Strategy 1: Command Registry (most reliable)
-        if (_dataStore.TryCompleteCommand(commandId, out registration))
+        // Strategy 1: Command Registry (already completed above)
+        if (registration != null)
         {
             affectedVm = await _dataStore.GetVmAsync(registration!.VmId);
             if (affectedVm != null)
