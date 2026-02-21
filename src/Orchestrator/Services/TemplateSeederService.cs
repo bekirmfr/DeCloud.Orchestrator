@@ -2006,12 +2006,13 @@ runcmd:
       --add-host=host.docker.internal:host-gateway \
       -v /opt/open-webui:/app/backend/data \
       -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-      -e WEBUI_AUTH=false \
-      -e ENABLE_SIGNUP=false \
+      -e WEBUI_AUTH=true \
+      -e WEBUI_SECRET_KEY=${DECLOUD_PASSWORD} \
+      -e ENABLE_SIGNUP=true \
       -e DEFAULT_MODELS=llama3.2:3b \
       -e ENABLE_COMMUNITY_SHARING=false \
       -p 3000:8080 \
-      ghcr.io/open-webui/open-webui:main
+      ghcr.io/open-webui/open-webui:latest
 
   # ── Nginx reverse proxy with basic auth ──
   - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
@@ -2027,6 +2028,7 @@ runcmd:
         listen 8080;
         server_name _;
         client_max_body_size 100M;
+        auth_basic off;
 
         location /health {
             proxy_pass http://127.0.0.1:3000/health;
