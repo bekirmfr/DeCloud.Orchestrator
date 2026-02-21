@@ -832,7 +832,31 @@ public class VmService : IVmService
         }
 
         // ========================================
-        // STEP 7: Create command with ALL required fields
+        // STEP 7: Resolve GPU PCI address (if GPU required)
+        // ========================================
+        string? gpuPciAddress = null;
+        if (vm.Spec.RequiresGpu && selectedNode.HardwareInventory.Gpus.Count > 0)
+        {
+            var availableGpu = selectedNode.HardwareInventory.Gpus
+                .FirstOrDefault(g => g.IsAvailableForPassthrough);
+            gpuPciAddress = availableGpu?.PciAddress;
+
+            if (gpuPciAddress != null)
+            {
+                _logger.LogInformation(
+                    "VM {VmId} assigned GPU {GpuModel} at PCI {PciAddress} on node {NodeId}",
+                    vm.Id, availableGpu!.Model, gpuPciAddress, selectedNode.Id);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "VM {VmId} requires GPU but no available GPU found on node {NodeId}",
+                    vm.Id, selectedNode.Id);
+            }
+        }
+
+        // ========================================
+        // STEP 8: Create command with ALL required fields
         // ========================================
 
         var command = new NodeCommand(
@@ -852,6 +876,7 @@ public class VmService : IVmService
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 SshPublicKey = sshPublicKey ?? "",
+                GpuPciAddress = gpuPciAddress,
                 Network = new
                 {
                     MacAddress = "",
