@@ -181,6 +181,7 @@ public class MarketplaceController : ControllerBase
             {
                 Name = request.Name,
                 Slug = request.Slug,
+                Version = request.Version,
                 Description = request.Description,
                 LongDescription = request.LongDescription,
                 Category = request.Category,
@@ -198,6 +199,7 @@ public class MarketplaceController : ControllerBase
                 CloudInitTemplate = request.CloudInitTemplate,
                 DefaultEnvironmentVariables = request.DefaultEnvironmentVariables ?? new(),
                 ExposedPorts = request.ExposedPorts ?? new(),
+                DefaultAccessUrl = request.DefaultAccessUrl,
                 DefaultUsername = request.DefaultUsername,
                 UseGeneratedPassword = request.UseGeneratedPassword,
                 Visibility = request.Visibility,
@@ -777,6 +779,7 @@ public class CreateTemplateRequest
     public string Description { get; set; } = string.Empty;
     public string? LongDescription { get; set; }
     public string Category { get; set; } = string.Empty;
+    public string Version { get; set; } = "1.0.0";
     public List<string>? Tags { get; set; }
     public string? IconUrl { get; set; }
     public string? AuthorName { get; set; }
@@ -790,6 +793,7 @@ public class CreateTemplateRequest
     public string CloudInitTemplate { get; set; } = string.Empty;
     public Dictionary<string, string>? DefaultEnvironmentVariables { get; set; }
     public List<TemplatePort>? ExposedPorts { get; set; }
+    public string? DefaultAccessUrl { get; set; }
     public string? DefaultUsername { get; set; }
     public bool UseGeneratedPassword { get; set; } = true;
     public TemplateVisibility Visibility { get; set; } = TemplateVisibility.Public;

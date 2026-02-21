@@ -307,9 +307,42 @@ function createTemplateModal() {
                 <!-- Exposed Ports -->
                 <div class="form-section">
                     <h3 class="form-section-title">Exposed Ports</h3>
+                    <p class="form-help" style="margin-bottom: 8px;">Define services your template exposes. Use <strong>http</strong> protocol for web services routed through ingress.</p>
                     <div id="ct-ports-list"></div>
                     <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.addPort()" type="button">
                         + Add Port
+                    </button>
+                </div>
+
+                <!-- Access & Credentials -->
+                <div class="form-section">
+                    <h3 class="form-section-title">Access & Credentials</h3>
+                    <div class="form-group">
+                        <label class="form-label">Default Access URL</label>
+                        <input type="text" class="form-input" id="ct-access-url" placeholder="https://$\{DECLOUD_DOMAIN}">
+                        <p class="form-help">URL shown to users after deploy. Use <code>$\{DECLOUD_DOMAIN}</code> for the VM's domain.</p>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Default Username</label>
+                            <input type="text" class="form-input" id="ct-default-username" placeholder="e.g. user, admin">
+                        </div>
+                        <div class="form-group" style="display:flex; align-items:center; padding-top:24px;">
+                            <label class="filter-label">
+                                <input type="checkbox" id="ct-use-generated-password" checked>
+                                <span>Use Generated Password</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Environment Variables -->
+                <div class="form-section">
+                    <h3 class="form-section-title">Environment Variables</h3>
+                    <p class="form-help" style="margin-bottom: 8px;">Default env vars passed to cloud-init. Deployers can override these.</p>
+                    <div id="ct-env-vars-list"></div>
+                    <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.addEnvVar()" type="button">
+                        + Add Variable
                     </button>
                 </div>
 
@@ -366,7 +399,8 @@ function createTemplateModal() {
 
 function resetCreateForm() {
     const fields = ['ct-template-id', 'ct-name', 'ct-slug', 'ct-description',
-        'ct-long-description', 'ct-tags', 'ct-cloudinit', 'ct-source-url'];
+        'ct-long-description', 'ct-tags', 'ct-cloudinit', 'ct-source-url',
+        'ct-access-url', 'ct-default-username', 'ct-revenue-wallet'];
     fields.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -376,6 +410,7 @@ function resetCreateForm() {
     document.getElementById('ct-min-memory').value = '512';
     document.getElementById('ct-min-disk').value = '10';
     document.getElementById('ct-requires-gpu').checked = false;
+    document.getElementById('ct-use-generated-password').checked = true;
     document.getElementById('ct-min-quality-tier').value = '1';
     document.getElementById('ct-default-bandwidth-tier').value = '3';
     document.getElementById('ct-visibility').value = 'Public';
@@ -384,6 +419,7 @@ function resetCreateForm() {
     document.getElementById('ct-price-group').style.display = 'none';
     document.getElementById('ct-wallet-group').style.display = 'none';
     document.getElementById('ct-ports-list').innerHTML = '';
+    document.getElementById('ct-env-vars-list').innerHTML = '';
     document.getElementById('ct-submit-btn').textContent = 'Create as Draft';
     document.getElementById('create-template-modal-title').textContent = 'Create Template';
 }
@@ -409,20 +445,74 @@ export function addPort() {
     const list = document.getElementById('ct-ports-list');
     const idx = list.children.length;
     const row = document.createElement('div');
-    row.className = 'form-row port-row';
-    row.style.marginBottom = '8px';
+    row.className = 'port-row';
+    row.style.marginBottom = '12px';
+    row.style.padding = '10px';
+    row.style.border = '1px solid var(--border-color, #333)';
+    row.style.borderRadius = '6px';
+    row.innerHTML = `
+        <div class="form-row" style="margin-bottom:6px;">
+            <div class="form-group" style="flex:1">
+                <label class="form-label" style="font-size:11px;">Port *</label>
+                <input type="number" class="form-input" placeholder="8080" data-port-idx="${idx}" data-port-field="port" min="1" max="65535">
+            </div>
+            <div class="form-group" style="flex:1">
+                <label class="form-label" style="font-size:11px;">Protocol</label>
+                <select class="form-input" data-port-idx="${idx}" data-port-field="protocol" onchange="window.myTemplates.onPortProtocolChange(this)">
+                    <option value="http">HTTP (web/ingress)</option>
+                    <option value="https">HTTPS</option>
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                    <option value="ws">WebSocket</option>
+                    <option value="wss">WebSocket Secure</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex:2">
+                <label class="form-label" style="font-size:11px;">Description</label>
+                <input type="text" class="form-input" placeholder="e.g. Open WebUI Chat Interface" data-port-idx="${idx}" data-port-field="description">
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="this.closest('.port-row').remove()" type="button" style="align-self:flex-end; margin-bottom:4px;">X</button>
+        </div>
+        <div class="form-row" style="margin-bottom:0;">
+            <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center;">
+                <label class="filter-label">
+                    <input type="checkbox" data-port-idx="${idx}" data-port-field="isPublic" checked>
+                    <span style="font-size:12px;">Public</span>
+                </label>
+            </div>
+            <div class="form-group port-check-group" style="flex:1">
+                <label class="form-label" style="font-size:11px;">Health Check Path</label>
+                <input type="text" class="form-input" placeholder="/health" data-port-idx="${idx}" data-port-field="healthPath" style="font-size:12px;">
+            </div>
+            <div class="form-group" style="flex:0 0 100px;">
+                <label class="form-label" style="font-size:11px;">Timeout (s)</label>
+                <input type="number" class="form-input" placeholder="300" data-port-idx="${idx}" data-port-field="timeout" min="30" max="1800" style="font-size:12px;">
+            </div>
+        </div>
+    `;
+    list.appendChild(row);
+}
+
+export function onPortProtocolChange(select) {
+    const row = select.closest('.port-row');
+    const checkGroup = row.querySelector('.port-check-group');
+    const isHttp = ['http', 'https', 'ws', 'wss'].includes(select.value);
+    if (checkGroup) {
+        checkGroup.style.display = isHttp ? '' : 'none';
+    }
+}
+
+export function addEnvVar() {
+    const list = document.getElementById('ct-env-vars-list');
+    const row = document.createElement('div');
+    row.className = 'form-row env-var-row';
+    row.style.marginBottom = '6px';
     row.innerHTML = `
         <div class="form-group" style="flex:1">
-            <input type="number" class="form-input" placeholder="Port" data-port-idx="${idx}" data-port-field="port" min="1" max="65535">
-        </div>
-        <div class="form-group" style="flex:1">
-            <select class="form-input" data-port-idx="${idx}" data-port-field="protocol">
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-            </select>
+            <input type="text" class="form-input" placeholder="KEY" data-env-field="key" style="font-family:var(--font-mono);font-size:12px;">
         </div>
         <div class="form-group" style="flex:2">
-            <input type="text" class="form-input" placeholder="Description" data-port-idx="${idx}" data-port-field="description">
+            <input type="text" class="form-input" placeholder="value" data-env-field="value" style="font-family:var(--font-mono);font-size:12px;">
         </div>
         <button class="btn btn-sm btn-danger" onclick="this.parentElement.remove()" type="button" style="align-self:center;">X</button>
     `;
@@ -434,13 +524,37 @@ function collectPorts() {
     const ports = [];
     rows.forEach(row => {
         const port = row.querySelector('[data-port-field="port"]')?.value;
-        const protocol = row.querySelector('[data-port-field="protocol"]')?.value || 'tcp';
+        const protocol = row.querySelector('[data-port-field="protocol"]')?.value || 'http';
         const description = row.querySelector('[data-port-field="description"]')?.value || '';
+        const isPublic = row.querySelector('[data-port-field="isPublic"]')?.checked ?? true;
+        const healthPath = row.querySelector('[data-port-field="healthPath"]')?.value || '';
+        const timeout = parseInt(row.querySelector('[data-port-field="timeout"]')?.value) || 0;
         if (port) {
-            ports.push({ port: parseInt(port), protocol, description });
+            const entry = { port: parseInt(port), protocol, description, isPublic };
+            // Add readiness check if health path or timeout is set
+            const isHttp = ['http', 'https', 'ws', 'wss'].includes(protocol);
+            if (healthPath || timeout) {
+                entry.readinessCheck = {
+                    strategy: isHttp ? 1 : 0, // 1=HttpGet, 0=TcpPort
+                    httpPath: healthPath || (isHttp ? '/' : null),
+                    timeoutSeconds: timeout || 300
+                };
+            }
+            ports.push(entry);
         }
     });
     return ports;
+}
+
+function collectEnvVars() {
+    const rows = document.querySelectorAll('#ct-env-vars-list .env-var-row');
+    const envVars = {};
+    rows.forEach(row => {
+        const key = row.querySelector('[data-env-field="key"]')?.value?.trim();
+        const value = row.querySelector('[data-env-field="value"]')?.value || '';
+        if (key) envVars[key] = value;
+    });
+    return envVars;
 }
 
 function buildTemplatePayload() {
@@ -458,7 +572,6 @@ function buildTemplatePayload() {
         category: document.getElementById('ct-category').value,
         version: document.getElementById('ct-version').value.trim() || '1.0.0',
         tags: tags,
-        imageId: document.getElementById('ct-image').value,
         cloudInitTemplate: document.getElementById('ct-cloudinit').value,
         requiresGpu: document.getElementById('ct-requires-gpu').checked,
         minimumSpec: {
@@ -476,6 +589,10 @@ function buildTemplatePayload() {
             bandwidthTier: parseInt(document.getElementById('ct-default-bandwidth-tier').value) ?? 3
         },
         exposedPorts: collectPorts(),
+        defaultAccessUrl: document.getElementById('ct-access-url').value.trim() || null,
+        defaultUsername: document.getElementById('ct-default-username').value.trim() || null,
+        useGeneratedPassword: document.getElementById('ct-use-generated-password').checked,
+        defaultEnvironmentVariables: collectEnvVars(),
         defaultBandwidthTier: parseInt(document.getElementById('ct-default-bandwidth-tier').value) || 3,
         visibility: VISIBILITY_TO_INT[document.getElementById('ct-visibility').value] ?? 0,
         pricingModel: PRICING_TO_INT[document.getElementById('ct-pricing').value] ?? 0,
@@ -555,6 +672,11 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-requires-gpu').checked = template.requiresGpu || false;
     document.getElementById('ct-source-url').value = template.sourceUrl || '';
 
+    // Access & credentials
+    document.getElementById('ct-access-url').value = template.defaultAccessUrl || '';
+    document.getElementById('ct-default-username').value = template.defaultUsername || '';
+    document.getElementById('ct-use-generated-password').checked = template.useGeneratedPassword ?? true;
+
     // Specs
     const minSpec = template.minimumSpec || {};
     document.getElementById('ct-min-cpu').value = minSpec.virtualCpuCores || 1;
@@ -580,8 +702,28 @@ export async function editTemplate(templateId) {
         const rows = portsList.querySelectorAll('.port-row');
         const row = rows[rows.length - 1];
         row.querySelector('[data-port-field="port"]').value = p.port;
-        row.querySelector('[data-port-field="protocol"]').value = p.protocol || 'tcp';
+        row.querySelector('[data-port-field="protocol"]').value = p.protocol || 'http';
         row.querySelector('[data-port-field="description"]').value = p.description || '';
+        row.querySelector('[data-port-field="isPublic"]').checked = p.isPublic ?? true;
+        if (p.readinessCheck) {
+            row.querySelector('[data-port-field="healthPath"]').value = p.readinessCheck.httpPath || '';
+            row.querySelector('[data-port-field="timeout"]').value = p.readinessCheck.timeoutSeconds || '';
+        }
+        // Trigger protocol change to show/hide health path
+        const protocolSelect = row.querySelector('[data-port-field="protocol"]');
+        onPortProtocolChange(protocolSelect);
+    });
+
+    // Environment variables
+    const envList = document.getElementById('ct-env-vars-list');
+    envList.innerHTML = '';
+    const envVars = template.defaultEnvironmentVariables || {};
+    Object.entries(envVars).forEach(([key, value]) => {
+        addEnvVar();
+        const rows = envList.querySelectorAll('.env-var-row');
+        const row = rows[rows.length - 1];
+        row.querySelector('[data-env-field="key"]').value = key;
+        row.querySelector('[data-env-field="value"]').value = value;
     });
 }
 
@@ -639,5 +781,7 @@ window.myTemplates = {
     publishTemplate,
     deleteTemplate,
     addPort,
-    onPricingChange
+    addEnvVar,
+    onPricingChange,
+    onPortProtocolChange
 };
