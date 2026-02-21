@@ -13,20 +13,17 @@ public class NodesController : ControllerBase
     private readonly INodeService _nodeService;
     private readonly DataStore _dataStore;
     private readonly IVmService _vmService;
-    private readonly IGpuSetupService _gpuSetupService;
     private readonly ILogger<NodesController> _logger;
 
     public NodesController(
         INodeService nodeService,
         DataStore dataStore,
         IVmService vmService,
-        IGpuSetupService gpuSetupService,
         ILogger<NodesController> logger)
     {
         _nodeService = nodeService;
         _dataStore = dataStore;
         _vmService = vmService;
-        _gpuSetupService = gpuSetupService;
         _logger = logger;
     }
 
@@ -200,73 +197,6 @@ public class NodesController : ControllerBase
             return StatusCode(500, ApiResponse<bool>.Fail(
                 "PROCESSING_ERROR",
                 "Failed to process acknowledgment"));
-        }
-    }
-
-    /// <summary>
-    /// Get GPU setup status for a node
-    /// </summary>
-    [HttpGet("{nodeId}/gpu/status")]
-    [Authorize]
-    public async Task<ActionResult<ApiResponse<GpuStatusResponse>>> GetGpuStatus(string nodeId)
-    {
-        var node = await _dataStore.GetNodeAsync(nodeId);
-        if (node == null)
-            return NotFound(ApiResponse<GpuStatusResponse>.Fail("NOT_FOUND", "Node not found"));
-
-        var response = new GpuStatusResponse
-        {
-            NodeId = node.Id,
-            SetupStatus = node.GpuSetupStatus.ToString(),
-            SupportsGpu = node.HardwareInventory.SupportsGpu,
-            SupportsGpuContainers = node.HardwareInventory.SupportsGpuContainers,
-            Gpus = node.HardwareInventory.Gpus.Select(g => new GpuStatusDetail
-            {
-                Vendor = g.Vendor,
-                Model = g.Model,
-                PciAddress = g.PciAddress,
-                MemoryBytes = g.MemoryBytes,
-                DriverVersion = g.DriverVersion,
-                IsAvailableForPassthrough = g.IsAvailableForPassthrough,
-                IsAvailableForContainerSharing = g.IsAvailableForContainerSharing,
-                IsIommuEnabled = g.IsIommuEnabled,
-                SetupStatus = g.SetupStatus.ToString()
-            }).ToList()
-        };
-
-        return Ok(ApiResponse<GpuStatusResponse>.Ok(response));
-    }
-
-    /// <summary>
-    /// Manually trigger GPU setup on a node.
-    /// Sends a ConfigureGpu command to the node agent to install drivers
-    /// and configure VFIO passthrough or NVIDIA Container Toolkit.
-    /// </summary>
-    [HttpPost("{nodeId}/gpu/setup")]
-    [Authorize(Roles = "admin")]
-    public async Task<ActionResult<ApiResponse<GpuSetupResult>>> TriggerGpuSetup(
-        string nodeId,
-        [FromBody] GpuSetupRequest? request)
-    {
-        try
-        {
-            var mode = GpuSetupMode.Auto;
-            if (!string.IsNullOrEmpty(request?.Mode) &&
-                Enum.TryParse<GpuSetupMode>(request.Mode, true, out var parsedMode))
-            {
-                mode = parsedMode;
-            }
-
-            var result = await _gpuSetupService.TriggerSetupAsync(nodeId, mode);
-            if (!result.Success)
-                return BadRequest(ApiResponse<GpuSetupResult>.Fail("GPU_SETUP_ERROR", result.Message));
-
-            return Ok(ApiResponse<GpuSetupResult>.Ok(result));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to trigger GPU setup for node {NodeId}", nodeId);
-            return StatusCode(500, ApiResponse<GpuSetupResult>.Fail("INTERNAL_ERROR", ex.Message));
         }
     }
 
@@ -494,38 +424,4 @@ public class ZoneInfo
     public int NodeCount { get; set; }
     public int AvailableComputePoints { get; set; }
     public bool HasGpu { get; set; }
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// GPU Setup DTOs
-// ════════════════════════════════════════════════════════════════════════
-
-public class GpuSetupRequest
-{
-    /// <summary>
-    /// Setup mode: "Auto", "VfioPassthrough", or "ContainerToolkit"
-    /// </summary>
-    public string? Mode { get; set; }
-}
-
-public class GpuStatusResponse
-{
-    public string NodeId { get; set; } = string.Empty;
-    public string SetupStatus { get; set; } = string.Empty;
-    public bool SupportsGpu { get; set; }
-    public bool SupportsGpuContainers { get; set; }
-    public List<GpuStatusDetail> Gpus { get; set; } = new();
-}
-
-public class GpuStatusDetail
-{
-    public string Vendor { get; set; } = string.Empty;
-    public string Model { get; set; } = string.Empty;
-    public string PciAddress { get; set; } = string.Empty;
-    public long MemoryBytes { get; set; }
-    public string DriverVersion { get; set; } = string.Empty;
-    public bool IsAvailableForPassthrough { get; set; }
-    public bool IsAvailableForContainerSharing { get; set; }
-    public bool IsIommuEnabled { get; set; }
-    public string SetupStatus { get; set; } = string.Empty;
 }
