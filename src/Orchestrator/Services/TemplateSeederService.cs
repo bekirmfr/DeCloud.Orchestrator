@@ -2026,16 +2026,10 @@ runcmd:
     server {
         listen 8080;
         server_name _;
-
         client_max_body_size 100M;
 
-        auth_basic $auth_type;
-        auth_basic_user_file /etc/nginx/.htpasswd;
-
-        # Health endpoint (no auth) — for readiness checks
         location /health {
             proxy_pass http://127.0.0.1:3000/health;
-            auth_basic off;
         }
 
         location / {
