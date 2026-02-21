@@ -117,19 +117,9 @@ public class VmTemplate
     // ============================================
 
     /// <summary>
-    /// GPU requirement level: Cpu (none), PrefersGpu (optional), RequiresGpu (mandatory).
+    /// Whether this template requires GPU
     /// </summary>
-    public GpuMode GpuMode { get; set; } = GpuMode.Cpu;
-
-    /// <summary>
-    /// Backward-compatible accessor. Returns true when GpuMode is RequiresGpu.
-    /// </summary>
-    [Obsolete("Use GpuMode instead. Kept for JSON backward compatibility.")]
-    public bool RequiresGpu
-    {
-        get => GpuMode == GpuMode.RequiresGpu;
-        set => GpuMode = value ? GpuMode.RequiresGpu : GpuMode.Cpu;
-    }
+    public bool RequiresGpu { get; set; }
 
     /// <summary>
     /// GPU requirement description (e.g., "RTX 3060 or better")

@@ -70,7 +70,7 @@ public interface ITemplateService
 public class TemplateQuery
 {
     public string? Category { get; set; }
-    public GpuMode? GpuMode { get; set; }
+    public bool? RequiresGpu { get; set; }
     public List<string>? Tags { get; set; }
     public string? SearchTerm { get; set; }
     public bool FeaturedOnly { get; set; }
