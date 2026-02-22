@@ -214,6 +214,18 @@ public class VmService : IVmService
                     vm.Spec.ContainerImage = template.ContainerImage;
                 }
 
+                // ── GPU mode propagation ─────────────────────────────────────
+                // If the request didn't explicitly set a GpuMode, inherit from
+                // the template so the scheduler picks a GPU-capable node and the
+                // node agent receives the correct gpuMode in the CreateVm payload.
+                if (vm.Spec.GpuMode == GpuMode.None && template.DefaultGpuMode != GpuMode.None)
+                {
+                    vm.Spec.GpuMode = template.DefaultGpuMode;
+                    _logger.LogInformation(
+                        "VM {VmId} inherited GpuMode={GpuMode} from template {TemplateName}",
+                        vm.Id, template.DefaultGpuMode, template.Name);
+                }
+
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
