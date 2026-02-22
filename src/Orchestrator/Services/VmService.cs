@@ -838,44 +838,48 @@ public class VmService : IVmService
         }
 
         // ========================================
-        // STEP 7: Resolve GPU and deployment mode
+        // STEP 7: Resolve GPU mode and assignment
         // ========================================
+        // The orchestrator owns GPU scheduling — it sets gpuMode explicitly
+        // based on the VM's requested mode and the node's capabilities.
+        // The node agent no longer auto-detects GPU mode.
         string? gpuPciAddress = null;
         var deploymentMode = vm.Spec.DeploymentMode;
-        var nodeHasGpu = selectedNode.HardwareInventory.Gpus.Count > 0;
+        var resolvedGpuMode = vm.Spec.GpuMode;
 
-        if (vm.Spec.RequiresGpu && nodeHasGpu)
+        if (resolvedGpuMode == GpuMode.Passthrough)
         {
-            // Check if node supports VFIO passthrough
+            // VFIO passthrough — assign a specific GPU PCI address
             var passthroughGpu = selectedNode.HardwareInventory.Gpus
                 .FirstOrDefault(g => g.IsAvailableForPassthrough);
 
             if (passthroughGpu != null)
             {
-                // Use VFIO passthrough (bare-metal Linux with IOMMU)
                 gpuPciAddress = passthroughGpu.PciAddress;
                 deploymentMode = DeploymentMode.VirtualMachine;
                 _logger.LogInformation(
-                    "VM {VmId} assigned GPU {GpuModel} via VFIO passthrough at PCI {PciAddress} on node {NodeId}",
+                    "VM {VmId} assigned GPU {GpuModel} via passthrough (GpuMode=1) at PCI {PciAddress} on node {NodeId}",
                     vm.Id, passthroughGpu.Model, gpuPciAddress, selectedNode.Id);
-            }
-            else if (selectedNode.HardwareInventory.SupportsGpuContainers)
-            {
-                // Fallback to container-based GPU sharing (WSL2, no IOMMU)
-                deploymentMode = DeploymentMode.Container;
-                var containerGpu = selectedNode.HardwareInventory.Gpus
-                    .FirstOrDefault(g => g.IsAvailableForContainerSharing);
-                _logger.LogInformation(
-                    "VM {VmId} assigned GPU {GpuModel} via container sharing on node {NodeId} (no IOMMU, using Docker --gpus)",
-                    vm.Id, containerGpu?.Model ?? "unknown", selectedNode.Id);
             }
             else
             {
+                // Node passed scheduling filter but GPU may have been claimed between filter and here.
+                // Send gpuMode=1 without gpuPciAddress — node agent will auto-assign from its pool.
                 _logger.LogWarning(
-                    "VM {VmId} requires GPU but no available GPU (passthrough or container) found on node {NodeId}",
+                    "VM {VmId} requested passthrough GPU but no specific GPU available on node {NodeId}. " +
+                    "Sending gpuMode=1 without gpuPciAddress — node agent will auto-assign from pool.",
                     vm.Id, selectedNode.Id);
             }
         }
+        else if (resolvedGpuMode == GpuMode.Proxied)
+        {
+            // Proxied mode — shared GPU over virtio-vsock, no PCI address needed
+            _logger.LogInformation(
+                "VM {VmId} using proxied GPU (GpuMode=2) on node {NodeId} — shared GPU, no IOMMU required",
+                vm.Id, selectedNode.Id);
+            // gpuPciAddress stays null (not used for proxied mode)
+        }
+        // GpuMode.None — no GPU setup needed
 
         // Store resolved deployment mode
         vm.Spec.DeploymentMode = deploymentMode;
@@ -901,6 +905,8 @@ public class VmService : IVmService
                 ComputePointCost = vm.Spec.ComputePointCost,
                 BaseImageUrl = imageUrl,
                 SshPublicKey = sshPublicKey ?? "",
+                // GPU scheduling: orchestrator sets gpuMode explicitly (node agent no longer auto-detects)
+                GpuMode = (int)resolvedGpuMode,
                 GpuPciAddress = gpuPciAddress,
                 DeploymentMode = (int)deploymentMode,
                 ContainerImage = vm.Spec.ContainerImage,

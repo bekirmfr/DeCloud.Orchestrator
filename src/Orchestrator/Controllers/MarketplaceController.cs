@@ -195,7 +195,11 @@ public class MarketplaceController : ControllerBase
                 MinimumSpec = request.MinimumSpec ?? new VmSpec(),
                 RecommendedSpec = request.RecommendedSpec ?? new VmSpec(),
                 RequiresGpu = request.RequiresGpu,
+                DefaultGpuMode = request.RequiresGpu
+                    ? (request.DefaultGpuMode != GpuMode.None ? request.DefaultGpuMode : GpuMode.Passthrough)
+                    : GpuMode.None,
                 GpuRequirement = request.GpuRequirement,
+                ContainerImage = request.ContainerImage,
                 CloudInitTemplate = request.CloudInitTemplate,
                 DefaultEnvironmentVariables = request.DefaultEnvironmentVariables ?? new(),
                 ExposedPorts = request.ExposedPorts ?? new(),
@@ -789,7 +793,17 @@ public class CreateTemplateRequest
     public VmSpec? MinimumSpec { get; set; }
     public VmSpec? RecommendedSpec { get; set; }
     public bool RequiresGpu { get; set; }
+    /// <summary>
+    /// Default GPU mode when RequiresGpu is true.
+    /// 0 = None, 1 = Passthrough (dedicated GPU, IOMMU required), 2 = Proxied (shared GPU).
+    /// If RequiresGpu is true and this is not set, defaults to Passthrough.
+    /// </summary>
+    public GpuMode DefaultGpuMode { get; set; } = GpuMode.None;
     public string? GpuRequirement { get; set; }
+    /// <summary>
+    /// Docker container image for container-based GPU deployment (e.g., "ollama/ollama:latest").
+    /// </summary>
+    public string? ContainerImage { get; set; }
     public string CloudInitTemplate { get; set; } = string.Empty;
     public Dictionary<string, string>? DefaultEnvironmentVariables { get; set; }
     public List<TemplatePort>? ExposedPorts { get; set; }

@@ -240,7 +240,7 @@ public class TemplateSeederService
                 VirtualCpuCores = 4,
                 MemoryBytes = 16L * 1024 * 1024 * 1024, // 16 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
-                RequiresGpu = true,
+                GpuMode = GpuMode.Passthrough,
                 GpuModel = "NVIDIA"
             },
 
@@ -249,11 +249,12 @@ public class TemplateSeederService
                 VirtualCpuCores = 8,
                 MemoryBytes = 32L * 1024 * 1024 * 1024, // 32 GB
                 DiskBytes = 100L * 1024 * 1024 * 1024,  // 100 GB
-                RequiresGpu = true,
+                GpuMode = GpuMode.Passthrough,
                 GpuModel = "NVIDIA RTX 3090"
             },
 
             RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Passthrough,
             GpuRequirement = "NVIDIA GPU with CUDA support (RTX 3060+ recommended)",
             RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
 
@@ -448,7 +449,6 @@ postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud
                 VirtualCpuCores = 2,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,   // 20 GB
-                RequiresGpu = false
             },
 
             RecommendedSpec = new VmSpec
@@ -456,7 +456,6 @@ postgresql://postgres:${DECLOUD_PASSWORD}@${DECLOUD_DOMAIN}:5432/decloud
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
-                RequiresGpu = false
             },
 
             RequiresGpu = false,
@@ -622,7 +621,6 @@ final_message: |
                 VirtualCpuCores = 2,
                 MemoryBytes = 4L * 1024 * 1024 * 1024,  // 4 GB
                 DiskBytes = 30L * 1024 * 1024 * 1024,   // 30 GB
-                RequiresGpu = false
             },
 
             RecommendedSpec = new VmSpec
@@ -630,7 +628,6 @@ final_message: |
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
-                RequiresGpu = false
             },
 
             RequiresGpu = false,
@@ -848,7 +845,6 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
                 VirtualCpuCores = 2,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
                 DiskBytes = 15L * 1024 * 1024 * 1024,   // 15 GB
-                RequiresGpu = false,
                 QualityTier = QualityTier.Burstable
             },
 
@@ -857,7 +853,6 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
                 VirtualCpuCores = 4,
                 MemoryBytes = 4L * 1024 * 1024 * 1024,  // 4 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,   // 20 GB
-                RequiresGpu = false,
                 QualityTier = QualityTier.Balanced
             },
 
@@ -1668,16 +1663,14 @@ CPU inference is significantly slower than GPU:
             {
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024, // 8 GB
-                DiskBytes = 30L * 1024 * 1024 * 1024,   // 30 GB
-                RequiresGpu = false
+                DiskBytes = 30L * 1024 * 1024 * 1024    // 30 GB
             },
 
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 8,
                 MemoryBytes = 12L * 1024 * 1024 * 1024, // 12 GB
-                DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
-                RequiresGpu = false
+                DiskBytes = 50L * 1024 * 1024 * 1024    // 50 GB
             },
 
             RequiresGpu = false,
@@ -1910,7 +1903,7 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
                 DiskBytes = 30L * 1024 * 1024 * 1024,    // 30 GB
-                RequiresGpu = true
+                GpuMode = GpuMode.Passthrough
             },
 
             RecommendedSpec = new VmSpec
@@ -1918,10 +1911,11 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
                 VirtualCpuCores = 8,
                 MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,    // 50 GB
-                RequiresGpu = true
+                GpuMode = GpuMode.Passthrough
             },
 
             RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Passthrough,
             GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
             ContainerImage = "ollama/ollama:latest",
 
@@ -2245,7 +2239,7 @@ nginx (:8080) → API Key Auth → vLLM OpenAI Server (:8000)
                 VirtualCpuCores = 4,
                 MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
                 DiskBytes = 40L * 1024 * 1024 * 1024,    // 40 GB
-                RequiresGpu = true,
+                GpuMode = GpuMode.Passthrough,
                 GpuModel = "NVIDIA"
             },
 
@@ -2254,11 +2248,12 @@ nginx (:8080) → API Key Auth → vLLM OpenAI Server (:8000)
                 VirtualCpuCores = 8,
                 MemoryBytes = 32L * 1024 * 1024 * 1024,  // 32 GB
                 DiskBytes = 80L * 1024 * 1024 * 1024,    // 80 GB
-                RequiresGpu = true,
+                GpuMode = GpuMode.Passthrough,
                 GpuModel = "NVIDIA"
             },
 
             RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Passthrough,
             GpuRequirement = "NVIDIA GPU with CUDA support and 8GB+ VRAM (RTX 3060/4060 or better)",
             ContainerImage = "vllm/vllm-openai:latest",
             RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },

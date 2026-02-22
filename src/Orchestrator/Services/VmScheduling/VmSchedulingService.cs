@@ -392,22 +392,27 @@ public class VmSchedulingService : IVmSchedulingService
         }
 
         // =====================================================
-        // FILTER 5: GPU Requirement
+        // FILTER 5: GPU Mode Requirement
         // =====================================================
-        if (spec.RequiresGpu)
+        if (spec.GpuMode == GpuMode.Passthrough)
         {
-            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
-                return "VM requires GPU but node has no GPU available";
+            // Passthrough requires IOMMU-enabled node with an available GPU for VFIO
+            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.GpuCount == 0)
+                return "VM requires GPU passthrough but node has no GPU";
 
-            // Accept nodes with either VFIO passthrough OR container-based GPU sharing
-            var hasPassthrough = node.HardwareInventory.Gpus
-                .Any(g => g.IsAvailableForPassthrough);
-            var hasContainerSharing = node.HardwareInventory.SupportsGpuContainers &&
-                node.HardwareInventory.Gpus.Any(g => g.IsAvailableForContainerSharing);
+            if (!node.HardwareInventory.HasIommuCapableGpu)
+                return "VM requires GPU passthrough but node has no IOMMU-capable GPU";
 
-            if (!hasPassthrough && !hasContainerSharing)
-                return "VM requires GPU but no GPU is available (neither passthrough nor container sharing) on this node";
+            if (!node.HardwareInventory.HasPassthroughCapableGpu)
+                return "VM requires GPU passthrough but no GPU is available for VFIO passthrough";
         }
+        else if (spec.GpuMode == GpuMode.Proxied)
+        {
+            // Proxied mode requires any node with a GPU (no IOMMU needed)
+            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.GpuCount == 0)
+                return "VM requires proxied GPU but node has no GPU";
+        }
+        // GpuMode.None — no GPU filter applied
 
         // =====================================================
         // FILTER 6: Load Average

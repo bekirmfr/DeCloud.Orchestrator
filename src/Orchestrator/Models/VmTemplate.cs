@@ -118,8 +118,18 @@ public class VmTemplate
 
     /// <summary>
     /// Whether this template requires a GPU-capable node.
+    /// Used for marketplace filtering and display.
     /// </summary>
     public bool RequiresGpu { get; set; }
+
+    /// <summary>
+    /// Default GPU mode for this template.
+    /// Passthrough = dedicated GPU (IOMMU required, best performance).
+    /// Proxied = shared GPU (no IOMMU, cost-effective).
+    /// None = no GPU needed.
+    /// The user may override this when deploying (e.g., choose Proxied for cost savings).
+    /// </summary>
+    public GpuMode DefaultGpuMode { get; set; } = GpuMode.None;
 
     /// <summary>
     /// GPU requirement description (e.g., "RTX 3060 or better")
