@@ -1438,6 +1438,7 @@ function validateVmName(sanitized) {
 // Expose naming utils globally for module-based scripts (template-detail.js, etc.)
 window.sanitizeVmName = sanitizeVmName;
 window.validateVmName = validateVmName;
+window.previewVmName = previewVmName;
 
 /**
  * Live preview of the canonical VM name as the user types.
