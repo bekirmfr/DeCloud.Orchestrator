@@ -183,6 +183,31 @@ public class HardwareInventory
     /// True if any GPU supports container-based sharing (Docker + NVIDIA Container Toolkit)
     /// </summary>
     public bool SupportsGpuContainers { get; set; }
+
+    // ====================================================================
+    // GPU Capability Helpers (for scheduling decisions)
+    // ====================================================================
+
+    /// <summary>
+    /// Number of GPUs available on this node
+    /// </summary>
+    public int GpuCount => Gpus.Count;
+
+    /// <summary>
+    /// True if any GPU has IOMMU enabled (required for Passthrough mode)
+    /// </summary>
+    public bool HasIommuCapableGpu => Gpus.Any(g => g.IsIommuEnabled);
+
+    /// <summary>
+    /// True if node has at least one GPU available for VFIO passthrough
+    /// </summary>
+    public bool HasPassthroughCapableGpu => Gpus.Any(g => g.IsAvailableForPassthrough);
+
+    /// <summary>
+    /// True if node can serve GPU workloads in proxied (shared) mode.
+    /// Requires GPU container support or any GPU present.
+    /// </summary>
+    public bool HasProxiedCapableGpu => SupportsGpu && GpuCount > 0;
 }
 
 public class CpuInfo

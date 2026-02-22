@@ -529,10 +529,16 @@ public class TemplateService : ITemplateService
         // Use custom spec or template's recommended spec
         var spec = customSpec ?? template.RecommendedSpec ?? template.MinimumSpec;
 
-        // Apply template's default bandwidth tier only when using template spec
+        // Apply template defaults when using template spec (not custom)
         if (customSpec == null)
         {
             spec.BandwidthTier = template.DefaultBandwidthTier;
+
+            // Apply template's default GPU mode to the spec if not already set
+            if (spec.GpuMode == GpuMode.None && template.DefaultGpuMode != GpuMode.None)
+            {
+                spec.GpuMode = template.DefaultGpuMode;
+            }
         }
 
         // Merge environment variables (template defaults + user overrides)

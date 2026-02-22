@@ -298,9 +298,22 @@ function createTemplateModal() {
                     </div>
                     <div class="form-group">
                         <label class="filter-label">
-                            <input type="checkbox" id="ct-requires-gpu">
+                            <input type="checkbox" id="ct-requires-gpu" onchange="window.myTemplates.onGpuToggle()">
                             <span>Requires GPU</span>
                         </label>
+                    </div>
+                    <div class="form-group" id="ct-gpu-mode-group" style="display:none;">
+                        <label class="form-label">GPU Mode</label>
+                        <select class="form-input" id="ct-gpu-mode">
+                            <option value="1">Dedicated (Passthrough) &mdash; exclusive GPU, best performance, IOMMU required</option>
+                            <option value="2">Shared (Proxied) &mdash; shared GPU via proxy, cost-effective, no IOMMU</option>
+                        </select>
+                        <p class="form-help">Dedicated gives full GPU access to a single VM. Shared allows multiple VMs to share one GPU at lower cost.</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">GPU Requirement Description</label>
+                        <input type="text" class="form-input" id="ct-gpu-requirement" placeholder="e.g. NVIDIA RTX 3060+ with 8GB VRAM">
+                        <p class="form-help">Human-readable GPU requirement shown in the marketplace.</p>
                     </div>
                 </div>
 
@@ -410,6 +423,9 @@ function resetCreateForm() {
     document.getElementById('ct-min-memory').value = '512';
     document.getElementById('ct-min-disk').value = '10';
     document.getElementById('ct-requires-gpu').checked = false;
+    document.getElementById('ct-gpu-mode-group').style.display = 'none';
+    document.getElementById('ct-gpu-mode').value = '1';
+    document.getElementById('ct-gpu-requirement').value = '';
     document.getElementById('ct-use-generated-password').checked = true;
     document.getElementById('ct-min-quality-tier').value = '1';
     document.getElementById('ct-default-bandwidth-tier').value = '3';
@@ -422,6 +438,11 @@ function resetCreateForm() {
     document.getElementById('ct-env-vars-list').innerHTML = '';
     document.getElementById('ct-submit-btn').textContent = 'Create as Draft';
     document.getElementById('create-template-modal-title').textContent = 'Create Template';
+}
+
+export function onGpuToggle() {
+    const checked = document.getElementById('ct-requires-gpu').checked;
+    document.getElementById('ct-gpu-mode-group').style.display = checked ? '' : 'none';
 }
 
 export function onPricingChange() {
@@ -574,6 +595,10 @@ function buildTemplatePayload() {
         tags: tags,
         cloudInitTemplate: document.getElementById('ct-cloudinit').value,
         requiresGpu: document.getElementById('ct-requires-gpu').checked,
+        defaultGpuMode: document.getElementById('ct-requires-gpu').checked
+            ? parseInt(document.getElementById('ct-gpu-mode').value)
+            : 0,
+        gpuRequirement: document.getElementById('ct-gpu-requirement').value.trim() || null,
         minimumSpec: {
             virtualCpuCores: minCpu,
             memoryBytes: minMemMb * 1024 * 1024,
@@ -670,6 +695,9 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-image').value = template.imageId || 'ubuntu-22.04';
     document.getElementById('ct-cloudinit').value = template.cloudInitTemplate || '';
     document.getElementById('ct-requires-gpu').checked = template.requiresGpu || false;
+    document.getElementById('ct-gpu-mode').value = template.defaultGpuMode || 1;
+    document.getElementById('ct-gpu-mode-group').style.display = template.requiresGpu ? '' : 'none';
+    document.getElementById('ct-gpu-requirement').value = template.gpuRequirement || '';
     document.getElementById('ct-source-url').value = template.sourceUrl || '';
 
     // Access & credentials
@@ -783,5 +811,6 @@ window.myTemplates = {
     addPort,
     addEnvVar,
     onPricingChange,
+    onGpuToggle,
     onPortProtocolChange
 };

@@ -151,10 +151,19 @@ public class VmSpec
     //[JsonIgnore]
     //public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
     /// <summary>
-    /// Whether this workload requires a GPU.
-    /// When true, scheduler hard-filters to GPU-capable nodes only.
+    /// GPU access mode for this workload.
+    /// None = no GPU, Passthrough = dedicated VFIO GPU, Proxied = shared GPU via proxy daemon.
+    /// The scheduler uses this to filter nodes and the value is sent to the node agent in CreateVm payloads.
     /// </summary>
-    public bool RequiresGpu { get; set; }
+    public GpuMode GpuMode { get; set; } = GpuMode.None;
+
+    /// <summary>
+    /// Convenience property: true when GpuMode requires any GPU access.
+    /// Used by scheduling hard-filters and marketplace queries.
+    /// </summary>
+    [BsonIgnore]
+    [JsonIgnore]
+    public bool RequiresGpu => GpuMode != GpuMode.None;
 
     public string? GpuModel { get; set; }
 
@@ -362,6 +371,31 @@ public enum DeploymentMode
 {
     VirtualMachine = 0,
     Container = 1
+}
+
+/// <summary>
+/// GPU access mode for a VM, set by the orchestrator during scheduling.
+/// The node agent no longer auto-detects GPU mode — the orchestrator decides
+/// based on node capabilities (IOMMU, GPU availability) and user preference.
+/// </summary>
+public enum GpuMode
+{
+    /// <summary>No GPU access</summary>
+    None = 0,
+
+    /// <summary>
+    /// VFIO passthrough — dedicated GPU assigned to a single VM.
+    /// Requires IOMMU enabled on the host node.
+    /// Best performance, exclusive access to the GPU.
+    /// </summary>
+    Passthrough = 1,
+
+    /// <summary>
+    /// GPU proxy daemon — shared GPU over virtio-vsock.
+    /// No IOMMU required; multiple VMs can share one GPU.
+    /// Cost-effective, slightly lower performance.
+    /// </summary>
+    Proxied = 2
 }
 
 /// <summary>
