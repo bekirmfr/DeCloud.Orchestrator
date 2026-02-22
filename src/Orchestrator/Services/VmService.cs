@@ -226,17 +226,6 @@ public class VmService : IVmService
                         vm.Id, template.DefaultGpuMode, template.Name);
                 }
 
-                // Promote VmType to Inference for GPU templates when the caller
-                // left it at the default (General). This ensures the node agent
-                // treats the workload correctly and billing/metrics are accurate.
-                if (vm.Spec.RequiresGpu && vm.VmType == VmType.General)
-                {
-                    vm.VmType = VmType.Inference;
-                    _logger.LogInformation(
-                        "VM {VmId} promoted to VmType=Inference (template {TemplateName} requires GPU)",
-                        vm.Id, template.Name);
-                }
-
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
