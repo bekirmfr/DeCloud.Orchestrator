@@ -287,38 +287,22 @@ public class VmLifecycleManager : IVmLifecycleManager
     /// </summary>
     private async Task OnVmBecameRunningAsync(VirtualMachine vm, TransitionContext context)
     {
-        var isContainer = vm.Spec.DeploymentMode == DeploymentMode.Container;
-
-        // For containers: auto-resolve PrivateIp and services since there's no
-        // qemu-guest-agent or cloud-init. The node agent monitors containers via
-        // Docker API but may not report IP/services in the same heartbeat format.
-        if (isContainer)
+        // Reset all service readiness to Pending so node agent re-checks via qemu-guest-agent
+        if (vm.Services.Count > 0)
         {
-            await ResolveContainerNetworkingAsync(vm);
-            MarkContainerServicesReady(vm);
-            await _dataStore.SaveVmAsync(vm);
-        }
-        else
-        {
-            // Reset all service readiness to Pending so node agent re-checks via qemu-guest-agent
-            if (vm.Services.Count > 0)
+            foreach (var service in vm.Services)
             {
-                foreach (var service in vm.Services)
-                {
-                    service.Status = ServiceReadiness.Pending;
-                    service.StatusMessage = null;
-                    service.ReadyAt = null;
-                    service.LastCheckAt = null;
-                }
-                _logger.LogDebug("VM {VmId} service readiness reset to Pending ({Count} services)",
-                    vm.Id, vm.Services.Count);
+                service.Status = ServiceReadiness.Pending;
+                service.StatusMessage = null;
+                service.ReadyAt = null;
+                service.LastCheckAt = null;
             }
+            _logger.LogDebug("VM {VmId} service readiness reset to Pending ({Count} services)",
+                vm.Id, vm.Services.Count);
         }
 
         // Wait for PrivateIp to be available (heartbeat may not have delivered it yet)
-        // For containers, ResolveContainerNetworkingAsync already set it above.
-        var ipReady = !string.IsNullOrEmpty(vm.NetworkConfig?.PrivateIp)
-            || await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
+        var ipReady = await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
         if (!ipReady)
         {
             _logger.LogWarning(
@@ -352,62 +336,6 @@ public class VmLifecycleManager : IVmLifecycleManager
                 () => SettleTemplateFeeAsync(freshVm),
                 "Template fee settlement", freshVm.Id);
         }
-    }
-
-    /// <summary>
-    /// For container VMs, set PrivateIp to the node's tunnel/public IP.
-    /// Docker containers expose ports on the host, so the node itself is the target.
-    /// </summary>
-    private async Task ResolveContainerNetworkingAsync(VirtualMachine vm)
-    {
-        if (!string.IsNullOrEmpty(vm.NetworkConfig?.PrivateIp))
-            return; // Already set
-
-        if (string.IsNullOrEmpty(vm.NodeId))
-            return;
-
-        var node = await _dataStore.GetNodeAsync(vm.NodeId);
-        if (node == null) return;
-
-        // Use the tunnel IP (CGNAT/WireGuard) if available, otherwise public IP.
-        // Docker maps container ports to the host, so the host IP is the upstream target.
-        var hostIp = node.CgnatInfo?.TunnelIp ?? node.PublicIp;
-        if (string.IsNullOrEmpty(hostIp))
-            return;
-
-        vm.NetworkConfig ??= new VmNetworkConfig();
-        vm.NetworkConfig.PrivateIp = hostIp;
-        vm.NetworkConfig.IsIpAssigned = true;
-
-        _logger.LogInformation(
-            "Container VM {VmId} PrivateIp set to node host {Ip} (Docker port-mapped)",
-            vm.Id, hostIp);
-    }
-
-    /// <summary>
-    /// For container VMs, auto-mark all services as Ready.
-    /// Containers don't have cloud-init or qemu-guest-agent — if the container
-    /// is running (reported by node agent), the services are available.
-    /// </summary>
-    private void MarkContainerServicesReady(VirtualMachine vm)
-    {
-        if (vm.Services.Count == 0) return;
-
-        var now = DateTime.UtcNow;
-        foreach (var service in vm.Services)
-        {
-            if (service.Status == ServiceReadiness.Ready)
-                continue;
-
-            service.Status = ServiceReadiness.Ready;
-            service.ReadyAt = now;
-            service.LastCheckAt = now;
-            service.StatusMessage = "Container running";
-        }
-
-        _logger.LogInformation(
-            "Container VM {VmId} all {Count} services auto-marked Ready",
-            vm.Id, vm.Services.Count);
     }
 
     /// <summary>

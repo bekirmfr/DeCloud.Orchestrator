@@ -1413,33 +1413,8 @@ public class NodeService : INodeService
                 vm = await _dataStore.GetVmAsync(vmId);
                 if (vm == null) continue;
 
-                // Update per-service readiness from node agent.
-                // For container VMs, the node agent may not report services (no qemu-guest-agent).
-                // If the container is running but services aren't reported, auto-mark them as Ready.
-                if (vm.Spec.DeploymentMode == DeploymentMode.Container &&
-                    (reported.Services == null || reported.Services.Count == 0) &&
-                    vm.Services.Count > 0 &&
-                    vm.Status == VmStatus.Running)
-                {
-                    var needsSave = false;
-                    var now = DateTime.UtcNow;
-                    foreach (var svc in vm.Services.Where(s => s.Status != ServiceReadiness.Ready))
-                    {
-                        svc.Status = ServiceReadiness.Ready;
-                        svc.ReadyAt ??= now;
-                        svc.LastCheckAt = now;
-                        svc.StatusMessage = "Container running";
-                        needsSave = true;
-                    }
-                    if (needsSave)
-                    {
-                        _logger.LogInformation(
-                            "Container VM {VmId} services auto-marked Ready (node agent does not report container services)",
-                            vmId);
-                        await _dataStore.SaveVmAsync(vm);
-                    }
-                }
-                else if (reported.Services?.Count > 0 && vm.Services.Count > 0)
+                // Update per-service readiness from node agent
+                if (reported.Services?.Count > 0 && vm.Services.Count > 0)
                 {
                     UpdateServiceReadiness(vm, reported.Services);
                     await _dataStore.SaveVmAsync(vm);
