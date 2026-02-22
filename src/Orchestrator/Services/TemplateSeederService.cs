@@ -1838,7 +1838,7 @@ final_message: |
         {
             Name = "AI Chatbot (Ollama + Open WebUI)",
             Slug = "ai-chatbot-ollama",
-            Version = "1.2.0",
+            Version = "1.1.0",
             Category = "ai-ml",
             Description = "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, Gemma) locally with a beautiful chat interface. No data leaves your server.",
             LongDescription = @"## Your Own Private ChatGPT
