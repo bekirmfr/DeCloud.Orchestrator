@@ -117,7 +117,7 @@ public class VmTemplate
     // ============================================
 
     /// <summary>
-    /// Whether this template requires GPU
+    /// Whether this template requires a GPU-capable node.
     /// </summary>
     public bool RequiresGpu { get; set; }
 

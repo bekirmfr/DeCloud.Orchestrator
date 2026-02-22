@@ -150,7 +150,12 @@ public class VmSpec
     //[BsonIgnore]
     //[JsonIgnore]
     //public long DiskGb => DiskBytes / (1024L * 1024L * 1024L);
+    /// <summary>
+    /// Whether this workload requires a GPU.
+    /// When true, scheduler hard-filters to GPU-capable nodes only.
+    /// </summary>
     public bool RequiresGpu { get; set; }
+
     public string? GpuModel { get; set; }
 
     /// <summary>

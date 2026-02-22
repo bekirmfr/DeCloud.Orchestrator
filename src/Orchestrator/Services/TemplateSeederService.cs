@@ -1910,7 +1910,7 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
                 DiskBytes = 30L * 1024 * 1024 * 1024,    // 30 GB
-                RequiresGpu = false
+                RequiresGpu = true
             },
 
             RecommendedSpec = new VmSpec
@@ -1918,10 +1918,10 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
                 VirtualCpuCores = 8,
                 MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,    // 50 GB
-                RequiresGpu = false
+                RequiresGpu = true
             },
 
-            RequiresGpu = false,
+            RequiresGpu = true,
             GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
             ContainerImage = "ollama/ollama:latest",
 

@@ -1436,7 +1436,7 @@ public class DataStore
 
             if (!string.IsNullOrEmpty(category))
                 filters.Add(filterBuilder.Eq(t => t.Category, category));
-            
+
             if (requiresGpu.HasValue)
                 filters.Add(filterBuilder.Eq(t => t.RequiresGpu, requiresGpu.Value));
             
