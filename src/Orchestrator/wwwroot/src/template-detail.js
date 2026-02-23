@@ -549,9 +549,15 @@ export async function deployFromTemplate() {
                 }
             })
         });
-        
-        const data = await response.json();
-        
+
+        const text = await response.text();
+        let data;
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch {
+            throw new Error(response.ok ? 'Invalid response from server' : `Server error (${response.status})`);
+        }
+
         if (data.success || response.ok) {
             console.log('[Template Detail] Deployment successful:', data.data || data);
             
