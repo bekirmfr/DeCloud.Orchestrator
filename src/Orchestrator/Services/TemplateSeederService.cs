@@ -1942,10 +1942,12 @@ runcmd:
   # Create persistent data directories
   - mkdir -p /opt/ollama /opt/open-webui
 
-  # ── GPU Detection & NVIDIA Container Toolkit ──
+# ── GPU Detection & NVIDIA Container Toolkit ──
   - |
     GPU_FLAG=""""
+    SHIM_OPTS=""""
     if lspci | grep -i nvidia > /dev/null 2>&1; then
+      # ── Mode 1: Physical NVIDIA GPU (passthrough / bare-metal) ──
       echo ""NVIDIA GPU detected — installing container toolkit...""
       apt-get update
       apt-get install -y ubuntu-drivers-common
@@ -1963,18 +1965,51 @@ runcmd:
       nvidia-ctk runtime configure --runtime=docker
       systemctl restart docker
       GPU_FLAG=""--gpus=all""
-      echo ""GPU_MODE=true"" > /opt/ollama/gpu-status
-      echo ""GPU acceleration enabled""
+      echo ""GPU_MODE=passthrough"" > /opt/ollama/gpu-status
+      echo ""GPU acceleration enabled (passthrough)""
+
+    elif [ -f /usr/local/lib/libcuda.so.1 ] && [ -f /usr/local/lib/libnvidia-ml.so.1 ]; then
+      # ── Mode 2: DeCloud GPU Proxy (shims installed by InjectGpuProxyConfig) ──
+      echo ""DeCloud GPU proxy shims detected — configuring proxied GPU mode...""
+
+      # Mount shims into the container so Ollama finds them via dlopen()
+      SHIM_OPTS=""-v /usr/local/lib/libcuda.so.1:/usr/local/lib/libcuda.so.1:ro""
+      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libnvidia-ml.so.1:/usr/local/lib/libnvidia-ml.so.1:ro""
+
+      # Also mount the symlinks Ollama may follow
+      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libcuda.so:/usr/local/lib/libcuda.so:ro""
+      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libnvidia-ml.so:/usr/local/lib/libnvidia-ml.so:ro""
+
+      # Ensure the container's linker finds shims before anything else
+      SHIM_OPTS=""$SHIM_OPTS -e LD_LIBRARY_PATH=/usr/local/lib""
+
+      # Force Ollama to load the CUDA backend (it won't auto-detect without nvidia-smi)
+      SHIM_OPTS=""$SHIM_OPTS -e OLLAMA_LLM_LIBRARY=cuda_v12""
+
+      # Pass GPU proxy transport config (token, host, port) into the container.
+      # The env file is created by InjectGpuProxyConfig() with cloud-init indentation,
+      # so strip leading whitespace before feeding to --env-file.
+      if [ -f /etc/decloud/gpu-proxy.env ]; then
+        sed 's/^[[:space:]]*//' /etc/decloud/gpu-proxy.env | grep -v '^$' > /tmp/gpu-proxy-clean.env
+        SHIM_OPTS=""$SHIM_OPTS --env-file /tmp/gpu-proxy-clean.env""
+      fi
+
+      echo ""GPU_MODE=proxied"" > /opt/ollama/gpu-status
+      echo ""GPU proxy mode enabled via DeCloud shims""
+
     else
+      # ── Mode 3: No GPU available ──
       echo ""No GPU detected — running in CPU-only mode""
       echo ""GPU_MODE=false"" > /opt/ollama/gpu-status
     fi
 
     # ── Start Ollama container ──
+    # shellcheck disable=SC2086  # intentional word splitting on SHIM_OPTS
     docker run -d \
       --name ollama \
       --restart unless-stopped \
       $GPU_FLAG \
+      $SHIM_OPTS \
       -v /opt/ollama:/root/.ollama \
       -p 11434:11434 \
       ollama/ollama:latest
