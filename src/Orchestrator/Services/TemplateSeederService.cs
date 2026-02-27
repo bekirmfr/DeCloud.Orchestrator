@@ -1986,16 +1986,15 @@ runcmd:
 
       # Inject GPU proxy env vars into the Ollama systemd service
       mkdir -p /etc/systemd/system/ollama.service.d
-      cat > /etc/systemd/system/ollama.service.d/gpu-proxy.conf <<'SVCEOF'
-      [Service]
-      Environment=""LD_LIBRARY_PATH=/usr/local/lib""
-      Environment=""OLLAMA_HOST=0.0.0.0:11434""
-      SVCEOF
+      GPCONF=/etc/systemd/system/ollama.service.d/gpu-proxy.conf
+      printf '[Service]\n' > ""$GPCONF""
+      printf 'Environment=""LD_LIBRARY_PATH=/usr/local/lib""\n' >> ""$GPCONF""
+      printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
 
       # Add GPU proxy transport config from the env file
       if [ -f /etc/decloud/gpu-proxy.env ]; then
         grep -v '^\s*$' /etc/decloud/gpu-proxy.env | grep -v '^\s*#' | grep -v '^LD_PRELOAD=' | sed 's/^[[:space:]]*//' | while IFS= read -r envline; do
-          printf 'Environment=""%s""\n' ""$envline"" >> /etc/systemd/system/ollama.service.d/gpu-proxy.conf
+          printf 'Environment=""%s""\n' ""$envline"" >> ""$GPCONF""
         done
       fi
 
