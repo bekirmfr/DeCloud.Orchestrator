@@ -453,7 +453,9 @@ public class TemplateService : ITemplateService
                 "nixos.org",                        // Nix official
                 "raw.githubusercontent.com",        // GitHub raw content
                 "dl.k8s.io",                        // Kubernetes official
-                "get.helm.sh"                       // Helm official
+                "get.helm.sh",                      // Helm official
+                "ollama.com",                       // Ollama official
+                "nvidia.github.io"                  // NVIDIA Container Toolkit
             };
 
             // Find all curl|bash and wget|sh patterns
