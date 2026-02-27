@@ -1864,14 +1864,14 @@ Deploy a fully self-hosted AI chatbot that runs entirely on your VM. No API keys
 ## Pull More Models via SSH
 ```bash
 # Larger, more capable models (require more RAM)
-docker exec ollama ollama pull llama3.2        # 3B default
-docker exec ollama ollama pull mistral         # 7B, great all-rounder
-docker exec ollama ollama pull gemma2:9b       # 9B, Google's model
-docker exec ollama ollama pull codellama       # 7B, optimized for code
-docker exec ollama ollama pull llama3.1:70b    # 70B, needs 40GB+ RAM + GPU
+ollama pull llama3.2        # 3B default
+ollama pull mistral         # 7B, great all-rounder
+ollama pull gemma2:9b       # 9B, Google's model
+ollama pull codellama       # 7B, optimized for code
+ollama pull llama3.1:70b    # 70B, needs 40GB+ RAM + GPU
 
 # List installed models
-docker exec ollama ollama list
+ollama list
 ```
 
 ## GPU vs CPU Performance
@@ -1942,10 +1942,8 @@ runcmd:
   # Create persistent data directories
   - mkdir -p /opt/ollama /opt/open-webui
 
-# ── GPU Detection & NVIDIA Container Toolkit ──
+# ── GPU Detection & Ollama Install ──
   - |
-    GPU_FLAG=""""
-    SHIM_OPTS=""""
     if lspci | grep -i nvidia > /dev/null 2>&1; then
       # ── Mode 1: Physical NVIDIA GPU (passthrough / bare-metal) ──
       echo ""NVIDIA GPU detected — installing container toolkit...""
@@ -1964,57 +1962,71 @@ runcmd:
       apt-get install -y nvidia-container-toolkit
       nvidia-ctk runtime configure --runtime=docker
       systemctl restart docker
-      GPU_FLAG=""--gpus=all""
+
+      # Passthrough: Ollama in Docker with --gpus=all
+      docker run -d \
+        --name ollama \
+        --restart unless-stopped \
+        --gpus=all \
+        -v /opt/ollama:/root/.ollama \
+        -p 11434:11434 \
+        ollama/ollama:latest
+
       echo ""GPU_MODE=passthrough"" > /opt/ollama/gpu-status
-      echo ""GPU acceleration enabled (passthrough)""
+      echo ""GPU acceleration enabled (passthrough) — Ollama in Docker""
 
     elif [ -f /usr/local/lib/libcuda.so.1 ] && [ -f /usr/local/lib/libnvidia-ml.so.1 ]; then
-      # ── Mode 2: DeCloud GPU Proxy (shims installed by InjectGpuProxyConfig) ──
-      echo ""DeCloud GPU proxy shims detected — configuring proxied GPU mode...""
+      # ── Mode 2: DeCloud GPU Proxy — Ollama native (NOT Docker) ──
+      # Our driver shim (libcuda.so.1) works natively but Ollama's internal
+      # GPU discovery can't find it inside Docker containers.
+      echo ""DeCloud GPU proxy shims detected — installing Ollama natively...""
 
-      # Mount shims into the container so Ollama finds them via dlopen()
-      SHIM_OPTS=""-v /usr/local/lib/libcuda.so.1:/usr/local/lib/libcuda.so.1:ro""
-      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libnvidia-ml.so.1:/usr/local/lib/libnvidia-ml.so.1:ro""
+      # Install Ollama via official script (creates systemd service)
+      curl -fsSL https://ollama.com/install.sh | sh
 
-      # Also mount the symlinks Ollama may follow
-      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libcuda.so:/usr/local/lib/libcuda.so:ro""
-      SHIM_OPTS=""$SHIM_OPTS -v /usr/local/lib/libnvidia-ml.so:/usr/local/lib/libnvidia-ml.so:ro""
+      # Inject GPU proxy env vars into the Ollama systemd service
+      mkdir -p /etc/systemd/system/ollama.service.d
+      cat > /etc/systemd/system/ollama.service.d/gpu-proxy.conf <<'SVCEOF'
+      [Service]
+      Environment=""LD_LIBRARY_PATH=/usr/local/lib""
+      Environment=""OLLAMA_HOST=0.0.0.0:11434""
+      SVCEOF
 
-      # Ensure the container's linker finds shims before anything else
-      SHIM_OPTS=""$SHIM_OPTS -e LD_LIBRARY_PATH=/usr/local/lib""
-
-      # Force Ollama to load the CUDA backend (it won't auto-detect without nvidia-smi)
-      SHIM_OPTS=""$SHIM_OPTS -e OLLAMA_LLM_LIBRARY=cuda_v12""
-
-      # Pass GPU proxy transport config (token, host, port) into the container.
-      # The env file is created by InjectGpuProxyConfig() with cloud-init indentation,
-      # so strip leading whitespace before feeding to --env-file.
+      # Add GPU proxy transport config from the env file
       if [ -f /etc/decloud/gpu-proxy.env ]; then
-        sed 's/^[[:space:]]*//' /etc/decloud/gpu-proxy.env | grep -v '^$' > /tmp/gpu-proxy-clean.env
-        SHIM_OPTS=""$SHIM_OPTS --env-file /tmp/gpu-proxy-clean.env""
+        while IFS= read -r line; do
+          # Skip empty lines and comments
+          line=$(echo ""$line"" | sed 's/^[[:space:]]*//')
+          [ -z ""$line"" ] && continue
+          [[ ""$line"" == \#* ]] && continue
+          # Skip LD_PRELOAD (we use LD_LIBRARY_PATH + dlopen, not LD_PRELOAD)
+          [[ ""$line"" == LD_PRELOAD=* ]] && continue
+          echo ""Environment=\""$line\"""" >> /etc/systemd/system/ollama.service.d/gpu-proxy.conf
+        done < /etc/decloud/gpu-proxy.env
       fi
 
+      systemctl daemon-reload
+      systemctl enable ollama
+      systemctl restart ollama
+
       echo ""GPU_MODE=proxied"" > /opt/ollama/gpu-status
-      echo ""GPU proxy mode enabled via DeCloud shims""
+      echo ""GPU proxy mode enabled — Ollama native with shims""
 
     else
-      # ── Mode 3: No GPU available ──
-      echo ""No GPU detected — running in CPU-only mode""
+      # ── Mode 3: No GPU — Ollama in Docker (CPU-only) ──
+      echo ""No GPU detected — running Ollama in Docker (CPU-only)""
+
+      docker run -d \
+        --name ollama \
+        --restart unless-stopped \
+        -v /opt/ollama:/root/.ollama \
+        -p 11434:11434 \
+        ollama/ollama:latest
+
       echo ""GPU_MODE=false"" > /opt/ollama/gpu-status
     fi
 
-    # ── Start Ollama container ──
-    # shellcheck disable=SC2086  # intentional word splitting on SHIM_OPTS
-    docker run -d \
-      --name ollama \
-      --restart unless-stopped \
-      $GPU_FLAG \
-      $SHIM_OPTS \
-      -v /opt/ollama:/root/.ollama \
-      -p 11434:11434 \
-      ollama/ollama:latest
-
-    # Wait for Ollama API to be ready
+    # Wait for Ollama API to be ready (native or Docker)
     echo ""Waiting for Ollama to start...""
     for i in $(seq 1 60); do
       if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
@@ -2024,9 +2036,13 @@ runcmd:
       sleep 2
     done
 
-    # Pull default model (llama3.2:3b — fast, capable, 2GB)
+    # Pull default model (works for both native and Docker)
     echo ""Pulling llama3.2:3b model (this takes 2-5 minutes)...""
-    docker exec ollama ollama pull llama3.2:3b
+    if command -v ollama > /dev/null 2>&1; then
+      ollama pull llama3.2:3b
+    elif docker ps --format '{{.Names}}' | grep -q ollama; then
+      docker exec ollama ollama pull llama3.2:3b
+    fi
 
   # ── Start Open WebUI container ──
   - |
@@ -2098,13 +2114,13 @@ runcmd:
     ║  Default Model: llama3.2:3b                                  ║
     ║                                                               ║
     ║  Pull more models:                                            ║
-    ║    docker exec ollama ollama pull mistral                     ║
-    ║    docker exec ollama ollama pull codellama                   ║
-    ║    docker exec ollama ollama pull gemma2:9b                   ║
+    ║    ollama pull mistral                                        ║
+    ║    ollama pull codellama                                      ║
+    ║    ollama pull gemma2:9b                                      ║
     ║                                                               ║
     ║  Services:                                                    ║
-    ║    docker ps                  (running containers)            ║
-    ║    docker logs -f ollama      (Ollama logs)                   ║
+    ║    systemctl status ollama    (Ollama service)                 ║
+    ║    journalctl -u ollama -f    (Ollama logs)                   ║
     ║    docker logs -f open-webui  (Open WebUI logs)               ║
     ║                                                               ║
     ║  100% Private — no data leaves this server.                   ║
@@ -2121,8 +2137,8 @@ final_message: |
   Default model: llama3.2:3b (pre-pulled on first boot)
 
   Pull more models via SSH:
-    docker exec ollama ollama pull mistral
-    docker exec ollama ollama pull codellama
+    ollama pull mistral
+    ollama pull codellama
 
   No data leaves your server. 100% private AI.",
 
