@@ -1994,15 +1994,9 @@ runcmd:
 
       # Add GPU proxy transport config from the env file
       if [ -f /etc/decloud/gpu-proxy.env ]; then
-        while IFS= read -r line; do
-          # Skip empty lines and comments
-          line=$(echo ""$line"" | sed 's/^[[:space:]]*//')
-          [ -z ""$line"" ] && continue
-          [[ ""$line"" == \#* ]] && continue
-          # Skip LD_PRELOAD (we use LD_LIBRARY_PATH + dlopen, not LD_PRELOAD)
-          [[ ""$line"" == LD_PRELOAD=* ]] && continue
-          echo ""Environment=\""$line\"""" >> /etc/systemd/system/ollama.service.d/gpu-proxy.conf
-        done < /etc/decloud/gpu-proxy.env
+        grep -v '^\s*$' /etc/decloud/gpu-proxy.env | grep -v '^\s*#' | grep -v '^LD_PRELOAD=' | sed 's/^[[:space:]]*//' | while IFS= read -r envline; do
+          printf 'Environment=""%s""\n' ""$envline"" >> /etc/systemd/system/ollama.service.d/gpu-proxy.conf
+        done
       fi
 
       systemctl daemon-reload
