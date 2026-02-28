@@ -1989,6 +1989,7 @@ runcmd:
       GPCONF=/etc/systemd/system/ollama.service.d/gpu-proxy.conf
       printf '[Service]\n' > ""$GPCONF""
       printf 'Environment=""LD_LIBRARY_PATH=/usr/local/lib""\n' >> ""$GPCONF""
+      printf 'Environment=""LD_PRELOAD=/usr/local/lib/libdecloud_cuda_shim.so""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
 
       # Add GPU proxy transport config from the env file
