@@ -2031,6 +2031,7 @@ runcmd:
 
     # Pull default model (works for both native and Docker)
     echo ""Pulling llama3.2:3b model (this takes 2-5 minutes)...""
+    export HOME=/root
     if command -v ollama > /dev/null 2>&1; then
       ollama pull llama3.2:3b
     elif docker ps --format '{{.Names}}' | grep -q ollama; then
