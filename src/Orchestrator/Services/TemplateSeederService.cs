@@ -1991,6 +1991,8 @@ runcmd:
       printf 'Environment=""LD_LIBRARY_PATH=/usr/local/lib""\n' >> ""$GPCONF""
       printf 'Environment=""LD_PRELOAD=/usr/local/lib/libdecloud_cuda_shim.so""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
+      printf 'Environment=""OLLAMA_LLM_LIBRARY=cuda_v12""\n' >> ""$GPCONF""
+      printf 'Environment=""OLLAMA_FLASH_ATTENTION=0""\n' >> ""$GPCONF""
 
       # Add GPU proxy transport config from the env file
       if [ -f /etc/decloud/gpu-proxy.env ]; then
