@@ -1984,7 +1984,51 @@ runcmd:
       # Install Ollama via official script (creates systemd service)
       curl -fsSL https://ollama.com/install.sh | sh
 
-      # Inject GPU proxy env vars into the Ollama systemd service
+      # ── Replace bundled NVIDIA libs with our shims (DT_NEEDED fix) ──
+      # libggml-cuda.so has DT_NEEDED: libcudart.so.12, libcublas.so.12, libcublasLt.so.12
+      # The linker resolves these from the SAME DIRECTORY before LD_PRELOAD.
+      # Real cuBLAS (116MB+751MB) calls cuGetExportTable (private NVIDIA internals)
+      # which cannot be proxied → crash. Replace with our shim that stubs cuBLAS
+      # and proxies cudart calls to the daemon.
+      CUDA_DIR=/usr/local/lib/ollama/cuda_v12
+      if [ -d ""$CUDA_DIR"" ] && [ -f /usr/local/lib/libdecloud_cuda_shim.so ]; then
+        # Back up originals (for debugging)
+        for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12; do
+          target=""$CUDA_DIR/$lib""
+          if [ -f ""$target"" ] && [ ! -f ""$target.orig"" ]; then
+            mv ""$target"" ""$target.orig""
+            # Remove any symlink targets too
+            real=$(readlink -f ""$target.orig"" 2>/dev/null)
+            [ -n ""$real"" ] && [ ""$real"" != ""$target.orig"" ] && mv ""$real"" ""$real.orig"" 2>/dev/null
+          fi
+          # Replace with our shim
+          cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/$lib""
+        done
+        echo ""Replaced bundled CUDA libs in $CUDA_DIR with GPU proxy shims""
+      fi
+
+      # ── Install NVML and libcuda shims to system library paths ──
+      # Ollama's Go code uses dlopen(""libnvidia-ml.so.1"") which searches
+      # system paths, not /usr/local/lib. Must be in /usr/lib/x86_64-linux-gnu/.
+      if [ -f /usr/local/lib/libnvidia-ml.so.1 ]; then
+        cp /usr/local/lib/libnvidia-ml.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+        ln -sf libnvidia-ml.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so
+      fi
+      if [ -f /usr/local/lib/libcuda.so.1 ]; then
+        cp /usr/local/lib/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so.1
+        ln -sf libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
+      fi
+      ldconfig 2>/dev/null || true
+
+      # ── Note: /proc/driver/nvidia/version ──
+      # Cannot be faked because /proc is a kernel procfs (mkdir fails silently).
+      # GPU detection works without it because:
+      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 forces loading the CUDA backend
+      #   2. NVML shim in /usr/lib/x86_64-linux-gnu/ satisfies dlopen discovery
+      #   3. /dev/nvidia* device nodes satisfy existence checks
+      # strace confirmed Ollama never reads this file.
+
+      # ── Inject GPU proxy env vars into the Ollama systemd service ──
       mkdir -p /etc/systemd/system/ollama.service.d
       GPCONF=/etc/systemd/system/ollama.service.d/gpu-proxy.conf
       printf '[Service]\n' > ""$GPCONF""
@@ -1993,6 +2037,10 @@ runcmd:
       printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_LLM_LIBRARY=cuda_v12""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_FLASH_ATTENTION=0""\n' >> ""$GPCONF""
+      # GGML env vars — belt-and-suspenders with shim constructor
+      printf 'Environment=""GGML_CUDA_FORCE_MMQ=1""\n' >> ""$GPCONF""
+      printf 'Environment=""GGML_CUDA_DISABLE_GRAPHS=1""\n' >> ""$GPCONF""
+      printf 'Environment=""GGML_CUDA_NO_PEER_COPY=1""\n' >> ""$GPCONF""
 
       # Add GPU proxy transport config from the env file
       if [ -f /etc/decloud/gpu-proxy.env ]; then
