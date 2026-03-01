@@ -1925,12 +1925,6 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
 
 # AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
 # DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
-
-apt:
-  conf: |
-    Acquire::http::Timeout "30";
-    Acquire::https::Timeout "30";
-    Acquire::Retries "3";
     
 packages:
   - curl
