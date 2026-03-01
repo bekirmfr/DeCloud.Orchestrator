@@ -1925,7 +1925,7 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
 
 # AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
 # DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
-    
+
 packages:
   - curl
   - wget
@@ -1988,8 +1988,12 @@ runcmd:
       # libggml-cuda.so has DT_NEEDED: libcudart.so.12, libcublas.so.12, libcublasLt.so.12
       # The linker resolves these from the SAME DIRECTORY before LD_PRELOAD.
       # Real cuBLAS (116MB+751MB) calls cuGetExportTable (private NVIDIA internals)
-      # which cannot be proxied → crash. Replace with our shim that stubs cuBLAS
-      # and proxies cudart calls to the daemon.
+      # which cannot be proxied → crash. Replace with our shims.
+      #
+      # CRITICAL: libcublas.so.12 MUST use a separately-built stub with correct
+      # @@libcublas.so.12 ELF version tags. Copying the cudart shim gives wrong
+      # tags (@@libcudart.so.12) causing silent dlopen failure of libggml-cuda.so.
+      # See: GPU_PROXY_DEBUGGING_JOURNAL.md, Problem 17 (Day 4)
       CUDA_DIR=/usr/local/lib/ollama/cuda_v12
       if [ -d ""$CUDA_DIR"" ] && [ -f /usr/local/lib/libdecloud_cuda_shim.so ]; then
         # Back up originals (for debugging)
@@ -2001,9 +2005,22 @@ runcmd:
             real=$(readlink -f ""$target.orig"" 2>/dev/null)
             [ -n ""$real"" ] && [ ""$real"" != ""$target.orig"" ] && mv ""$real"" ""$real.orig"" 2>/dev/null
           fi
-          # Replace with our shim
-          cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/$lib""
         done
+
+        # libcudart.so.12 → our cuda shim (correct @@libcudart.so.12 tags)
+        cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcudart.so.12""
+
+        # libcublas.so.12 → SEPARATE cuBLAS stub with correct @@libcublas.so.12 tags
+        if [ -f /usr/local/lib/libcublas_stub.so ]; then
+          cp /usr/local/lib/libcublas_stub.so ""$CUDA_DIR/libcublas.so.12""
+        else
+          echo ""WARNING: libcublas_stub.so not found — falling back to cuda shim copy (version tags may be wrong)""
+          cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcublas.so.12""
+        fi
+
+        # libcublasLt.so.12 → placeholder (no versioned symbol imports, shim copy works)
+        cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcublasLt.so.12""
+
         echo ""Replaced bundled CUDA libs in $CUDA_DIR with GPU proxy shims""
       fi
 
@@ -2022,13 +2039,11 @@ runcmd:
 
       # ── Note: /proc/driver/nvidia/version ──
       # Cannot be faked because /proc is a kernel procfs (mkdir fails silently).
-      # Without OLLAMA_LLM_LIBRARY, Ollama checks this file as a pre-condition
-      # for NVML GPU discovery (strace confirmed: missing file → skips dlopen
-      # of libnvidia-ml.so.1 entirely → CPU-only). However, this is moot because:
-      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 bypasses normal GPU discovery entirely
-      #   2. Ollama loads libggml-cuda.so directly from cuda_v12/ directory
-      #   3. Our shim in cuda_v12/ handles the rest via LD_PRELOAD + DT_NEEDED
-      # So /proc/driver/nvidia/version is not needed for GPU proxy mode.
+      # GPU detection works without it because:
+      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 forces loading the CUDA backend
+      #   2. NVML shim in /usr/lib/x86_64-linux-gnu/ satisfies dlopen discovery
+      #   3. /dev/nvidia* device nodes satisfy existence checks
+      # strace confirmed Ollama never reads this file.
 
       # ── Inject GPU proxy env vars into the Ollama systemd service ──
       mkdir -p /etc/systemd/system/ollama.service.d
