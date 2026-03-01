@@ -1926,6 +1926,12 @@ nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
 # AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
 # DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
 
+apt:
+  conf: |
+    Acquire::http::Timeout "30";
+    Acquire::https::Timeout "30";
+    Acquire::Retries "3";
+    
 packages:
   - curl
   - wget
@@ -2022,11 +2028,13 @@ runcmd:
 
       # ── Note: /proc/driver/nvidia/version ──
       # Cannot be faked because /proc is a kernel procfs (mkdir fails silently).
-      # GPU detection works without it because:
-      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 forces loading the CUDA backend
-      #   2. NVML shim in /usr/lib/x86_64-linux-gnu/ satisfies dlopen discovery
-      #   3. /dev/nvidia* device nodes satisfy existence checks
-      # strace confirmed Ollama never reads this file.
+      # Without OLLAMA_LLM_LIBRARY, Ollama checks this file as a pre-condition
+      # for NVML GPU discovery (strace confirmed: missing file → skips dlopen
+      # of libnvidia-ml.so.1 entirely → CPU-only). However, this is moot because:
+      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 bypasses normal GPU discovery entirely
+      #   2. Ollama loads libggml-cuda.so directly from cuda_v12/ directory
+      #   3. Our shim in cuda_v12/ handles the rest via LD_PRELOAD + DT_NEEDED
+      # So /proc/driver/nvidia/version is not needed for GPU proxy mode.
 
       # ── Inject GPU proxy env vars into the Ollama systemd service ──
       mkdir -p /etc/systemd/system/ollama.service.d
