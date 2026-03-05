@@ -2206,7 +2206,12 @@ final_message: |
 
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
-                ["DEFAULT_MODELS"] = "llama3.2:3b"
+                ["DEFAULT_MODELS"] = "llama3.2:3b",
+                // GPU proxy: application env vars (propagated to /etc/decloud/gpu-proxy.env)
+                ["GGML_CUDA_FORCE_MMQ"] = "1",
+                ["GGML_CUDA_DISABLE_GRAPHS"] = "1",
+                ["GGML_CUDA_NO_PEER_COPY"] = "1",
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
             },
 
             ExposedPorts = new List<TemplatePort>
