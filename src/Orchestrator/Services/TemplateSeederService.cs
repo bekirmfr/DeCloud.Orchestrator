@@ -360,7 +360,9 @@ final_message: |
 
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
-                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api"
+                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api",
+                // GPU proxy: stable diffusion works well with graph noops (uses custom kernels)
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
             },
 
             ExposedPorts = new List<TemplatePort>
