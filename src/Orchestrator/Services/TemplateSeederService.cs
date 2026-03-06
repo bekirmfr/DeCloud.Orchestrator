@@ -228,7 +228,7 @@ public class TemplateSeederService
 
 ## Requirements
 - GPU: NVIDIA with at least 8GB VRAM (RTX 3060+ recommended)
-- RAM: 16GB minimum
+- RAM: 10GB minimum
 - Storage: 40GB for models and cache",
 
             AuthorId = "platform",
@@ -285,17 +285,7 @@ runcmd:
   # Update package index (no full upgrade — keeps boot fast)
   - apt-get update
 
-  # Install NVIDIA drivers and CUDA (if GPU available)
-  - |
-    if lspci | grep -i nvidia; then
-      echo ""Installing NVIDIA drivers...""
-      apt-get install -y ubuntu-drivers-common
-      ubuntu-drivers autoinstall
-
-      # Install CUDA toolkit
-      apt-get install -y --no-install-recommends nvidia-cuda-toolkit
-    fi
-
+  # GPU access via DeCloud GPU proxy shim (injected by EnsureGpuProxyShim)
   # Create application user
   - useradd -m -s /bin/bash sduser
 
@@ -306,7 +296,7 @@ runcmd:
   # Pip build-isolation downloads latest setuptools (>=71) which removed pkg_resources.
   # Pre-installing wheel+setuptools avoids build failures for packages that need them.
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
-  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install joblib""
 
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
@@ -322,9 +312,10 @@ runcmd:
     [Service]
     Type=simple
     User=sduser
+    EnvironmentFile=-/etc/decloud/gpu-proxy.env
     Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
-    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --gradio-auth user:${DECLOUD_PASSWORD}
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
     Restart=always
     RestartSec=10
 
