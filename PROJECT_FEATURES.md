@@ -17,7 +17,8 @@
 8. [Monitoring & Health](#monitoring--health)
 9. [Per-Service VM Readiness Tracking](#per-service-vm-readiness-tracking)
 10. [DHT Infrastructure](#dht-infrastructure)
-11. [Future Features](#future-features)
+11. [GPU Proxy (CUDA Virtualization)](#gpu-proxy-cuda-virtualization)
+12. [Future Features](#future-features)
 
 ---
 
@@ -1582,6 +1583,80 @@ Both DHT nodes confirmed connected after fixes:
 | File | Change |
 |------|--------|
 | `CloudInit/Templates/relay-vm/relay-api.py` | `add_cgnat_peer` handles mesh enrollment; stale peer cleanup protects DHT peers (last octet >= 198) |
+
+---
+
+## GPU Proxy (CUDA Virtualization)
+
+**Status:** ✅ Production-ready (2026-03-06)
+
+### Overview
+
+The GPU proxy enables VMs without physical GPUs to run GPU-accelerated workloads through CUDA API-level interception and TCP RPC forwarding. This unlocks GPU hosting on nodes without IOMMU (WSL2, consumer PCs) — estimated 60-80% of potential node operators.
+
+### Architecture
+
+```
+VM (no GPU)                          Host (real GPU)
+┌──────────────────────┐             ┌─────────────────────┐
+│ Application (Ollama) │             │ gpu-proxy-daemon     │
+│   ↓ cuda*() calls    │             │   ↓ real CUDA calls  │
+│ libcudart.so.12 shim │──TCP RPC──→│ NVIDIA Driver + GPU  │
+│ libcuda.so.1 shim    │  9999      │                      │
+└──────────────────────┘             └─────────────────────┘
+```
+
+### Key Capabilities
+
+- **35+ protocol commands** covering memory, execution, streams, events, modules, cuBLAS GEMM
+- **Streaming module upload** — 1.56GB fatbin from mmap, zero-copy
+- **Real kernel attributes** via daemon RPC (not hardcoded)
+- **cuBLAS GEMM proxy** for GQA attention (batched + strided)
+- **Per-VM token auth** with SIGHUP reload
+- **Resource metering** — memory quota, kernel count, kernel time, peak memory
+
+### Performance (RTX 4060 Laptop GPU, llama3.2:1b)
+
+| Metric | Value |
+|--------|-------|
+| Prompt eval (warm) | 436 tok/s |
+| Prompt eval (cold) | 188 tok/s |
+| Token generation | 13-21 tok/s |
+| RPC round-trip | <1ms |
+| Model load (warm) | ~130ms |
+
+### Generic Proxy Design
+
+No hardcoded application or GPU vendor dependencies. All app-specific config driven by template `DefaultEnvironmentVariables`:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `DECLOUD_GPU_GRAPH_NOOP` | 1 | Graph stubs return success (1) or honest error (0) |
+| `DECLOUD_GPU_VMEM_PROXY` | 0 | Virtual memory APIs proxy to daemon (1) or NOT_SUPPORTED (0) |
+
+Ollama template writes `GGML_CUDA_FORCE_MMQ=1`, `GGML_CUDA_DISABLE_GRAPHS=1`, etc. PyTorch template would write `DECLOUD_GPU_VMEM_PROXY=1`.
+
+### Critical Fix: TCP_QUICKACK
+
+TCP delayed ACK imposed 40ms wait per small RPC response (0.07 tok/s). `TCP_QUICKACK` eliminates this. Must be re-armed before every `read()`. Combined with `TCP_NODELAY`, achieves sub-ms RPC latency.
+
+### Implementation Files
+
+| File | Purpose |
+|------|---------|
+| `src/gpu-proxy/shim/cuda_shim.c` | Runtime API shim (~1900 lines) |
+| `src/gpu-proxy/shim/cuda_driver_shim.c` | Driver API shim (~1800 lines) |
+| `src/gpu-proxy/shim/transport.c` | TCP/vsock transport with QUICKACK |
+| `src/gpu-proxy/daemon/gpu_proxy_daemon.c` | Host daemon (~2100 lines) |
+| `src/gpu-proxy/proto/gpu_proxy_proto.h` | Wire protocol definitions |
+| `LibvirtVmManager.cs` | `EnsureGpuProxyShim` — cloud-init injection |
+| `TemplateSeederService.cs` | Template GPU env vars |
+| `GpuProxyService.cs` | Daemon lifecycle management |
+| `install.sh` | Build + deploy pipeline |
+
+### Deployment
+
+Fully automated via cloud-init. `install.sh` builds shims and daemon on host, exposes via 9p share. Cloud-init copies shims into VM, replaces Ollama's bundled CUDA libs, writes transport config, restarts application. Zero manual steps.
 
 ---
 

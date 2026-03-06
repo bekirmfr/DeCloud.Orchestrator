@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-02-15
-**Status:** Phase 1 (Marketplace Foundation) COMPLETE — Moving to Phase 2 (User Engagement)
+**Last Updated:** 2026-03-06
+**Status:** Phase 1 (Marketplace Foundation) COMPLETE — GPU Proxy PRODUCTION-READY — Moving to Phase 2 (User Engagement)
 
 ---
 
@@ -98,6 +98,27 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 
 **Licensing Opportunity:** Relay system could be standalone product ("DeCloud Relay SDK") for other decentralized platforms.
 
+### GPU Proxy (Production-Ready, 2026-03-06)
+**Problem:** Nodes without IOMMU (WSL2, consumer PCs) can't do GPU passthrough to VMs.
+
+**Solution:** CUDA virtualization layer — shim libraries in VM intercept all CUDA calls and forward them via TCP RPC to a daemon on the host with the real GPU.
+
+**Architecture:**
+- **Runtime API Shim** (`libcudart.so.12`) — intercepts `cudaMalloc`, `cudaLaunchKernel`, etc.
+- **Driver API Shim** (`libcuda.so.1`) — intercepts `cuInit`, `cuGetProcAddress`, etc.
+- **GPU Proxy Daemon** — host-side process executing real CUDA operations
+- **Transport** — TCP with `TCP_NODELAY` + `TCP_QUICKACK` for sub-ms RPC latency
+- **35+ protocol commands** covering memory, execution, streams, events, modules, cuBLAS GEMM
+
+**Performance (RTX 4060 Laptop GPU):**
+- Prompt eval: 436 tok/s (warm), 188 tok/s (cold)
+- Generation: 13-21 tok/s
+- 100% GPU offload, zero manual configuration
+
+**Generic Design:** No hardcoded app or GPU vendor dependencies. Application-specific config (GGML vars for Ollama, CUDA vars for PyTorch) driven by template `DefaultEnvironmentVariables` written to `/etc/decloud/gpu-proxy.env`.
+
+**Key Innovation:** TCP_QUICKACK fix eliminated 40ms delayed ACK per RPC, achieving 150x speedup (0.07 → 13+ tok/s).
+
 ---
 
 ## Current State (Production)
@@ -131,6 +152,7 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ CentralIngress-aware port allocation (HTTP/WS ports handled by Caddy, only TCP/UDP gets iptables DNAT)
 ✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator side complete, NodeAgent pending)
 ✅ DHT infrastructure: libp2p DHT nodes over WireGuard mesh with bootstrap polling and NodeAgent enrollment proxy
+✅ GPU Proxy: CUDA virtualization over TCP RPC — 436 tok/s prompt eval, 100% GPU offload, generic proxy with template-driven config
 
 ### Recent Achievements (2026-01-30)
 

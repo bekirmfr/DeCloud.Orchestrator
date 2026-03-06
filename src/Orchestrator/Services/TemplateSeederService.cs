@@ -2054,6 +2054,11 @@ runcmd:
       printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_LLM_LIBRARY=cuda_v12""\n' >> ""$GPCONF""
       printf 'Environment=""OLLAMA_FLASH_ATTENTION=0""\n' >> ""$GPCONF""
+      # Keep model loaded indefinitely — prevents UI dropouts after 5min idle
+      printf 'Environment=""OLLAMA_KEEP_ALIVE=-1""\n' >> ""$GPCONF""
+      # Limit concurrency to 1 — prevents memory spikes on proxied GPU path
+      printf 'Environment=""OLLAMA_NUM_PARALLEL=1""\n' >> ""$GPCONF""
+      printf 'Environment=""OLLAMA_MAX_LOADED_MODELS=1""\n' >> ""$GPCONF""
       # GGML env vars — belt-and-suspenders with shim constructor
       printf 'Environment=""GGML_CUDA_FORCE_MMQ=1""\n' >> ""$GPCONF""
       printf 'Environment=""GGML_CUDA_DISABLE_GRAPHS=1""\n' >> ""$GPCONF""

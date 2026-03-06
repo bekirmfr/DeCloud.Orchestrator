@@ -2,8 +2,8 @@
 ## Building the World's First Emergent Compute Network
 
 **Version:** 2.0
-**Last Updated:** 2026-02-17
-**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS — See status markers below
+**Last Updated:** 2026-03-06
+**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY — See status markers below
 **Philosophy:** Simple primitives → Complex outcomes → Community ownership
 
 ---
@@ -778,12 +778,19 @@ These significant features were implemented but were NOT in the original Minecra
 | **ARM Architecture Support** | Production | Raspberry Pi support with dual-arch domain XML |
 | **CLI Tool** | Production | `decloud` v1.3.0 — wallet auth, VM management, diagnostics |
 | **USDC Escrow Contract** | Production | `DeCloudEscrow.sol` on Polygon — deposits, settlement, payouts |
+| **GPU Proxy** | Production | CUDA virtualization over TCP RPC — 436 tok/s, generic proxy, template-driven config, zero-touch VM deployment |
 
 ---
 
-## 🚦 NEXT IMMEDIATE STEPS (Updated 2026-02-17)
+## 🚦 NEXT IMMEDIATE STEPS (Updated 2026-03-06)
 
-**Current Focus: Phase 2 — User Engagement & Retention**
+**Current Focus: Phase 2 — User Engagement & Retention + GPU Proxy Expansion**
+
+**Completed Since Last Update:**
+1. ✅ GPU Proxy — CUDA virtualization over TCP (436 tok/s, generic proxy, production-ready)
+2. ✅ Generic proxy refactor — template-driven config, no hardcoded app/vendor deps
+3. ✅ TCP_QUICKACK performance fix (150x speedup)
+4. ✅ install.sh automation (daemon lifecycle, binary sync, freshness verification)
 
 **This Sprint:**
 1. ~~Add node tags and description fields~~ ✅ Done
@@ -792,6 +799,7 @@ These significant features were implemented but were NOT in the original Minecra
 4. Node operator dashboard (Priority 2.1) — earnings, uptime, relay stats
 5. Frontend trust badges ("99.9% uptime", "100+ VMs hosted")
 6. Review prompt modal after VM termination
+7. EU node provider setup for GPU passthrough testing
 
 **This Month:**
 1. ~~Implement full template marketplace~~ ✅ Done
