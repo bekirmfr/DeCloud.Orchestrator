@@ -238,9 +238,9 @@ public class TemplateSeederService
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 4,
-                MemoryBytes = 16L * 1024 * 1024 * 1024, // 16 GB
+                MemoryBytes = 10L * 1024 * 1024 * 1024, // 10 GB
                 DiskBytes = 50L * 1024 * 1024 * 1024,   // 50 GB
-                GpuMode = GpuMode.Passthrough,
+                GpuMode = GpuMode.Proxy,
                 GpuModel = "NVIDIA"
             },
 
@@ -254,7 +254,7 @@ public class TemplateSeederService
             },
 
             RequiresGpu = true,
-            DefaultGpuMode = GpuMode.Passthrough,
+            DefaultGpuMode = GpuMode.Proxy,
             GpuRequirement = "NVIDIA GPU with CUDA support (RTX 3060+ recommended)",
             RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
 
