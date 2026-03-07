@@ -2695,6 +2695,7 @@ final_message: |
             },
 
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
+            DefaultUsername = "admin",
             UseGeneratedPassword = true,
             EstimatedCostPerHour = 0.20m,
             DefaultBandwidthTier = BandwidthTier.Basic,
@@ -2726,6 +2727,7 @@ packages:
   - python3-pip
   - python3-venv
   - nginx
+  - apache2-utils
   - qemu-guest-agent
 
 runcmd:
@@ -2813,7 +2815,36 @@ EOFSVC
   - systemctl daemon-reload
   - systemctl enable --now jupyterlab
 
-  # nginx reverse proxy
+  # MOTD
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║         PyTorch + JupyterLab — DeCloud GPU Template          ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  URL:      https://${DECLOUD_DOMAIN}                         ║
+    ║  Username: admin                                              ║
+    ║  Password: ${DECLOUD_PASSWORD}                               ║
+    ║                                                               ║
+    ║  GPU proxy env:   /etc/decloud/gpu-proxy.env                 ║
+    ║  Notebooks:       /opt/notebooks/                            ║
+    ║  Python venv:     /opt/jupyter/venv/bin/python3              ║
+    ║                                                               ║
+    ║  Limitations (proxy mode):                                    ║
+    ║    ✗ torch.compile() / inductor (TORCHINDUCTOR_DISABLE=1)    ║
+    ║    ✗ CUDA Graphs    (DECLOUD_GPU_GRAPH_NOOP=1)               ║
+    ║    ✓ Eager ops, transformers, LoRA, bitsandbytes 4-bit       ║
+    ║                                                               ║
+    ║  Services:                                                    ║
+    ║    systemctl status jupyterlab                                ║
+    ║    journalctl -u jupyterlab -f                                ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+  # nginx — auth_basic (defense-in-depth, JupyterLab also requires password)
+  # Exceptions: /health probe, /api/* kernel calls, /files/*, /nbconvert/* (bypass double-prompt)
+  - htpasswd -bc /etc/nginx/.htpasswd admin ${DECLOUD_PASSWORD}
   - |
     cat > /etc/nginx/sites-available/jupyterlab <<'EOFNGINX'
 map $http_upgrade $connection_upgrade {
@@ -2824,8 +2855,27 @@ server {
     listen 8080;
     server_name _;
     client_max_body_size 500M;
+
+    # Readiness probe — no auth
     location /health { return 200 'ok'; add_header Content-Type text/plain; }
+
+    # JupyterLab kernel API, file serving, WebSocket — skip nginx basic auth
+    # (JupyterLab enforces its own cookie/password session on these)
+    location ~* ^/(api|files|nbconvert|terminals|kernels|sessions|metrics)/ {
+        auth_basic off;
+        proxy_pass http://127.0.0.1:8888;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+
+    # All other routes — nginx basic auth + JupyterLab password (defense-in-depth)
     location / {
+        auth_basic ""JupyterLab"";
+        auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://127.0.0.1:8888;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -2842,7 +2892,10 @@ EOFNGINX
 
 final_message: |
   PyTorch + JupyterLab is ready!
-  URL: https://${DECLOUD_DOMAIN}
+  URL:      https://${DECLOUD_DOMAIN}
+  Username: admin
   Password: ${DECLOUD_PASSWORD}
-  Open welcome.ipynb to verify GPU access.";
+  Open welcome.ipynb to verify GPU access.
+  Note: torch.compile() is disabled (requires kernel driver, not available in proxy mode).
+  Note: CUDA Graphs are disabled (noop stubs — use eager mode).";
 }
