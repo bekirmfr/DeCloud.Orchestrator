@@ -6,6 +6,7 @@ secrets.json
 bin/
 obj/
 publish/
+node_modules/
 
 # IDE
 .vs/
