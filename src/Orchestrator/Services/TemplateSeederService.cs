@@ -196,7 +196,8 @@ public class TemplateSeederService
             CreateShadowsocksProxyTemplate(),
             CreateWebProxyBrowserTemplate(),
             CreateOllamaOpenWebUiTemplate(),
-            CreateVllmInferenceServerTemplate()
+            CreateVllmInferenceServerTemplate(),
+            CreatePytorchJupyterTemplate()
         };
     }
 
@@ -2567,7 +2568,13 @@ final_message: |
             {
                 ["MODEL_ID"] = "Qwen/Qwen2.5-3B-Instruct",
                 ["MAX_MODEL_LEN"] = "4096",
-                ["GPU_MEMORY_UTILIZATION"] = "0.90"
+                ["GPU_MEMORY_UTILIZATION"] = "0.90",
+                // Enable VMM allocator: vLLM uses cuMemCreate/cuMemMap by default
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                // Disable CUDA graphs — proxy runs kernels eagerly
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                // Suppress device-side assertion crashes
+                ["TORCH_USE_CUDA_DSA"] = "0",
             },
 
             ExposedPorts = new List<TemplatePort>
@@ -2609,5 +2616,233 @@ final_message: |
             UpdatedAt = DateTime.UtcNow
         };
     }
+    
+    private VmTemplate CreatePytorchJupyterTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "PyTorch + JupyterLab",
+            Slug = "pytorch-jupyter",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "GPU-accelerated PyTorch 2.x with JupyterLab. Run training, fine-tuning, and inference notebooks with full CUDA support via DeCloud GPU proxy.",
+            LongDescription = @"
+- **PyTorch 2.x** with CUDA 12.1 — GPU acceleration via DeCloud proxy (no IOMMU needed)
+- **JupyterLab** — browser-based notebook IDE, password-protected
+- **ML libraries** — transformers, accelerate, datasets, numpy, pandas, matplotlib, scikit-learn
+- **bitsandbytes** — 4-bit / 8-bit quantization for LLM fine-tuning
+- **Note:** torch.compile() disabled — requires kernel driver not available in proxy mode",
 
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://jupyter.org",
+            License = "BSD-3-Clause",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,   // 8 GB RAM
+                DiskBytes = 40L * 1024 * 1024 * 1024,    // 40 GB disk (PyTorch ~5 GB)
+                GpuMode = GpuMode.Proxied
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB RAM
+                DiskBytes = 80L * 1024 * 1024 * 1024,    // 80 GB (datasets + checkpoints)
+                GpuMode = GpuMode.Proxied
+            },
+
+            RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Proxied,
+            GpuRequirement = "NVIDIA GPU with 6GB+ VRAM (RTX 3060 or better recommended)",
+            Tags = new List<string> { "ai", "pytorch", "jupyter", "python", "ml", "training",
+                                      "fine-tuning", "data-science", "gpu", "transformers" },
+
+            CloudInitTemplate = PYTORCH_CLOUD_INIT,  // see below
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                // VMM: PyTorch's caching allocator uses cuMemCreate/cuMemMap/cuMemAddressReserve
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                // Graphs: proxy runs kernels eagerly — CUDA graph capture is meaningless
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                // Disable torch.compile/inductor (needs kernel driver, not available in VM)
+                ["TORCHINDUCTOR_DISABLE"] = "1",
+                // Device-side assertions crash via proxy on CUDA errors — disable
+                ["TORCH_USE_CUDA_DSA"] = "0",
+                // Tune caching allocator: expandable_segments=False avoids repeated VMM
+                // calls that each incur an RPC round-trip
+                ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:False",
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "JupyterLab",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health",
+                        TimeoutSeconds = 600  // PyTorch pip install ~5 min on first boot
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
+            UseGeneratedPassword = true,
+            EstimatedCostPerHour = 0.20m,
+            DefaultBandwidthTier = BandwidthTier.Basic,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private const string PYTORCH_CLOUD_INIT = @"#cloud-config
+
+# PyTorch + JupyterLab — DeCloud GPU Template v1.0.0
+
+packages:
+  - curl
+  - wget
+  - git
+  - build-essential
+  - python3
+  - python3-pip
+  - python3-venv
+  - nginx
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - mkdir -p /opt/jupyter /opt/notebooks
+
+  # Install PyTorch 2.3.1 + CUDA 12.1
+  # CUDA 12.1 wheel matches our shim's exported symbols.
+  - /usr/bin/python3 -m venv /opt/jupyter/venv
+  - |
+    /opt/jupyter/venv/bin/pip install --upgrade pip --quiet
+    /opt/jupyter/venv/bin/pip install \
+      torch==2.3.1+cu121 torchvision==0.18.1+cu121 torchaudio==2.3.1+cu121 \
+      --index-url https://download.pytorch.org/whl/cu121 --quiet
+
+  # Install ML stack
+  - |
+    /opt/jupyter/venv/bin/pip install \
+      jupyterlab==4.2.5 ipywidgets \
+      numpy pandas matplotlib seaborn scipy scikit-learn \
+      transformers==4.44.2 accelerate==0.33.0 \
+      datasets tokenizers sentencepiece huggingface_hub tqdm Pillow \
+      --quiet
+
+  # bitsandbytes for 4-bit/8-bit quantization
+  - |
+    /opt/jupyter/venv/bin/pip install bitsandbytes==0.43.3 --quiet \
+      || echo 'bitsandbytes install failed — skipping'
+
+  # Configure JupyterLab
+  - mkdir -p /root/.jupyter
+  - |
+    HASHED_PW=$(/opt/jupyter/venv/bin/python3 -c \
+      ""from jupyter_server.auth import passwd; print(passwd('${DECLOUD_PASSWORD}'))"")
+    cat > /root/.jupyter/jupyter_lab_config.py <<EOFPY
+c.ServerApp.ip = '0.0.0.0'
+c.ServerApp.port = 8888
+c.ServerApp.open_browser = False
+c.ServerApp.root_dir = '/opt/notebooks'
+c.ServerApp.password = '$HASHED_PW'
+c.ServerApp.allow_root = True
+c.ServerApp.token = ''
+EOFPY
+
+  # Welcome notebook with GPU verification cell
+  - |
+    cat > /opt/notebooks/welcome.ipynb <<'EOFNB'
+{""cells"":[
+  {""cell_type"":""markdown"",""metadata"":{},""source"":[""# DeCloud PyTorch GPU\n\nRun the cell below to verify GPU access.""]},
+  {""cell_type"":""code"",""metadata"":{},""source"":[
+    ""import torch\n"",
+    ""print(f'PyTorch {torch.__version__}')\n"",
+    ""print(f'CUDA available: {torch.cuda.is_available()}')\n"",
+    ""if torch.cuda.is_available():\n"",
+    ""    print(f'GPU: {torch.cuda.get_device_name(0)}')\n"",
+    ""    x = torch.ones(512, 512, device='cuda')\n"",
+    ""    print(f'Tensor sum: {x.sum().item()} — GPU proxy working!')""],""outputs"":[],""execution_count"":null}
+],""metadata"":{""kernelspec"":{""display_name"":""Python 3"",""language"":""python"",""name"":""python3""}},""nbformat"":4,""nbformat_minor"":5}
+EOFNB
+
+  # systemd service
+  - |
+    cat > /etc/systemd/system/jupyterlab.service <<'EOFSVC'
+[Unit]
+Description=JupyterLab
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/notebooks
+EnvironmentFile=-/etc/decloud/gpu-proxy.env
+Environment=TORCHINDUCTOR_DISABLE=1
+Environment=TORCH_USE_CUDA_DSA=0
+Environment=PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:False
+ExecStart=/opt/jupyter/venv/bin/jupyter lab \
+    --config=/root/.jupyter/jupyter_lab_config.py \
+    --no-browser
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOFSVC
+  - systemctl daemon-reload
+  - systemctl enable --now jupyterlab
+
+  # nginx reverse proxy
+  - |
+    cat > /etc/nginx/sites-available/jupyterlab <<'EOFNGINX'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+server {
+    listen 8080;
+    server_name _;
+    client_max_body_size 500M;
+    location /health { return 200 'ok'; add_header Content-Type text/plain; }
+    location / {
+        proxy_pass http://127.0.0.1:8888;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+EOFNGINX
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/jupyterlab /etc/nginx/sites-enabled/jupyterlab
+  - nginx -t && systemctl restart nginx && systemctl enable nginx
+
+final_message: |
+  PyTorch + JupyterLab is ready!
+  URL: https://${DECLOUD_DOMAIN}
+  Password: ${DECLOUD_PASSWORD}
+  Open welcome.ipynb to verify GPU access.";
 }
