@@ -2717,6 +2717,13 @@ final_message: |
     private const string PYTORCH_CLOUD_INIT = @"#cloud-config
 
 # PyTorch + JupyterLab — DeCloud GPU Template v1.0.0
+#
+# IMPORTANT: NO heredocs (<<EOF) anywhere in runcmd.
+# Heredoc content sits at column 0 in the shell script, which breaks the YAML
+# parser — cloud-init sees an invalid document, treats it as empty config, and
+# silently skips bootcmd/chpasswd/runcmd entirely. All static file content is
+# written via write_files (properly indented = valid YAML). The one dynamic
+# file that needs a runtime value (jupyter_lab_config.py) uses echo commands.
 
 packages:
   - curl
@@ -2730,12 +2737,121 @@ packages:
   - apache2-utils
   - qemu-guest-agent
 
+write_files:
+  # Welcome notebook — written before runcmd installs PyTorch so the file
+  # exists immediately on boot even if pip takes 10+ minutes.
+  - path: /opt/notebooks/welcome.ipynb
+    permissions: '0644'
+    content: |
+      {""cells"":[
+        {""cell_type"":""markdown"",""metadata"":{},""source"":[""# DeCloud PyTorch GPU\n\nRun the cell below to verify GPU access.""]},
+        {""cell_type"":""code"",""metadata"":{},""source"":[
+          ""import torch\n"",
+          ""print(f'PyTorch {torch.__version__}')\n"",
+          ""print(f'CUDA available: {torch.cuda.is_available()}')\n"",
+          ""if torch.cuda.is_available():\n"",
+          ""    print(f'GPU: {torch.cuda.get_device_name(0)}')\n"",
+          ""    x = torch.ones(512, 512, device='cuda')\n"",
+          ""    print(f'Tensor sum: {x.sum().item()} — GPU proxy working!')""],""outputs"":[],""execution_count"":null}
+      ],""metadata"":{""kernelspec"":{""display_name"":""Python 3"",""language"":""python"",""name"":""python3""}},""nbformat"":4,""nbformat_minor"":5}
+
+  # JupyterLab systemd service
+  - path: /etc/systemd/system/jupyterlab.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=JupyterLab
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=root
+      WorkingDirectory=/opt/notebooks
+      EnvironmentFile=-/etc/decloud/gpu-proxy.env
+      Environment=TORCHINDUCTOR_DISABLE=1
+      Environment=TORCH_USE_CUDA_DSA=0
+      Environment=PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:False
+      ExecStart=/opt/jupyter/venv/bin/jupyter lab \
+          --config=/root/.jupyter/jupyter_lab_config.py \
+          --no-browser
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # nginx reverse proxy — auth_basic defense-in-depth
+  # /health and kernel API paths are auth-exempt (readiness probe + WebSocket)
+  - path: /etc/nginx/sites-available/jupyterlab
+    permissions: '0644'
+    content: |
+      map $http_upgrade $connection_upgrade {
+          default upgrade;
+          '' close;
+      }
+      server {
+          listen 8080;
+          server_name _;
+          client_max_body_size 500M;
+
+          location /health { return 200 'ok'; add_header Content-Type text/plain; }
+
+          location ~* ^/(api|files|nbconvert|terminals|kernels|sessions|metrics)/ {
+              auth_basic off;
+              proxy_pass http://127.0.0.1:8888;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection $connection_upgrade;
+              proxy_set_header Host $host;
+              proxy_buffering off;
+              proxy_read_timeout 3600s;
+          }
+
+          location / {
+              auth_basic ""JupyterLab"";
+              auth_basic_user_file /etc/nginx/.htpasswd;
+              proxy_pass http://127.0.0.1:8888;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection $connection_upgrade;
+              proxy_set_header Host $host;
+              proxy_buffering off;
+              proxy_read_timeout 3600s;
+          }
+      }
+
+  # MOTD — ${DECLOUD_DOMAIN} and ${DECLOUD_PASSWORD} are substituted by the
+  # orchestrator before cloud-init parses this file, so they resolve correctly.
+  - path: /etc/motd
+    permissions: '0644'
+    content: |
+      ╯═══════════════════════════════════════════════════════════════╗
+      ║         PyTorch + JupyterLab — DeCloud GPU Template          ║
+      ╠═══════════════════════════════════════════════════════════════╣
+      ║  URL:      https://${DECLOUD_DOMAIN}                             ║
+      ║  Username: admin                                                 ║
+      ║  Password: ${DECLOUD_PASSWORD}                                   ║
+      ║                                                                  ║
+      ║  GPU proxy env:   /etc/decloud/gpu-proxy.env                    ║
+      ║  Notebooks:       /opt/notebooks/                               ║
+      ║  Python venv:     /opt/jupyter/venv/bin/python3                 ║
+      ║                                                                  ║
+      ║  Limitations (proxy mode):                                       ║
+      ║    ✗ torch.compile() / inductor (TORCHINDUCTOR_DISABLE=1)       ║
+      ║    ✗ CUDA Graphs    (DECLOUD_GPU_GRAPH_NOOP=1)                  ║
+      ║    ✓ Eager ops, transformers, LoRA, bitsandbytes 4-bit          ║
+      ║                                                                  ║
+      ║  Services:                                                       ║
+      ║    systemctl status jupyterlab                                   ║
+      ║    journalctl -u jupyterlab -f                                   ║
+      ║                                                                  ║
+      ╘═══════════════════════════════════════════════════════════════╝
+
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - mkdir -p /opt/jupyter /opt/notebooks
 
-  # Install PyTorch 2.3.1 + CUDA 12.1
-  # CUDA 12.1 wheel matches our shim's exported symbols.
+  # Install PyTorch 2.3.1 + CUDA 12.1 wheels
   - /usr/bin/python3 -m venv /opt/jupyter/venv
   - |
     /opt/jupyter/venv/bin/pip install --upgrade pip --quiet
@@ -2757,135 +2873,27 @@ runcmd:
     /opt/jupyter/venv/bin/pip install bitsandbytes==0.43.3 --quiet \
       || echo 'bitsandbytes install failed — skipping'
 
-  # Configure JupyterLab
+  # Configure JupyterLab password.
+  # Uses echo commands instead of a heredoc — heredoc content at column 0
+  # breaks the cloud-init YAML parser and silently discards the entire config.
   - mkdir -p /root/.jupyter
   - |
-    HASHED_PW=$(/opt/jupyter/venv/bin/python3 -c \
-      ""from jupyter_server.auth import passwd; print(passwd('${DECLOUD_PASSWORD}'))"")
-    cat > /root/.jupyter/jupyter_lab_config.py <<EOFPY
-c.ServerApp.ip = '0.0.0.0'
-c.ServerApp.port = 8888
-c.ServerApp.open_browser = False
-c.ServerApp.root_dir = '/opt/notebooks'
-c.ServerApp.password = '$HASHED_PW'
-c.ServerApp.allow_root = True
-c.ServerApp.token = ''
-EOFPY
+    HASHED_PW=$(/opt/jupyter/venv/bin/python3 -c ""from jupyter_server.auth import passwd; print(passwd('${DECLOUD_PASSWORD}'))"")
+    {
+      echo ""c.ServerApp.ip = '0.0.0.0'""
+      echo 'c.ServerApp.port = 8888'
+      echo 'c.ServerApp.open_browser = False'
+      echo ""c.ServerApp.root_dir = '/opt/notebooks'""
+      echo ""c.ServerApp.password = '$HASHED_PW'""
+      echo 'c.ServerApp.allow_root = True'
+      echo ""c.ServerApp.token = ''""
+    } > /root/.jupyter/jupyter_lab_config.py
 
-  # Welcome notebook with GPU verification cell
-  - |
-    cat > /opt/notebooks/welcome.ipynb <<'EOFNB'
-{""cells"":[
-  {""cell_type"":""markdown"",""metadata"":{},""source"":[""# DeCloud PyTorch GPU\n\nRun the cell below to verify GPU access.""]},
-  {""cell_type"":""code"",""metadata"":{},""source"":[
-    ""import torch\n"",
-    ""print(f'PyTorch {torch.__version__}')\n"",
-    ""print(f'CUDA available: {torch.cuda.is_available()}')\n"",
-    ""if torch.cuda.is_available():\n"",
-    ""    print(f'GPU: {torch.cuda.get_device_name(0)}')\n"",
-    ""    x = torch.ones(512, 512, device='cuda')\n"",
-    ""    print(f'Tensor sum: {x.sum().item()} — GPU proxy working!')""],""outputs"":[],""execution_count"":null}
-],""metadata"":{""kernelspec"":{""display_name"":""Python 3"",""language"":""python"",""name"":""python3""}},""nbformat"":4,""nbformat_minor"":5}
-EOFNB
-
-  # systemd service
-  - |
-    cat > /etc/systemd/system/jupyterlab.service <<'EOFSVC'
-[Unit]
-Description=JupyterLab
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/notebooks
-EnvironmentFile=-/etc/decloud/gpu-proxy.env
-Environment=TORCHINDUCTOR_DISABLE=1
-Environment=TORCH_USE_CUDA_DSA=0
-Environment=PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:False
-ExecStart=/opt/jupyter/venv/bin/jupyter lab \
-    --config=/root/.jupyter/jupyter_lab_config.py \
-    --no-browser
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOFSVC
   - systemctl daemon-reload
   - systemctl enable --now jupyterlab
 
-  # MOTD
-  - |
-    cat > /etc/motd <<'EOF'
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║         PyTorch + JupyterLab — DeCloud GPU Template          ║
-    ╠═══════════════════════════════════════════════════════════════╣
-    ║                                                               ║
-    ║  URL:      https://${DECLOUD_DOMAIN}                         ║
-    ║  Username: admin                                              ║
-    ║  Password: ${DECLOUD_PASSWORD}                               ║
-    ║                                                               ║
-    ║  GPU proxy env:   /etc/decloud/gpu-proxy.env                 ║
-    ║  Notebooks:       /opt/notebooks/                            ║
-    ║  Python venv:     /opt/jupyter/venv/bin/python3              ║
-    ║                                                               ║
-    ║  Limitations (proxy mode):                                    ║
-    ║    ✗ torch.compile() / inductor (TORCHINDUCTOR_DISABLE=1)    ║
-    ║    ✗ CUDA Graphs    (DECLOUD_GPU_GRAPH_NOOP=1)               ║
-    ║    ✓ Eager ops, transformers, LoRA, bitsandbytes 4-bit       ║
-    ║                                                               ║
-    ║  Services:                                                    ║
-    ║    systemctl status jupyterlab                                ║
-    ║    journalctl -u jupyterlab -f                                ║
-    ║                                                               ║
-    ╚═══════════════════════════════════════════════════════════════╝
-    EOF
-
-  # nginx — auth_basic (defense-in-depth, JupyterLab also requires password)
-  # Exceptions: /health probe, /api/* kernel calls, /files/*, /nbconvert/* (bypass double-prompt)
+  # nginx — htpasswd auth (apache2-utils installed in packages above)
   - htpasswd -bc /etc/nginx/.htpasswd admin ${DECLOUD_PASSWORD}
-  - |
-    cat > /etc/nginx/sites-available/jupyterlab <<'EOFNGINX'
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-server {
-    listen 8080;
-    server_name _;
-    client_max_body_size 500M;
-
-    # Readiness probe — no auth
-    location /health { return 200 'ok'; add_header Content-Type text/plain; }
-
-    # JupyterLab kernel API, file serving, WebSocket — skip nginx basic auth
-    # (JupyterLab enforces its own cookie/password session on these)
-    location ~* ^/(api|files|nbconvert|terminals|kernels|sessions|metrics)/ {
-        auth_basic off;
-        proxy_pass http://127.0.0.1:8888;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-    }
-
-    # All other routes — nginx basic auth + JupyterLab password (defense-in-depth)
-    location / {
-        auth_basic ""JupyterLab"";
-        auth_basic_user_file /etc/nginx/.htpasswd;
-        proxy_pass http://127.0.0.1:8888;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-    }
-}
-EOFNGINX
   - rm -f /etc/nginx/sites-enabled/default
   - ln -sf /etc/nginx/sites-available/jupyterlab /etc/nginx/sites-enabled/jupyterlab
   - nginx -t && systemctl restart nginx && systemctl enable nginx
