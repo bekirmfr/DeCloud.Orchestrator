@@ -2803,6 +2803,7 @@ write_files:
               proxy_set_header Upgrade $http_upgrade;
               proxy_set_header Connection $connection_upgrade;
               proxy_set_header Host $host;
+              proxy_set_header Origin $http_origin;
               proxy_buffering off;
               proxy_read_timeout 3600s;
           }
@@ -2815,6 +2816,7 @@ write_files:
               proxy_set_header Upgrade $http_upgrade;
               proxy_set_header Connection $connection_upgrade;
               proxy_set_header Host $host;
+              proxy_set_header Origin $http_origin;
               proxy_buffering off;
               proxy_read_timeout 3600s;
           }
@@ -2878,15 +2880,21 @@ runcmd:
   # breaks the cloud-init YAML parser and silently discards the entire config.
   - mkdir -p /root/.jupyter
   - |
-    HASHED_PW=$(/opt/jupyter/venv/bin/python3 -c ""from jupyter_server.auth import passwd; print(passwd('${DECLOUD_PASSWORD}'))"")
+    # JupyterLab auth is disabled — nginx basic auth is the access gate.
+    # jupyter_server 2.x requires a separate login cookie for WebSocket kernel
+    # channels even after nginx auth passes. Removing the password avoids this
+    # double-auth problem. Security is enforced by nginx basic auth above.
     {
       echo ""c.ServerApp.ip = '0.0.0.0'""
       echo 'c.ServerApp.port = 8888'
       echo 'c.ServerApp.open_browser = False'
       echo ""c.ServerApp.root_dir = '/opt/notebooks'""
-      echo ""c.ServerApp.password = '$HASHED_PW'""
       echo 'c.ServerApp.allow_root = True'
       echo ""c.ServerApp.token = ''""
+      echo ""c.ServerApp.password = ''""
+      echo ""c.ServerApp.allow_origin = '*'""
+      echo ""c.ServerApp.allow_origin_pat = '.*'""
+      echo ""c.IdentityProvider.token = ''""
     } > /root/.jupyter/jupyter_lab_config.py
 
   - systemctl daemon-reload
