@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-03-06
-**Status:** Phase 1 (Marketplace Foundation) COMPLETE — GPU Proxy PRODUCTION-READY — Moving to Phase 2 (User Engagement)
+**Last Updated:** 2026-03-13
+**Status:** Phase 1 (Marketplace Foundation) COMPLETE — GPU Proxy PRODUCTION-READY (PyTorch inference + training + LoRA confirmed) — Moving to Phase 2 (User Engagement)
 
 ---
 
@@ -98,7 +98,7 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 
 **Licensing Opportunity:** Relay system could be standalone product ("DeCloud Relay SDK") for other decentralized platforms.
 
-### GPU Proxy (Production-Ready, 2026-03-06)
+### GPU Proxy (Production-Ready, 2026-03-13)
 **Problem:** Nodes without IOMMU (WSL2, consumer PCs) can't do GPU passthrough to VMs.
 
 **Solution:** CUDA virtualization layer — shim libraries in VM intercept all CUDA calls and forward them via TCP RPC to a daemon on the host with the real GPU.
@@ -111,9 +111,18 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 - **35+ protocol commands** covering memory, execution, streams, events, modules, cuBLAS GEMM
 
 **Performance (RTX 4060 Laptop GPU):**
-- Prompt eval: 436 tok/s (warm), 188 tok/s (cold)
-- Generation: 13-21 tok/s
-- 100% GPU offload, zero manual configuration
+- Ollama inference (llama3.2:1b): 436 tok/s prompt eval, 13-21 tok/s generation
+- PyTorch full fine-tuning (GPT-2, batch=4, seq=128): 1,252 tok/s, 409ms/step
+- PyTorch LoRA fine-tuning (r=8, 0.65% trainable params): 1,038 tok/s, 493ms/step, 1,360MB peak VRAM
+- RPC round-trip: <1ms, 100% GPU offload, zero manual configuration
+
+**Confirmed PyTorch/Training Support (2026-03-13):**
+- Full PyTorch 2.3.1+cu121 inference ✅
+- Autograd / backward pass ✅
+- AdamW optimizer step ✅ (all moment accumulation + weight update CUDA kernels proxied)
+- LoRA fine-tuning via PEFT ✅ (GPT-2 loss decreasing, VRAM efficient)
+- JupyterLab kernel via LD_PRELOAD (`/etc/decloud/gpu-proxy.env`) ✅
+- No cuDNN required — GPT-2 / transformer models use native CUDA attention kernels
 
 **Generic Design:** No hardcoded app or GPU vendor dependencies. Application-specific config (GGML vars for Ollama, CUDA vars for PyTorch) driven by template `DefaultEnvironmentVariables` written to `/etc/decloud/gpu-proxy.env`.
 
@@ -140,6 +149,10 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ USDC payments on Polygon blockchain
 ✅ WebSocket terminal access
 ✅ Automated deployment via install.sh scripts
+✅ GPU proxy inference — Ollama/ggml (436 tok/s, 100% GPU offload)
+✅ GPU proxy PyTorch inference — forward pass, logits, sampling (confirmed 2026-03-13)
+✅ GPU proxy PyTorch training — backward pass + AdamW optimizer (confirmed 2026-03-13)
+✅ GPU proxy LoRA fine-tuning via PEFT — 1,038 tok/s, 1,360MB VRAM (confirmed 2026-03-13)
 ✅ ARM architecture support (Raspberry Pi)
 ✅ Node marketplace with search and filtering
 ✅ Real-time node reputation tracking (uptime, reliability)
@@ -929,6 +942,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ✅ Economic foundation (USDC payments, bandwidth-aware billing, hybrid pricing)
 - ✅ Bandwidth QoS enforcement (libvirt-level, 4 tiers)
 - ✅ Node operator pricing with platform floor enforcement
+- ✅ GPU proxy — CUDA virtualization over TCP RPC (Ollama 436 tok/s; PyTorch inference + training + LoRA confirmed 2026-03-13)
 - ✅ Security (wallet auth, attestation, SSH certs)
 - ✅ Monitoring (heartbeats, metrics, events)
 - ✅ Centralized VM lifecycle management (state machine, consistent side effects)

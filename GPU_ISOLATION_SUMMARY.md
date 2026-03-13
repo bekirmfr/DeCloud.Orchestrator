@@ -1,7 +1,7 @@
 # GPU Isolation & Passthrough — Architecture Summary Card
 
-**Date:** 2026-02-22 (designed), 2026-03-06 (implemented)
-**Status:** ✅ Implemented — GPU Proxy (Solution 2) is production-ready
+**Date:** 2026-02-22 (designed), 2026-03-13 (updated)
+**Status:** ✅ Implemented — GPU Proxy (Solution 2) is production-ready; PyTorch training + LoRA confirmed
 **Context:** GPU workload isolation for heterogeneous node environments
 
 > **UPDATE 2026-03-06:** Solution 2 (GPU Proxy) has been fully implemented and is in production.
@@ -187,6 +187,8 @@ Tenant Code (PyTorch, custom CUDA, rendering, training, etc.)
 | RPC round-trip | **<1ms** | TCP_NODELAY + TCP_QUICKACK |
 | 1.56GB fatbin upload | **~11s** | Streaming, zero-copy from mmap |
 | GPU memory allocation | **<1ms** | Single RPC |
+| PyTorch full fine-tune | **1,252 tok/s / 409ms/step** | GPT-2, batch=4, seq=128, AdamW |
+| PyTorch LoRA fine-tune | **1,038 tok/s / 493ms/step** | GPT-2, PEFT r=8, 1,360MB VRAM |
 
 ---
 
@@ -309,4 +311,4 @@ Node has IOMMU + VFIO-capable GPU?
 
 ---
 
-*This document was originally written 2026-02-22 as a design proposal. Updated 2026-03-06 to reflect full implementation of Solution 2 (GPU Proxy) with production performance numbers. The LD_PRELOAD + TCP RPC approach achieved 95%+ CUDA coverage with near-native performance for AI inference workloads. The Docker-in-VM approach was not needed — direct daemon + VM architecture is simpler and faster.*
+*This document was originally written 2026-02-22 as a design proposal. Updated 2026-03-06 to reflect full implementation of Solution 2 (GPU Proxy) with production performance numbers. Updated 2026-03-13 to reflect PyTorch inference + full training + LoRA fine-tuning confirmed working end-to-end. The LD_PRELOAD + TCP RPC approach achieved 95%+ CUDA coverage with near-native performance for AI inference and training workloads. The Docker-in-VM approach was not needed — direct daemon + VM architecture is simpler and faster.*

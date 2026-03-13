@@ -2,8 +2,8 @@
 ## Building the World's First Emergent Compute Network
 
 **Version:** 2.0
-**Last Updated:** 2026-03-06
-**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY — See status markers below
+**Last Updated:** 2026-03-13
+**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY (PyTorch inference + training + LoRA confirmed) — See status markers below
 **Philosophy:** Simple primitives → Complex outcomes → Community ownership
 
 ---
@@ -51,7 +51,7 @@ GOAL: World's largest decentralized compute network
 - General VMs (basic compute)
 - Relay VMs (auto-deployed networking infrastructure)
 - DHT VMs (libp2p decentralized coordination — production-verified)
-- Inference VMs (AI workloads with GPU passthrough)
+- Inference VMs (AI workloads with GPU proxy — inference + training + LoRA confirmed)
 - Quality Tiers (Guaranteed/Standard/Balanced/Burstable)
 - Bandwidth Tiers (Basic/Standard/Performance/Unmetered with libvirt QoS)
 ```
@@ -778,7 +778,7 @@ These significant features were implemented but were NOT in the original Minecra
 | **ARM Architecture Support** | Production | Raspberry Pi support with dual-arch domain XML |
 | **CLI Tool** | Production | `decloud` v1.3.0 — wallet auth, VM management, diagnostics |
 | **USDC Escrow Contract** | Production | `DeCloudEscrow.sol` on Polygon — deposits, settlement, payouts |
-| **GPU Proxy** | Production | CUDA virtualization over TCP RPC — 436 tok/s, generic proxy, template-driven config, zero-touch VM deployment |
+| **GPU Proxy** | Production | CUDA virtualization over TCP RPC — Ollama 436 tok/s; PyTorch inference + full training + LoRA confirmed (2026-03-13); 1,252 tok/s full fine-tune, 1,038 tok/s LoRA at 1,360MB VRAM |
 
 ---
 
@@ -791,6 +791,12 @@ These significant features were implemented but were NOT in the original Minecra
 2. ✅ Generic proxy refactor — template-driven config, no hardcoded app/vendor deps
 3. ✅ TCP_QUICKACK performance fix (150x speedup)
 4. ✅ install.sh automation (daemon lifecycle, binary sync, freshness verification)
+5. ✅ PyTorch 2.3.1+cu121 inference — confirmed end-to-end (2026-03-13)
+6. ✅ PyTorch training — backward pass + AdamW optimizer confirmed (2026-03-13)
+7. ✅ LoRA fine-tuning via PEFT — 1,038 tok/s, 1,360MB VRAM, loss decreasing (2026-03-13)
+8. ✅ JupyterLab GPU access via EnvironmentFile — confirmed kernel-level LD_PRELOAD injection
+9. ✅ Bug 17c fix — `maxThreadsPerMultiProcessor` at correct CUDA 12 offset (0x270), eliminating SIGFPE in GPT-2 sampling
+10. ✅ cublasLt stub `DECLOUD_GPU_DEBUG` gate — silent in normal operation
 
 **This Sprint:**
 1. ~~Add node tags and description fields~~ ✅ Done

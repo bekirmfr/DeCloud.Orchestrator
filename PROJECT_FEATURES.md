@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-02-15
+**Last Updated:** 2026-03-13
 **Purpose:** Technical documentation of all major platform features and innovations
 
 ---
@@ -1588,7 +1588,7 @@ Both DHT nodes confirmed connected after fixes:
 
 ## GPU Proxy (CUDA Virtualization)
 
-**Status:** ✅ Production-ready (2026-03-06)
+**Status:** ✅ Production-ready (2026-03-13) — Ollama inference + PyTorch inference + training + LoRA confirmed
 
 ### Overview
 
@@ -1599,10 +1599,13 @@ The GPU proxy enables VMs without physical GPUs to run GPU-accelerated workloads
 ```
 VM (no GPU)                          Host (real GPU)
 ┌──────────────────────┐             ┌─────────────────────┐
-│ Application (Ollama) │             │ gpu-proxy-daemon     │
-│   ↓ cuda*() calls    │             │   ↓ real CUDA calls  │
-│ libcudart.so.12 shim │──TCP RPC──→│ NVIDIA Driver + GPU  │
-│ libcuda.so.1 shim    │  9999      │                      │
+│ Application          │             │ gpu-proxy-daemon     │
+│ (Ollama / PyTorch)   │             │   ↓ real CUDA calls  │
+│   ↓ cuda*() calls    │             │ NVIDIA Driver + GPU  │
+│ libcudart.so.12 shim │──TCP RPC──→│                      │
+│ libcuda.so.1 shim    │  port 9999  │                      │
+│ libcublas_stub.so    │             │                      │
+│ libcublasLt_stub.so  │             │                      │
 └──────────────────────┘             └─────────────────────┘
 ```
 
@@ -1612,10 +1615,14 @@ VM (no GPU)                          Host (real GPU)
 - **Streaming module upload** — 1.56GB fatbin from mmap, zero-copy
 - **Real kernel attributes** via daemon RPC (not hardcoded)
 - **cuBLAS GEMM proxy** for GQA attention (batched + strided)
+- **cublasLtMatmul proxy** — intercepts all PyTorch GEMM ops (matmul, linear, attention projection)
 - **Per-VM token auth** with SIGHUP reload
 - **Resource metering** — memory quota, kernel count, kernel time, peak memory
+- **CUDA 12 ABI compatibility** — correct `cudaDeviceProp` offsets for SM8.9 (RTX 4060)
 
-### Performance (RTX 4060 Laptop GPU, llama3.2:1b)
+### Performance (RTX 4060 Laptop GPU)
+
+#### Ollama Inference (llama3.2:1b)
 
 | Metric | Value |
 |--------|-------|
@@ -1625,20 +1632,71 @@ VM (no GPU)                          Host (real GPU)
 | RPC round-trip | <1ms |
 | Model load (warm) | ~130ms |
 
+#### PyTorch Inference & Training (GPT-2, batch=4, seq=128, RTX 4060)
+
+| Workload | ms/step | Tokens/sec | Peak VRAM |
+|----------|---------|------------|-----------|
+| Full fine-tune (AdamW, 125M params) | 409ms | 1,252 tok/s | ~3,500MB |
+| LoRA fine-tune (r=8, 811K trainable) | 493ms | 1,038 tok/s | 1,360MB |
+
+**Training confirmed working end-to-end (2026-03-13):**
+- Forward pass ✅
+- Backward pass (autograd through all 12 transformer layers) ✅
+- AdamW `optimizer.step()` ✅ (moment accumulation + weight update kernels proxied)
+- LoRA via PEFT ✅ (loss decreasing, VRAM efficient, ~0.65% trainable params)
+- Loss decreasing correctly across all 3 benchmark runs ✅
+
+### Confirmed Workload Support
+
+| Workload | Status | Notes |
+|----------|--------|-------|
+| Ollama / ggml LLM inference | ✅ Production | Llama, Mistral, Phi, Gemma families |
+| PyTorch eager inference | ✅ Confirmed | GPT-2, transformer forward pass |
+| PyTorch full fine-tuning | ✅ Confirmed | AdamW optimizer, all gradient ops |
+| PyTorch LoRA fine-tuning (PEFT) | ✅ Confirmed | r=4/8/16, causal LM task type |
+| JupyterLab kernel GPU access | ✅ Confirmed | Via `/etc/decloud/gpu-proxy.env` EnvironmentFile |
+| Stable Diffusion WebUI Forge | ⚠️ Partial | UI+model load OK; cuBLAS backward pass pending |
+| torch.compile / inductor | ❌ Not supported | Requires kernel driver — disabled via `TORCHINDUCTOR_DISABLE=1` |
+| CUDA Graphs | ❌ Not supported | Proxy is eager-mode only — noop stubs prevent crash |
+
 ### Generic Proxy Design
 
-No hardcoded application or GPU vendor dependencies. All app-specific config driven by template `DefaultEnvironmentVariables`:
+No hardcoded application or GPU vendor dependencies. All app-specific config driven by template `DefaultEnvironmentVariables` written to `/etc/decloud/gpu-proxy.env`:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `DECLOUD_GPU_GRAPH_NOOP` | 1 | Graph stubs return success (1) or honest error (0) |
-| `DECLOUD_GPU_VMEM_PROXY` | 0 | Virtual memory APIs proxy to daemon (1) or NOT_SUPPORTED (0) |
+| `DECLOUD_GPU_VMEM_PROXY` | 1 | Virtual memory APIs proxy to daemon — required for PyTorch |
+| `CUDA_MODULE_LOADING` | `EAGER` | Forces eager `__cudaRegisterFunction` (PyTorch CUDA 12 lazy loading bypass) |
+| `TORCHINDUCTOR_DISABLE` | 1 | Disables torch.compile (kernel driver required) |
+| `PYTORCH_CUDA_ALLOC_CONF` | `max_split_size_mb:128,expandable_segments:False` | Tuned for proxy RPC efficiency |
+| `DECLOUD_GPU_DEBUG` | (unset) | Gates all shim + stub debug logging |
 
-Ollama template writes `GGML_CUDA_FORCE_MMQ=1`, `GGML_CUDA_DISABLE_GRAPHS=1`, etc. PyTorch template would write `DECLOUD_GPU_VMEM_PROXY=1`.
+### Critical Fixes Applied (Bugs 1–17c)
+
+| Bug | Fix | Impact |
+|-----|-----|--------|
+| TCP delayed ACK (40ms/RPC) | `TCP_QUICKACK` re-armed before every `read()` | 150x speedup (0.07→436 tok/s) |
+| CUDA 12 lazy loading | `CUDA_MODULE_LOADING=EAGER` forced via env | PyTorch module registration works |
+| `maxThreadsPerMultiProcessor` wrong offset | Fixed to `raw+624` (0x270); `regsPerMultiprocessor=65536` at `raw+648` | Eliminated SIGFPE in GPT-2 sampling |
+| `static` occupancy functions invisible to PLT | Non-static exported wrappers in `cuda_driver_shim.c` | cuOccupancyMaxActiveBlocksPerMultiprocessor works |
+| cublasLt unconditional stderr logging | `DECLOUD_GPU_DEBUG` gate in `cublasLt_stub.c` | Clean output in normal operation |
+
+### CUDA 12.1 / PyTorch 2.3.1 Device Properties Offset Map
+
+Confirmed correct for RTX 4060 (SM8.9):
+
+| Offset | Field | Value |
+|--------|-------|-------|
+| 0x184 (388) | multiProcessorCount | 24 |
+| 0x270 (624) | maxThreadsPerMultiProcessor | 1536 |
+| 0x288 (648) | regsPerMultiprocessor | 65536 |
+| 0x2c8 (712) | maxBlocksPerMultiProcessor | 1024 |
+| 0x2d0 (720) | reservedSharedMemPerBlock | 65536 |
 
 ### Critical Fix: TCP_QUICKACK
 
-TCP delayed ACK imposed 40ms wait per small RPC response (0.07 tok/s). `TCP_QUICKACK` eliminates this. Must be re-armed before every `read()`. Combined with `TCP_NODELAY`, achieves sub-ms RPC latency.
+TCP delayed ACK imposed 40ms wait per small RPC response (0.07 tok/s). `TCP_QUICKACK` eliminates this. Must be re-armed before every `read()` — Linux resets it per-operation. Combined with `TCP_NODELAY`, achieves sub-ms RPC latency.
 
 ### Implementation Files
 
@@ -1647,16 +1705,24 @@ TCP delayed ACK imposed 40ms wait per small RPC response (0.07 tok/s). `TCP_QUIC
 | `src/gpu-proxy/shim/cuda_shim.c` | Runtime API shim (~1900 lines) |
 | `src/gpu-proxy/shim/cuda_driver_shim.c` | Driver API shim (~1800 lines) |
 | `src/gpu-proxy/shim/transport.c` | TCP/vsock transport with QUICKACK |
+| `src/gpu-proxy/stubs/cublasLt_stub.c` | cublasLtMatmul stub (29 versioned symbols) |
+| `src/gpu-proxy/stubs/cublas_stub.c` | cuBLAS stub (20+ versioned symbols) |
 | `src/gpu-proxy/daemon/gpu_proxy_daemon.c` | Host daemon (~2100 lines) |
 | `src/gpu-proxy/proto/gpu_proxy_proto.h` | Wire protocol definitions |
 | `LibvirtVmManager.cs` | `EnsureGpuProxyShim` — cloud-init injection |
-| `TemplateSeederService.cs` | Template GPU env vars |
+| `TemplateSeederService.cs` | PyTorch + Ollama template GPU env vars |
 | `GpuProxyService.cs` | Daemon lifecycle management |
-| `install.sh` | Build + deploy pipeline |
+| `install.sh` | Build + deploy pipeline with symbol count verification |
 
 ### Deployment
 
-Fully automated via cloud-init. `install.sh` builds shims and daemon on host, exposes via 9p share. Cloud-init copies shims into VM, replaces Ollama's bundled CUDA libs, writes transport config, restarts application. Zero manual steps.
+Fully automated via cloud-init. `install.sh` builds shims and daemon on host, exposes via 9p share. Cloud-init copies shims into VM, replaces bundled CUDA libs (PyTorch ships its own `libcublas.so.12` — terminal scan replaces all with stubs), writes transport config, restarts application. Zero manual steps.
+
+**LD_PRELOAD order (critical):**
+```
+libdecloud_cuda_shim.so:libcuda_pytorch_stubs.so:libcudart.so.12
+```
+Shim must precede PyTorch stubs to win symbol resolution.
 
 ---
 
