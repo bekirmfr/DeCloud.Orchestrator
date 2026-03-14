@@ -300,18 +300,7 @@ runcmd:
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install joblib""
 
   # Disable cuDNN globally — Bug 19 parked.
-  - |
-    cat > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py << 'PYEOF'
-try:
-    import torch
-    _orig_lazy_init = torch.cuda._lazy_init
-    def _patched_lazy_init(_orig=_orig_lazy_init):
-        _orig()
-        torch.backends.cudnn.enabled = False
-    torch.cuda._lazy_init = _patched_lazy_init
-except ImportError:
-    pass
-PYEOF
+  - printf 'try:\n    import torch\n    _orig_lazy_init = torch.cuda._lazy_init\n    def _patched_lazy_init(_orig=_orig_lazy_init):\n        _orig()\n        torch.backends.cudnn.enabled = False\n    torch.cuda._lazy_init = _patched_lazy_init\nexcept ImportError:\n    pass\n' > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py
   - echo ""import decloud_cudnn_disable"" > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Download base model (with retry)
@@ -2896,18 +2885,7 @@ runcmd:
   # .pth file auto-imports the patch module on every Python startup.
   # Default arg _orig=_orig_lazy_init captures the reference before patching
   # (required — .pth closures lose outer scope variables).
-  - |
-    cat > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py << 'PYEOF'
-try:
-    import torch
-    _orig_lazy_init = torch.cuda._lazy_init
-    def _patched_lazy_init(_orig=_orig_lazy_init):
-        _orig()
-        torch.backends.cudnn.enabled = False
-    torch.cuda._lazy_init = _patched_lazy_init
-except ImportError:
-    pass
-PYEOF
+  - printf 'try:\n    import torch\n    _orig_lazy_init = torch.cuda._lazy_init\n    def _patched_lazy_init(_orig=_orig_lazy_init):\n        _orig()\n        torch.backends.cudnn.enabled = False\n    torch.cuda._lazy_init = _patched_lazy_init\nexcept ImportError:\n    pass\n' > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py
   - echo ""import decloud_cudnn_disable"" > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Configure JupyterLab password.
