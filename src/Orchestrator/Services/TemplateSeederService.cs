@@ -364,6 +364,11 @@ final_message: |
                 ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api",
                 // GPU proxy: stable diffusion works well with graph noops (uses custom kernels)
                 ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                // VMM: required for PyTorch memory allocator used by Forge
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                // cuDNN init blocked (Bug 19). PyTorch native CUDA conv kernels
+                // handle UNet ops — slightly slower but fully functional.
+                ["TORCH_CUDNN_ENABLED"] = "0",
             },
 
             ExposedPorts = new List<TemplatePort>
@@ -2675,6 +2680,9 @@ final_message: |
                 // Tune caching allocator: expandable_segments=False avoids repeated VMM
                 // calls that each incur an RPC round-trip
                 ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:False",
+                // cuDNN init blocked (Bug 19 — export table context struct unknown).
+                // PyTorch native CUDA kernels handle all transformer ops without cuDNN.
+                ["TORCH_CUDNN_ENABLED"] = "0",
             },
 
             ExposedPorts = new List<TemplatePort>
