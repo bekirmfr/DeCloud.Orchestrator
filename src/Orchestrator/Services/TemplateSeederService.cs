@@ -312,7 +312,7 @@ try:
 except ImportError:
     pass
 PYEOF
-  - echo "import decloud_cudnn_disable" > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
+  - echo ""import decloud_cudnn_disable"" > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
@@ -2908,7 +2908,7 @@ try:
 except ImportError:
     pass
 PYEOF
-  - echo "import decloud_cudnn_disable" > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
+  - echo ""import decloud_cudnn_disable"" > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Configure JupyterLab password.
   # Uses echo commands instead of a heredoc — heredoc content at column 0
