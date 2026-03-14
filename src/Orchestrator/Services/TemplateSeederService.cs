@@ -299,6 +299,12 @@ runcmd:
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install joblib""
 
+  # Disable cuDNN globally — Bug 19 parked. sitecustomize.py runs on every
+  # Python startup so Forge's webui.sh picks it up without any changes.
+  - |
+    printf 'try:\n    import torch\n    torch.backends.cudnn.enabled = False\nexcept ImportError:\n    pass\n' \
+      > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/sitecustomize.py
+
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
   - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors""
@@ -366,9 +372,6 @@ final_message: |
                 ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
                 // VMM: required for PyTorch memory allocator used by Forge
                 ["DECLOUD_GPU_VMEM_PROXY"] = "1",
-                // cuDNN init blocked (Bug 19). PyTorch native CUDA conv kernels
-                // handle UNet ops — slightly slower but fully functional.
-                ["TORCH_CUDNN_ENABLED"] = "0",
             },
 
             ExposedPorts = new List<TemplatePort>
@@ -2680,9 +2683,6 @@ final_message: |
                 // Tune caching allocator: expandable_segments=False avoids repeated VMM
                 // calls that each incur an RPC round-trip
                 ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:False",
-                // cuDNN init blocked (Bug 19 — export table context struct unknown).
-                // PyTorch native CUDA kernels handle all transformer ops without cuDNN.
-                ["TORCH_CUDNN_ENABLED"] = "0",
             },
 
             ExposedPorts = new List<TemplatePort>
@@ -2882,6 +2882,13 @@ runcmd:
   - |
     /opt/jupyter/venv/bin/pip install bitsandbytes==0.43.3 --quiet \
       || echo 'bitsandbytes install failed — skipping'
+
+  # Disable cuDNN globally — Bug 19 parked (export table context struct unknown).
+  # sitecustomize.py executes automatically on every Python startup including
+  # JupyterLab kernels. Uses printf to avoid heredoc (breaks cloud-init YAML).
+  - |
+    printf 'try:\n    import torch\n    torch.backends.cudnn.enabled = False\nexcept ImportError:\n    pass\n' \
+      > /opt/jupyter/venv/lib/python3.10/site-packages/sitecustomize.py
 
   # Configure JupyterLab password.
   # Uses echo commands instead of a heredoc — heredoc content at column 0
