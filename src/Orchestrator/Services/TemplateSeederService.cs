@@ -299,11 +299,20 @@ runcmd:
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install joblib""
 
-  # Disable cuDNN globally — Bug 19 parked. sitecustomize.py runs on every
-  # Python startup so Forge's webui.sh picks it up without any changes.
+  # Disable cuDNN globally — Bug 19 parked.
   - |
-    printf 'try:\n    import torch\n    torch.backends.cudnn.enabled = False\nexcept ImportError:\n    pass\n' \
-      > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/sitecustomize.py
+    cat > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py << 'PYEOF'
+try:
+    import torch
+    _orig_lazy_init = torch.cuda._lazy_init
+    def _patched_lazy_init(_orig=_orig_lazy_init):
+        _orig()
+        torch.backends.cudnn.enabled = False
+    torch.cuda._lazy_init = _patched_lazy_init
+except ImportError:
+    pass
+PYEOF
+  - echo "import decloud_cudnn_disable" > /home/sduser/stable-diffusion-webui/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Download base model (with retry)
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
@@ -2884,11 +2893,22 @@ runcmd:
       || echo 'bitsandbytes install failed — skipping'
 
   # Disable cuDNN globally — Bug 19 parked (export table context struct unknown).
-  # sitecustomize.py executes automatically on every Python startup including
-  # JupyterLab kernels. Uses printf to avoid heredoc (breaks cloud-init YAML).
+  # .pth file auto-imports the patch module on every Python startup.
+  # Default arg _orig=_orig_lazy_init captures the reference before patching
+  # (required — .pth closures lose outer scope variables).
   - |
-    printf 'try:\n    import torch\n    torch.backends.cudnn.enabled = False\nexcept ImportError:\n    pass\n' \
-      > /opt/jupyter/venv/lib/python3.10/site-packages/sitecustomize.py
+    cat > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.py << 'PYEOF'
+try:
+    import torch
+    _orig_lazy_init = torch.cuda._lazy_init
+    def _patched_lazy_init(_orig=_orig_lazy_init):
+        _orig()
+        torch.backends.cudnn.enabled = False
+    torch.cuda._lazy_init = _patched_lazy_init
+except ImportError:
+    pass
+PYEOF
+  - echo "import decloud_cudnn_disable" > /opt/jupyter/venv/lib/python3.10/site-packages/decloud_cudnn_disable.pth
 
   # Configure JupyterLab password.
   # Uses echo commands instead of a heredoc — heredoc content at column 0
