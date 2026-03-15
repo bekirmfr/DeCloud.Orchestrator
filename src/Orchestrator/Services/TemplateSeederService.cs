@@ -367,7 +367,7 @@ final_message: |
 
             DefaultEnvironmentVariables = new Dictionary<string, string>
             {
-                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api",
+                ["COMMANDLINE_ARGS"] = "--listen --port 7860 --api --no-clean-temp-dir",
                 // GPU proxy: stable diffusion works well with graph noops (uses custom kernels)
                 ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
                 // VMM: required for PyTorch memory allocator used by Forge
