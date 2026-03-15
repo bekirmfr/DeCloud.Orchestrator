@@ -317,6 +317,7 @@ runcmd:
     [Service]
     Type=simple
     User=sduser
+    PermissionsStartOnly=true
     EnvironmentFile=-/etc/decloud/gpu-proxy.env
     Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
