@@ -526,8 +526,7 @@ runcmd:
     EnvironmentFile=-/etc/decloud/gpu-proxy.env
     Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
-    ExecStartPre=/bin/bash -c 'find /home/sduser/stable-diffusion-webui/venv -name ""libcublas.so.12"" | xargs -I{} cp /usr/local/lib/libcublas_stub.so {} && find /home/sduser/stable-diffusion-webui/venv -name ""libcublasLt.so.12"" | xargs -I{} cp /usr/local/lib/libcublasLt_stub.so {} && SP=$(find /home/sduser/stable-diffusion-webui/venv -path ""*/site-packages"" -maxdepth 5 | head -1) && printf ""try:\n    import torch\n    _orig_lazy_init = torch.cuda._lazy_init\n    def _patched_lazy_init(_orig=_orig_lazy_init):\n        _orig()\n        torch.backends.cudnn.enabled = False\n    torch.cuda._lazy_init = _patched_lazy_init\nexcept ImportError:\n    pass\n"" > $SP/decloud_cudnn_disable.py && echo import decloud_cudnn_disable > $SP/decloud_cudnn_disable.pth'
-    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD} --vae-on-cpu --lowvram
     Restart=always
     RestartSec=10
 
