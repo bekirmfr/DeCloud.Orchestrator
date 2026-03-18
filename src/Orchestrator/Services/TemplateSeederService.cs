@@ -450,7 +450,7 @@ final_message: |
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 8,
-                MemoryBytes = 16L * 1024 * 1024 * 1024, // 16GB RAM (T5 encoder is large)
+                MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8GB RAM
                 DiskBytes = 60L * 1024 * 1024 * 1024,   // 60GB — FLUX files are big
                 GpuMode = GpuMode.Proxied,
                 GpuModel = "NVIDIA"
