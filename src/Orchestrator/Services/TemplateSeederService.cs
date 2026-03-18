@@ -190,6 +190,7 @@ public class TemplateSeederService
         {
             CreateStableDiffusionTemplate(),
             CreateStableDiffusionCpuTemplate(),
+            CreateFluxTemplate(),
             CreatePostgreSqlTemplate(),
             CreateCodeServerTemplate(),
             CreatePrivateBrowserTemplate(),
@@ -397,6 +398,196 @@ final_message: |
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
 
             EstimatedCostPerHour = 0.50m, // $0.50/hour for GPU instance
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    private VmTemplate CreateFluxTemplate()
+    {
+        return new VmTemplate
+        {
+            Name = "FLUX.1 Image Generation",
+            Slug = "flux-image-generation",
+            Version = "1.0.0",
+            Category = "ai-ml",
+            Description = "FLUX.1-dev (NF4 quantized) via SD WebUI Forge. Best-in-class open-source image generation, unrestricted, on 8GB+ VRAM.",
+            LongDescription = @"## Features
+- FLUX.1-dev — best-in-class open-source image generation model
+- NF4 quantized checkpoint — fits in 8GB VRAM
+- SD WebUI Forge interface (actively maintained)
+- Pre-downloaded: checkpoint, VAE, CLIP-L & T5-XXL fp8 text encoders
+- Unrestricted generation — no content filters
+
+## Getting Started
+1. Wait for first-boot setup to complete (~15-20 minutes, downloading ~15GB of models)
+2. Access the WebUI at `https://${DECLOUD_DOMAIN}:7860`
+3. Login with `user` / `${DECLOUD_PASSWORD}`
+4. Select `flux1-dev-bnb-nf4` from the model dropdown
+5. Start generating!
+
+## Requirements
+- GPU: NVIDIA with 8GB+ VRAM
+- RAM: 16GB minimum (T5 text encoder is large)
+- Storage: 60GB for models and dependencies",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024, // 16GB RAM (T5 encoder is large)
+                DiskBytes = 60L * 1024 * 1024 * 1024,   // 60GB — FLUX files are big
+                GpuMode = GpuMode.Proxied,
+                GpuModel = "NVIDIA"
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 32L * 1024 * 1024 * 1024,
+                DiskBytes = 100L * 1024 * 1024 * 1024,
+                GpuMode = GpuMode.Passthrough,
+                GpuModel = "NVIDIA RTX 4070"
+            },
+
+            RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Proxied,
+            GpuRequirement = "NVIDIA GPU with 8GB+ VRAM",
+            RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
+
+            Tags = new List<string> { "ai", "flux", "image-generation", "gpu", "unrestricted", "forge" },
+
+            CloudInitTemplate = @"#cloud-config
+
+# FLUX.1-dev (NF4) via SD WebUI Forge — DeCloud Template v1.0.0
+
+packages:
+  - git
+  - wget
+  - python3
+  - python3-pip
+  - python3-venv
+  - python3-setuptools
+  - pkg-config
+  - libcairo2-dev
+  - libgirepository1.0-dev
+  - libgl1
+  - libglib2.0-0
+  - qemu-guest-agent
+
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+  - apt-get update
+  - useradd -m -s /bin/bash sduser
+
+  - su - sduser -c ""git clone https://github.com/lllyasviel/stable-diffusion-webui-forge.git /home/sduser/stable-diffusion-webui""
+  - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
+  - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools joblib""
+
+  # FLUX.1-dev NF4 checkpoint (~6.5GB)
+  - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/flux1-dev-bnb-nf4.safetensors https://huggingface.co/lllyasviel/flux1-dev-bnb-nf4/resolve/main/flux1-dev-bnb-nf4.safetensors""
+
+  # FLUX VAE
+  - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/VAE""
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/VAE/ae.safetensors https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors""
+
+  # Text encoders
+  - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/text_encoder /home/sduser/stable-diffusion-webui/models/text_encoder_2""
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder/clip_l.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors""
+  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder_2/t5xxl_fp8_e4m3fn.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors""
+
+  # Create systemd service (with cuDNN disable patch — Bug 19)
+  - |
+    cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
+    [Unit]
+    Description=FLUX.1 WebUI Forge
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=sduser
+    PermissionsStartOnly=true
+    EnvironmentFile=-/etc/decloud/gpu-proxy.env
+    Environment=HOME=/home/sduser
+    WorkingDirectory=/home/sduser/stable-diffusion-webui
+    ExecStartPre=/bin/bash -c 'find /home/sduser/stable-diffusion-webui/venv -name ""libcublas.so.12"" | xargs -I{} cp /usr/local/lib/libcublas_stub.so {} && find /home/sduser/stable-diffusion-webui/venv -name ""libcublasLt.so.12"" | xargs -I{} cp /usr/local/lib/libcublasLt_stub.so {} && SP=$(find /home/sduser/stable-diffusion-webui/venv -path ""*/site-packages"" -maxdepth 5 | head -1) && printf ""try:\n    import torch\n    _orig_lazy_init = torch.cuda._lazy_init\n    def _patched_lazy_init(_orig=_orig_lazy_init):\n        _orig()\n        torch.backends.cudnn.enabled = False\n    torch.cuda._lazy_init = _patched_lazy_init\nexcept ImportError:\n    pass\n"" > $SP/decloud_cudnn_disable.py && echo import decloud_cudnn_disable > $SP/decloud_cudnn_disable.pth'
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD}
+    Restart=always
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+  - systemctl daemon-reload
+  - systemctl enable stable-diffusion.service
+  - systemctl start stable-diffusion.service
+
+  # Create welcome message
+  - |
+    cat > /etc/motd <<'EOF'
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║        FLUX.1-dev Image Generation - DeCloud Template        ║
+    ╠═══════════════════════════════════════════════════════════════╣
+    ║                                                               ║
+    ║  WebUI: https://${DECLOUD_DOMAIN}:7860                       ║
+    ║  User:  user / ${DECLOUD_PASSWORD}                           ║
+    ║  API:   https://${DECLOUD_DOMAIN}:7860/docs                  ║
+    ║                                                               ║
+    ║  Service: systemctl status stable-diffusion                  ║
+    ║  Logs:    journalctl -u stable-diffusion -f                  ║
+    ║                                                               ║
+    ║  Models: /home/sduser/stable-diffusion-webui/models          ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    EOF
+
+final_message: |
+  FLUX.1-dev is starting up. First boot takes 15-20 minutes (model downloads ~15GB total).
+  Access: https://${DECLOUD_DOMAIN}:7860 — user / ${DECLOUD_PASSWORD}",
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                ["CUDA_MODULE_LOADING"] = "EAGER",
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 7860,
+                    Protocol = "http",
+                    Description = "FLUX WebUI",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/sdapi/v1/sd-models",
+                        TimeoutSeconds = 1800 // 30 min — large model downloads
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
+
+            EstimatedCostPerHour = 0.75m,
 
             Status = TemplateStatus.Published,
             Visibility = TemplateVisibility.Public,
