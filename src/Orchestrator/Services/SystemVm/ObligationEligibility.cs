@@ -50,9 +50,10 @@ public static class ObligationEligibility
         bool hasBlockStoreStorage = totalStorage >= MinBlockStoreStorage;
         bool hasBlockStoreRam = node.HardwareInventory.Memory.TotalBytes >= MinBlockStoreRam;
 
-        if (hasBlockStoreStorage && hasBlockStoreRam)
+        if (hasBlockStoreStorage && hasBlockStoreRam){
             // TODO: BlockStore obligation disabled until Phase B (the Go binary + cloud-init template)
             // roles.Add(SystemVmRole.BlockStore);
+        }
 
         return roles;
     }
