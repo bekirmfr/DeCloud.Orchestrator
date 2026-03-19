@@ -417,19 +417,20 @@ final_message: |
 
     private VmTemplate CreateFluxTemplate()
     {
-        return new VmTemplate
-        {
-            Name = "FLUX.1 Image Generation",
-            Slug = "flux-image-generation",
-            Version = "1.0.0",
-            Category = "ai-ml",
-            Description = "FLUX.1-dev (NF4 quantized) via SD WebUI Forge. Best-in-class open-source image generation, unrestricted, on 8GB+ VRAM.",
-            LongDescription = @"## Features
+      return new VmTemplate
+      {
+          Name = "FLUX.1 Image Generation",
+          Slug = "flux-image-generation",
+          Version = "1.1.0",
+          Category = "ai-ml",
+          Description = "FLUX.1-dev (NF4 quantized) via SD WebUI Forge. Best-in-class open-source image generation, unrestricted, on 8GB+ VRAM.",
+          LongDescription = @"## Features
 - FLUX.1-dev — best-in-class open-source image generation model
 - NF4 quantized checkpoint — fits in 8GB VRAM
 - SD WebUI Forge interface (actively maintained)
 - Pre-downloaded: checkpoint, VAE, CLIP-L & T5-XXL fp8 text encoders
 - Unrestricted generation — no content filters
+- Auto-tunes memory flags based on available VRAM and RAM
 
 ## Getting Started
 1. Wait for first-boot setup to complete (~15-20 minutes, downloading ~15GB of models)
@@ -440,41 +441,41 @@ final_message: |
 
 ## Requirements
 - GPU: NVIDIA with 8GB+ VRAM
-- RAM: 16GB minimum (T5 text encoder is large)
+- RAM: 8GB minimum (swapfile created automatically if RAM < 20GB)
 - Storage: 60GB for models and dependencies",
 
-            AuthorId = "platform",
-            AuthorName = "DeCloud",
-            SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
+          AuthorId = "platform",
+          AuthorName = "DeCloud",
+          SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
 
-            MinimumSpec = new VmSpec
-            {
-                VirtualCpuCores = 8,
-                MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8GB RAM
-                DiskBytes = 60L * 1024 * 1024 * 1024,   // 60GB — FLUX files are big
-                GpuMode = GpuMode.Proxied,
-                GpuModel = "NVIDIA"
-            },
+          MinimumSpec = new VmSpec
+          {
+              VirtualCpuCores = 8,
+              MemoryBytes = 8L * 1024 * 1024 * 1024,   // 8GB — swapfile compensates for mmap
+              DiskBytes = 60L * 1024 * 1024 * 1024,    // 60GB — FLUX files are big
+              GpuMode = GpuMode.Proxied,
+              GpuModel = "NVIDIA"
+          },
 
-            RecommendedSpec = new VmSpec
-            {
-                VirtualCpuCores = 8,
-                MemoryBytes = 32L * 1024 * 1024 * 1024,
-                DiskBytes = 100L * 1024 * 1024 * 1024,
-                GpuMode = GpuMode.Passthrough,
-                GpuModel = "NVIDIA RTX 4070"
-            },
+          RecommendedSpec = new VmSpec
+          {
+              VirtualCpuCores = 8,
+              MemoryBytes = 32L * 1024 * 1024 * 1024,  // 32GB — no swap needed, full speed
+              DiskBytes = 100L * 1024 * 1024 * 1024,
+              GpuMode = GpuMode.Passthrough,
+              GpuModel = "NVIDIA RTX 4070"
+          },
 
-            RequiresGpu = true,
-            DefaultGpuMode = GpuMode.Proxied,
-            GpuRequirement = "NVIDIA GPU with 8GB+ VRAM",
-            RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
+          RequiresGpu = true,
+          DefaultGpuMode = GpuMode.Proxied,
+          GpuRequirement = "NVIDIA GPU with 8GB+ VRAM",
+          RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
 
-            Tags = new List<string> { "ai", "flux", "image-generation", "gpu", "unrestricted", "forge" },
+          Tags = new List<string> { "ai", "flux", "image-generation", "gpu", "unrestricted", "forge" },
 
-            CloudInitTemplate = @"#cloud-config
+          CloudInitTemplate = @"#cloud-config
 
-# FLUX.1-dev (NF4) via SD WebUI Forge — DeCloud Template v1.0.0
+# FLUX.1-dev (NF4) via SD WebUI Forge — DeCloud Template v1.1.0
 
 packages:
   - git
@@ -495,24 +496,43 @@ runcmd:
   - apt-get update
   - useradd -m -s /bin/bash sduser
 
+  # Headless xdg-open stub — Forge tries to open output folder in a file manager
+  - printf '#!/bin/bash\nexit 0\n' > /usr/local/bin/xdg-open
+  - chmod +x /usr/local/bin/xdg-open
+
+  # Swapfile — only if RAM < 20GB (needed for mmap of 11GB model file)
+  - |
+    TOTAL_RAM_GB=$(awk '/MemTotal/ {printf ""%d"", $2/1024/1024}' /proc/meminfo)
+    if [ ""$TOTAL_RAM_GB"" -lt 20 ]; then
+      echo ""RAM ${TOTAL_RAM_GB}GB < 20GB — creating 16GB swapfile""
+      fallocate -l 16G /swapfile
+      chmod 600 /swapfile
+      mkswap /swapfile
+      swapon /swapfile
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    else
+      echo ""RAM ${TOTAL_RAM_GB}GB sufficient — skipping swapfile""
+    fi
+
   - su - sduser -c ""git clone https://github.com/lllyasviel/stable-diffusion-webui-forge.git /home/sduser/stable-diffusion-webui""
   - su - sduser -c ""python3 -m venv /home/sduser/stable-diffusion-webui/venv""
   - su - sduser -c ""/home/sduser/stable-diffusion-webui/venv/bin/pip install wheel setuptools joblib""
 
-  # FLUX.1-dev NF4 checkpoint (~6.5GB)
+  # FLUX.1-dev NF4 checkpoint — Civitai mirror (no HuggingFace auth required)
+  # tmp+rename pattern prevents Forge from seeing partial/failed downloads
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/Stable-diffusion""
-  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/flux1-dev-bnb-nf4.safetensors https://huggingface.co/lllyasviel/flux1-dev-bnb-nf4/resolve/main/flux1-dev-bnb-nf4.safetensors""
+  - su - sduser -c ""wget --tries=3 --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/Stable-diffusion/flux1-dev-bnb-nf4.safetensors.tmp 'https://civitai.com/api/download/models/738898?type=Model&format=SafeTensor' && mv /home/sduser/stable-diffusion-webui/models/Stable-diffusion/flux1-dev-bnb-nf4.safetensors.tmp /home/sduser/stable-diffusion-webui/models/Stable-diffusion/flux1-dev-bnb-nf4.safetensors""
 
   # FLUX VAE
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/VAE""
-  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/VAE/ae.safetensors https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors""
+  - su - sduser -c ""wget --tries=3 --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/VAE/ae.safetensors.tmp https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors && mv /home/sduser/stable-diffusion-webui/models/VAE/ae.safetensors.tmp /home/sduser/stable-diffusion-webui/models/VAE/ae.safetensors""
 
   # Text encoders
   - su - sduser -c ""mkdir -p /home/sduser/stable-diffusion-webui/models/text_encoder /home/sduser/stable-diffusion-webui/models/text_encoder_2""
-  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder/clip_l.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors""
-  - su - sduser -c ""wget --tries=3 --retry-connrefused --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder_2/t5xxl_fp8_e4m3fn.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors""
+  - su - sduser -c ""wget --tries=3 --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder/clip_l.safetensors.tmp https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors && mv /home/sduser/stable-diffusion-webui/models/text_encoder/clip_l.safetensors.tmp /home/sduser/stable-diffusion-webui/models/text_encoder/clip_l.safetensors""
+  - su - sduser -c ""wget --tries=3 --waitretry=5 -O /home/sduser/stable-diffusion-webui/models/text_encoder_2/t5xxl_fp8_e4m3fn.safetensors.tmp https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors && mv /home/sduser/stable-diffusion-webui/models/text_encoder_2/t5xxl_fp8_e4m3fn.safetensors.tmp /home/sduser/stable-diffusion-webui/models/text_encoder_2/t5xxl_fp8_e4m3fn.safetensors""
 
-  # Create systemd service (with cuDNN disable patch — Bug 19)
+  # Write service file with __EXTRA_FLAGS__ placeholder
   - |
     cat > /etc/systemd/system/stable-diffusion.service <<'EOF'
     [Unit]
@@ -526,18 +546,35 @@ runcmd:
     EnvironmentFile=-/etc/decloud/gpu-proxy.env
     Environment=HOME=/home/sduser
     WorkingDirectory=/home/sduser/stable-diffusion-webui
-    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD} --vae-on-cpu --lowvram
+    ExecStartPre=/bin/bash -c 'find /home/sduser/stable-diffusion-webui/venv -name ""libcublas.so.12"" | xargs -I{} cp /usr/local/lib/libcublas_stub.so {} && find /home/sduser/stable-diffusion-webui/venv -name ""libcublasLt.so.12"" | xargs -I{} cp /usr/local/lib/libcublasLt_stub.so {} && SP=$(find /home/sduser/stable-diffusion-webui/venv -path ""*/site-packages"" -maxdepth 5 | head -1) && printf ""try:\n    import torch\n    _orig_lazy_init = torch.cuda._lazy_init\n    def _patched_lazy_init(_orig=_orig_lazy_init):\n        _orig()\n        torch.backends.cudnn.enabled = False\n    torch.cuda._lazy_init = _patched_lazy_init\nexcept ImportError:\n    pass\n"" > $SP/decloud_cudnn_disable.py && echo import decloud_cudnn_disable > $SP/decloud_cudnn_disable.pth'
+    ExecStart=/home/sduser/stable-diffusion-webui/webui.sh --listen --port 7860 --api --skip-torch-cuda-test --gradio-auth user:${DECLOUD_PASSWORD} __EXTRA_FLAGS__
     Restart=always
     RestartSec=10
 
     [Install]
     WantedBy=multi-user.target
     EOF
+
+  # Detect VRAM and patch __EXTRA_FLAGS__ placeholder
+  # < 12GB VRAM: offload VAE to CPU + aggressive layer offloading
+  # >= 12GB VRAM: no flags needed — Forge manages memory automatically
+  - |
+    VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo 0)
+    VRAM_GB=$((VRAM_MB / 1024))
+    if [ ""$VRAM_GB"" -lt 12 ]; then
+      echo ""VRAM ${VRAM_GB}GB < 12GB — enabling vae-in-cpu + always-offload-from-vram""
+      EXTRA_FLAGS=""--vae-in-cpu --always-offload-from-vram""
+    else
+      echo ""VRAM ${VRAM_GB}GB sufficient — no offload flags needed""
+      EXTRA_FLAGS=""""
+    fi
+    sed -i ""s|__EXTRA_FLAGS__|${EXTRA_FLAGS}|g"" /etc/systemd/system/stable-diffusion.service
+
   - systemctl daemon-reload
   - systemctl enable stable-diffusion.service
   - systemctl start stable-diffusion.service
 
-  # Create welcome message
+  # Welcome message
   - |
     cat > /etc/motd <<'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
@@ -560,48 +597,48 @@ final_message: |
   FLUX.1-dev is starting up. First boot takes 15-20 minutes (model downloads ~15GB total).
   Access: https://${DECLOUD_DOMAIN}:7860 — user / ${DECLOUD_PASSWORD}",
 
-            DefaultEnvironmentVariables = new Dictionary<string, string>
-            {
-                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
-                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
-                ["CUDA_MODULE_LOADING"] = "EAGER",
-            },
+          DefaultEnvironmentVariables = new Dictionary<string, string>
+          {
+              ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+              ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+              ["CUDA_MODULE_LOADING"] = "EAGER",
+          },
 
-            ExposedPorts = new List<TemplatePort>
-            {
-                new TemplatePort
-                {
-                    Port = 7860,
-                    Protocol = "http",
-                    Description = "FLUX WebUI",
-                    IsPublic = true,
-                    ReadinessCheck = new ServiceCheck
-                    {
-                        Strategy = CheckStrategy.HttpGet,
-                        HttpPath = "/sdapi/v1/sd-models",
-                        TimeoutSeconds = 1800 // 30 min — large model downloads
-                    }
-                }
-            },
+          ExposedPorts = new List<TemplatePort>
+          {
+              new TemplatePort
+              {
+                  Port = 7860,
+                  Protocol = "http",
+                  Description = "FLUX WebUI",
+                  IsPublic = true,
+                  ReadinessCheck = new ServiceCheck
+                  {
+                      Strategy = CheckStrategy.HttpGet,
+                      HttpPath = "/sdapi/v1/sd-models",
+                      TimeoutSeconds = 1800 // 30 min — large model downloads
+                  }
+              }
+          },
 
-            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
+          DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
 
-            EstimatedCostPerHour = 0.75m,
+          EstimatedCostPerHour = 0.75m,
 
-            Status = TemplateStatus.Published,
-            Visibility = TemplateVisibility.Public,
-            IsFeatured = true,
-            IsVerified = true,
-            IsCommunity = false,
-            PricingModel = TemplatePricingModel.Free,
-            TemplatePrice = 0,
-            AverageRating = 0,
-            TotalReviews = 0,
-            RatingDistribution = new int[5],
+          Status = TemplateStatus.Published,
+          Visibility = TemplateVisibility.Public,
+          IsFeatured = true,
+          IsVerified = true,
+          IsCommunity = false,
+          PricingModel = TemplatePricingModel.Free,
+          TemplatePrice = 0,
+          AverageRating = 0,
+          TotalReviews = 0,
+          RatingDistribution = new int[5],
 
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
+          CreatedAt = DateTime.UtcNow,
+          UpdatedAt = DateTime.UtcNow
+      };
     }
 
     private VmTemplate CreatePostgreSqlTemplate()

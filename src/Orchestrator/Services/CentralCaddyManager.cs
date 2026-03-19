@@ -235,11 +235,14 @@ public class CentralCaddyManager : ICentralCaddyManager
                         {
                             listen = new[] { ":80", ":443" },
                             routes = allRoutes,
-                            protocols = new[] { "h1" },  // Force HTTP/1.1 only (fixes code-server and other WebSocket services)
-                            automatic_https = new
+                            protocols = new[] { "h1" },
+                            automatic_https = new { disable = false, disable_redirects = false },
+                            timeouts = new
                             {
-                                disable = false,
-                                disable_redirects = false
+                                read_body = "600s",
+                                read_header = "30s",
+                                write = "600s",
+                                idle = "120s"
                             }
                         }
                     }
@@ -376,6 +379,13 @@ public class CentralCaddyManager : ICentralCaddyManager
                             {
                                 disable = false,
                                 disable_redirects = false
+                            },
+                            timeouts = new
+                            {
+                                read_body = "600s",
+                                read_header = "30s",
+                                write = "600s",
+                                idle = "120s"
                             }
                         }
                     }
@@ -431,10 +441,13 @@ public class CentralCaddyManager : ICentralCaddyManager
                     transport = new
                     {
                         protocol = "http",
-                        read_buffer_size = 4096,
-                        versions = new[] { "1.1" }
+                        read_buffer_size = 16384,
+                        versions = new[] { "1.1" },
+                        dial_timeout = "10s",
+                        response_header_timeout = "600s",
+                        read_timeout = "600s"
                     },
-                    flush_interval = 0
+                    flush_interval = -1  // -1 = stream immediately, no buffering
                 }
             },
             terminal = true
@@ -483,10 +496,13 @@ public class CentralCaddyManager : ICentralCaddyManager
                     transport = new
                     {
                         protocol = "http",
-                        read_buffer_size = 4096,
-                        versions = new[] { "1.1" }
+                        read_buffer_size = 16384,
+                        versions = new[] { "1.1" },
+                        dial_timeout = "10s",
+                        response_header_timeout = "600s",
+                        read_timeout = "600s"
                     },
-                    flush_interval = 0
+                    flush_interval = -1  // -1 = stream immediately, no buffering
                 }
             },
             terminal = true
