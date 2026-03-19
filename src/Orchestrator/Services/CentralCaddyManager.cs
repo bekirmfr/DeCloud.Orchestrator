@@ -236,14 +236,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                             listen = new[] { ":80", ":443" },
                             routes = allRoutes,
                             protocols = new[] { "h1" },
-                            automatic_https = new { disable = false, disable_redirects = false },
-                            timeouts = new
-                            {
-                                read_body = "600s",
-                                read_header = "30s",
-                                write = "600s",
-                                idle = "120s"
-                            }
+                            automatic_https = new { disable = false, disable_redirects = false }s
                         }
                     }
                 },
@@ -379,13 +372,6 @@ public class CentralCaddyManager : ICentralCaddyManager
                             {
                                 disable = false,
                                 disable_redirects = false
-                            },
-                            timeouts = new
-                            {
-                                read_body = "600s",
-                                read_header = "30s",
-                                write = "600s",
-                                idle = "120s"
                             }
                         }
                     }
