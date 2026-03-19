@@ -93,6 +93,7 @@ builder.Services.AddSingleton<IVmSchedulingService, VmSchedulingService>();
 builder.Services.AddHttpClient("RelayApi");
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
 builder.Services.AddSingleton<IDhtNodeService, DhtNodeService>();
+builder.Services.AddSingleton<IBlockStoreService, BlockStoreService>();
 builder.Services.AddSingleton<IWireGuardManager, WireGuardManager>();
 builder.Services.AddSingleton<HttpClient>();
 builder.Services.AddSingleton<INodeService, NodeService>();

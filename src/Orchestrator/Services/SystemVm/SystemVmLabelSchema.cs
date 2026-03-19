@@ -12,6 +12,19 @@ public static class SystemVmLabelSchema
 {
     private static readonly Dictionary<VmType, string[]> RequiredLabels = new()
     {
+        [VmType.BlockStore] = [
+            "role",
+            "blockstore-listen-port",
+            "blockstore-api-port",
+            "blockstore-storage-bytes",
+            "blockstore-auth-token",
+            "blockstore-advertise-ip",
+            "node-region",
+            "node-id",
+            // wg-relay-endpoint, wg-relay-pubkey, wg-tunnel-ip, wg-relay-api
+            // are optional — resolved by BlockStoreService.ResolveWireGuardLabels
+            // when a relay is available.
+        ],
         [VmType.Relay] = [
             "role",
             "wireguard-private-key",

@@ -19,7 +19,7 @@ public static class ObligationEligibility
 
     // BlockStore eligibility thresholds
     private const long MinBlockStoreStorage = 100L * 1024 * 1024 * 1024;  // 100 GB
-    private const long MinBlockStoreRam = 4L * 1024 * 1024 * 1024;        // 4 GB
+    private const long MinBlockStoreRam = 2L * 1024 * 1024 * 1024;        // 2 GB
 
     public static List<SystemVmRole> ComputeObligations(Node node)
     {
@@ -46,14 +46,12 @@ public static class ObligationEligibility
             // roles.Add(SystemVmRole.Ingress);
         }
 
-        // TODO: BlockStore obligation disabled until DeployBlockStoreVmAsync is implemented.
-        // Enabling it now causes an infinite retry loop in the reconciliation service.
-        // var totalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
-        // bool hasStorage = totalStorage >= MinBlockStoreStorage;
-        // bool hasBlockStoreRam = node.HardwareInventory.Memory.TotalBytes >= MinBlockStoreRam;
-        //
-        // if (hasStorage && hasBlockStoreRam)
-        //     roles.Add(SystemVmRole.BlockStore);
+        var totalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
+        bool hasBlockStoreStorage = totalStorage >= MinBlockStoreStorage;
+        bool hasBlockStoreRam = node.HardwareInventory.Memory.TotalBytes >= MinBlockStoreRam;
+
+        if (hasBlockStoreStorage && hasBlockStoreRam)
+            roles.Add(SystemVmRole.BlockStore);
 
         return roles;
     }

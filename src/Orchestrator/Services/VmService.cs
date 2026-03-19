@@ -68,7 +68,7 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
-        var isSystemVm = request.VmType is VmType.Relay or VmType.Dht;
+        var isSystemVm = request.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore;
 
         // ════════════════════════════════════════════════════════════════════════
         // VM Name Pipeline: sanitize → validate → unique suffix → uniqueness check

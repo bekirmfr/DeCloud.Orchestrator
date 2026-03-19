@@ -73,6 +73,12 @@ public class Node
     public DhtNodeInfo? DhtInfo { get; set; }
 
     /// <summary>
+    /// Block store node configuration (null until BlockStore VM is deployed).
+    /// Only present on nodes with ≥100 GB storage and ≥2 GB RAM.
+    /// </summary>
+    public BlockStoreInfo? BlockStoreInfo { get; set; }
+
+    /// <summary>
     /// CGNAT node configuration (null if node has public IP)
     /// </summary>
     public bool IsBehindCgnat => HardwareInventory.Network.NatType != NatType.None;
@@ -768,6 +774,46 @@ public enum DhtStatus
     Initializing,
     Active,
     Degraded,
+    Offline
+}
+
+/// <summary>
+/// Block store node state tracked on the host node.
+/// Populated when the BlockStore system VM is deployed and calls /api/blockstore/join.
+/// </summary>
+public class BlockStoreInfo
+{
+    /// <summary>VM ID of the block store VM running on this node.</summary>
+    public string BlockStoreVmId { get; set; } = string.Empty;
+
+    /// <summary>libp2p peer ID (e.g., "12D3Koo..." or "QmXyz..."). Set on /join.</summary>
+    public string? PeerId { get; set; }
+
+    /// <summary>Address the block store VM listens on (e.g., "10.20.1.202:5001").</summary>
+    public string ListenAddress { get; set; } = string.Empty;
+
+    /// <summary>Localhost HTTP API port for node agent → block store VM queries.</summary>
+    public int ApiPort { get; set; } = 5090;
+
+    /// <summary>Allocated storage (5% of node total) in bytes.</summary>
+    public long CapacityBytes { get; set; }
+
+    /// <summary>Currently used storage in bytes (reported via /announce).</summary>
+    public long UsedBytes { get; set; }
+
+    /// <summary>Number of blocks currently stored (determined by Kademlia XOR proximity).</summary>
+    public int BlockCount { get; set; }
+
+    public BlockStoreStatus Status { get; set; } = BlockStoreStatus.Initializing;
+    public DateTime? LastHealthCheck { get; set; }
+}
+
+public enum BlockStoreStatus
+{
+    Initializing,
+    Active,
+    Degraded,
+    Full,
     Offline
 }
 

@@ -28,6 +28,7 @@ public class SystemVmReconciliationService : BackgroundService
     private readonly DataStore _dataStore;
     private readonly IRelayNodeService _relayNodeService;
     private readonly IDhtNodeService _dhtNodeService;
+    private readonly IBlockStoreService _blockStoreService;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<SystemVmReconciliationService> _logger;
 
@@ -37,12 +38,14 @@ public class SystemVmReconciliationService : BackgroundService
         DataStore dataStore,
         IRelayNodeService relayNodeService,
         IDhtNodeService dhtNodeService,
+        IBlockStoreService blockStoreService,
         IServiceProvider serviceProvider,
         ILogger<SystemVmReconciliationService> logger)
     {
         _dataStore = dataStore;
         _relayNodeService = relayNodeService;
         _dhtNodeService = dhtNodeService;
+        _blockStoreService = blockStoreService;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -438,14 +441,9 @@ public class SystemVmReconciliationService : BackgroundService
     {
         string? existingVmId = role switch
         {
-            SystemVmRole.Relay when node.RelayInfo != null
-                && !string.IsNullOrEmpty(node.RelayInfo.RelayVmId)
-                => node.RelayInfo.RelayVmId,
-
-            SystemVmRole.Dht when node.DhtInfo != null
-                && !string.IsNullOrEmpty(node.DhtInfo.DhtVmId)
-                => node.DhtInfo.DhtVmId,
-
+            SystemVmRole.Dht => node.DhtInfo?.DhtVmId,
+            SystemVmRole.Relay => node.RelayInfo?.RelayVmId,
+            SystemVmRole.BlockStore => node.BlockStoreInfo?.BlockStoreVmId,
             _ => null
         };
 
@@ -549,7 +547,44 @@ public class SystemVmReconciliationService : BackgroundService
     /// </summary>
     private async Task<string?> TryDiscoverHealthySystemVmAsync(Node node, SystemVmRole role)
     {
-        if (role != SystemVmRole.Dht) return null;
+        if (role != SystemVmRole.Dht && role != SystemVmRole.BlockStore) return null;
+
+        // BlockStore VM recovery: reconstruct BlockStoreInfo from a running VM
+        if (role == SystemVmRole.BlockStore)
+        {
+            var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+            var candidate = nodeVms.FirstOrDefault(v =>
+                v.Spec.VmType == VmType.BlockStore &&
+                v.Status == VmStatus.Running &&
+                v.IsFullyReady &&
+                v.Services.Any(s => s.LastCheckAt.HasValue &&
+                    (DateTime.UtcNow - s.LastCheckAt.Value).TotalMinutes <= 5));
+
+            if (candidate == null) return null;
+
+            _logger.LogInformation(
+                "Discovered healthy BlockStore VM {VmId} on node {NodeId} via datastore fallback",
+                candidate.Id, node.Id);
+
+            var advertiseIp = candidate.Labels?.GetValueOrDefault("blockstore-advertise-ip")
+                ?? DhtNodeService.GetAdvertiseIp(node);
+
+            node.BlockStoreInfo = new BlockStoreInfo
+            {
+                BlockStoreVmId = candidate.Id,
+                ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
+                ApiPort = BlockStoreVmSpec.ApiPort,
+                Status = BlockStoreStatus.Active,
+                LastHealthCheck = DateTime.UtcNow,
+            };
+
+            if (long.TryParse(candidate.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
+                node.BlockStoreInfo.CapacityBytes = cap;
+
+            return candidate.Id;
+        }
+
+        // DHT VM recovery (original logic follows)
 
         var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
         var candidate = nodeVms.FirstOrDefault(v =>
@@ -791,6 +826,9 @@ public class SystemVmReconciliationService : BackgroundService
             case SystemVmRole.Relay:
                 node.RelayInfo = null;
                 break;
+            case SystemVmRole.BlockStore:
+                node.BlockStoreInfo = null;
+                break;
         }
     }
 
@@ -824,11 +862,10 @@ public class SystemVmReconciliationService : BackgroundService
         return await _dhtNodeService.DeployDhtVmAsync(node, vmService, ct);
     }
 
-    private Task<string?> DeployBlockStoreVmAsync(Node node, CancellationToken ct)
+    private async Task<string?> DeployBlockStoreVmAsync(Node node, CancellationToken ct)
     {
-        // TODO: Implement BlockStore VM deployment when BlockStoreService is available
-        _logger.LogDebug("BlockStore VM deployment not yet implemented for node {NodeId}", node.Id);
-        return Task.FromResult<string?>(null);
+        var vmService = _serviceProvider.GetRequiredService<IVmService>();
+        return await _blockStoreService.DeployBlockStoreVmAsync(node, vmService, ct);
     }
 
     private Task<string?> DeployIngressVmAsync(Node node, CancellationToken ct)
