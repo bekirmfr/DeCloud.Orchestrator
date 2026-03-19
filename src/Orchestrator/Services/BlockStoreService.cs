@@ -101,6 +101,11 @@ public interface IBlockStoreService
     Task<string?> DeployBlockStoreVmAsync(Node node, IVmService vmService, CancellationToken ct = default);
     Task<List<string>> GetBootstrapPeersAsync(string? excludeNodeId = null);
 
+    // CID index (secondary index — DHT is primary source of truth)
+    void IndexCids(string nodeId, IEnumerable<string> cids);
+    void UnindexCids(string nodeId, IEnumerable<string> cids);
+    IReadOnlyCollection<string> LocateCid(string cid);
+
     // Manifest lifecycle (Phase D implementation; interface defined now)
     Task<ManifestRecord> RegisterManifestAsync(string vmId, string rootCid, int version,
         List<string> changedBlockCids, long totalBytes, CancellationToken ct = default);

@@ -552,36 +552,39 @@ public class SystemVmReconciliationService : BackgroundService
         // BlockStore VM recovery: reconstruct BlockStoreInfo from a running VM
         if (role == SystemVmRole.BlockStore)
         {
-            var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
-            var candidate = nodeVms.FirstOrDefault(v =>
-                v.Spec.VmType == VmType.BlockStore &&
-                v.Status == VmStatus.Running &&
-                v.IsFullyReady &&
-                v.Services.Any(s => s.LastCheckAt.HasValue &&
-                    (DateTime.UtcNow - s.LastCheckAt.Value).TotalMinutes <= 5));
-
-            if (candidate == null) return null;
-
-            _logger.LogInformation(
-                "Discovered healthy BlockStore VM {VmId} on node {NodeId} via datastore fallback",
-                candidate.Id, node.Id);
-
-            var advertiseIp = candidate.Labels?.GetValueOrDefault("blockstore-advertise-ip")
-                ?? DhtNodeService.GetAdvertiseIp(node);
-
-            node.BlockStoreInfo = new BlockStoreInfo
+            // Explicit brace scope — prevents variable name conflicts with DHT block below
             {
-                BlockStoreVmId = candidate.Id,
-                ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
-                ApiPort = BlockStoreVmSpec.ApiPort,
-                Status = BlockStoreStatus.Active,
-                LastHealthCheck = DateTime.UtcNow,
-            };
+                var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+                var candidate = nodeVms.FirstOrDefault(v =>
+                    v.Spec.VmType == VmType.BlockStore &&
+                    v.Status == VmStatus.Running &&
+                    v.IsFullyReady &&
+                    v.Services.Any(s => s.LastCheckAt.HasValue &&
+                        (DateTime.UtcNow - s.LastCheckAt.Value).TotalMinutes <= 5));
 
-            if (long.TryParse(candidate.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
-                node.BlockStoreInfo.CapacityBytes = cap;
+                if (candidate == null) return null;
 
-            return candidate.Id;
+                _logger.LogInformation(
+                    "Discovered healthy BlockStore VM {VmId} on node {NodeId} via datastore fallback",
+                    candidate.Id, node.Id);
+
+                var advertiseIp = candidate.Labels?.GetValueOrDefault("blockstore-advertise-ip")
+                    ?? DhtNodeService.GetAdvertiseIp(node);
+
+                node.BlockStoreInfo = new BlockStoreInfo
+                {
+                    BlockStoreVmId = candidate.Id,
+                    ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
+                    ApiPort = BlockStoreVmSpec.ApiPort,
+                    Status = BlockStoreStatus.Active,
+                    LastHealthCheck = DateTime.UtcNow,
+                };
+
+                if (long.TryParse(candidate.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
+                    node.BlockStoreInfo.CapacityBytes = cap;
+
+                return candidate.Id;
+            }
         }
 
         // DHT VM recovery (original logic follows)
