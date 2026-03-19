@@ -236,7 +236,7 @@ public class CentralCaddyManager : ICentralCaddyManager
                             listen = new[] { ":80", ":443" },
                             routes = allRoutes,
                             protocols = new[] { "h1" },
-                            automatic_https = new { disable = false, disable_redirects = false }s
+                            automatic_https = new { disable = false, disable_redirects = false }
                         }
                     }
                 },
