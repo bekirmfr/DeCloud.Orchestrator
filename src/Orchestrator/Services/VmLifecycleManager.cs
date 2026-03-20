@@ -1,5 +1,7 @@
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Payment;
 
 namespace Orchestrator.Services;
 
@@ -339,8 +341,8 @@ public class VmLifecycleManager : IVmLifecycleManager
     }
 
     /// <summary>
-    /// Side effects when a VM leaves Running state (→ Stopping, Deleting, Error).
-    /// Cleanup ingress registration.
+    /// Side effects when a VM leaves Running state (→ Error, Deleting).
+    /// Cleanup ingress registration and bill the final period.
     /// </summary>
     private async Task OnVmLeavingRunningAsync(VirtualMachine vm)
     {
@@ -348,17 +350,18 @@ public class VmLifecycleManager : IVmLifecycleManager
             () => _ingressService.OnVmStoppedAsync(vm.Id),
             "Ingress cleanup", vm.Id);
 
-        // Final billing: capture the period from last 5-min tick to now
+        // Bill the final period (last 5-min tick → now) before the VM leaves Running.
+        // BillingTrigger.VmStop bypasses the Running-status guard in ProcessVmBillingAsync.
         await SafeExecuteAsync(async () =>
         {
             var billingService = _serviceProvider.GetRequiredService<BillingService>();
-            await billingService.EnqueueBillingAsync(
-                vm.Id, BillingTrigger.VmStop, "VM leaving running state");
+            await billingService.EnqueueBillingAsync(vm.Id, BillingTrigger.VmStop, "VM leaving running state");
         }, "Final billing", vm.Id);
     }
 
     /// <summary>
-    /// Side effects when a VM transitions to Stopped.
+    /// Side effects when a VM transitions to Stopped (normal Running→Stopping→Stopped path).
+    /// Cleanup ingress registration and bill the final period.
     /// </summary>
     private async Task OnVmStoppedAsync(VirtualMachine vm)
     {
@@ -366,12 +369,12 @@ public class VmLifecycleManager : IVmLifecycleManager
             () => _ingressService.OnVmStoppedAsync(vm.Id),
             "Ingress cleanup", vm.Id);
 
-        // Final billing: capture the period from last 5-min tick to now
+        // Bill the final period (last 5-min tick → now).
+        // BillingTrigger.VmStop bypasses the Running-status guard in ProcessVmBillingAsync.
         await SafeExecuteAsync(async () =>
         {
             var billingService = _serviceProvider.GetRequiredService<BillingService>();
-            await billingService.EnqueueBillingAsync(
-                vm.Id, BillingTrigger.VmStop, "VM stopped");
+            await billingService.EnqueueBillingAsync(vm.Id, BillingTrigger.VmStop, "VM stopped");
         }, "Final billing", vm.Id);
     }
 

@@ -177,7 +177,7 @@ public class BillingService : BackgroundService
             return;
         }
 
-        // Skip system VMs
+        // Skip system VMss
         if (vm.Spec.VmType != VmType.General)
         {
             return;
@@ -188,6 +188,7 @@ public class BillingService : BackgroundService
         // ═══════════════════════════════════════════════════════════════════════
 
         var attestationStatus = _attestationService.GetLivenessState(vm.Id);
+        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
 
         if (attestationStatus?.BillingPaused == true && evt.Trigger != BillingTrigger.VmStop)
         {
@@ -208,8 +209,6 @@ public class BillingService : BackgroundService
 
         // Track the period for this billing attempt
         var billingPeriod = now - currentPeriodStart;
-
-        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
 
         if (isVerified)
         {
