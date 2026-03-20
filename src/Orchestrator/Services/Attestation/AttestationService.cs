@@ -315,6 +315,7 @@ public class AttestationService : IAttestationService
                 result.Errors.Add($"Response timeout (>{adaptiveTimeout:F1}ms, measured: {elapsed:F1}ms)");
                 result.TimingValid = false;
                 await RecordFailureAsync(vmId, "Timeout");
+                await SaveAttestationRecordAsync(vm, challenge, result, null);
                 return result;
             }
 
@@ -337,6 +338,7 @@ public class AttestationService : IAttestationService
             {
                 result.Errors.Add("No response received");
                 await RecordFailureAsync(vmId, "No response");
+                await SaveAttestationRecordAsync(vm, challenge, result, null);
                 return result;
             }
 
@@ -384,6 +386,7 @@ public class AttestationService : IAttestationService
             // Other HTTP errors are real failures
             result.Errors.Add($"Network error: {ex.Message}");
             await RecordFailureAsync(vmId, $"Network: {ex.Message}");
+            await SaveAttestationRecordAsync(vm, challenge, result, null);
             return result;
         }
         catch (Exception ex)
@@ -391,6 +394,7 @@ public class AttestationService : IAttestationService
             _logger.LogError(ex, "Attestation challenge failed for VM {VmId}", vmId);
             result.Errors.Add($"Exception: {ex.Message}");
             await RecordFailureAsync(vmId, ex.Message);
+            await SaveAttestationRecordAsync(vm, challenge, result, null);
             return result;
         }
     }

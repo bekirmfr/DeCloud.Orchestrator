@@ -219,11 +219,11 @@ public class BillingService : BackgroundService
             vm.BillingInfo.UnverifiedRuntime += billingPeriod;
         }
 
-        // Initialize CurrentPeriodStart if this is the first billing attempt
-        if (vm.BillingInfo.CurrentPeriodStart == null)
-        {
-            vm.BillingInfo.CurrentPeriodStart = vm.StartedAt ?? now;
-        }
+        // Always advance CurrentPeriodStart to now so the next billing cycle
+        // measures only the NEW period — not from the original start time.
+        // Without this, skipped cycles (cost < 0.01, period < 1min) cause
+        // runtime to be double-counted and billing periods to grow unboundedly.
+        vm.BillingInfo.CurrentPeriodStart = now;
 
         await _dataStore.SaveVmAsync(vm);
 
@@ -279,11 +279,10 @@ public class BillingService : BackgroundService
             vm.BillingInfo.VerifiedRuntime.TotalMilliseconds,
             vm.BillingInfo.UnverifiedRuntime.TotalMilliseconds);
 
-        // Update billing info
+        // Update billing info (CurrentPeriodStart already set to `now` above)
         vm.BillingInfo.TotalBilled += cost;
         vm.BillingInfo.TotalRuntime += billingPeriod;
         vm.BillingInfo.LastBillingAt = now;
-        vm.BillingInfo.CurrentPeriodStart = now;
 
         // ═══════════════════════════════════════════════════════════════════════
         // PERSIST BILLING UPDATE & RECORD USAGE

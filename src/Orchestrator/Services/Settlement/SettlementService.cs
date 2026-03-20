@@ -58,8 +58,10 @@ public class SettlementService : ISettlementService
 
         // Create usage record
 
-        var platformFee = amount * _paymentConfig.PlatformFeePercent / 100;
-        var nodeShare = amount * (1 - platformFee);
+        var platformFeeRatio = _paymentConfig.PlatformFeePercent / 100m;
+        var platformFee = amount * platformFeeRatio;
+        var nodeShare = amount * (1 - platformFeeRatio);
+        
         var usageRecord = new UsageRecord
         {
             Id = Guid.NewGuid().ToString(),
