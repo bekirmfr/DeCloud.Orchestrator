@@ -115,6 +115,32 @@ public class VirtualMachine
     public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceReadiness.Ready);
 
     // =========================================================================
+    // Lazysync & Replication State (updated each lazysync cycle)
+    // =========================================================================
+
+    /// <summary>
+    /// Actual overlay size in bytes as of the last lazysync cycle.
+    /// Used for accurate storage replication billing.
+    /// Null until the first lazysync cycle completes.
+    /// Falls back to DiskBytes * 0.05 (conservative 5% estimate) for billing
+    /// until the real measurement is available.
+    /// </summary>
+    public long? LastKnownOverlayBytes { get; set; }
+
+    /// <summary>
+    /// When the last successful lazysync cycle completed for this VM.
+    /// Null for ephemeral VMs (ReplicationFactor == 0) and VMs not yet seeded.
+    /// </summary>
+    public DateTime? LastLazysyncAt { get; set; }
+
+    /// <summary>
+    /// Current lazysync / migration status for this VM.
+    /// Drives source-offline alerting and dashboard display.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public LazysyncStatus LazysyncStatus { get; set; } = LazysyncStatus.Pending;
+
+    // =========================================================================
     // Command Tracking (for reliable acknowledgement processing)
     // =========================================================================
 
@@ -264,7 +290,29 @@ public class VmSpec
     /// Enforced via libvirt QoS on the VM's virtio network interface.
     /// Default: Unmetered (no artificial cap)
     /// </summary>
-    public BandwidthTier BandwidthTier { get; set; } = BandwidthTier.Unmetered;
+    public BandwidthTier BandwidthTier { get; set; } = BandwidthTier.Basic;
+
+    // =========================================================================
+    // REPLICATION
+    // =========================================================================
+
+    /// <summary>
+    /// Number of block store providers that must hold the VM's overlay chunks
+    /// before a lazysync version is considered confirmed.
+    ///
+    /// Supported values:
+    ///   0 — Ephemeral. Lazysync skipped entirely. VM data is lost on node failure.
+    ///       Use for stateless workloads, batch jobs, CI runners.
+    ///   1 — Single replica. Survives if ≥1 block store provider holds the blocks.
+    ///   3 — Standard (default). Survives loss of 2 provider nodes simultaneously.
+    ///   5 — High availability. Survives loss of 4 provider nodes simultaneously.
+    ///       Use for databases, ML checkpoints, critical stateful services.
+    ///
+    /// Immutable after VM creation. Default: 3 for tenant VMs, 0 for system VMs.
+    /// Affects scheduling: replicationFactor > 0 requires an Active BlockStore
+    /// on the target node.
+    /// </summary>
+    public int ReplicationFactor { get; set; } = 3;
 }
 
 public class VmNetworkConfig
@@ -419,6 +467,61 @@ public enum SubdomainTier
     /// Claimed via separate upgrade flow on VM dashboard.
     /// </summary>
     Premium
+}
+
+/// <summary>
+/// Replication and migration state for a VM's lazysync lifecycle.
+/// </summary>
+public enum LazysyncStatus
+{
+    /// <summary>
+    /// Initial state. Lazysync has not yet run for this VM.
+    /// Ephemeral VMs (ReplicationFactor == 0) stay here permanently.
+    /// </summary>
+    Pending = 0,
+
+    /// <summary>
+    /// Initial overlay seeding in progress (first lazysync cycle).
+    /// confirmedVersion == 0 — no confirmed replica yet.
+    /// </summary>
+    Seeding = 1,
+
+    /// <summary>
+    /// All chunks in the latest manifest have ≥N providers confirmed in the DHT.
+    /// VM is fully protected and can be migrated without data loss.
+    /// </summary>
+    Protected = 2,
+
+    /// <summary>
+    /// Replication is in progress or lagging — confirmedVersion < currentVersion.
+    /// VM can still be migrated from confirmedVersion with minor data loss.
+    /// </summary>
+    Replicating = 3,
+
+    /// <summary>
+    /// Source node is offline. VM is being rescheduled to another node.
+    /// Target node is fetching overlay blocks via bitswap.
+    /// </summary>
+    Migrating = 4,
+
+    /// <summary>
+    /// Source node is offline. confirmedVersion > 0 but chunks are under-replicated.
+    /// Migration possible but with data loss since last confirmed version.
+    /// </summary>
+    Recovering = 5,
+
+    /// <summary>
+    /// Source node is offline. confirmedVersion == 0 (seeding never completed).
+    /// VM disk state cannot be recovered — must be redeployed from scratch.
+    /// </summary>
+    Unrecoverable = 6,
+
+    /// <summary>
+    /// ReplicationFactor == 0 and source node is offline.
+    /// Expected state — user opted into ephemeral semantics at creation time.
+    /// No alert generated.
+    /// </summary>
+    Lost = 7
 }
 
 // DTOs for API

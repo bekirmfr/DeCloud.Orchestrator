@@ -107,8 +107,20 @@ public class VmService : IVmService
         // Generate memorable password
         var password = isSystemVm ? null : GenerateMemorablePassword();
 
-        // Calculate pricing
+        // Calculate pricing (no overlay measurement yet — uses 5% estimate)
         var hourlyRate = CalculateHourlyRate(request.Spec);
+
+        // Validate and apply replication factor.
+        // System VMs are always ephemeral (factor=0): they redeploy from cloud-init,
+        // not from disk state. Tenant VMs default to 3, validated to allowed tiers.
+        var replicationFactor = isSystemVm
+            ? 0
+            : request.Spec.ReplicationFactor switch
+            {
+                0 or 1 or 3 or 5 => request.Spec.ReplicationFactor,
+                _ => 3 // Clamp unsupported values to default
+            };
+        request.Spec.ReplicationFactor = replicationFactor;
 
         var vm = new VirtualMachine
         {
@@ -120,6 +132,9 @@ public class VmService : IVmService
             OwnerWallet = isSystemVm ? null : user?.WalletAddress,
             Spec = request.Spec,
             Status = VmStatus.Pending,
+            LazysyncStatus = replicationFactor == 0
+                ? LazysyncStatus.Pending   // ephemeral — stays Pending forever
+                : LazysyncStatus.Pending,  // will advance to Seeding on first cycle
             Labels = request.Labels ?? [],
             BillingInfo = new VmBillingInfo
             {
@@ -747,8 +762,10 @@ public class VmService : IVmService
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
-        // Recalculate hourly rate with node-specific pricing (replaces platform defaults)
-        vm.BillingInfo.HourlyRateCrypto = CalculateHourlyRate(vm.Spec, selectedNode.Pricing);
+        // Recalculate hourly rate with node-specific pricing (replaces platform defaults).
+        // Pass LastKnownOverlayBytes if available (populated by LazysyncManager each cycle).
+        vm.BillingInfo.HourlyRateCrypto = CalculateHourlyRate(
+            vm.Spec, selectedNode.Pricing, vm.LastKnownOverlayBytes);
 
         // Track VM hosting in node reputation
         var reputationService = _serviceProvider.GetService<INodeReputationService>();
@@ -1002,10 +1019,18 @@ public class VmService : IVmService
     /// Calculate the hourly rate for a VM based on its spec and the node's pricing.
     /// Uses node operator pricing if set, otherwise platform defaults.
     /// All rates are clamped to platform floor minimums.
+    ///
+    /// Includes a storage replication cost component when ReplicationFactor > 0:
+    ///   overlay_gb × replication_factor × storage_rate
+    /// Uses knownOverlayBytes when available (updated each lazysync cycle).
+    /// Falls back to DiskBytes × 5% as a conservative estimate before first cycle.
     /// </summary>
-    private decimal CalculateHourlyRate(VmSpec spec, NodePricing? nodePricing = null)
+    private decimal CalculateHourlyRate(
+        VmSpec spec,
+        NodePricing? nodePricing = null,
+        long? knownOverlayBytes = null)
     {
-        if (spec.VmType is VmType.Relay or VmType.Dht)
+        if (spec.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore)
             return 0.005m; // Flat rate for system VMs
 
         const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
@@ -1045,7 +1070,26 @@ public class VmService : IVmService
             ((spec.MemoryBytes / BYTES_PER_GB) * memRate) +
             ((spec.DiskBytes / BYTES_PER_GB) * storageRate);
 
-        return (resourceCost * tierMultiplier) + bandwidthRate;
+        // ── Storage replication cost ──────────────────────────────────────────
+        // Charged when replicationFactor > 0 (lazysync is running for this VM).
+        // Uses the last known measured overlay size if available; otherwise a
+        // conservative 5% estimate of the virtual disk size (typical overlay:
+        // 2–8% after first boot, up to 15% for write-heavy workloads).
+        var replicationCost = 0m;
+        if (spec.ReplicationFactor > 0)
+        {
+            var overlayBytes = knownOverlayBytes
+                ?? (long)(spec.DiskBytes * 0.05); // 5% conservative estimate
+            var overlayGb = overlayBytes / BYTES_PER_GB;
+
+            // Use the platform storage floor rate for replication billing —
+            // independent of node operator storage pricing (network duty cost).
+            var replicationStorageRate = Math.Max(storageRate, cfg.FloorStoragePerGbPerHour);
+
+            replicationCost = overlayGb * spec.ReplicationFactor * replicationStorageRate;
+        }
+
+        return (resourceCost * tierMultiplier) + bandwidthRate + replicationCost;
     }
 
     private static string GeneratePrivateIp()

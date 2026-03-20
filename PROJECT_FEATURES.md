@@ -18,7 +18,8 @@
 9. [Per-Service VM Readiness Tracking](#per-service-vm-readiness-tracking)
 10. [DHT Infrastructure](#dht-infrastructure)
 11. [GPU Proxy (CUDA Virtualization)](#gpu-proxy-cuda-virtualization)
-12. [Future Features](#future-features)
+12. [Block Store & Storage Economics](#block-store--storage-economics)
+13. [Future Features](#future-features)
 
 ---
 
@@ -1584,6 +1585,153 @@ Both DHT nodes confirmed connected after fixes:
 |------|--------|
 | `CloudInit/Templates/relay-vm/relay-api.py` | `add_cgnat_peer` handles mesh enrollment; stale peer cleanup protects DHT peers (last octet >= 198) |
 
+---
+
+## Block Store & Storage Economics
+
+**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D (Lazysync) 🔲 Next
+
+### Overview
+
+Every DeCloud node with ≥100 GB storage and ≥2 GB RAM runs a **Block Store VM**
+as a network duty obligation, contributing 5% of its total storage to a
+distributed, content-addressed storage network. This network serves two purposes:
+
+1. **VM resilience** — VM overlay disks are continuously replicated via lazysync.
+   When a node fails, its VMs can be reconstructed on another node from the
+   confirmed manifest without data loss.
+2. **AI model distribution** — Large language models are chunked and distributed
+   across block store nodes, enabling decentralized model serving and
+   pipeline-parallel distributed inference.
+
+### Variable Chunk Sizes by Manifest Type
+
+Block size is a **per-manifest-type constant** enforced by the block store binary
+at write time. Different content types have optimal chunk sizes based on access
+patterns, update frequency, and scale:
+
+| Manifest Type | Chunk Size | Rationale |
+|---|---|---|
+| `vm-overlay` | **1 MB** | Aligns with QEMU dirty bitmap granularity. ~5,120 chunks for a 5 GB overlay. Content addressing means unchanged regions are never re-transferred. |
+| `model-shard` | **64 MB** | Aligns with transformer layer boundaries. Llama-3 70B Q4 (~40 GB) = 640 chunks. Efficient for bitswap bulk transfer and pipeline-parallel inference routing. |
+| `lora-adapter` | **256 KB** | Fine-grained deduplication across fine-tuned model variants that share base layer weights. |
+| `image-template` | **4 MB** | Base OS images → 500–1,000 chunks. Good deduplication across Ubuntu/Debian variants. |
+
+**Model shard chunk counts:**
+
+| Model | Precision | Size | 64 MB Chunks |
+|---|---|---|---|
+| Llama-3 8B | FP16 | ~16 GB | 256 |
+| Llama-3 70B | Q4_K_M | ~40 GB | 640 |
+| Llama-3 70B | FP16 | ~140 GB | 2,240 |
+
+All manifest types have a **tail block exception**: the final chunk may be smaller
+than `blockSizeBytes` and is billed as one full block. Maximum over-billing per
+VM: one block of storage.
+
+### Block-Based Pricing
+
+Storage replication cost uses block count as the billing unit — not estimated
+overlay size in GB. This is deterministic, exact, and trustless:
+storage_cost = blockCount × replicationFactor × costPerMbPerHour × (blockSizeKb / 1024)
+- `blockCount` — exact count from the confirmed manifest. Updated by
+  `LazysyncManager` each audit cycle. No estimation.
+- `costPerMbPerHour` — single platform rate applied to all manifest types,
+  normalizing cost per MB regardless of chunk size.
+- `blockSizeKb / 1024` — scales cost proportionally: a 64 MB model shard block
+  costs 64× a 1 MB VM overlay block. Same rate per MB, different block sizes.
+
+**Example costs at $0.000001/MB/hour:**
+
+| Workload | Blocks | Block Size | N | Storage cost/hr |
+|---|---|---|---|---|
+| Typical VM, light use | 512 | 1 MB | 3 | $0.001536 |
+| Typical VM, active | 4,096 | 1 MB | 3 | $0.012288 |
+| Llama-3 70B Q4 | 640 | 64 MB | 3 | $0.122880 |
+| Fine-tune adapter | 200 | 256 KB | 3 | $0.000015 |
+
+### Storage Revenue Distribution
+
+Block store contributors (nodes running BlockStore VMs) earn a share of the
+storage replication costs collected from tenant VMs. This creates two independent
+revenue streams for node operators:
+
+- **Compute earnings** — for VMs hosted on their node (existing)
+- **Storage earnings** — for blocks held by their BlockStore VM (new)
+
+**Distribution formula:**
+reward_i = storagePool × (node_i.UsedBytes / Σ allNodes.UsedBytes)
+
+Proportional to actual bytes stored — nodes that store more blocks earn more.
+Calculated on-chain from raw byte counts — the orchestrator cannot manipulate
+share allocation.
+
+### DeCloudEscrow: `settleCycle()` (Atomic Settlement)
+
+The existing escrow contract is extended with `settleCycle()`, which replaces the
+separate `batchReportUsage()` + distribution flow with a single atomic transaction
+per billing cycle:
+settleCycle(
+// Per-VM billing arrays
+users[], computeNodes[],
+computeAmounts[],         ← CPU + memory + disk + bandwidth
+blockCounts[],            ← manifest chunk count (verifiable)
+blockSizeKbs[],           ← 1024 / 65536 / 256 / 4096
+replicationFactors[],     ← 0 / 1 / 3 / 5 (immutable)
+vmIds[],
+// Per-storage-node arrays
+storageNodes[],           ← BlockStore operator wallets
+storageBytes[],           ← node.BlockStoreInfo.UsedBytes
+cycleId                   ← ISO timestamp for auditability
+)
+
+**What happens in one transaction:**
+1. Deducts `computeAmount + storageAmount` from each user
+2. Credits hosting node with 85% of compute cost
+3. Accumulates 85% of storage cost into `storagePool`
+4. Divides `storagePool` among storage nodes proportional to `storageBytes`
+5. Credits storage node earnings to `nodePendingPayouts` (same withdrawal path)
+6. Platform retains 15% of both compute and storage costs
+
+**Atomicity guarantee:** storage fees are always distributed in the same
+transaction they are collected. The `storagePool` balance on-chain represents
+only integer division dust, rolling over automatically to the next cycle.
+
+**New contract events:**
+- `StorageCollected(user, vmId, storageAmount, platformFee, poolContribution)`
+  — emitted per VM when storage cost flows into pool
+- `StorageRewarded(storageNode, rewardAmount, contributedBytes, totalNetworkBytes, cycleId)`
+  — emitted per storage node per cycle, with full context to verify the
+  proportional calculation from chain data alone
+
+**Backward compatibility:** `reportUsage()` and `batchReportUsage()` are
+unchanged — used for ephemeral VMs (`replicationFactor=0`) where
+`storageAmount` is always zero.
+
+### Replication Factor Tiers
+
+| Factor | Semantics | Scheduler requirement | Cost |
+|---|---|---|---|
+| 0 | Ephemeral — no replication | None | No storage cost |
+| 1 | Single replica | Active BlockStore on target node | 1× storage rate |
+| 3 | Standard (default) | Active BlockStore on target node | 3× storage rate |
+| 5 | High availability | Active BlockStore on target node | 5× storage rate |
+
+`replicationFactor` is set at VM creation and is immutable. The scheduler
+rejects nodes without an Active BlockStore VM for any `replicationFactor > 0`.
+
+### Implementation Files
+
+| File | Purpose |
+|---|---|
+| `contracts/DeCloudEscrow.sol` | `settleCycle()`, `storagePool`, `costPerMbPerHour`, `StorageCollected` + `StorageRewarded` events |
+| `Models/VirtualMachine.cs` | `ReplicationFactor`, `LazysyncStatus`, `CurrentManifestBlockCount` on `VmSpec`/`VirtualMachine` |
+| `Services/VmService.cs` | `CalculateHourlyRate` uses block-count formula; system VMs forced to factor=0 |
+| `Services/VmScheduling/VmSchedulingService.cs` | Filter 8: Active BlockStore required for factor > 0 |
+| `Services/Blockchain/BlockchainService.cs` | `ExecuteSettlementAsync` calls `settleCycle()`; updated ABI |
+| `blockstore-node-src/main.go` | `ManifestTypeBlockSize` map; write-time block size enforcement; tail block handling |
+| `Models/Payment/PricingConfig.cs` | `StoragePerMbPerHour` replaces `StoragePerGbPerHour` |
+| `Services/BlockStore/LazysyncManager.cs` | Updates `BlockCount` on `ManifestRecord` and `VirtualMachine` each cycle |
 ---
 
 ## GPU Proxy (CUDA Virtualization)

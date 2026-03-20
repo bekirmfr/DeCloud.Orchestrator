@@ -427,6 +427,27 @@ public class VmSchedulingService : IVmSchedulingService
         if (freeMemoryMb < config.Limits.MinFreeMemoryMb)
             return $"Insufficient free memory ({freeMemoryMb}MB < {config.Limits.MinFreeMemoryMb}MB)";
 
+        // =====================================================
+        // FILTER 8: Active Block Store required for replicated VMs
+        //
+        // When replicationFactor > 0, the node must have an Active BlockStore VM.
+        // Without it, the lazysync daemon on this node has nowhere to push dirty
+        // overlay blocks — replication cannot function.
+        //
+        // Ephemeral VMs (replicationFactor == 0) bypass this filter: they
+        // intentionally accept data loss on node failure and can run anywhere.
+        // =====================================================
+        if (spec.ReplicationFactor > 0)
+        {
+            var blockStoreStatus = node.BlockStoreInfo?.Status;
+            if (blockStoreStatus != BlockStoreStatus.Active)
+            {
+                return blockStoreStatus == null
+                    ? "VM requires replication (ReplicationFactor > 0) but node has no Block Store VM"
+                    : $"VM requires replication but node Block Store is {blockStoreStatus} (not Active)";
+            }
+        }
+
         return null; // All filters passed
     }
 
