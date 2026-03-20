@@ -252,6 +252,9 @@ public class AttestationService : IAttestationService
                 vmId, adaptiveTimeout);
         }
 
+        // Create challenge before the try block so it is in scope in all catch blocks
+        var challenge = CreateChallenge(vm);
+
         try
         {
             // =====================================================
@@ -273,9 +276,8 @@ public class AttestationService : IAttestationService
             }
 
             // =====================================================
-            // STEP 2: Generate and send challenge
+            // STEP 2: Send challenge
             // =====================================================
-            var challenge = CreateChallenge(vm);
 
             var challengeStart = Stopwatch.GetTimestamp();
 
