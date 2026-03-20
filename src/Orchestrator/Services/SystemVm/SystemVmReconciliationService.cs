@@ -300,14 +300,48 @@ public class SystemVmReconciliationService : BackgroundService
 
         if (vm.Status == VmStatus.Running)
         {
+            // Only advance to Active once the System service reports Ready.
+            // Running means the VM booted; Ready means cloud-init completed
+            // and the role-specific callback fired (e.g. blockstore-notify-ready.sh).
+            // Without this check, a VM that booted but whose cloud-init failed
+            // is incorrectly marked Active, stopping redeployment attempts.
+            var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
+            var isReady = systemService?.Status == ServiceReadiness.Ready;
+
+            if (!isReady)
+            {
+                // Still waiting for cloud-init / callback — check timeout
+                var deployedAt = obligation.DeployedAt ?? DateTime.UtcNow;
+                var elapsed = DateTime.UtcNow - deployedAt;
+                var timeout = TimeSpan.FromMinutes(20); // generous for slow cloud-init
+
+                if (elapsed > timeout)
+                {
+                    _logger.LogWarning(
+                        "{Role} VM {VmId} on node {NodeId} has been Running for {Minutes:F0}m " +
+                        "but System service never became Ready — resetting to Pending for redeployment",
+                        obligation.Role, obligation.VmId, node.Id, elapsed.TotalMinutes);
+                    ResetObligation(node, obligation);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "{Role} VM {VmId} on node {NodeId} is Running but System service not Ready yet " +
+                        "({Elapsed:F0}m / {Timeout:F0}m timeout)",
+                        obligation.Role, obligation.VmId, node.Id,
+                        elapsed.TotalMinutes, timeout.TotalMinutes);
+                }
+                return;
+            }
+
             obligation.Status = SystemVmStatus.Active;
             obligation.ActiveAt = DateTime.UtcNow;
 
             _logger.LogInformation(
-                "{Role} VM {VmId} on node {NodeId} is Active",
+                "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
                 obligation.Role, obligation.VmId, node.Id);
 
-            // Sync role-specific info to Active now that VM is Running
+            // Sync role-specific info to Active now that VM is Running + Ready
             if (obligation.Role == SystemVmRole.Relay && node.RelayInfo != null)
             {
                 node.RelayInfo.Status = RelayStatus.Active;
@@ -317,6 +351,11 @@ public class SystemVmReconciliationService : BackgroundService
             {
                 node.DhtInfo.Status = DhtStatus.Active;
                 node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+            }
+            else if (obligation.Role == SystemVmRole.BlockStore && node.BlockStoreInfo != null)
+            {
+                node.BlockStoreInfo.Status = BlockStoreStatus.Active;
+                node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
             }
         }
         else if (vm.Status == VmStatus.Error)
