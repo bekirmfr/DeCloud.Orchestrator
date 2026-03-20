@@ -347,6 +347,14 @@ public class VmLifecycleManager : IVmLifecycleManager
         await SafeExecuteAsync(
             () => _ingressService.OnVmStoppedAsync(vm.Id),
             "Ingress cleanup", vm.Id);
+
+        // Final billing: capture the period from last 5-min tick to now
+        await SafeExecuteAsync(async () =>
+        {
+            var billingService = _serviceProvider.GetRequiredService<BillingService>();
+            await billingService.EnqueueBillingAsync(
+                vm.Id, BillingTrigger.VmStop, "VM leaving running state");
+        }, "Final billing", vm.Id);
     }
 
     /// <summary>
@@ -357,6 +365,14 @@ public class VmLifecycleManager : IVmLifecycleManager
         await SafeExecuteAsync(
             () => _ingressService.OnVmStoppedAsync(vm.Id),
             "Ingress cleanup", vm.Id);
+
+        // Final billing: capture the period from last 5-min tick to now
+        await SafeExecuteAsync(async () =>
+        {
+            var billingService = _serviceProvider.GetRequiredService<BillingService>();
+            await billingService.EnqueueBillingAsync(
+                vm.Id, BillingTrigger.VmStop, "VM stopped");
+        }, "Final billing", vm.Id);
     }
 
     /// <summary>

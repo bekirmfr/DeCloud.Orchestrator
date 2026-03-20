@@ -396,6 +396,10 @@ if (mongoDatabase != null)
             await dataStore.LoadStateFromDatabaseAsync();
             logger.LogInformation("✓ State loaded successfully from MongoDB");
 
+            var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
+            await attestationService.InitializeAsync();
+            logger.LogInformation("✓ Attestation stats restored for running VMs");
+
             var ingressService = scope.ServiceProvider.GetRequiredService<ICentralIngressService>();
             if (ingressService.IsEnabled)
             {

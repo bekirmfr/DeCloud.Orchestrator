@@ -27,6 +27,8 @@ namespace Orchestrator.Services;
 /// </summary>
 public interface IAttestationService
 {
+    Task InitializeAsync();
+
     /// <summary>
     /// Send a challenge to a VM and verify the response
     /// </summary>
@@ -80,7 +82,10 @@ public class AttestationService : IAttestationService
 
         // HTTP client - timeout will be set dynamically per request
         _httpClient = new HttpClient();
+    }
 
+    public async Task InitializeAsync()
+    {
         LoadAttestationStatsFromDatabase();
     }
 

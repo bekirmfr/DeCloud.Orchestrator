@@ -192,9 +192,10 @@ public class BillingService : BackgroundService
         if (attestationStatus?.BillingPaused == true && evt.Trigger != BillingTrigger.VmStop)
         {
             _logger.LogWarning(
-                "⚠️ Billing PAUSED for VM {VmId} - attestation failing. Skipping billing.",
+                "⚠️ Attestation PAUSED for VM {VmId} — billing as unverified usage",
                 vm.Id);
-            return;
+            isVerified = false;
+            // fall through — bill the period at unverified rate
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -208,7 +209,7 @@ public class BillingService : BackgroundService
         // Track the period for this billing attempt
         var billingPeriod = now - currentPeriodStart;
 
-        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0 || attestationStatus == null;
+        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
 
         if (isVerified)
         {
