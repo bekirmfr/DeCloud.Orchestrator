@@ -547,7 +547,7 @@ public async Task<ManifestRecord> RegisterManifestAsync(
         // Phase A stub — Phase D implements scheduling fit + resource headroom ranking
         _logger.LogDebug("PlanMigrationAsync called for VM {VmId} — stub in Phase A", vmId);
 
-        _manifests.TryGetValue(vmId, out var manifest);
+        _manifestCache.TryGetValue(vmId, out var manifest);
         return Task.FromResult(new MigrationPlan
         {
             VmId = vmId,

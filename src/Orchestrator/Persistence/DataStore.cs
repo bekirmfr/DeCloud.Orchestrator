@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;
+using Orchestrator.Services;
 using System.Collections.Concurrent;
 
 namespace Orchestrator.Persistence;
@@ -631,7 +632,7 @@ public class DataStore
                     m => m.VmId == manifest.VmId,
                     manifest,
                     new ReplaceOptions { IsUpsert = true });
-            });
+            }, $"SaveManifest:{manifest.VmId}");
         }
         catch (Exception ex)
         {

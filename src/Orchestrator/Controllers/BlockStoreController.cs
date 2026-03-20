@@ -283,6 +283,9 @@ public class BlockStoreController : ControllerBase
             request.RootCid,
             request.Version,
             request.ChangedBlockCids ?? [],
+            request.BlockCount,
+            request.BlockSizeKb,
+            request.ManifestType,
             request.TotalBytes);
 
         return Ok(new { success = true, manifestVersion = manifest.Version });
@@ -359,5 +362,8 @@ public class BlockStoreManifestRequest
     public string RootCid { get; set; } = string.Empty;
     public int Version { get; set; }
     public List<string>? ChangedBlockCids { get; set; }
+    public int BlockCount { get; set; }
+    public int BlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
+    public ManifestType ManifestType { get; set; } = ManifestType.VmOverlay;
     public long TotalBytes { get; set; }
 }
