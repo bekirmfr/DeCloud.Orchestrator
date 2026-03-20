@@ -11,8 +11,65 @@ namespace Orchestrator.Services;
 // ════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
+/// Manifest type determines block size and billing rate.
+/// Block size is a protocol constant per type — enforced at write time
+/// by the block store binary.
+/// </summary>
+public enum ManifestType
+{
+    /// <summary>
+    /// VM overlay disk replication (lazysync).
+    /// Block size: 1 MB. Optimised for sparse write patterns.
+    /// </summary>
+    VmOverlay = 0,
+
+    /// <summary>
+    /// Large language model weight shard for distributed inference.
+    /// Block size: 64 MB. Aligned to transformer layer boundaries.
+    /// Llama-3 70B Q4 ≈ 640 blocks, FP16 ≈ 2,240 blocks.
+    /// </summary>
+    ModelShard = 1,
+
+    /// <summary>
+    /// LoRA fine-tune adapter weights.
+    /// Block size: 256 KB. Fine-grained deduplication across adapter variants.
+    /// </summary>
+    LoraAdapter = 2,
+
+    /// <summary>
+    /// Base OS image template (e.g., debian-12-generic).
+    /// Block size: 4 MB. Clean chunk counts, good cross-image deduplication.
+    /// </summary>
+    ImageTemplate = 3,
+}
+
+/// <summary>
+/// Protocol-level block size constants per manifest type.
+/// These are immutable network constants — changing them requires a network migration.
+/// The block store binary enforces these at write time.
+/// </summary>
+public static class BlockSizeConstants
+{
+    public const int VmOverlayKb     = 1024;        // 1 MB
+    public const int ModelShardKb    = 64 * 1024;   // 64 MB
+    public const int LoraAdapterKb   = 256;          // 256 KB
+    public const int ImageTemplateKb = 4 * 1024;    // 4 MB
+
+    /// <summary>Returns the canonical block size in KB for a manifest type.</summary>
+    public static int ForType(ManifestType type) => type switch
+    {
+        ManifestType.VmOverlay     => VmOverlayKb,
+        ManifestType.ModelShard    => ModelShardKb,
+        ManifestType.LoraAdapter   => LoraAdapterKb,
+        ManifestType.ImageTemplate => ImageTemplateKb,
+        _                          => VmOverlayKb,
+    };
+}
+
+/// <summary>
 /// Tracks the evolving overlay manifest for a VM's disk replication state.
 /// Created by lazysync daemon (Phase D) and registered via POST /api/blockstore/manifest.
+/// Persisted to MongoDB in Phase D (in-memory only in Phase A).
 /// </summary>
 public class ManifestRecord
 {
@@ -26,6 +83,26 @@ public class ManifestRecord
 
     /// <summary>CIDs of blocks that changed in this version (delta from previous).</summary>
     public List<string> ChangedBlockCids { get; set; } = [];
+
+    /// <summary>
+    /// Total number of chunks in the current manifest (all chunks, not just changed ones).
+    /// Used for exact block-count billing: cost = BlockCount × (BlockSizeKb/1024) × N × rate.
+    /// Updated by LazysyncManager each audit cycle.
+    /// </summary>
+    public int BlockCount { get; set; }
+
+    /// <summary>
+    /// Block size in KB for this manifest type. Protocol constant per ManifestType.
+    /// Set at manifest creation from BlockSizeConstants.ForType(ManifestType).
+    /// Immutable after first registration.
+    /// </summary>
+    public int BlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
+
+    /// <summary>
+    /// Manifest type — determines block size and content semantics.
+    /// Defaults to VmOverlay (current primary use case).
+    /// </summary>
+    public ManifestType ManifestType { get; set; } = ManifestType.VmOverlay;
 
     /// <summary>Total overlay size in bytes at this version.</summary>
     public long TotalBytes { get; set; }
@@ -107,8 +184,16 @@ public interface IBlockStoreService
     IReadOnlyCollection<string> LocateCid(string cid);
 
     // Manifest lifecycle (Phase D implementation; interface defined now)
-    Task<ManifestRecord> RegisterManifestAsync(string vmId, string rootCid, int version,
-        List<string> changedBlockCids, long totalBytes, CancellationToken ct = default);
+    Task<ManifestRecord> RegisterManifestAsync(
+        string vmId,
+        string rootCid,
+        int version,
+        List<string> changedBlockCids,
+        int blockCount,
+        int blockSizeKb,
+        ManifestType manifestType,
+        long totalBytes,
+        CancellationToken ct = default);
 
     // Replication audit (Phase D implementation; interface defined now)
     Task<ReplicationAudit> AuditManifestReplicationAsync(string vmId, CancellationToken ct = default);
@@ -135,9 +220,10 @@ public class BlockStoreService : IBlockStoreService
     // Key: CID string, InnerKey: nodeId, InnerValue: unused (ConcurrentDictionary as HashSet).
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, bool>> _cidIndex = new();
 
-    // Manifest registry (in-memory for Phase A; Phase D persists to MongoDB).
-    // Key: vmId
-    private readonly ConcurrentDictionary<string, ManifestRecord> _manifests = new();
+    // Manifest registry — Phase D: persisted to MongoDB via DataStore.
+    // In-memory fallback: if MongoDB is unavailable, manifests are held in this cache.
+    // LazysyncManager reads from DataStore.GetPendingAuditManifestsAsync() directly.
+    private readonly ConcurrentDictionary<string, ManifestRecord> _manifestCache = new();
 
     public BlockStoreService(DataStore dataStore, ILogger<BlockStoreService> logger)
     {
@@ -364,59 +450,95 @@ public class BlockStoreService : IBlockStoreService
     // Manifest lifecycle — Phase D implementation (stub returns in Phase A)
     // ════════════════════════════════════════════════════════════════════════
 
-    public Task<ManifestRecord> RegisterManifestAsync(
-        string vmId, string rootCid, int version,
-        List<string> changedBlockCids, long totalBytes,
+public async Task<ManifestRecord> RegisterManifestAsync(
+        string vmId,
+        string rootCid,
+        int version,
+        List<string> changedBlockCids,
+        int blockCount,
+        int blockSizeKb,
+        ManifestType manifestType,
+        long totalBytes,
         CancellationToken ct = default)
     {
-        // Phase A stub — Phase D wires up the lazysync daemon and MongoDB persistence
-        var record = _manifests.AddOrUpdate(
-            vmId,
-            _ => new ManifestRecord
+        // Try to load existing from MongoDB to preserve immutable fields
+        var existing = await _dataStore.GetManifestAsync(vmId)
+            ?? _manifestCache.GetValueOrDefault(vmId);
+
+        ManifestRecord record;
+
+        if (existing == null)
+        {
+            // First registration for this VM
+            record = new ManifestRecord
             {
-                VmId = vmId,
-                RootCid = rootCid,
-                Version = version,
+                VmId             = vmId,
+                RootCid          = rootCid,
+                Version          = version,
                 ChangedBlockCids = changedBlockCids,
-                TotalBytes = totalBytes,
-                RegisteredAt = DateTime.UtcNow,
-            },
-            (_, existing) =>
-            {
-                // Only advance version forward
-                if (version > existing.Version)
-                {
-                    existing.RootCid = rootCid;
-                    existing.Version = version;
-                    existing.ChangedBlockCids = changedBlockCids;
-                    existing.TotalBytes = totalBytes;
-                    existing.RegisteredAt = DateTime.UtcNow;
-                }
-                return existing;
-            });
+                BlockCount       = blockCount,
+                BlockSizeKb      = blockSizeKb > 0 ? blockSizeKb : BlockSizeConstants.ForType(manifestType),
+                ManifestType     = manifestType,
+                TotalBytes       = totalBytes,
+                RegisteredAt     = DateTime.UtcNow,
+            };
+        }
+        else if (version > existing.Version)
+        {
+            // Advance to newer version — BlockSizeKb and ManifestType are immutable
+            existing.RootCid          = rootCid;
+            existing.Version          = version;
+            existing.ChangedBlockCids = changedBlockCids;
+            existing.BlockCount       = blockCount;
+            existing.TotalBytes       = totalBytes;
+            existing.RegisteredAt     = DateTime.UtcNow;
+            record = existing;
+        }
+        else
+        {
+            // Duplicate or stale — return existing without modification
+            _logger.LogDebug(
+                "Skipping manifest registration for VM {VmId}: incoming v{IncomingVersion} " +
+                "≤ current v{CurrentVersion}",
+                vmId, version, existing.Version);
+            return existing;
+        }
+
+        // Persist to MongoDB
+        await _dataStore.SaveManifestAsync(record);
+
+        // Update in-memory cache for fast lookups
+        _manifestCache[vmId] = record;
 
         _logger.LogDebug(
-            "Manifest registered for VM {VmId}: v{Version}, root={RootCid}, changed={Count} blocks",
-            vmId, version, rootCid[..Math.Min(12, rootCid.Length)], changedBlockCids.Count);
+            "Manifest registered for VM {VmId}: v{Version}, root={RootCid}, " +
+            "blocks={BlockCount} × {BlockSizeKb} KB ({Type})",
+            vmId, version, rootCid[..Math.Min(12, rootCid.Length)],
+            blockCount, record.BlockSizeKb, record.ManifestType);
 
-        return Task.FromResult(record);
+        return record;
     }
 
-    public Task<ReplicationAudit> AuditManifestReplicationAsync(
+    public async Task<ReplicationAudit> AuditManifestReplicationAsync(
         string vmId, CancellationToken ct = default)
     {
-        // Phase A stub — Phase D queries DHT FindProviders for each chunk CID
-        _logger.LogDebug("AuditManifestReplicationAsync called for VM {VmId} — stub in Phase A", vmId);
+        // Phase D stub — LazysyncManager calls DHT FindProviders for each chunk CID
+        // and calls this indirectly by updating ConfirmedVersion on the manifest.
+        // This endpoint returns the last known audit state from MongoDB.
+        var manifest = await _dataStore.GetManifestAsync(vmId)
+            ?? _manifestCache.GetValueOrDefault(vmId);
 
-        _manifests.TryGetValue(vmId, out var manifest);
-        return Task.FromResult(new ReplicationAudit
+        return new ReplicationAudit
         {
-            VmId = vmId,
-            Version = manifest?.Version ?? 0,
-            TotalChunks = manifest?.ChangedBlockCids.Count ?? 0,
-            ChunksWithSufficientProviders = 0,
-            UnderReplicatedChunks = [],
-        });
+            VmId                         = vmId,
+            Version                      = manifest?.Version ?? 0,
+            TotalChunks                  = manifest?.BlockCount ?? 0,
+            ChunksWithSufficientProviders = manifest?.ConfirmedVersion == manifest?.Version
+                                            ? manifest?.BlockCount ?? 0
+                                            : 0,
+            UnderReplicatedChunks        = [],
+            // Phase D: LazysyncManager populates UnderReplicatedChunks from DHT audit
+        };
     }
 
     public Task<MigrationPlan> PlanMigrationAsync(
@@ -455,7 +577,7 @@ public class BlockStoreService : IBlockStoreService
             TotalCapacityBytes = blockStoreNodes.Sum(i => i.CapacityBytes),
             TotalUsedBytes = blockStoreNodes.Sum(i => i.UsedBytes),
             TotalBlocks = blockStoreNodes.Sum(i => i.BlockCount),
-            ManifestCount = _manifests.Count,
+            ManifestCount = (int)await _dataStore.GetManifestCountAsync(),
             AvgReplication = 0, // Phase D: compute from DHT provider records
             TotalReplicatedBytes = blockStoreNodes.Sum(i => i.UsedBytes),
         };

@@ -56,6 +56,8 @@ public class DataStore
         _database?.GetCollection<VmImage>("images");
     private IMongoCollection<VmPricingTier>? PricingTiersCollection =>
         _database?.GetCollection<VmPricingTier>("pricingTiers");
+    private IMongoCollection<ManifestRecord>? ManifestsCollection =>
+        _database?.GetCollection<ManifestRecord>("blockstore_manifests");
     private IMongoCollection<OrchestratorEvent>? EventsCollection =>
         _database?.GetCollection<OrchestratorEvent>("events");
     private IMongoCollection<Attestation>? AttestationsCollection =>
@@ -117,7 +119,8 @@ public class DataStore
             new CreateIndexModel<Node>(
                 Builders<Node>.IndexKeys.Ascending(n => n.Region).Ascending(n => n.Zone),
                 new CreateIndexOptions { Name = "idx_region_zone" })
-        };
+            };
+            
             TryCreateIndexesAsync(NodesCollection!, "nodes", nodeIndexes).Wait();
 
             // VMs indexes
@@ -143,7 +146,8 @@ public class DataStore
                     .Ascending(v => v.OwnerId)
                     .Descending(v => v.CreatedAt),
                 new CreateIndexOptions { Name = "idx_owner_created" })
-        };
+            };
+
             TryCreateIndexesAsync(VmsCollection!, "vms", vmIndexes).Wait();
 
             // Users indexes
@@ -162,7 +166,8 @@ public class DataStore
             new CreateIndexModel<User>(
                 Builders<User>.IndexKeys.Ascending(u => u.Status),
                 new CreateIndexOptions { Name = "idx_status" })
-        };
+            };
+
             TryCreateIndexesAsync(UsersCollection!, "users", userIndexes).Wait();
 
             // Events indexes
@@ -180,7 +185,8 @@ public class DataStore
             new CreateIndexModel<OrchestratorEvent>(
                 Builders<OrchestratorEvent>.IndexKeys.Ascending(e => e.UserId),
                 new CreateIndexOptions { Name = "idx_user" })
-        };
+            };
+
             TryCreateIndexesAsync(EventsCollection!, "events", eventIndexes).Wait();
 
             // Attestations indexes
@@ -197,7 +203,8 @@ public class DataStore
             new CreateIndexModel<Attestation>(
                 Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
                 new CreateIndexOptions { Name = "idx_success" })
-        };
+            };
+            
             TryCreateIndexesAsync(AttestationsCollection!, "attestations", attestationIndexes).Wait();
 
             // UsageRecords indexes
@@ -211,7 +218,7 @@ public class DataStore
             new CreateIndexModel<UsageRecord>(
                 Builders<UsageRecord>.IndexKeys.Ascending(r => r.VmId),
                 new CreateIndexOptions { Name = "idx_vm" })
-        };
+            };
             TryCreateIndexesAsync(UsageRecordsCollection!, "usageRecords", usageIndexes).Wait();
 
             // Template indexes
@@ -241,7 +248,7 @@ public class DataStore
             new CreateIndexModel<VmTemplate>(
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Visibility),
                 new CreateIndexOptions { Name = "idx_visibility" })
-        };
+            };
             TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Wait();
 
             // Category indexes
@@ -253,7 +260,8 @@ public class DataStore
             new CreateIndexModel<TemplateCategory>(
                 Builders<TemplateCategory>.IndexKeys.Ascending(c => c.DisplayOrder),
                 new CreateIndexOptions { Name = "idx_display_order" })
-        };
+            };
+            
             TryCreateIndexesAsync(CategoriesCollection!, "templateCategories", categoryIndexes).Wait();
 
             // MarketplaceReview indexes
@@ -276,8 +284,20 @@ public class DataStore
                     .Ascending(r => r.ResourceId)
                     .Ascending(r => r.ReviewerId),
                 new CreateIndexOptions { Name = "idx_unique_review", Unique = true })
-        };
+            };
+            
             TryCreateIndexesAsync(ReviewsCollection!, "marketplaceReviews", reviewIndexes).Wait();
+
+            var blockstoreManifestIndexes = new[]{
+                new CreateIndexModel<ManifestRecord>(
+                Builders<ManifestRecord>.IndexKeys.Ascending(m => m.VmId),
+                new CreateIndexOptions { Unique = true, Name = "manifest_vmId_unique" }),
+                new CreateIndexModel<ManifestRecord>(
+                Builders<ManifestRecord>.IndexKeys.Ascending(m => m.RegisteredAt),
+                new CreateIndexOptions { Name = "manifest_registeredAt" })
+            };
+
+            TryCreateIndexesAsync(ManifestsCollection!, "blockstoreManifests", blockstoreManifestIndexes).Wait();
 
             _logger.LogInformation("✓ MongoDB indexes created successfully");
         }
@@ -570,6 +590,112 @@ public class DataStore
         return await VmsCollection!
             .Find(vm => vm.NodeId == nodeId && vm.Status != VmStatus.Deleted)
             .ToListAsync();
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Manifest persistence (BlockStore lazysync state)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Get a manifest record by VM ID. Returns null if not found.
+    /// </summary>
+    public async Task<ManifestRecord?> GetManifestAsync(string vmId)
+    {
+        if (!_useMongoDB) return null;
+
+        try
+        {
+            return await ManifestsCollection!
+                .Find(m => m.VmId == vmId)
+                .FirstOrDefaultAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get manifest for VM {VmId}", vmId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Upsert a manifest record (insert or replace by VmId).
+    /// </summary>
+    public async Task SaveManifestAsync(ManifestRecord manifest)
+    {
+        if (!_useMongoDB) return;
+
+        try
+        {
+            await RetryMongoOperationAsync(async () =>
+            {
+                await ManifestsCollection!.ReplaceOneAsync(
+                    m => m.VmId == manifest.VmId,
+                    manifest,
+                    new ReplaceOptions { IsUpsert = true });
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save manifest for VM {VmId}", manifest.VmId);
+        }
+    }
+
+    /// <summary>
+    /// Delete a manifest record by VM ID (called when VM is deleted).
+    /// </summary>
+    public async Task DeleteManifestAsync(string vmId)
+    {
+        if (!_useMongoDB) return;
+
+        try
+        {
+            await ManifestsCollection!.DeleteOneAsync(m => m.VmId == vmId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete manifest for VM {VmId}", vmId);
+        }
+    }
+
+    /// <summary>
+    /// Get all manifests for VMs with pending replication audit.
+    /// Returns manifests where currentVersion > confirmedVersion, ordered by oldest first.
+    /// Used by LazysyncManager audit loop.
+    /// </summary>
+    public async Task<List<ManifestRecord>> GetPendingAuditManifestsAsync(int limit = 100)
+    {
+        if (!_useMongoDB) return [];
+
+        try
+        {
+            return await ManifestsCollection!
+                .Find(m => m.Version > m.ConfirmedVersion && m.ReplicationFactor > 0)
+                .SortBy(m => m.RegisteredAt)
+                .Limit(limit)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get pending audit manifests");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Get all manifest records (for network stats).
+    /// </summary>
+    public async Task<long> GetManifestCountAsync()
+    {
+        if (!_useMongoDB) return 0;
+
+        try
+        {
+            return await ManifestsCollection!.CountDocumentsAsync(FilterDefinition<ManifestRecord>.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to count manifests");
+            return 0;
+        }
     }
 
     /// <summary>

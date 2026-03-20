@@ -2,6 +2,7 @@ using MongoDB.Bson.Serialization.Attributes;
 using Orchestrator.Services;
 using Orchestrator.Models.Payment;
 using System.Text.Json.Serialization;
+using Orchestrator.Services;  // BlockSizeConstants
 
 namespace Orchestrator.Models;
 
@@ -119,13 +120,25 @@ public class VirtualMachine
     // =========================================================================
 
     /// <summary>
-    /// Actual overlay size in bytes as of the last lazysync cycle.
-    /// Used for accurate storage replication billing.
+    /// Number of blocks in the current confirmed manifest.
+    /// Updated by LazysyncManager after each successful audit cycle.
     /// Null until the first lazysync cycle completes.
-    /// Falls back to DiskBytes * 0.05 (conservative 5% estimate) for billing
-    /// until the real measurement is available.
+    ///
+    /// Used for exact block-count billing:
+    ///   cost = CurrentManifestBlockCount × (CurrentManifestBlockSizeKb / 1024)
+    ///          × ReplicationFactor × StoragePerMbPerHour
+    ///
+    /// Falls back to estimate before first cycle:
+    ///   (DiskBytes × 0.05) / (BlockSizeKb × 1024)
     /// </summary>
-    public long? LastKnownOverlayBytes { get; set; }
+    public int? CurrentManifestBlockCount { get; set; }
+
+    /// <summary>
+    /// Block size in KB for this VM's manifest type.
+    /// Set from ManifestRecord.BlockSizeKb on first lazysync cycle.
+    /// Defaults to 1024 (1 MB, VmOverlay) for the billing estimate fallback.
+    /// </summary>
+    public int CurrentManifestBlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
 
     /// <summary>
     /// When the last successful lazysync cycle completed for this VM.
