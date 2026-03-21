@@ -71,10 +71,10 @@ public sealed class ObligationEligibility : IObligationEligibility
         // ── Physical cores ───────────────────────────────────────────────
         // Compare against physical cores, not compute points — the relay VM
         // needs real CPU headroom, not a benchmark-derived score.
-        var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
-        if (physicalCores < RelayMinComputePoints)
+        var totalComputePoints = node.TotalResources.ComputePoints;
+        if (totalComputePoints < RelayMinComputePoints)
             failures.Add(
-                $"insufficient CPU: {physicalCores} physical cores " +
+                $"insufficient CPU: {totalComputePoints} physical cores " +
                 $"(minimum {RelayMinComputePoints})");
 
         // ── RAM ──────────────────────────────────────────────────────────
