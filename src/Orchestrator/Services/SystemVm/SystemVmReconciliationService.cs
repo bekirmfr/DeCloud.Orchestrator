@@ -26,6 +26,7 @@ namespace Orchestrator.Services.SystemVm;
 public class SystemVmReconciliationService : BackgroundService
 {
     private readonly DataStore _dataStore;
+    private readonly IObligationEligibility _eligibility;
     private readonly IRelayNodeService _relayNodeService;
     private readonly IDhtNodeService _dhtNodeService;
     private readonly IBlockStoreService _blockStoreService;
@@ -36,6 +37,7 @@ public class SystemVmReconciliationService : BackgroundService
 
     public SystemVmReconciliationService(
         DataStore dataStore,
+        IObligationEligibility eligibility,
         IRelayNodeService relayNodeService,
         IDhtNodeService dhtNodeService,
         IBlockStoreService blockStoreService,
@@ -43,6 +45,7 @@ public class SystemVmReconciliationService : BackgroundService
         ILogger<SystemVmReconciliationService> logger)
     {
         _dataStore = dataStore;
+        _eligibility = eligibility;
         _relayNodeService = relayNodeService;
         _dhtNodeService = dhtNodeService;
         _blockStoreService = blockStoreService;
@@ -430,7 +433,7 @@ public class SystemVmReconciliationService : BackgroundService
     /// </summary>
     private async Task EnsureObligationsAsync(Node node, CancellationToken ct)
     {
-        var requiredRoles = ObligationEligibility.ComputeObligations(node);
+        var requiredRoles = _eligibility.ComputeObligations(node);
         var existingRoles = new HashSet<SystemVmRole>(
             node.SystemVmObligations.Select(o => o.Role));
 

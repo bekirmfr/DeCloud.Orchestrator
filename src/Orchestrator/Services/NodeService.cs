@@ -3,16 +3,13 @@ using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
-using Orchestrator.Services;
 using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
-using Org.BouncyCastle.Asn1.Ocsp;
 using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Orchestrator.Services;
 
@@ -74,6 +71,7 @@ public class NodeService : INodeService
     private readonly ILogger<NodeService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
+    private readonly IObligationEligibility _eligibility;
     private readonly IRelayNodeService _relayNodeService;
     private readonly IDhtNodeService _dhtNodeService;
     private readonly IServiceProvider _serviceProvider;
@@ -91,6 +89,7 @@ public class NodeService : INodeService
         ILogger<NodeService> logger,
         ILoggerFactory loggerFactory,
         HttpClient httpClient,
+        IObligationEligibility eligibility,
         IRelayNodeService relayNodeService,
         IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
@@ -105,6 +104,7 @@ public class NodeService : INodeService
         _logger = logger;
         _loggerFactory = loggerFactory;
         _httpClient = httpClient;
+        _eligibility = eligibility;
         _relayNodeService = relayNodeService;
         _dhtNodeService = dhtNodeService;
         _serviceProvider = serviceProvider;
@@ -351,7 +351,7 @@ public class NodeService : INodeService
         // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
         // based on its capabilities. The reconciliation loop converges toward it.
 
-        var requiredRoles = ObligationEligibility.ComputeObligations(node);
+        var requiredRoles = _eligibility.ComputeObligations(node);
 
         var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
         if (node.SystemVmObligations.Count == 0)
