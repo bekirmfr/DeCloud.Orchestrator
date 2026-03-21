@@ -1,5 +1,6 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.SystemVm;
 
 namespace Orchestrator.Services;
 
@@ -51,12 +52,8 @@ public class RelayNodeService : IRelayNodeService
     private readonly IWireGuardManager _wireGuardManager;
     private readonly ICentralIngressService _ingressService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IObligationEligibility _eligibility;
     private readonly ILogger<RelayNodeService> _logger;
-
-    // Criteria for relay eligibility
-    private const int MIN_CORES_FOR_RELAY = 2;
-    private const long MIN_RAM_FOR_RELAY = 4L * 1024 * 1024 * 1024; // 32GB
-    private const long MIN_BANDWIDTH_FOR_RELAY = 50L * 1024 * 1024; // 100 Mbps
 
     public RelayNodeService(
         DataStore dataStore,
@@ -64,6 +61,7 @@ public class RelayNodeService : IRelayNodeService
         IWireGuardManager wireGuardManager,
         ICentralIngressService ingressService,
         IHttpClientFactory httpClientFactory,
+        IObligationEligibility eligibility,
         ILogger<RelayNodeService> logger)
     {
         _dataStore = dataStore;
@@ -71,6 +69,7 @@ public class RelayNodeService : IRelayNodeService
         _wireGuardManager = wireGuardManager;
         _ingressService = ingressService;
         _httpClientFactory = httpClientFactory;
+        _eligibility = eligibility;
         _logger = logger;
     }
 
@@ -79,47 +78,22 @@ public class RelayNodeService : IRelayNodeService
     /// </summary>
     public bool IsEligibleForRelay(Node node)
     {
-        // Must have public IP (NAT type = None)
-        if (node.HardwareInventory.Network.NatType != NatType.None)
-        {
-            _logger.LogDebug(
-                "Node {NodeId} not eligible for relay: NAT type = {NatType}",
-                node.Id, node.HardwareInventory.Network.NatType);
-            return false;
-        }
+        var result = _eligibility.CheckRelay(node);
 
-        // Must have sufficient resources
-        if (node.TotalResources.ComputePoints < MIN_CORES_FOR_RELAY)
+        if (result.IsEligible)
         {
-            _logger.LogDebug(
-                "Node {NodeId} not eligible for relay: insufficient CPU",
+            _logger.LogInformation(
+                "Node {NodeId} is ELIGIBLE for relay service",
                 node.Id);
-            return false;
         }
-
-        if (node.HardwareInventory.Memory.TotalBytes < MIN_RAM_FOR_RELAY)
+        else
         {
             _logger.LogDebug(
-                "Node {NodeId} not eligible for relay: insufficient RAM",
-                node.Id);
-            return false;
+                "Node {NodeId} not eligible for relay: {Reasons}",
+                node.Id, string.Join("; ", result.FailureReasons));
         }
 
-        // Check bandwidth if available
-        var bandwidth = node.HardwareInventory.Network.BandwidthBitsPerSecond;
-        if (bandwidth.HasValue && bandwidth.Value < MIN_BANDWIDTH_FOR_RELAY)
-        {
-            _logger.LogDebug(
-                "Node {NodeId} not eligible for relay: insufficient bandwidth",
-                node.Id);
-            return false;
-        }
-
-        _logger.LogInformation(
-            "Node {NodeId} is ELIGIBLE for relay service",
-            node.Id);
-
-        return true;
+        return result.IsEligible;
     }
 
     /// <summary>

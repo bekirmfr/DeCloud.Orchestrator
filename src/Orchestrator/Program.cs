@@ -3,7 +3,6 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Driver;
 using Orchestrator.Background;
-using Orchestrator.Services;
 using Orchestrator.Extensions;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
@@ -12,6 +11,8 @@ using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -160,6 +161,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = true;
     options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
+
+builder.Services.AddSingleton<IObligationEligibility, ObligationEligibility>();
 
 // =====================================================
 // System VM Reconciliation (declarative, dependency-aware deployment)
