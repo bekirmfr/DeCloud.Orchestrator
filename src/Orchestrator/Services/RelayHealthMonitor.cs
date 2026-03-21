@@ -346,26 +346,23 @@ public class RelayHealthMonitor : BackgroundService
             // STEP 1: Get actual peer public keys from relay VM
             // ========================================
             var actualPeerKeys = new HashSet<string>();
-
             foreach (var peer in peersArray.EnumerateArray())
             {
+                // relay-api v3.0.0 returns peer_type for each peer;
+                // only cgnat-node peers count toward CGNAT reconciliation
+                var peerType = peer.TryGetProperty("peer_type", out var pt)
+                    ? pt.GetString()
+                    : "cgnat-node"; // safe default for old relay-api without peer_type
+
+                if (peerType != "cgnat-node")
+                    continue;
+
                 if (peer.TryGetProperty("public_key", out var pubKeyProp))
                 {
                     var peerKey = pubKeyProp.GetString();
                     if (!string.IsNullOrEmpty(peerKey))
-                    {
                         actualPeerKeys.Add(peerKey);
-                    }
                 }
-            }
-
-            // Remove orchestrator's peer (always connected, not a CGNAT node)
-            // Note: You may need to load this from config
-            var orchestratorConfig = actualPeerKeys.FirstOrDefault(k =>
-                k.StartsWith("BL+") || k.Length > 40); // Adjust based on your setup
-            if (orchestratorConfig != null)
-            {
-                actualPeerKeys.Remove(orchestratorConfig);
             }
 
             _logger.LogInformation(

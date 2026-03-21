@@ -73,6 +73,27 @@ public class DhtController : ControllerBase
         var dhtObligation = node.SystemVmObligations
             .FirstOrDefault(o => o.Role == SystemVmRole.Dht && o.VmId == request.VmId);
 
+
+        // Self-heal: VmId was lost (failed save, retry reset) but VM is live.
+        // Find a Pending DHT obligation with no VmId and adopt this VM into it.
+        // Step 5 will verify the token — no need to check it here.
+        if (dhtObligation == null)
+        {
+            dhtObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.Dht
+                                  && o.VmId == null
+                                  && !string.IsNullOrEmpty(o.AuthToken));
+
+            if (dhtObligation != null)
+            {
+                _logger.LogInformation(
+                    "DHT join self-heal: adopting VM {VmId} into pending DHT obligation on node {NodeId}",
+                    request.VmId, request.NodeId);
+                dhtObligation.VmId = request.VmId;
+                dhtObligation.Status = SystemVmStatus.Deploying;
+            }
+        }
+
         if (dhtObligation == null)
         {
             _logger.LogWarning(
