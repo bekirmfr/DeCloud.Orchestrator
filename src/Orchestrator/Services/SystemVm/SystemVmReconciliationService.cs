@@ -706,11 +706,11 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
-        if (vm.Status == VmStatus.Error)
+        if (vm.Status is VmStatus.Error or VmStatus.Deleted)
         {
             _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} is in Error state — resetting to Pending",
-                obligation.Role, obligation.VmId, node.Id);
+                "{Role} VM {VmId} on node {NodeId} is in {Status} state — resetting to Pending",
+                obligation.Role, obligation.VmId, node.Id, vm.Status);
             ResetObligation(node, obligation);
             return;
         }
