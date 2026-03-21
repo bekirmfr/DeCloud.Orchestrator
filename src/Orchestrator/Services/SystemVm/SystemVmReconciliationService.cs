@@ -433,6 +433,17 @@ public class SystemVmReconciliationService : BackgroundService
     /// </summary>
     private async Task EnsureObligationsAsync(Node node, CancellationToken ct)
     {
+        // Skip nodes registered within the last 60 seconds — registration
+        // seeds and reconciles obligations atomically. Racing with it causes
+        // duplicate system VM deployments.
+        if ((DateTime.UtcNow - node.RegisteredAt).TotalSeconds < 60)
+        {
+            _logger.LogDebug(
+                "Skipping EnsureObligations for recently registered node {NodeId} (age: {Age:F0}s)",
+                node.Id, (DateTime.UtcNow - node.RegisteredAt).TotalSeconds);
+            return;
+        }
+
         var requiredRoles = _eligibility.ComputeObligations(node);
         var existingRoles = new HashSet<SystemVmRole>(
             node.SystemVmObligations.Select(o => o.Role));

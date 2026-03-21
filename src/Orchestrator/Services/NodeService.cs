@@ -79,6 +79,7 @@ public class NodeService : INodeService
     private readonly IConfiguration _configuration;
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _registrationLocks = new();
 
     public NodeService(
         DataStore dataStore,
@@ -290,116 +291,126 @@ public class NodeService : INodeService
             node.PerformanceEvaluation.HighestTier,
             totalCapacity.TotalComputePoints);
 
-        // =====================================================
-        // Generate and save API key
-        // =====================================================
-        node.ApiKeyHash = apiKeyHash;
-        node.ApiKeyCreatedAt = DateTime.UtcNow;
-        node.ApiKeyLastUsedAt = null;
-
-        await _dataStore.SaveNodeAsync(node);
-
-        _logger.LogInformation(
-            "✓ Node registered successfully: {NodeId}",
-            node.Id);
-
-        // =====================================================
-        // STEP 6a: CGNAT relay assignment (BEFORE system VM deployment)
-        // =====================================================
-        // CGNAT nodes need to be assigned to an *existing* relay on another node.
-        // This MUST happen before DHT deployment so GetAdvertiseIp() returns the
-        // WireGuard tunnel IP instead of the unreachable public IP. Without this,
-        // the DHT VM gets the wrong dht-advertise-ip label and other nodes can't
-        // connect to it via the overlay network.
-
-        if (node.HardwareInventory.Network.NatType != NatType.None)
+        var registrationLock = _registrationLocks.GetOrAdd(nodeId, _ => new SemaphoreSlim(1, 1));
+        await registrationLock.WaitAsync(ct);
+        try
         {
-            if (node.CgnatInfo == null)
+
+            // =====================================================
+            // Generate and save API key
+            // =====================================================
+            node.ApiKeyHash = apiKeyHash;
+            node.ApiKeyCreatedAt = DateTime.UtcNow;
+            node.ApiKeyLastUsedAt = null;
+
+            await _dataStore.SaveNodeAsync(node);
+
+            _logger.LogInformation(
+                "✓ Node registered successfully: {NodeId}",
+                node.Id);
+
+            // =====================================================
+            // STEP 6a: CGNAT relay assignment (BEFORE system VM deployment)
+            // =====================================================
+            // CGNAT nodes need to be assigned to an *existing* relay on another node.
+            // This MUST happen before DHT deployment so GetAdvertiseIp() returns the
+            // WireGuard tunnel IP instead of the unreachable public IP. Without this,
+            // the DHT VM gets the wrong dht-advertise-ip label and other nodes can't
+            // connect to it via the overlay network.
+
+            if (node.HardwareInventory.Network.NatType != NatType.None)
             {
-                _logger.LogInformation(
-                "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
-                node.Id, node.HardwareInventory.Network.NatType);
-
-                var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
-
-                if (relay != null)
+                if (node.CgnatInfo == null)
                 {
-                    await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                    _logger.LogInformation(
+                    "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
+                    node.Id, node.HardwareInventory.Network.NatType);
+
+                    var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+
+                    if (relay != null)
+                    {
+                        await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "No available relay found for CGNAT node {NodeId}",
+                            node.Id);
+                    }
                 }
                 else
                 {
-                    _logger.LogWarning(
-                        "No available relay found for CGNAT node {NodeId}",
-                        node.Id);
+                    _logger.LogInformation(
+                    "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
+                    node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
+
+                    // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
+
+
                 }
             }
-            else
+
+            // =====================================================
+            // STEP 6b: Compute system VM obligations & deploy what's ready
+            // =====================================================
+            // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
+            // based on its capabilities. The reconciliation loop converges toward it.
+
+            var requiredRoles = _eligibility.ComputeObligations(node);
+
+            var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
+            if (node.SystemVmObligations.Count == 0)
             {
-                _logger.LogInformation(
-                "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
-                node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
-
-                // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
-
-
-            }
-        }
-
-        // =====================================================
-        // STEP 6b: Compute system VM obligations & deploy what's ready
-        // =====================================================
-        // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
-        // based on its capabilities. The reconciliation loop converges toward it.
-
-        var requiredRoles = _eligibility.ComputeObligations(node);
-
-        var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
-        if (node.SystemVmObligations.Count == 0)
-        {
-            // Fresh registration — seed all required obligations as Pending
-            node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
-            {
-                Role = role,
-                Status = SystemVmStatus.Pending
-            }).ToList();
-        }
-        else
-        {
-            // Re-registration — preserve existing obligations but backfill any
-            // newly required roles (e.g., Relay re-enabled after initial registration).
-            // Without this, new roles only get added by the background loop's
-            // EnsureObligationsAsync (which ReconcileNodeAsync does NOT call).
-            var existingRoles = new HashSet<SystemVmRole>(
-                node.SystemVmObligations.Select(o => o.Role));
-
-            foreach (var role in requiredRoles.Where(r => !existingRoles.Contains(r)))
-            {
-                node.SystemVmObligations.Add(new SystemVmObligation
+                // Fresh registration — seed all required obligations as Pending
+                node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
                 {
                     Role = role,
                     Status = SystemVmStatus.Pending
-                });
-
-                _logger.LogInformation(
-                    "Backfilled {Role} obligation on node {NodeId} during re-registration",
-                    role, node.Id);
+                }).ToList();
             }
+            else
+            {
+                // Re-registration — preserve existing obligations but backfill any
+                // newly required roles (e.g., Relay re-enabled after initial registration).
+                // Without this, new roles only get added by the background loop's
+                // EnsureObligationsAsync (which ReconcileNodeAsync does NOT call).
+                var existingRoles = new HashSet<SystemVmRole>(
+                    node.SystemVmObligations.Select(o => o.Role));
+
+                foreach (var role in requiredRoles.Where(r => !existingRoles.Contains(r)))
+                {
+                    node.SystemVmObligations.Add(new SystemVmObligation
+                    {
+                        Role = role,
+                        Status = SystemVmStatus.Pending
+                    });
+
+                    _logger.LogInformation(
+                        "Backfilled {Role} obligation on node {NodeId} during re-registration",
+                        role, node.Id);
+                }
+            }
+
+            _logger.LogInformation(
+                "Node {NodeId} obligations computed: [{Roles}]",
+                node.Id, string.Join(", ", requiredRoles));
+
+            // Deploy obligations with no dependencies immediately (e.g., DHT).
+            // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
+            // the background SystemVmReconciliationService picks up Pending obligations
+            // from the datastore and deploys duplicates while we're about to deploy here.
+            if (reconciler != null)
+            {
+                await reconciler.ReconcileNodeAsync(node);
+            }
+
+            await _dataStore.SaveNodeAsync(node);
         }
-
-        _logger.LogInformation(
-            "Node {NodeId} obligations computed: [{Roles}]",
-            node.Id, string.Join(", ", requiredRoles));
-
-        // Deploy obligations with no dependencies immediately (e.g., DHT).
-        // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
-        // the background SystemVmReconciliationService picks up Pending obligations
-        // from the datastore and deploys duplicates while we're about to deploy here.
-        if (reconciler != null)
+        finally
         {
-            await reconciler.ReconcileNodeAsync(node);
+            registrationLock.Release();
         }
-
-        await _dataStore.SaveNodeAsync(node);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {
