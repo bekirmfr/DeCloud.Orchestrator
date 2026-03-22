@@ -611,10 +611,45 @@ public async Task<ManifestRecord> RegisterManifestAsync(
                 relayNode.RelayInfo.Status == RelayStatus.Active)
             {
                 var relayTunnelIp = relayNode.RelayInfo.TunnelIp;
-                labels["wg-tunnel-ip"] = $"{node.CgnatInfo.TunnelIp}/24";
-                labels["wg-relay-endpoint"] = $"{relayNode.PublicIp}:51820";
-                labels["wg-relay-pubkey"] = relayNode.RelayInfo.WireGuardPublicKey ?? "";
-                labels["wg-relay-api"] = $"http://{relayTunnelIp}:8080/api/relay";
+
+                // Derive a unique tunnel IP for the BlockStore VM from the host's
+                // last octet — same pattern as DhtNodeService (host .2 → DHT .202).
+                // BlockStore uses offset 210: host .2 → BlockStore .212
+                // This gives the VM its own peer slot in the relay's WG table,
+                // making port 5001 directly routable via the mesh without DNAT.
+                //
+                // Offset summary (relay subnet 10.20.{subnet}.x):
+                //   .254       relay gateway
+                //   .199       DHT VM on relay node
+                //   .202       BlockStore VM on relay node
+                //   .200+N     DHT VM on CGNAT node (N = host last octet)
+                //   .210+N     BlockStore VM on CGNAT node (N = host last octet)
+                var hostTunnelIp = node.CgnatInfo.TunnelIp;
+                var parts = hostTunnelIp.Split('.');
+                if (parts.Length == 4 && int.TryParse(parts[3], out var hostOctet))
+                {
+                    var bsOctet = 210 + hostOctet;
+                    if (bsOctet <= 253)
+                    {
+                        var bsTunnelIp = $"{parts[0]}.{parts[1]}.{parts[2]}.{bsOctet}";
+                        labels["wg-tunnel-ip"] = $"{bsTunnelIp}/24";
+                        labels["wg-relay-endpoint"] = $"{relayNode.PublicIp}:51820";
+                        labels["wg-relay-pubkey"] = relayNode.RelayInfo.WireGuardPublicKey ?? "";
+                        labels["wg-relay-api"] = $"http://{relayTunnelIp}:8080/api/relay";
+
+                        _logger.LogInformation(
+                            "BlockStore VM on CGNAT node {NodeId}: tunnel IP {TunnelIp} " +
+                            "(derived from host {HostIp})",
+                            node.Id, bsTunnelIp, hostTunnelIp);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "BlockStore VM on CGNAT node {NodeId}: host octet {HostOctet} " +
+                            "produces BS octet {BsOctet} (>253) — skipping WG mesh enrollment",
+                            node.Id, hostOctet, bsOctet);
+                    }
+                }
             }
 
             return labels;
