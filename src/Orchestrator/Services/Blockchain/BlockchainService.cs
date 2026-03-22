@@ -329,6 +329,82 @@ public class BlockchainService : IBlockchainService
         }
     }
 
+    /// <summary>
+    /// Execute settleCycle() — atomic compute + storage settlement.
+    /// Calls the extended DeCloudEscrow contract in a single transaction.
+    /// </summary>
+    public async Task<string> ExecuteSettleCycleAsync(SettleCycleRequest request)
+    {
+        try
+        {
+            _logger.LogInformation(
+                "Executing settleCycle: {VmCount} VMs, {StorageCount} storage nodes, cycleId={CycleId}",
+                request.VmIds.Count, request.StorageNodeWallets.Count, request.CycleId);
+
+            var chainId = BigInteger.Parse(_config.ChainId);
+            var account = new Account(_config.OrchestratorPrivateKey, chainId);
+            var web3 = new Web3(account, _config.RpcUrl);
+
+            var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
+            var cycleFunction = contract.GetFunction("settleCycle");
+
+            // Convert decimals → wei (6 decimals for USDC)
+            var computeAmountsWei = request.ComputeAmounts
+                .Select(a => Web3.Convert.ToWei(a, 6))
+                .ToArray();
+
+            var storageBytesArr = request.StorageNodeUsedBytes
+                .Select(b => new BigInteger(b))
+                .ToArray();
+
+            var gas = await cycleFunction.EstimateGasAsync(
+                from: account.Address,
+                gas: null,
+                value: null,
+                request.UserWallets.ToArray(),
+                request.ComputeNodeWallets.ToArray(),
+                computeAmountsWei,
+                request.BlockCounts.Select(b => (BigInteger)b).ToArray(),
+                request.BlockSizeKbs.Select(b => (BigInteger)b).ToArray(),
+                request.ReplicationFactors.Select(r => (BigInteger)r).ToArray(),
+                request.VmIds.ToArray(),
+                request.StorageNodeWallets.ToArray(),
+                storageBytesArr,
+                request.CycleId);
+
+            var receipt = await cycleFunction.SendTransactionAndWaitForReceiptAsync(
+                from: account.Address,
+                gas: gas,
+                gasPrice: null,
+                value: null,
+                receiptRequestCancellationToken: null,
+                request.UserWallets.ToArray(),
+                request.ComputeNodeWallets.ToArray(),
+                computeAmountsWei,
+                request.BlockCounts.Select(b => (BigInteger)b).ToArray(),
+                request.BlockSizeKbs.Select(b => (BigInteger)b).ToArray(),
+                request.ReplicationFactors.Select(r => (BigInteger)r).ToArray(),
+                request.VmIds.ToArray(),
+                request.StorageNodeWallets.ToArray(),
+                storageBytesArr,
+                request.CycleId);
+
+            if (receipt.Status?.Value != 1)
+                throw new Exception($"settleCycle reverted: {receipt.TransactionHash}");
+
+            _logger.LogInformation(
+                "✓ settleCycle executed: tx={TxHash}, gasUsed={Gas}",
+                receipt.TransactionHash, receipt.GasUsed);
+
+            return receipt.TransactionHash;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "settleCycle transaction failed");
+            throw new Exception($"settleCycle failed: {ex.Message}", ex);
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ESCROW CONTRACT ABI (with settlement methods)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -960,6 +1036,48 @@ public class BlockchainService : IBlockchainService
 		],
 		""stateMutability"": ""view"",
 		""type"": ""function""
+	},
+	{
+		""inputs"": [
+			{""internalType"": ""address[]"", ""name"": ""users"",             ""type"": ""address[]""},
+			{""internalType"": ""address[]"", ""name"": ""computeNodes"",      ""type"": ""address[]""},
+			{""internalType"": ""uint256[]"", ""name"": ""computeAmounts"",    ""type"": ""uint256[]""},
+			{""internalType"": ""uint256[]"", ""name"": ""blockCounts"",       ""type"": ""uint256[]""},
+			{""internalType"": ""uint256[]"", ""name"": ""blockSizeKbs"",      ""type"": ""uint256[]""},
+			{""internalType"": ""uint256[]"", ""name"": ""replicationFactors"",""type"": ""uint256[]""},
+			{""internalType"": ""string[]"",  ""name"": ""vmIds"",             ""type"": ""string[]""},
+			{""internalType"": ""address[]"", ""name"": ""storageNodes"",      ""type"": ""address[]""},
+			{""internalType"": ""uint256[]"", ""name"": ""storageBytes"",      ""type"": ""uint256[]""},
+			{""internalType"": ""string"",    ""name"": ""cycleId"",           ""type"": ""string""}
+		],
+		""name"": ""settleCycle"",
+		""outputs"": [],
+		""stateMutability"": ""nonpayable"",
+		""type"": ""function""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{""indexed"": true,  ""internalType"": ""address"", ""name"": ""user"",             ""type"": ""address""},
+			{""indexed"": true,  ""internalType"": ""string"",  ""name"": ""vmId"",             ""type"": ""string""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""storageAmount"",    ""type"": ""uint256""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""platformFee"",      ""type"": ""uint256""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""poolContribution"", ""type"": ""uint256""}
+		],
+		""name"": ""StorageCollected"",
+		""type"": ""event""
+	},
+	{
+		""anonymous"": false,
+		""inputs"": [
+			{""indexed"": true,  ""internalType"": ""address"", ""name"": ""storageNode"",        ""type"": ""address""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""rewardAmount"",       ""type"": ""uint256""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""contributedBytes"",   ""type"": ""uint256""},
+			{""indexed"": false, ""internalType"": ""uint256"", ""name"": ""totalNetworkBytes"",  ""type"": ""uint256""},
+			{""indexed"": false, ""internalType"": ""string"",  ""name"": ""cycleId"",            ""type"": ""string""}
+		],
+		""name"": ""StorageRewarded"",
+		""type"": ""event""
 	}
 ]";
 }

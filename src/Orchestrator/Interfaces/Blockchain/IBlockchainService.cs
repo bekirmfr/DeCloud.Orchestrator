@@ -77,4 +77,11 @@ public interface IBlockchainService
     /// <param name="settlements">List of settlements to execute</param>
     /// <returns>Transaction hash</returns>
     Task<string> ExecuteBatchSettlementAsync(List<SettlementTransaction> settlements);
+
+    /// <summary>
+    /// Execute atomic settleCycle() — bills compute + storage in one transaction.
+    /// Replaces batchReportUsage() for VMs with replicationFactor > 0.
+    /// Storage pool is distributed to BlockStore operators proportional to UsedBytes.
+    /// </summary>
+    Task<string> ExecuteSettleCycleAsync(SettleCycleRequest request);
 }

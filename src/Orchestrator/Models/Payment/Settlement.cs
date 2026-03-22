@@ -46,6 +46,30 @@
     }
 
     /// <summary>
+    /// Input for settleCycle() — atomic compute + storage settlement.
+    /// Per-VM arrays must be parallel (same index = same VM).
+    /// Per-storage-node arrays are independent.
+    /// </summary>
+    public class SettleCycleRequest
+    {
+        // Per-VM arrays (parallel)
+        public List<string> UserWallets { get; set; } = [];
+        public List<string> ComputeNodeWallets { get; set; } = [];
+        public List<decimal> ComputeAmounts { get; set; } = [];
+        public List<int> BlockCounts { get; set; } = [];
+        public List<int> BlockSizeKbs { get; set; } = [];
+        public List<int> ReplicationFactors { get; set; } = [];
+        public List<string> VmIds { get; set; } = [];
+
+        // Per-storage-node arrays (parallel)
+        public List<string> StorageNodeWallets { get; set; } = [];
+        public List<long> StorageNodeUsedBytes { get; set; } = [];
+
+        // Cycle identifier for on-chain auditability
+        public string CycleId { get; set; } = DateTime.UtcNow.ToString("O");
+    }
+
+    /// <summary>
     /// Batch of usage ready for settlement
     /// </summary>
     public class SettlementBatch

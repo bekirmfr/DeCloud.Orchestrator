@@ -1,6 +1,7 @@
 ﻿using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
+using Orchestrator.Persistence;
 
 namespace Orchestrator.Services.Settlement;
 
@@ -123,27 +124,43 @@ public class OnChainSettlementService : BackgroundService
         IBlockchainService blockchainService,
         CancellationToken ct)
     {
-        // Convert to settlement transactions
-        var transactions = chunk.Select(b => new SettlementTransaction
-        {
-            UserWallet = b.UserWallet,
-            NodeWallet = b.NodeWallet,
-            Amount = b.TotalAmount,
-            VmId = b.VmId
-        }).ToList();
-
-        var chunkTotal = transactions.Sum(t => t.Amount);
+        var chunkTotal = chunk.Sum(b => b.TotalAmount);
 
         _logger.LogInformation(
-            "Executing batch settlement: {Count} settlements, {Total} USDC",
-            transactions.Count, chunkTotal);
+            "Executing settlement: {Count} settlements, {Total} USDC",
+            chunk.Length, chunkTotal);
 
-        // Execute on blockchain
-        var txHash = await blockchainService.ExecuteBatchSettlementAsync(transactions);
+        // Use settleCycle() when any VM in the chunk has replication enabled.
+        // settleCycle() is strictly better — it atomically handles both compute
+        // billing and storage pool distribution in one transaction.
+        // Fall back to batchReportUsage() only for pure-ephemeral batches.
+        string txHash;
+
+        using var scope = _serviceProvider.CreateScope();
+        var dataStore = scope.ServiceProvider.GetRequiredService<DataStore>();
+
+        var cycleRequest = await BuildSettleCycleRequestAsync(chunk, dataStore, ct);
+
+        if (cycleRequest.VmIds.Count > 0)
+        {
+            txHash = await blockchainService.ExecuteSettleCycleAsync(cycleRequest);
+        }
+        else
+        {
+            // Fallback: all VMs ephemeral or manifest data unavailable
+            var transactions = chunk.Select(b => new SettlementTransaction
+            {
+                UserWallet = b.UserWallet,
+                NodeWallet = b.NodeWallet,
+                Amount = b.TotalAmount,
+                VmId = b.VmId
+            }).ToList();
+            txHash = await blockchainService.ExecuteBatchSettlementAsync(transactions);
+        }
 
         _logger.LogInformation(
             "✓ Batch settlement executed: tx={TxHash}, {Count} settlements",
-            txHash[..16] + "...", transactions.Count);
+            txHash[..16] + "...", chunk.Length);
 
         // Mark all usage records in this batch as settled
         var allRecordIds = chunk.SelectMany(b => b.UsageRecordIds).ToList();
@@ -160,5 +177,44 @@ public class OnChainSettlementService : BackgroundService
                 "📊 Settled for node {NodeId}: {Amount} USDC ({NodeShare} to node, {PlatformFee} platform fee)",
                 batch.NodeId, batch.TotalAmount, batch.NodeShare, batch.PlatformFee);
         }
+    }
+
+    private async Task<SettleCycleRequest> BuildSettleCycleRequestAsync(
+        SettlementBatch[] chunk,
+        DataStore dataStore,
+        CancellationToken ct)
+    {
+        var request = new SettleCycleRequest
+        {
+            CycleId = DateTime.UtcNow.ToString("O")
+        };
+
+        foreach (var batch in chunk)
+        {
+            var manifest = await dataStore.GetManifestAsync(batch.VmId);
+
+            request.UserWallets.Add(batch.UserWallet);
+            request.ComputeNodeWallets.Add(batch.NodeWallet);
+            request.ComputeAmounts.Add(batch.TotalAmount);
+            request.VmIds.Add(batch.VmId);
+
+            // Block-based storage data — zero for ephemeral VMs
+            request.BlockCounts.Add(manifest?.BlockCount ?? 0);
+            request.BlockSizeKbs.Add(manifest?.BlockSizeKb ?? 1024);
+            request.ReplicationFactors.Add(manifest?.ReplicationFactor ?? 0);
+        }
+
+        // Per-storage-node arrays — active BlockStore nodes with used bytes
+        var allNodes = await dataStore.GetAllNodesAsync();
+        foreach (var node in allNodes.Where(n =>
+            n.BlockStoreInfo?.Status == BlockStoreStatus.Active &&
+            n.BlockStoreInfo.UsedBytes > 0 &&
+            !string.IsNullOrEmpty(n.WalletAddress)))
+        {
+            request.StorageNodeWallets.Add(node.WalletAddress!);
+            request.StorageNodeUsedBytes.Add(node.BlockStoreInfo!.UsedBytes);
+        }
+
+        return request;
     }
 }
