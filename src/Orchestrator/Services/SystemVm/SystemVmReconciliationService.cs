@@ -170,9 +170,15 @@ public class SystemVmReconciliationService : BackgroundService
         // but the old VM was already transitioned to Deleting). Without this, the
         // reconciliation loop creates new VM records that the node agent rejects,
         // leaving orphaned ghost records in the orchestrator DB.
-        if (obligation.Role is SystemVmRole.Dht or SystemVmRole.Relay)
+        if (obligation.Role is SystemVmRole.Dht or SystemVmRole.Relay or SystemVmRole.BlockStore)
         {
-            var vmType = obligation.Role == SystemVmRole.Dht ? VmType.Dht : VmType.Relay;
+            var vmType = obligation.Role switch
+            {
+                SystemVmRole.Dht => VmType.Dht,
+                SystemVmRole.Relay => VmType.Relay,
+                SystemVmRole.BlockStore => VmType.BlockStore,
+                _ => VmType.Dht
+            };
             var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
             var existingVm = nodeVms.FirstOrDefault(v =>
                 v.Spec.VmType == vmType &&
@@ -297,6 +303,18 @@ public class SystemVmReconciliationService : BackgroundService
         }
 
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
+
+        // Self-heal: if VM exists but NodeId is empty, patch it now.
+        // NodeId is required for the heartbeat path to find and update
+        // the VM's service status — without it the Ready gate never fires.
+        if (vm != null && string.IsNullOrEmpty(vm.NodeId))
+        {
+            vm.NodeId = node.Id;
+            await _dataStore.SaveVmAsync(vm);
+            _logger.LogInformation(
+                "{Role} VM {VmId} had empty NodeId — patched to {NodeId}",
+                obligation.Role, vm.Id, node.Id);
+        }
 
         if (vm == null)
         {
