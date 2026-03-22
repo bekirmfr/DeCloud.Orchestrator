@@ -253,7 +253,16 @@ public class DhtNodeService : IDhtNodeService
                         var parts = tunnelIp.Split('.');
                         if (parts.Length == 4 && int.TryParse(parts[3], out var hostOctet))
                         {
-                            var dhtOctet = 200 + hostOctet;
+                            // Offset 230: avoids collision with relay-node IPs:
+                            //   .199 = relay node DHT
+                            //   .202 = relay node BlockStore
+                            //   .210+N = CGNAT BlockStore VM
+                            // Full subnet convention (10.20.{subnet}.x):
+                            //   .199        relay DHT VM
+                            //   .202        relay BlockStore VM
+                            //   .210+N      CGNAT BlockStore VM (N = host last octet)
+                            //   .230+N      CGNAT DHT VM
+                            var dhtOctet = 230 + hostOctet;
                             if (dhtOctet > 253)
                             {
                                 _logger.LogWarning(
