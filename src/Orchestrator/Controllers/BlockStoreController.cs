@@ -112,6 +112,7 @@ public class BlockStoreController : ControllerBase
             CapacityBytes = request.CapacityBytes,
         };
 
+        node.BlockStoreInfo.BlockStoreVmId = request.VmId; // always overwrite
         node.BlockStoreInfo.PeerId = request.PeerId;
         node.BlockStoreInfo.CapacityBytes = request.CapacityBytes;
         node.BlockStoreInfo.UsedBytes = request.UsedBytes;

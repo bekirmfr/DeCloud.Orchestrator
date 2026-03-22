@@ -246,6 +246,14 @@ public class SystemVmReconciliationService : BackgroundService
                 obligation.Status = SystemVmStatus.Deploying;
                 obligation.DeployedAt = DateTime.UtcNow;
 
+                // Sync auth token from the newly deployed VM's labels
+                // so /join authentication works with the new VM's token
+                var newVm = await _dataStore.GetVmAsync(vmId);
+                var newAuthToken = newVm?.Labels?.GetValueOrDefault("blockstore-auth-token")
+                               ?? newVm?.Labels?.GetValueOrDefault("dht-auth-token");
+                if (!string.IsNullOrEmpty(newAuthToken))
+                    obligation.AuthToken = newAuthToken;
+
                 _logger.LogInformation(
                     "{Role} VM {VmId} deploying on node {NodeId}",
                     obligation.Role, vmId, node.Id);

@@ -585,7 +585,39 @@ public class NodeService : INodeService
         // Get pending commands for this node
         var commands = _dataStore.GetAndClearPendingCommands(nodeId);
 
-        return new NodeHeartbeatResponse(true, commands.Count > 0 ? commands : null, agentSchedulingConfig, node.CgnatInfo);
+        // Compute invalid VM IDs — VMs the node reports running that the
+        // orchestrator doesn't recognize as belonging to this node.
+        // NodeAgent will destroy these on the next heartbeat cycle.
+        List<string>? invalidVmIds = null;
+        if (heartbeat.ActiveVms != null && heartbeat.ActiveVms.Any())
+        {
+            var invalid = new List<string>();
+            foreach (var reported in heartbeat.ActiveVms)
+            {
+                var vm = await _dataStore.GetVmAsync(reported.VmId);
+                // Invalid if: VM doesn't exist in orchestrator DB, OR
+                // VM exists but belongs to a different node
+                if (vm == null || vm.NodeId != nodeId)
+                {
+                    invalid.Add(reported.VmId);
+                    _logger.LogWarning(
+                        "Node {NodeId} reports running VM {VmId} that is invalid " +
+                        "(exists={Exists}, assignedNode={AssignedNode}) — flagging for destruction",
+                        nodeId, reported.VmId,
+                        vm != null,
+                        vm?.NodeId ?? "none");
+                }
+            }
+            if (invalid.Count > 0)
+                invalidVmIds = invalid;
+        }
+
+        return new NodeHeartbeatResponse(
+            true,
+            commands.Count > 0 ? commands : null,
+            agentSchedulingConfig,
+            node.CgnatInfo,
+            invalidVmIds);
     }
 
     /// <summary>

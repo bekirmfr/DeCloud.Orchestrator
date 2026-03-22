@@ -506,7 +506,13 @@ public record NodeHeartbeatResponse(
     /// <summary>
     /// Relay configuration if node is behind CGNAT
     /// </summary>
-    CgnatNodeInfo? CgnatInfo
+    CgnatNodeInfo? CgnatInfo,
+    /// <summary>
+    /// VM IDs the node is running that it should NOT be running.
+    /// NodeAgent must destroy these immediately — they belong to a
+    /// different node, were deleted, or are from a previous registration.
+    /// </summary>
+    List<string>? InvalidVmIds = null
 );
 
 /// <summary>
