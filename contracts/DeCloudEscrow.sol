@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
- * @title DeCloudEscrow v2
+ * @title DeCloudEscrow v3
  * @notice Escrow and settlement contract for the DeCloud compute + storage marketplace.
  *
  * ── Payment model ────────────────────────────────────────────────────────────
@@ -38,13 +38,36 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * ── Platform token (XDE) integration ─────────────────────────────────────────
  *   Disabled at deploy (platformTokenEnabled = false).
  *   Enabled by owner once XDE token is live:
- *     setPlatformToken(xdeAddress)
+ *     setPlatformToken(xdeAddress, decimals)
  *     setPlatformTokenTreasury(multisig)
  *     setPlatformTokenEnabled(true)
  *   Collected XDE is forwarded to platformTokenTreasury (burn, staking pool, etc.)
  *   USDC solvency note: XDE deposits credit USDC-equivalent from the contract's
  *   existing USDC pool. Treasury must maintain adequate USDC reserves to cover
  *   XDE-funded credits.
+ *
+ * ── Migration model ──────────────────────────────────────────────────────────
+ *   This contract is immutable — no proxy, no upgradeable pattern.
+ *   If a new contract must be deployed, migration proceeds as follows:
+ *
+ *   On the NEW contract (before any deposits):
+ *     1. Owner calls migrateBalances() with snapshot from old contract events.
+ *        One-time only — migrationComplete flag prevents re-entry.
+ *        Owner must have deposited sufficient USDC to cover imported balances.
+ *
+ *   On the OLD contract (after migration is verified on-chain):
+ *     2. Owner calls initiateFreeze(newContractAddress).
+ *        A 3-day timelock begins. FreezeInitiated event is emitted so users
+ *        can see the new contract address and withdraw their balances.
+ *     3. After 3 days, owner calls executeFreeze().
+ *        New deposits are permanently blocked. Existing withdrawBalance() and
+ *        nodeWithdraw() remain functional indefinitely — users and nodes can
+ *        always claim their funds from the old contract.
+ *
+ *   There is NO admin function to drain user funds. The operator is responsible
+ *   for funding USDC reserves on the new contract to cover migrated balances.
+ *   No redeployment required for: fee changes, platform token launch,
+ *   master node additions, staking activation.
  */
 contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -174,6 +197,34 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     IDeCloudStaking public stakingContract;
 
     // ═══════════════════════════════════════════════════════════════════
+    // MIGRATION STATE
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice True once migrateBalances() has been called.
+     * Permanently prevents a second migration import on this contract.
+     */
+    bool public migrationComplete = false;
+
+    /**
+     * @notice True once executeFreeze() has been called on this contract.
+     * Permanently blocks new deposits. Withdrawals remain open indefinitely.
+     */
+    bool public frozen = false;
+
+    /**
+     * @notice Timestamp after which executeFreeze() may be called.
+     * Set by initiateFreeze(). Zero means freeze has not been initiated.
+     */
+    uint256 public freezeUnlocksAt = 0;
+
+    /// @notice Address of the replacement contract (set by initiateFreeze).
+    address public replacementContract;
+
+    /// @notice Duration of the freeze timelock — gives users time to withdraw.
+    uint256 public constant FREEZE_TIMELOCK = 3 days;
+
+    // ═══════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════
 
@@ -258,12 +309,35 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
 
     event StakingContractUpdated(address oldContract, address newContract);
 
+    // ── Migration ─────────────────────────────────────────────────────
+
+    /// @notice Emitted when migrateBalances() is called on a new contract.
+    event BalancesMigrated(
+        uint256 userCount,
+        uint256 nodeCount,
+        uint256 totalUsdcImported
+    );
+
+    /// @notice Emitted when freeze is initiated. Users have FREEZE_TIMELOCK to withdraw.
+    event FreezeInitiated(
+        address indexed newContract,
+        uint256 unlocksAt
+    );
+
+    /// @notice Emitted when freeze is executed. New deposits permanently blocked.
+    event ContractFrozen(address indexed newContract);
+
     // ═══════════════════════════════════════════════════════════════════
     // MODIFIERS
     // ═══════════════════════════════════════════════════════════════════
 
     modifier onlyAuthorized() {
         require(authorizedCallers[msg.sender], "Not authorized");
+        _;
+    }
+
+    modifier whenNotFrozen() {
+        require(!frozen, "Contract frozen — use replacement contract");
         _;
     }
 
@@ -296,7 +370,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
      * @notice Deposit USDC to fund VM usage.
      * @param amount Amount of USDC (6 decimals)
      */
-    function deposit(uint256 amount) external nonReentrant whenNotPaused {
+    function deposit(uint256 amount) external nonReentrant whenNotPaused whenNotFrozen {
         require(amount >= minDeposit, "Below minimum deposit");
 
         paymentToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -319,7 +393,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
      */
     function depositPlatformToken(
         uint256 tokenAmount
-    ) external nonReentrant whenNotPaused {
+    ) external nonReentrant whenNotPaused whenNotFrozen {
         require(platformTokenEnabled,                "Platform token not enabled");
         require(address(platformToken) != address(0),"Platform token not set");
         require(platformTokenTreasury != address(0), "Treasury not set");
@@ -774,6 +848,106 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
         }
     }
 }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // MIGRATION
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice One-time import of balances from a previous contract.
+     * Called by owner on a NEW contract before any user deposits.
+     * Owner must have transferred sufficient USDC to this contract first
+     * to cover all imported user balances and node payouts.
+     *
+     * Permanently sets migrationComplete = true after execution — cannot
+     * be called again, preventing double-import attacks.
+     *
+     * Data source: enumerate Deposited, UsageReported, NodeWithdrawal,
+     * and UserWithdrawal events from the old contract to compute net balances.
+     *
+     * @param users        Addresses with non-zero user balances on old contract
+     * @param usdcBalances Corresponding USDC-equivalent balances (6 decimals)
+     * @param nodes        Addresses with non-zero node payouts on old contract
+     * @param nodePayouts  Corresponding pending payouts (6 decimals)
+     * @param _storagePool Remaining storagePool dust from old contract
+     * @param _platformFees Remaining platformFees from old contract
+     */
+    function migrateBalances(
+        address[] calldata users,
+        uint256[] calldata usdcBalances,
+        address[] calldata nodes,
+        uint256[] calldata nodePayouts,
+        uint256 _storagePool,
+        uint256 _platformFees
+    ) external onlyOwner {
+        require(!migrationComplete,               "Migration already complete");
+        require(users.length == usdcBalances.length, "User array mismatch");
+        require(nodes.length == nodePayouts.length,  "Node array mismatch");
+
+        uint256 totalImported = 0;
+
+        for (uint256 i = 0; i < users.length; i++) {
+            require(users[i] != address(0), "Invalid user address");
+            userBalances[users[i]] += usdcBalances[i];
+            totalImported          += usdcBalances[i];
+        }
+
+        for (uint256 i = 0; i < nodes.length; i++) {
+            require(nodes[i] != address(0), "Invalid node address");
+            nodePendingPayouts[nodes[i]] += nodePayouts[i];
+            totalImported                += nodePayouts[i];
+        }
+
+        storagePool  += _storagePool;
+        platformFees += _platformFees;
+        totalImported += _storagePool + _platformFees;
+
+        // Verify contract holds enough USDC to cover all imported liabilities
+        require(
+            paymentToken.balanceOf(address(this)) >= totalImported,
+            "Insufficient USDC to cover imported balances"
+        );
+
+        totalDeposited    += totalImported;
+        migrationComplete  = true;
+
+        emit BalancesMigrated(users.length, nodes.length, totalImported);
+    }
+
+    /**
+     * @notice Initiate the freeze process on this (old) contract.
+     * Starts a 3-day timelock. Users see FreezeInitiated event with the
+     * new contract address and can withdraw their balances during this window.
+     *
+     * @param newContract Address of the replacement contract for user reference
+     */
+    function initiateFreeze(address newContract) external onlyOwner {
+        require(!frozen,             "Already frozen");
+        require(freezeUnlocksAt == 0, "Freeze already initiated");
+        require(newContract != address(0), "Invalid new contract");
+
+        freezeUnlocksAt      = block.timestamp + FREEZE_TIMELOCK;
+        replacementContract  = newContract;
+
+        emit FreezeInitiated(newContract, freezeUnlocksAt);
+    }
+
+    /**
+     * @notice Execute the freeze after the timelock has elapsed.
+     * Permanently blocks new deposits on this contract.
+     * withdrawBalance() and nodeWithdraw() remain functional indefinitely.
+     */
+    function executeFreeze() external onlyOwner {
+        require(!frozen,              "Already frozen");
+        require(freezeUnlocksAt > 0,  "Freeze not initiated");
+        require(block.timestamp >= freezeUnlocksAt, "Timelock not elapsed");
+
+        frozen = true;
+        _pause(); // also pause settlement calls on the old contract
+
+        emit ContractFrozen(replacementContract);
+    }
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // STAKING INTERFACE

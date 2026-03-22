@@ -729,19 +729,6 @@ public class BlockchainService : IBlockchainService
 		""inputs"": [
 			{
 				""internalType"": ""address"",
-				""name"": ""newOrchestrator"",
-				""type"": ""address""
-			}
-		],
-		""name"": ""setOrchestrator"",
-		""outputs"": [],
-		""stateMutability"": ""nonpayable"",
-		""type"": ""function""
-	},
-	{
-		""inputs"": [
-			{
-				""internalType"": ""address"",
 				""name"": ""newOwner"",
 				""type"": ""address""
 			}
