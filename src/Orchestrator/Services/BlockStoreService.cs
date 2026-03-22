@@ -620,14 +620,19 @@ public async Task<ManifestRecord> RegisterManifestAsync(
             return labels;
         }
 
-        // Relay node: the block store VM joins the relay's own WG mesh
-        // The relay VM's tunnel IP is the gateway for VMs on this node
+        // Relay node: the block store VM joins the relay's own WG mesh.
+        // Uses the same static IP convention as DhtNodeService:
+        //   DHT VM  → 10.20.{subnet}.199
+        //   BlockStore VM → 10.20.{subnet}.202
+        // The wg-mesh-enroll.sh script handles peer registration via
+        // NodeAgent proxy at http://192.168.122.1:5100/api/relay/wg-mesh-enroll.
+        // The relay API deduplicates by AllowedIPs — if a stale peer already
+        // holds this IP, wg-mesh-enroll.sh must remove it first.
+        // See: blockstore-vm/wg-mesh-enroll.sh stale peer cleanup logic.
         if (node.RelayInfo != null && node.RelayInfo.Status == RelayStatus.Active)
         {
-            var relayTunnelIp = node.RelayInfo.TunnelIp;
-            // Assign a stable tunnel IP within the relay's subnet for this block store VM
-            // Convention: relay subnet base + .202 (DHT uses .201, BlockStore uses .202)
             var subnet = node.RelayInfo.RelaySubnet;
+            var relayTunnelIp = node.RelayInfo.TunnelIp;
             labels["wg-tunnel-ip"] = $"10.20.{subnet}.202/24";
             labels["wg-relay-endpoint"] = $"{node.PublicIp}:51820";
             labels["wg-relay-pubkey"] = node.RelayInfo.WireGuardPublicKey ?? "";
