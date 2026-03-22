@@ -174,6 +174,10 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<Orchestrator.Servi
 // Background Services
 // =====================================================
 builder.Services.AddHostedService<AdminUserInitializer>(); // Must run first!
+// Lazysync replication audit — queries DHT /providers/{cid} each cycle
+builder.Services.AddHostedService<LazysyncManager>();
+builder.Services.AddHttpClient("lazysync-audit")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(35));
 builder.Services.AddHostedService<NodeHealthMonitorService>();
 builder.Services.AddHostedService<RelayHealthMonitor>();
 builder.Services.AddHostedService<VmSchedulerService>();
