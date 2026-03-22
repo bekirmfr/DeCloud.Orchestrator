@@ -258,7 +258,7 @@ public class BlockStoreService : IBlockStoreService
             // STEP 2: Resolve advertise IP — prefer WireGuard tunnel IP
             // ================================================================
             var allNodes = await _dataStore.GetAllNodesAsync();
-            var wgLabels = ResolveWireGuardLabels(node, allNodes);
+            var wgLabels = ResolveWireGuardLabels(node, allNodes, _logger);
 
             var advertiseIp = DhtNodeService.GetAdvertiseIp(node);
             if (wgLabels.TryGetValue("wg-tunnel-ip", out var wgTunnelIp))
@@ -595,7 +595,7 @@ public async Task<ManifestRecord> RegisterManifestAsync(
     ///   - Public nodes without relay: return empty (no WG mesh enrollment)
     /// </summary>
     private static Dictionary<string, string> ResolveWireGuardLabels(
-        Node node, IEnumerable<Node> allNodes)
+        Node node, IEnumerable<Node> allNodes, ILogger<BlockStoreService> logger)
     {
         var labels = new Dictionary<string, string>();
 
@@ -637,14 +637,14 @@ public async Task<ManifestRecord> RegisterManifestAsync(
                         labels["wg-relay-pubkey"] = relayNode.RelayInfo.WireGuardPublicKey ?? "";
                         labels["wg-relay-api"] = $"http://{relayTunnelIp}:8080/api/relay";
 
-                        _logger.LogInformation(
+                        logger.LogInformation(
                             "BlockStore VM on CGNAT node {NodeId}: tunnel IP {TunnelIp} " +
                             "(derived from host {HostIp})",
                             node.Id, bsTunnelIp, hostTunnelIp);
                     }
                     else
                     {
-                        _logger.LogWarning(
+                        logger.LogWarning(
                             "BlockStore VM on CGNAT node {NodeId}: host octet {HostOctet} " +
                             "produces BS octet {BsOctet} (>253) — skipping WG mesh enrollment",
                             node.Id, hostOctet, bsOctet);
