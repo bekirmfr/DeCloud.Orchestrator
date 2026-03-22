@@ -786,8 +786,7 @@ export async function refreshBalanceDisplay() {
 // Escrow ABI for author earnings
 const ESCROW_AUTHOR_ABI = [
     "function nodePendingPayouts(address) view returns (uint256)",
-    "function nodeWithdraw() external",
-    "function nodeWithdrawAmount(uint256 amount) external"
+    "function nodeWithdraw(uint256 amount) external"  // 0 = withdraw full balance
 ];
 
 /**
@@ -1088,7 +1087,7 @@ window.withdrawFromBalanceModal = async function () {
             btn.innerHTML = `<div class="bm-spinner-sm"></div> Confirming...`;
         }
 
-        const tx = await escrow.nodeWithdraw();
+        const tx = await escrow.nodeWithdraw(0); // 0 = full balance (v3 contract)
         if (btn) btn.innerHTML = `<div class="bm-spinner-sm"></div> Waiting...`;
         await tx.wait();
 

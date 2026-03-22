@@ -211,49 +211,14 @@ public class BlockchainService : IBlockchainService
             var web3 = new Web3(account, _config.RpcUrl);
 
             // Get escrow contract
-            var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
-            var settleFunction = contract.GetFunction("reportUsage");
-
-            // Convert to wei (6 decimals for USDC)
-            var amountWei = Web3.Convert.ToWei(amount, 6);
-
-            // Estimate gas (important for cost prediction)
-            var gas = await settleFunction.EstimateGasAsync(
-                from: account.Address,
-                gas: null,
-                value: null,
-                userWallet,
-                nodeWallet,
-                amountWei,
-                vmId);
-
-            _logger.LogDebug(
-                "Estimated gas for settlement: {Gas} units",
-                gas.Value);
-
-            // Execute settlement transaction
-            var receipt = await settleFunction.SendTransactionAndWaitForReceiptAsync(
-                from: account.Address,
-                gas: gas,
-                gasPrice: null,  // Use network gas price
-                value: null,
-                receiptRequestCancellationToken: null,
-                userWallet,
-                nodeWallet,
-                amountWei,
-                vmId);
-
-            // Check transaction status
-            if (receipt.Status?.Value != 1)
-            {
-                throw new Exception($"reportUsage transaction reverted: {receipt.TransactionHash}");
-            }
-
-            _logger.LogInformation(
-				"✓ Usage reported: tx={TxHash}, user={User}, node={Node}, amount={Amount} USDC, vmId={VmId}",
-				receipt.TransactionHash, userWallet[..10], nodeWallet[..10], amount, vmId);
-
-            return receipt.TransactionHash;
+            // reportUsage (single-VM) was removed in v3 — delegate to batchReportUsage
+            return await ExecuteBatchSettlementAsync([new SettlementTransaction
+			{
+				UserWallet = userWallet,
+				NodeWallet = nodeWallet,
+				Amount     = amount,
+				VmId       = vmId
+			}]);
         }
         catch (Exception ex)
         {
