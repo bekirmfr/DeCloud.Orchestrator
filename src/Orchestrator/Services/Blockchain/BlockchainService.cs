@@ -104,7 +104,7 @@ public class BlockchainService : IBlockchainService
                         Amount = amount,
                         Confirmations = confirmations,
                         RequiredConfirmations = requiredConfirmations,
-                        CreatedAt = DateTimeOffset.FromUnixTimeSeconds((long)evt.Event.Timestamp).UtcDateTime
+                        CreatedAt = DateTime.UtcNow // v3 Deposited event has no timestamp field
                     });
 
                     _logger.LogDebug(
@@ -409,7 +409,4 @@ public class DepositedEventDTO : IEventDTO
 
     [Parameter("uint256", "newBalance", 3, false)]
     public BigInteger NewBalance { get; set; }
-
-    [Parameter("uint256", "timestamp", 4, false)]
-    public BigInteger Timestamp { get; set; }
 }
