@@ -20,7 +20,9 @@ const ERC20_ABI = [
 const ESCROW_ABI = [
     "function deposit(uint256 amount)",
     "function userBalances(address) view returns (uint256)",
-    "function withdrawBalance(uint256 amount)"
+    "function withdrawBalance(uint256 amount)",
+    "function frozen() view returns (bool)",
+    "function replacementContract() view returns (address)"
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -105,6 +107,20 @@ export async function initializePayment(signer, token = null) {
         ESCROW_ABI,
         signer
     );
+
+    // Check if contract is frozen — warn user before they try to deposit
+    try {
+        const isFrozen = await escrowContract.frozen();
+        if (isFrozen) {
+            const newContract = await escrowContract.replacementContract();
+            console.warn('[Payment] Contract is frozen. Replacement:', newContract);
+            // Surface to UI
+            window.__escrowFrozen = true;
+            window.__escrowReplacement = newContract;
+        }
+    } catch (e) {
+        // Non-fatal — contract may not support these views (old deployment)
+    }
 
     console.log('[Payment] Initialized with config:', {
         chain: depositConfig.chainName,
@@ -288,6 +304,12 @@ class NetworkMismatchError extends Error {
 export async function depositUSDC(amount, onProgress = () => { }) {
     if (!isInitialized()) {
         throw new Error('Payment not initialized. Call initializePayment() first.');
+    }
+    if (window.__escrowFrozen) {
+        throw new Error(
+            `This contract has been decommissioned. ` +
+            `Please use the new contract at ${window.__escrowReplacement}`
+        );
     }
 
     // Check and switch network if needed
@@ -542,6 +564,10 @@ export function hideDepositModal() {
  * Create deposit modal HTML
  */
 function createDepositModal() {
+    // TODO: Add platform token (XDE) deposit tab when token launches.
+    // Contract function: depositPlatformToken(uint256 tokenAmount)
+    // Config needed: platformTokenEnabled, platformTokenRate, platformTokenDiscountBps
+    // from /api/payment/deposit-info endpoint.
     const chainName = depositConfig?.chainName || 'Polygon';
     const escrowAddr = depositConfig?.escrowContractAddress || '...';
     const minDeposit = depositConfig?.minDeposit || 1;
