@@ -12,6 +12,13 @@
 		<Compile Include="../Shared/**/*.cs" Link="Shared/%(RecursiveDir)%(Filename)%(Extension)" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Update="Contracts\DeCloudEscrow.abi.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
+	</ItemGroup>
+
 	<!-- ============================================== -->
 	<!-- NuGet Package References -->
 	<!-- ============================================== -->
