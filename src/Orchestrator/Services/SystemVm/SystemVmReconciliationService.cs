@@ -1,12 +1,16 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services.SystemVm;
 
 /// <summary>
-/// Background service that converges each node toward its desired system VM state.
+/// Background service that converges each online node toward its desired system VM state.
 ///
-/// Every 30 seconds, for each online node:
+/// Per-cycle steps (every 30 seconds):
 ///   1. Ensure obligations exist (backfill legacy nodes, detect new eligible roles)
 ///   2. Pending obligations with met dependencies → deploy
 ///   3. Deploying obligations → check if VM is Running + healthy → mark Active
@@ -34,6 +38,9 @@ public class SystemVmReconciliationService : BackgroundService
     private readonly ILogger<SystemVmReconciliationService> _logger;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ProvisioningTimeout = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan StuckDeletingTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan CloudInitReadyTimeout = TimeSpan.FromMinutes(20);
 
     public SystemVmReconciliationService(
         DataStore dataStore,
@@ -65,10 +72,24 @@ public class SystemVmReconciliationService : BackgroundService
             try
             {
                 var nodes = await _dataStore.GetAllNodesAsync();
+
+                // FIX 1: Per-node exception isolation.
+                // Previously, a single bad node (corrupt document, transient DB error, etc.)
+                // would abort the entire foreach, leaving all subsequent nodes unreconciled
+                // for the full 30-second cycle. Now each node is independently guarded.
                 foreach (var node in nodes.Where(n => n.Status == NodeStatus.Online))
                 {
-                    await EnsureObligationsAsync(node, ct);
-                    await ReconcileNodeAsync(node, ct);
+                    try
+                    {
+                        await EnsureObligationsAsync(node, ct);
+                        await ReconcileNodeAsync(node, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "Error reconciling obligations for node {NodeId} — skipping this cycle",
+                            node.Id);
+                    }
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -77,7 +98,7 @@ public class SystemVmReconciliationService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in SystemVmReconciliationService");
+                _logger.LogError(ex, "Error in SystemVmReconciliationService outer loop");
             }
 
             await Task.Delay(Interval, ct);
@@ -342,9 +363,8 @@ public class SystemVmReconciliationService : BackgroundService
                 // Still waiting for cloud-init / callback — check timeout
                 var deployedAt = obligation.DeployedAt ?? DateTime.UtcNow;
                 var elapsed = DateTime.UtcNow - deployedAt;
-                var timeout = TimeSpan.FromMinutes(20); // generous for slow cloud-init
 
-                if (elapsed > timeout)
+                if (elapsed > CloudInitReadyTimeout)
                 {
                     _logger.LogWarning(
                         "{Role} VM {VmId} on node {NodeId} has been Running for {Minutes:F0}m " +
@@ -358,13 +378,18 @@ public class SystemVmReconciliationService : BackgroundService
                         "{Role} VM {VmId} on node {NodeId} is Running but System service not Ready yet " +
                         "({Elapsed:F0}m / {Timeout:F0}m timeout)",
                         obligation.Role, obligation.VmId, node.Id,
-                        elapsed.TotalMinutes, timeout.TotalMinutes);
+                        elapsed.TotalMinutes, CloudInitReadyTimeout.TotalMinutes);
                 }
                 return;
             }
 
+            // FIX 4: Reset FailureCount and LastError on successful Active transition.
+            // Previously the count was preserved, causing future failures to start backoff
+            // at an inflated level and making monitoring misleading for healthy obligations.
             obligation.Status = SystemVmStatus.Active;
             obligation.ActiveAt = DateTime.UtcNow;
+            obligation.FailureCount = 0;
+            obligation.LastError = null;
 
             _logger.LogInformation(
                 "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
@@ -386,8 +411,11 @@ public class SystemVmReconciliationService : BackgroundService
                 node.BlockStoreInfo.Status = BlockStoreStatus.Active;
                 node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
             }
+
+            return;
         }
-        else if (vm.Status == VmStatus.Error)
+
+        if (vm.Status == VmStatus.Error)
         {
             obligation.Status = SystemVmStatus.Failed;
             obligation.FailureCount++;
@@ -396,8 +424,157 @@ public class SystemVmReconciliationService : BackgroundService
             _logger.LogWarning(
                 "{Role} VM {VmId} on node {NodeId} entered Error state: {Error}",
                 obligation.Role, obligation.VmId, node.Id, vm.StatusMessage);
+            return;
         }
-        // else: still Provisioning — wait for next cycle
+
+        // FIX 2: Provisioning timeout.
+        // Previously the Provisioning case fell through indefinitely with no action.
+        // If the NodeAgent crashes mid-provision (OOM kill, service restart, etc.),
+        // the VM stays Provisioning forever and the obligation stays Deploying forever.
+        // vm.UpdatedAt is set by VmLifecycleManager.TransitionAsync on every status
+        // change, so it accurately reflects when the VM entered Provisioning.
+        if (vm.Status == VmStatus.Provisioning)
+        {
+            var provisioningFor = DateTime.UtcNow - vm.UpdatedAt;
+
+            if (provisioningFor > ProvisioningTimeout)
+            {
+                _logger.LogWarning(
+                    "{Role} VM {VmId} on node {NodeId} has been Provisioning for {Minutes:F0}m " +
+                    "(timeout: {Timeout:F0}m) — NodeAgent may have crashed mid-provision. " +
+                    "Resetting to Pending for redeployment.",
+                    obligation.Role, obligation.VmId, node.Id,
+                    provisioningFor.TotalMinutes, ProvisioningTimeout.TotalMinutes);
+
+                ResetObligation(node, obligation);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "{Role} VM {VmId} on node {NodeId} still Provisioning " +
+                    "({Elapsed:F0}m / {Timeout:F0}m timeout)",
+                    obligation.Role, obligation.VmId, node.Id,
+                    provisioningFor.TotalMinutes, ProvisioningTimeout.TotalMinutes);
+            }
+            return;
+        }
+
+        // Scheduling, Stopped, or other transient state — wait for next cycle
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Active → verify VM still exists (self-heal if gone)
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Verify that an Active obligation still has a running VM.
+    /// Handles node restarts, agent updates, or orphaned obligation state
+    /// where the database says Active but the VM no longer exists.
+    /// </summary>
+    private async Task VerifyActiveAsync(
+        Node node, SystemVmObligation obligation, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(obligation.VmId))
+        {
+            // Active with no VM ID — impossible state, reset
+            _logger.LogWarning(
+                "{Role} obligation on node {NodeId} is Active with no VM ID — resetting to Pending",
+                obligation.Role, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        var vm = await _dataStore.GetVmAsync(obligation.VmId);
+
+        // Self-heal: BlockStoreInfo can be null if ResetObligation was called
+        // during a previous failed deploy cycle and the obligation was later
+        // re-adopted as Active. Reconstruct from VM labels.
+        if (obligation.Role == SystemVmRole.BlockStore
+            && node.BlockStoreInfo == null
+            && vm != null
+            && vm.Status == VmStatus.Running)
+        {
+            var advertiseIp = vm.Labels?.GetValueOrDefault("blockstore-advertise-ip")
+                           ?? DhtNodeService.GetAdvertiseIp(node);
+            node.BlockStoreInfo = new BlockStoreInfo
+            {
+                BlockStoreVmId = vm.Id,
+                ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
+                ApiPort = BlockStoreVmSpec.ApiPort,
+                Status = BlockStoreStatus.Initializing, // /join will set Active
+                LastHealthCheck = DateTime.UtcNow,
+            };
+            if (long.TryParse(
+                vm.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
+                node.BlockStoreInfo.CapacityBytes = cap;
+
+            var authToken = vm.Labels?.GetValueOrDefault("blockstore-auth-token");
+            if (!string.IsNullOrEmpty(authToken))
+                obligation.AuthToken = authToken;
+
+            _logger.LogInformation(
+                "Reconstructed null BlockStoreInfo for node {NodeId} from " +
+                "running VM {VmId} (advertise: {Ip})",
+                node.Id, vm.Id, advertiseIp);
+        }
+
+        if (vm == null)
+        {
+            _logger.LogWarning(
+                "{Role} VM {VmId} on node {NodeId} no longer exists — resetting to Pending for redeployment",
+                obligation.Role, obligation.VmId, node.Id);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        if (vm.Status is VmStatus.Error or VmStatus.Deleted)
+        {
+            _logger.LogWarning(
+                "{Role} VM {VmId} on node {NodeId} is in {Status} state — resetting to Pending",
+                obligation.Role, obligation.VmId, node.Id, vm.Status);
+            ResetObligation(node, obligation);
+            return;
+        }
+
+        // FIX 3: Stuck-in-Deleting timeout.
+        //
+        // Normal path: RedeployDhtVmAsync transitions the VM to Deleting, obligation
+        // stays Active, NodeAgent confirms deletion → Deleted → ResetObligation → redeploy.
+        //
+        // Stuck path: node goes offline while VM is Deleting. NodeAgent never confirms.
+        // VM stays Deleting forever. Previously this fell through to "still converged",
+        // leaving the obligation permanently Active and blocking all future redeployments.
+        //
+        // Fix: if stuck Deleting beyond the timeout, reset and let the loop redeploy.
+        // vm.UpdatedAt is set by VmLifecycleManager.TransitionAsync, so it accurately
+        // reflects when the VM entered the Deleting state.
+        if (vm.Status == VmStatus.Deleting)
+        {
+            var deletingFor = DateTime.UtcNow - vm.UpdatedAt;
+
+            if (deletingFor > StuckDeletingTimeout)
+            {
+                _logger.LogWarning(
+                    "{Role} VM {VmId} on node {NodeId} has been stuck Deleting for {Minutes:F0}m " +
+                    "(timeout: {Timeout:F0}m) — node likely went offline mid-delete. " +
+                    "Resetting obligation to Pending for redeployment.",
+                    obligation.Role, obligation.VmId, node.Id,
+                    deletingFor.TotalMinutes, StuckDeletingTimeout.TotalMinutes);
+
+                ResetObligation(node, obligation);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "{Role} VM {VmId} on node {NodeId} is Deleting — " +
+                    "waiting for node confirmation ({Elapsed:F0}m / {Timeout:F0}m stuck timeout)",
+                    obligation.Role, obligation.VmId, node.Id,
+                    deletingFor.TotalMinutes, StuckDeletingTimeout.TotalMinutes);
+            }
+            return;
+        }
+
+        // VM exists and is not in a terminal or transitional error state — still converged
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -518,19 +695,16 @@ public class SystemVmReconciliationService : BackgroundService
     private async Task<SystemVmObligation> TryAdoptExistingVmAsync(
         Node node, SystemVmRole role, CancellationToken ct)
     {
+        // Check role-specific info for an existing VM ID
         string? existingVmId = role switch
         {
-            SystemVmRole.Dht => node.DhtInfo?.DhtVmId,
             SystemVmRole.Relay => node.RelayInfo?.RelayVmId,
+            SystemVmRole.Dht => node.DhtInfo?.DhtVmId,
             SystemVmRole.BlockStore => node.BlockStoreInfo?.BlockStoreVmId,
             _ => null
         };
 
-        // ════════════════════════════════════════════════════════════════════════
-        // Fallback: role info lost (crash, DB corruption) but the system VM may
-        // still be running on the node. Search the datastore for a healthy VM of
-        // the correct type — only adopt if it's Running AND passing health checks.
-        // ════════════════════════════════════════════════════════════════════════
+        // Fallback: search the datastore for a healthy VM of the correct type
         if (existingVmId == null)
         {
             existingVmId = await TryDiscoverHealthySystemVmAsync(node, role);
@@ -621,8 +795,9 @@ public class SystemVmReconciliationService : BackgroundService
     /// the correct type that is confirmed alive via recent service health checks.
     /// Reconstructs role info from the discovered VM so the system self-heals.
     ///
-    /// Only DHT VMs can be fully reconstructed — Relay VMs require WireGuard keys
-    /// that aren't stored on the VM record, so they fall through to fresh deployment.
+    /// Only DHT and BlockStore VMs can be fully reconstructed — Relay VMs require
+    /// WireGuard keys that aren't stored on the VM record, so they fall through to
+    /// fresh deployment.
     /// </summary>
     private async Task<string?> TryDiscoverHealthySystemVmAsync(Node node, SystemVmRole role)
     {
@@ -646,7 +821,7 @@ public class SystemVmReconciliationService : BackgroundService
                 bsCandidate.Id, node.Id);
 
             var bsAdvertiseIp = bsCandidate.Labels?.GetValueOrDefault("blockstore-advertise-ip")
-                ?? DhtNodeService.GetAdvertiseIp(node);
+                             ?? DhtNodeService.GetAdvertiseIp(node);
 
             node.BlockStoreInfo = new BlockStoreInfo
             {
@@ -663,8 +838,7 @@ public class SystemVmReconciliationService : BackgroundService
             return bsCandidate.Id;
         }
 
-        // DHT VM recovery (original logic follows)
-
+        // DHT VM recovery
         var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
         var candidate = nodeVms.FirstOrDefault(v =>
             v.Spec.VmType == VmType.Dht &&
@@ -697,186 +871,6 @@ public class SystemVmReconciliationService : BackgroundService
         };
 
         return candidate.Id;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // Active → verify VM still exists (self-heal if gone)
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Verify that an Active obligation still has a running VM.
-    /// Handles node restarts, agent updates, or orphaned obligation state
-    /// where the database says Active but the VM no longer exists.
-    /// </summary>
-    private async Task VerifyActiveAsync(
-        Node node, SystemVmObligation obligation, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(obligation.VmId))
-        {
-            // Active with no VM ID — impossible state, reset
-            _logger.LogWarning(
-                "{Role} obligation on node {NodeId} is Active with no VM ID — resetting to Pending",
-                obligation.Role, node.Id);
-            ResetObligation(node, obligation);
-            return;
-        }
-
-        var vm = await _dataStore.GetVmAsync(obligation.VmId);
-
-        // Self-heal: BlockStoreInfo can be null if ResetObligation was called
-        // during a previous failed deploy cycle and the obligation was later
-        // re-adopted as Active. Reconstruct from VM labels.
-        if (obligation.Role == SystemVmRole.BlockStore
-            && node.BlockStoreInfo == null
-            && vm != null
-            && vm.Status == VmStatus.Running)
-        {
-            var advertiseIp = vm.Labels?.GetValueOrDefault("blockstore-advertise-ip")
-                           ?? DhtNodeService.GetAdvertiseIp(node);
-            node.BlockStoreInfo = new BlockStoreInfo
-            {
-                BlockStoreVmId = vm.Id,
-                ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
-                ApiPort = BlockStoreVmSpec.ApiPort,
-                Status = BlockStoreStatus.Initializing, // /join will set Active
-                LastHealthCheck = DateTime.UtcNow,
-            };
-            if (long.TryParse(
-                vm.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
-                node.BlockStoreInfo.CapacityBytes = cap;
-
-            var authToken = vm.Labels?.GetValueOrDefault("blockstore-auth-token");
-            if (!string.IsNullOrEmpty(authToken))
-                obligation.AuthToken = authToken;
-
-            _logger.LogInformation(
-                "Reconstructed null BlockStoreInfo for node {NodeId} from " +
-                "running VM {VmId} (advertise: {Ip})",
-                node.Id, vm.Id, advertiseIp);
-        }
-
-        if (vm == null)
-        {
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} no longer exists — resetting to Pending for redeployment",
-                obligation.Role, obligation.VmId, node.Id);
-            ResetObligation(node, obligation);
-            return;
-        }
-
-        if (vm.Status is VmStatus.Error or VmStatus.Deleted)
-        {
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} is in {Status} state — resetting to Pending",
-                obligation.Role, obligation.VmId, node.Id, vm.Status);
-            ResetObligation(node, obligation);
-            return;
-        }
-
-        // ════════════════════════════════════════════════════════════════════════
-        // Redeployment in progress: wait for node to confirm deletion.
-        //
-        // When a self-healing path triggers RedeployDhtVmAsync, the old VM is
-        // transitioned to Deleting but the obligation stays Active (not reset).
-        // This prevents the reconciliation loop from deploying a new VM while
-        // the old one still exists on the node agent — which would create
-        // orphaned records and duplicate-name rejections.
-        //
-        // Flow: Deleting → node confirms → Deleted → obligation resets → redeploy
-        // ════════════════════════════════════════════════════════════════════════
-        if (vm.Status == VmStatus.Deleting)
-        {
-            // Check for timeout — if the VM has been stuck in Deleting for >5 min,
-            // reset the obligation so the auto-recovery or retry logic can handle it
-            if ((DateTime.UtcNow - vm.UpdatedAt).TotalMinutes > 5)
-            {
-                _logger.LogWarning(
-                    "{Role} VM {VmId} on node {NodeId} stuck in Deleting for >5 min — resetting obligation",
-                    obligation.Role, obligation.VmId, node.Id);
-                ResetObligation(node, obligation);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "{Role} VM {VmId} on node {NodeId} is Deleting — waiting for node confirmation",
-                    obligation.Role, obligation.VmId, node.Id);
-            }
-            return;
-        }
-
-        if (vm.Status == VmStatus.Deleted)
-        {
-            _logger.LogInformation(
-                "{Role} VM {VmId} on node {NodeId} deletion confirmed — resetting for redeployment",
-                obligation.Role, obligation.VmId, node.Id);
-            ResetObligation(node, obligation);
-            return;
-        }
-
-        // NOTE: An "isolated DHT VM" self-healing check was removed here.
-        // It redeployed genesis nodes (BootstrapPeerCount == 0) once other peers
-        // appeared, under the assumption that the genesis node was "network-isolated."
-        // This was wrong: in libp2p/Kademlia DHT, the genesis node IS the bootstrap
-        // peer — joining nodes connect TO it using its PeerId and listen address.
-        // Once connected, both nodes are in each other's routing tables. The genesis
-        // node doesn't need bootstrap peers because other nodes bootstrap FROM it.
-        // Redeploying it destroyed the network's seed node for no benefit.
-
-        // ════════════════════════════════════════════════════════════════════════
-        // Self-healing: redeploy DHT VMs deployed with wrong advertise IP.
-        //
-        // If a CGNAT node's DHT VM was deployed before relay assignment, it got
-        // the public IP as dht-advertise-ip instead of the WireGuard tunnel IP.
-        // The VM itself must be redeployed because the advertise IP is baked into
-        // cloud-init — other peers in the routing table have the wrong address.
-        //
-        // The heartbeat path corrects DhtInfo.ListenAddress, but the running VM
-        // still advertises the wrong IP in the libp2p DHT. Only a redeploy fixes it.
-        //
-        // Safeguards:
-        //   - Only triggers when ListenAddress doesn't match GetAdvertiseIp()
-        //   - Requires ≥3 min Active age (gives CGNAT relay assignment time)
-        //   - Won't fire for nodes without CgnatInfo (public nodes always match)
-        // ════════════════════════════════════════════════════════════════════════
-        if (obligation.Role == SystemVmRole.Dht
-            && node.DhtInfo != null
-            && obligation.ActiveAt.HasValue
-            && (DateTime.UtcNow - obligation.ActiveAt.Value).TotalMinutes >= 3)
-        {
-            // Get the advertise IP that was actually baked into the VM's cloud-init.
-            // DhtNodeService.DeployDhtVmAsync overrides GetAdvertiseIp() with the WG
-            // tunnel IP when a relay is co-located — we must check against the label
-            // that was set at deployment time, not recompute from node state.
-            var dhtVm = await _dataStore.GetVmAsync(obligation.VmId);
-            var deployedAdvIp = dhtVm?.Labels?.GetValueOrDefault("dht-advertise-ip");
-
-            if (!string.IsNullOrEmpty(deployedAdvIp))
-            {
-                var expectedAddr = $"{deployedAdvIp}:{DhtNodeService.DhtListenPort}";
-                if (node.DhtInfo.ListenAddress != expectedAddr)
-                {
-                    _logger.LogWarning(
-                        "DHT VM {VmId} on node {NodeId} has wrong advertise IP: " +
-                        "current={Current}, expected={Expected} — redeploying with correct address",
-                        obligation.VmId, node.Id, node.DhtInfo.ListenAddress, expectedAddr);
-
-                    await RedeployDhtVmAsync(node, obligation,
-                        $"Redeploying DHT VM — wrong advertise IP ({node.DhtInfo.ListenAddress} → {expectedAddr})");
-                    return;
-                }
-            }
-        }
-
-        // NOTE: A "0 connected peers despite having bootstrap peers" self-healing
-        // check was removed here. It caused a destructive loop: ConnectedPeers
-        // defaults to 0 and is only populated when the node agent StatusMessage
-        // includes "connectedPeers=N" — which many deployments never report.
-        // Each false-positive redeployment transitioned the running VM to Deleting
-        // (stripping ingress domains), then created a new VM record that the node
-        // agent rejected as a duplicate. The new DhtInfo also had ConnectedPeers=0,
-        // re-triggering the loop every 5 minutes.
-
-        // VM exists and is not in error — still converged
     }
 
     /// <summary>
@@ -962,7 +956,6 @@ public class SystemVmReconciliationService : BackgroundService
 
     private async Task<string?> DeployRelayVmAsync(Node node, CancellationToken ct)
     {
-        // Delegate to existing RelayNodeService
         var vmService = _serviceProvider.GetRequiredService<IVmService>();
         return await _relayNodeService.DeployRelayVmAsync(node, vmService, ct);
     }

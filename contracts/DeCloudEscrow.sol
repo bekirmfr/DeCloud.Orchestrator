@@ -17,23 +17,23 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *
  *   All internal accounting is in USDC-equivalent units.
  *   Platform token deposits are converted to USDC-equivalent credit at the
- *   current owner-set rate plus a configurable discount — after deposit,
+ *   current owner-set rate plus a configurable discount - after deposit,
  *   the billing engine is currency-agnostic.
  *
  * ── Settlement model ─────────────────────────────────────────────────────────
  *   batchReportUsage()  Ephemeral VMs (replicationFactor=0). Compute billing only.
  *   settleCycle()       Replicated VMs. Atomic compute + storage in one transaction.
- *                       Storage pool is collected and distributed in the same tx —
+ *                       Storage pool is collected and distributed in the same tx -
  *                       structurally impossible to collect without distributing.
  *
  * ── Decentralization path ────────────────────────────────────────────────────
  *   authorizedCallers mapping replaces single orchestrator address.
- *   Master nodes are added via authorizeCaller() — no redeployment needed.
+ *   Master nodes are added via authorizeCaller() - no redeployment needed.
  *
  * ── Staking hook ─────────────────────────────────────────────────────────────
  *   Optional IDeCloudStaking interface. When set, node compute shares receive
  *   a bonus funded from the platform fee portion. Staking logic lives in a
- *   separate contract — this contract only reads the bonus BPS.
+ *   separate contract - this contract only reads the bonus BPS.
  *
  * ── Platform token (XDE) integration ─────────────────────────────────────────
  *   Disabled at deploy (platformTokenEnabled = false).
@@ -47,12 +47,12 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *   XDE-funded credits.
  *
  * ── Migration model ──────────────────────────────────────────────────────────
- *   This contract is immutable — no proxy, no upgradeable pattern.
+ *   This contract is immutable - no proxy, no upgradeable pattern.
  *   If a new contract must be deployed, migration proceeds as follows:
  *
  *   On the NEW contract (before any deposits):
  *     1. Owner calls migrateBalances() with snapshot from old contract events.
- *        One-time only — migrationComplete flag prevents re-entry.
+ *        One-time only - migrationComplete flag prevents re-entry.
  *        Owner must have deposited sufficient USDC to cover imported balances.
  *
  *   On the OLD contract (after migration is verified on-chain):
@@ -61,7 +61,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *        can see the new contract address and withdraw their balances.
  *     3. After 3 days, owner calls executeFreeze().
  *        New deposits are permanently blocked. Existing withdrawBalance() and
- *        nodeWithdraw() remain functional indefinitely — users and nodes can
+ *        nodeWithdraw() remain functional indefinitely - users and nodes can
  *        always claim their funds from the old contract.
  *
  *   There is NO admin function to drain user funds. The operator is responsible
@@ -69,6 +69,24 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *   No redeployment required for: fee changes, platform token launch,
  *   master node additions, staking activation.
  */
+/// @notice Per-VM billing arrays for settleCycle(). Packed into a struct
+/// to avoid stack-too-deep with 10 calldata parameters.
+struct CycleVmData {
+    address[] users;
+    address[] computeNodes;
+    uint256[] computeAmounts;
+    uint256[] blockCounts;
+    uint256[] blockSizeKbs;
+    uint256[] replicationFactors;
+    string[]  vmIds;
+}
+
+/// @notice Per-storage-node arrays for settleCycle().
+struct CycleStorageData {
+    address[] storageNodes;
+    uint256[] storageBytes;
+}
+
 contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -77,7 +95,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     // ═══════════════════════════════════════════════════════════════════
 
     uint256 public constant BPS_DENOMINATOR          = 10000;
-    /// @notice Hard cap on platform fee — protects users from admin abuse
+    /// @notice Hard cap on platform fee - protects users from admin abuse
     uint256 public constant MAX_FEE_BPS              = 3000;  // 30%
     /// @notice Hard cap on platform token discount
     uint256 public constant MAX_PLATFORM_TOKEN_DISCOUNT_BPS = 5000; // 50%
@@ -96,7 +114,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
      * @notice On-chain storage rate reference: micro-USDC per MB per hour.
      * e.g. 1 = 0.000001 USDC/MB/hr.
      * Used by settleCycle() to compute storageAmount on-chain from blockCounts,
-     * blockSizeKbs, and replicationFactors — fully verifiable from tx calldata.
+     * blockSizeKbs, and replicationFactors - fully verifiable from tx calldata.
      */
     uint256 public costPerMbPerHour     = 1;
 
@@ -131,7 +149,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Platform token rate: how many platform tokens equal 1 USDC.
      * e.g. 1000 = 1000 XDE per 1 USDC (6 decimal USDC).
-     * Set by owner/keeper. Not an on-chain oracle — intentionally off-chain.
+     * Set by owner/keeper. Not an on-chain oracle - intentionally off-chain.
      */
     uint256 public platformTokenRate    = 1000;
 
@@ -221,7 +239,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     /// @notice Address of the replacement contract (set by initiateFreeze).
     address public replacementContract;
 
-    /// @notice Duration of the freeze timelock — gives users time to withdraw.
+    /// @notice Duration of the freeze timelock - gives users time to withdraw.
     uint256 public constant FREEZE_TIMELOCK = 3 days;
 
     // ═══════════════════════════════════════════════════════════════════
@@ -281,7 +299,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Emitted per storage node per settleCycle.
-     * All inputs are on-chain in calldata — proportional calculation is
+     * All inputs are on-chain in calldata - proportional calculation is
      * independently verifiable: reward = pool × contributedBytes / totalNetworkBytes.
      */
     event StorageRewarded(
@@ -337,7 +355,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     }
 
     modifier whenNotFrozen() {
-        require(!frozen, "Contract frozen — use replacement contract");
+        require(!frozen, "Contract frozen - see replacementContract");
         _;
     }
 
@@ -403,7 +421,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
         // usdcBase = tokenAmount * 1e6 / (rate * 10^platformTokenDecimals)
         uint256 usdcBase   = (tokenAmount * 1e6) /
                              (platformTokenRate * (10 ** platformTokenDecimals));
-        require(usdcBase > 0, "Credit rounds to zero — increase deposit");
+        require(usdcBase > 0, "Credit rounds to zero - increase deposit");
 
         uint256 usdcCredit = usdcBase +
                              (usdcBase * platformTokenDiscountBps / BPS_DENOMINATOR);
@@ -468,7 +486,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // SETTLEMENT — compute only (ephemeral VMs, replicationFactor = 0)
+    // SETTLEMENT - compute only (ephemeral VMs, replicationFactor = 0)
     // ═══════════════════════════════════════════════════════════════════
 
     /**
@@ -512,13 +530,13 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // SETTLEMENT — atomic compute + storage (replicated VMs)
+    // SETTLEMENT - atomic compute + storage (replicated VMs)
     // ═══════════════════════════════════════════════════════════════════
 
     /**
      * @notice Atomic settlement for one billing cycle.
      *
-     * Phase 1 — per-VM billing:
+     * Phase 1 - per-VM billing:
      *   computeAmount  → billed as compute cost
      *   storageAmount  → computed on-chain:
      *       blockCounts[i] × blockSizeKbs[i] × replicationFactors[i]
@@ -527,118 +545,143 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
      *   Compute split: 85% → compute node, 15% → platform (adjusted by staking bonus)
      *   Storage split: 85% → storagePool, 15% → platform
      *
-     * Phase 2 — storage pool distribution:
+     * Phase 2 - storage pool distribution:
      *   Each storage node receives: storagePool × (storageBytes[j] / Σ storageBytes)
      *   Integer dust stays in storagePool and rolls over to next cycle.
      *
-     * @param users               VM owner wallets
-     * @param computeNodes        Hosting node wallets
-     * @param computeAmounts      Compute cost per VM in USDC-equivalent (6 decimals)
-     * @param blockCounts         Manifest block count per VM (from LazysyncManager)
-     * @param blockSizeKbs        Block size in KB per VM (protocol constant per ManifestType)
-     * @param replicationFactors  Per-VM replication factor (0/1/3/5). 0 = ephemeral.
-     * @param vmIds               VM identifiers for event tracking
-     * @param storageNodes        BlockStore operator wallets
-     * @param storageBytes        node.BlockStoreInfo.UsedBytes per storage node
+     * @param vmData              Per-VM billing arrays (users, computeNodes, computeAmounts,
+     *                            blockCounts, blockSizeKbs, replicationFactors, vmIds)
+     * @param storageData         Per-storage-node arrays (storageNodes, storageBytes)
      * @param cycleId             ISO-8601 timestamp for on-chain auditability
      */
     function settleCycle(
-        address[] calldata users,
-        address[] calldata computeNodes,
-        uint256[] calldata computeAmounts,
-        uint256[] calldata blockCounts,
-        uint256[] calldata blockSizeKbs,
-        uint256[] calldata replicationFactors,
-        string[]  calldata vmIds,
-        address[] calldata storageNodes,
-        uint256[] calldata storageBytes,
-        string    calldata cycleId
+        CycleVmData      calldata vmData,
+        CycleStorageData calldata storageData,
+        string           calldata cycleId
     ) external onlyAuthorized nonReentrant whenNotPaused {
         require(
-            users.length        == computeNodes.length     &&
-            computeNodes.length == computeAmounts.length   &&
-            computeAmounts.length == blockCounts.length    &&
-            blockCounts.length  == blockSizeKbs.length     &&
-            blockSizeKbs.length == replicationFactors.length &&
-            replicationFactors.length == vmIds.length,
+            vmData.users.length == vmData.computeNodes.length &&
+            vmData.computeNodes.length == vmData.computeAmounts.length &&
+            vmData.computeAmounts.length == vmData.blockCounts.length &&
+            vmData.blockCounts.length == vmData.blockSizeKbs.length &&
+            vmData.blockSizeKbs.length == vmData.replicationFactors.length &&
+            vmData.replicationFactors.length == vmData.vmIds.length,
             "VM array length mismatch"
         );
         require(
-            storageNodes.length == storageBytes.length,
+            storageData.storageNodes.length == storageData.storageBytes.length,
             "Storage array length mismatch"
         );
 
+        _billingPhase(vmData);
+        _distributionPhase(storageData, cycleId);
+    }
+
+    /// @dev Phase 1: bill each VM - compute + storage deduction and split.
+    function _billingPhase(CycleVmData calldata d) internal {
         uint256 feeBps = platformFeeBps;
         uint256 rate   = costPerMbPerHour;
 
-        // ── Phase 1: bill each VM ────────────────────────────────────────
-        for (uint256 i = 0; i < users.length; i++) {
-            address user       = users[i];
-            address cNode      = computeNodes[i];
-            uint256 compAmt    = computeAmounts[i];
-            uint256 replFactor = replicationFactors[i];
+        for (uint256 i = 0; i < d.users.length; i++) {
+            _billVm(
+                d.users[i],
+                d.computeNodes[i],
+                d.computeAmounts[i],
+                d.blockCounts[i],
+                d.blockSizeKbs[i],
+                d.replicationFactors[i],
+                d.vmIds[i],
+                feeBps,
+                rate
+            );
+        }
+    }
 
-            // Storage cost computed on-chain for verifiability
-            uint256 storageAmt = replFactor > 0
-                ? (blockCounts[i] * blockSizeKbs[i] * replFactor * rate) / (1024 * 1e6)
-                : 0;
+    /// @dev Bill a single VM — deduct from user balance, split compute + storage.
+    /// Parameters passed individually (not struct) so calldata slots stay cheap.
+    /// Local variables minimised to stay within EVM 16-slot stack limit.
+    function _billVm(
+        address user,
+        address cNode,
+        uint256 compAmt,
+        uint256 blockCount,
+        uint256 blockSizeKb,
+        uint256 replFactor,
+        string calldata vmId,
+        uint256 feeBps,
+        uint256 rate
+    ) internal {
+        // Compute storageAmt inline — no named local to save a slot
+        uint256 storageAmt = replFactor > 0
+            ? (blockCount * blockSizeKb * replFactor * rate) / (1024 * 1e6)
+            : 0;
 
-            uint256 total = compAmt + storageAmt;
-            if (total == 0 || userBalances[user] < total) continue;
+        if (compAmt + storageAmt == 0) return;
+        if (userBalances[user] < compAmt + storageAmt) return;
 
-            userBalances[user] -= total;
+        userBalances[user]    -= compAmt + storageAmt;
+        totalComputeSettled   += compAmt;
+        totalStorageCollected += storageAmt;
 
-            // Compute split (with optional staking bonus)
-            (uint256 nodeShare, uint256 compFee) =
-                _splitWithStakingBonus(cNode, compAmt, feeBps);
+        // Compute split — delegate to avoid local variable explosion
+        _creditCompute(user, cNode, compAmt, storageAmt, feeBps, vmId);
+    }
 
-            // Storage split (no staking bonus on storage fees)
+    /// @dev Apply compute + storage splits and emit events for one VM.
+    /// Separated from _billVm to distribute local variables across two frames.
+    function _creditCompute(
+        address user,
+        address cNode,
+        uint256 compAmt,
+        uint256 storageAmt,
+        uint256 feeBps,
+        string calldata vmId
+    ) internal {
+        (uint256 nodeShare, uint256 compFee) = _splitWithStakingBonus(cNode, compAmt, feeBps);
+        nodePendingPayouts[cNode] += nodeShare;
+        platformFees              += compFee;
+        emit UsageReported(user, cNode, compAmt, nodeShare, compFee, vmId);
+
+        if (storageAmt > 0) {
             uint256 storeFee  = (storageAmt * feeBps) / BPS_DENOMINATOR;
-            uint256 poolShare = storageAmt - storeFee;
-
-            nodePendingPayouts[cNode] += nodeShare;
-            platformFees              += compFee + storeFee;
-            storagePool               += poolShare;
-            totalComputeSettled       += compAmt;
-            totalStorageCollected     += storageAmt;
-
-            emit UsageReported(user, cNode, compAmt, nodeShare, compFee, vmIds[i]);
-            emit StorageCollected(user, vmIds[i], storageAmt, storeFee, poolShare);
-            _checkLowBalance(user);
+            storagePool      += storageAmt - storeFee;
+            platformFees     += storeFee;
+            emit StorageCollected(user, vmId, storageAmt, storeFee, storageAmt - storeFee);
         }
 
-        // ── Phase 2: distribute storage pool ────────────────────────────
-        if (storagePool > 0 && storageNodes.length > 0) {
-            uint256 totalBytes = 0;
-            for (uint256 j = 0; j < storageBytes.length; j++) {
-                totalBytes += storageBytes[j];
-            }
+        _checkLowBalance(user);
+    }
 
-            if (totalBytes > 0) {
-                uint256 pool        = storagePool;
-                uint256 distributed = 0;
+    /// @dev Phase 2: distribute storagePool proportionally to storage nodes.
+    /// Extracted to avoid stack-too-deep on settleCycle's 10 calldata params.
+    function _distributionPhase(
+        CycleStorageData calldata s,
+        string           calldata cycleId
+    ) internal {
+        if (storagePool == 0 || s.storageNodes.length == 0) return;
 
-                for (uint256 j = 0; j < storageNodes.length; j++) {
-                    uint256 reward = (pool * storageBytes[j]) / totalBytes;
-                    if (reward == 0) continue;
-
-                    nodePendingPayouts[storageNodes[j]] += reward;
-                    distributed                         += reward;
-                    totalStorageDistributed             += reward;
-
-                    emit StorageRewarded(
-                        storageNodes[j],
-                        reward,
-                        storageBytes[j],
-                        totalBytes,
-                        cycleId
-                    );
-                }
-
-                // Integer dust rolls over — never lost
-                storagePool -= distributed;
-            }
+        uint256 totalBytes = 0;
+        for (uint256 j = 0; j < s.storageBytes.length; j++) {
+            totalBytes += s.storageBytes[j];
         }
+        if (totalBytes == 0) return;
+
+        uint256 pool        = storagePool;
+        uint256 distributed = 0;
+
+        for (uint256 j = 0; j < s.storageNodes.length; j++) {
+            uint256 reward = (pool * s.storageBytes[j]) / totalBytes;
+            if (reward == 0) continue;
+
+            nodePendingPayouts[s.storageNodes[j]] += reward;
+            distributed                           += reward;
+            totalStorageDistributed               += reward;
+
+            emit StorageRewarded(s.storageNodes[j], reward, s.storageBytes[j], totalBytes, cycleId);
+        }
+
+        // Integer dust rolls over - never lost
+        storagePool -= distributed;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -798,7 +841,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
     /**
      * @notice Solvency check: USDC balance vs known liabilities.
      * Platform token deposits create a USDC liability not reflected in
-     * the USDC balance — this view helps the treasury monitor reserves.
+     * the USDC balance - this view helps the treasury monitor reserves.
      * Note: userBalances sum requires off-chain indexing from Deposited events.
      */
     function isSolvent() external view returns (bool solvent, uint256 surplus) {
@@ -814,7 +857,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @dev Split amount between node and platform, applying staking bonus if set.
-     * Bonus is funded from the platform fee — platform takes less, node earns more.
+     * Bonus is funded from the platform fee - platform takes less, node earns more.
      * If staking contract is not set or returns 0, standard split applies.
      */
     function _splitWithStakingBonus(
@@ -829,7 +872,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
             uint256 bonusBps = stakingContract.nodeComputeBonusBps(node);
             if (bonusBps > 0) {
                 uint256 bonus = (nodeShare * bonusBps) / BPS_DENOMINATOR;
-                // Bonus funded from fee — cap at available fee to stay solvent
+                // Bonus funded from fee - cap at available fee to stay solvent
                 if (bonus > fee) bonus = fee;
                 nodeShare += bonus;
                 fee       -= bonus;
@@ -847,7 +890,6 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
             emit LowBalance(user, userBalances[user], threshold);
         }
     }
-}
 
     // ═══════════════════════════════════════════════════════════════════
     // MIGRATION
@@ -859,7 +901,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
      * Owner must have transferred sufficient USDC to this contract first
      * to cover all imported user balances and node payouts.
      *
-     * Permanently sets migrationComplete = true after execution — cannot
+     * Permanently sets migrationComplete = true after execution - cannot
      * be called again, preventing double-import attacks.
      *
      * Data source: enumerate Deposited, UsageReported, NodeWithdrawal,
@@ -943,11 +985,11 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
         require(block.timestamp >= freezeUnlocksAt, "Timelock not elapsed");
 
         frozen = true;
-        _pause(); // also pause settlement calls on the old contract
+        if (!paused()) _pause(); // also pause settlement calls on the old contract
 
         emit ContractFrozen(replacementContract);
     }
-
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // STAKING INTERFACE
@@ -955,7 +997,7 @@ contract DeCloudEscrow is Ownable, ReentrancyGuard, Pausable {
 
 /**
  * @notice Interface for the DeCloud staking contract.
- * Implemented by a separate contract — escrow only reads the bonus.
+ * Implemented by a separate contract - escrow only reads the bonus.
  */
 interface IDeCloudStaking {
     /**
