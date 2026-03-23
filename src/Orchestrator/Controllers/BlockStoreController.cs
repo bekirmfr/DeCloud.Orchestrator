@@ -107,7 +107,15 @@ public class BlockStoreController : ControllerBase
         node.BlockStoreInfo ??= new BlockStoreInfo
         {
             BlockStoreVmId = request.VmId,
-            ListenAddress = $"{request.AdvertiseIp ?? ""}:{BlockStoreVmSpec.BitswapPort}",
+            // Prefer request IP; fall back to the VM label baked at deploy time.
+            // Never produce ":5001" with an empty IP — that breaks bootstrap peer generation.
+            ListenAddress = !string.IsNullOrEmpty(request.AdvertiseIp)
+                ? $"{request.AdvertiseIp}:{BlockStoreVmSpec.BitswapPort}"
+                : (await _dataStore.GetVmAsync(request.VmId))
+                      ?.Labels?.GetValueOrDefault("blockstore-advertise-ip") is { } labelIp
+                      && !string.IsNullOrEmpty(labelIp)
+                  ? $"{labelIp}:{BlockStoreVmSpec.BitswapPort}"
+                  : string.Empty,
             ApiPort = BlockStoreVmSpec.ApiPort,
             CapacityBytes = request.CapacityBytes,
         };
@@ -118,6 +126,14 @@ public class BlockStoreController : ControllerBase
         node.BlockStoreInfo.UsedBytes = request.UsedBytes;
         node.BlockStoreInfo.Status = BlockStoreStatus.Active;
         node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
+
+        if (string.IsNullOrEmpty(node.BlockStoreInfo.ListenAddress))
+        {
+            _logger.LogWarning(
+                "Block store join from {NodeId}/{VmId}: could not resolve advertise IP " +
+                "— ListenAddress not set. Peer will not appear in bootstrap lists.",
+                request.NodeId, request.VmId);
+        }
 
         if (!string.IsNullOrEmpty(request.AdvertiseIp))
             node.BlockStoreInfo.ListenAddress = $"{request.AdvertiseIp}:{BlockStoreVmSpec.BitswapPort}";
