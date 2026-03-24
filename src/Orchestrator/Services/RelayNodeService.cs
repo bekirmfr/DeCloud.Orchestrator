@@ -178,6 +178,9 @@ public class RelayNodeService : IRelayNodeService
             node.RelayInfo = new RelayNodeInfo
             {
                 RelayVmId = relayVm.VmId,
+                // Port 51820 is the relay VM's externally-advertised WireGuard port.
+                // On the host, an iptables DNAT rule forwards public_ip:51820 → relay_vm_ip:51820.
+                // The node agent WireGuard interface (wg0) uses port 51821 to avoid conflict.
                 WireGuardEndpoint = $"{node.PublicIp}:51820",
                 WireGuardPublicKey = relayPublicKey,
                 WireGuardPrivateKey = relayPrivateKey,
