@@ -448,6 +448,17 @@ public class VmSchedulingService : IVmSchedulingService
             }
         }
 
+        // =====================================================
+        // FILTER 9: KVM Required for User VMs
+        //
+        // Nodes without KVM run QEMU TCG (software emulation) — 10-50x slower
+        // than native KVM. System VMs (Relay, DHT, BlockStore) bypass scheduling
+        // entirely via targetNodeId, so this filter only applies to user workloads.
+        // =====================================================
+        if (!node.HardwareInventory.KvmAvailable)
+            return "Node does not support KVM hardware virtualization. " +
+                   "QEMU TCG (software emulation) is not suitable for user workloads.";
+
         return null; // All filters passed
     }
 
