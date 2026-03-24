@@ -13,12 +13,12 @@
 	</ItemGroup>
 
 	<!-- ABI files for blockchain contract interactions -->
-	<ItemGroup>
-		<None Update="..\..\contracts\DeCloudEscrow.abi.json">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<TargetPath>Contracts\DeCloudEscrow.abi.json</TargetPath>
-		</None>
-	</ItemGroup>
+	<!-- Embedded in assembly — works regardless of build/publish/run mode -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\contracts\DeCloudEscrow.abi.json">
+      <LogicalName>DeCloudEscrow.abi.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 
 	<!-- ============================================== -->
 	<!-- NuGet Package References -->

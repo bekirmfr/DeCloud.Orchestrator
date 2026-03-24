@@ -386,12 +386,15 @@ public class BlockchainService : IBlockchainService
 
     private static string LoadAbi()
     {
-        // Resolve path relative to the assembly location so it works in
-        // both development (bin/Debug) and production (publish) layouts.
-        var assemblyDir = Path.GetDirectoryName(
-            System.Reflection.Assembly.GetExecutingAssembly().Location)!;
-        var path = Path.Combine(assemblyDir, "Contracts", "DeCloudEscrow.abi.json");
-        return File.ReadAllText(path);
+        // Read ABI from embedded resource — works in all build/publish/run modes.
+        // LogicalName set in .csproj: <LogicalName>DeCloudEscrow.abi.json</LogicalName>
+        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream("DeCloudEscrow.abi.json")
+            ?? throw new InvalidOperationException(
+                "Embedded resource 'DeCloudEscrow.abi.json' not found. " +
+                "Ensure contracts/DeCloudEscrow.abi.json is included as EmbeddedResource in the .csproj.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }
 
