@@ -301,7 +301,7 @@ if [ -f "$CONFIG_FILE" ]; then
                         SKIP_CURRENT_PEER=true
                         SHORT_PEER="${peer_to_remove:0:16}...${peer_to_remove: -8}"
                         log_info "✓ Removing peer from config: $SHORT_PEER ($reason)"
-                        ((REMOVED_COUNT++))
+                        REMOVED_COUNT=$((REMOVED_COUNT + 1))
                         break
                     fi
                 done
@@ -373,10 +373,10 @@ else
         
         if wg set "$INTERFACE" peer "$peer" remove 2>/dev/null; then
             log_info "✓ Removed peer: $SHORT_PEER ($reason)"
-            ((REMOVED_COUNT++))
+            REMOVED_COUNT=$((REMOVED_COUNT + 1))
         else
             log_error "✗ Failed to remove peer: $SHORT_PEER"
-            ((FAILED_COUNT++))
+            FAILED_COUNT=$((FAILED_COUNT + 1))
         fi
     done
 fi
