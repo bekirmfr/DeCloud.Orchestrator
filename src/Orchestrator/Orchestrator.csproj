@@ -12,10 +12,11 @@
 		<Compile Include="../Shared/**/*.cs" Link="Shared/%(RecursiveDir)%(Filename)%(Extension)" />
 	</ItemGroup>
 
+	<!-- ABI files for blockchain contract interactions -->
 	<ItemGroup>
-		<None Update="Contracts\DeCloudEscrow.abi.json">
+		<None Update="..\..\contracts\DeCloudEscrow.abi.json">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<TargetPath>Contracts\DeCloudEscrow.abi.json</TargetPath>
 		</None>
 	</ItemGroup>
 
