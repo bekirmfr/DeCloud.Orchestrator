@@ -929,7 +929,17 @@ public class SystemVmReconciliationService : BackgroundService
                 node.DhtInfo = null;
                 break;
             case SystemVmRole.Relay:
-                node.RelayInfo = null;
+                // Preserve WireGuard keypair — DHT and BlockStore VMs have the relay's
+                // public key baked into their wg-mesh.conf at cloud-init time.
+                // Reusing the same keypair on redeploy means all mesh-enrolled VMs
+                // remain connected without cascading redeployment.
+                if (node.RelayInfo != null)
+                {
+                    node.RelayInfo.RelayVmId = string.Empty;
+                    node.RelayInfo.Status = RelayStatus.Initializing;
+                    // Preserved: WireGuardPrivateKey, WireGuardPublicKey, TunnelIp,
+                    //            RelaySubnet, WireGuardEndpoint, Region
+                }
                 break;
             case SystemVmRole.BlockStore:
                 node.BlockStoreInfo = null;

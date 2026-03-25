@@ -133,12 +133,28 @@ public class RelayNodeService : IRelayNodeService
                 "Generating WireGuard keypair for relay VM on node {NodeId}",
                 node.Id);
 
-            var relayPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
-            var relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
+            string relayPrivateKey;
+            string relayPublicKey;
 
-            _logger.LogInformation(
-                "Generated WireGuard keys for relay on node {NodeId} (public key: {PubKey})",
-                node.Id, relayPublicKey);
+            if (!string.IsNullOrEmpty(node.RelayInfo?.WireGuardPrivateKey))
+            {
+                // Reuse existing keypair — preserves mesh connectivity for DHT and
+                // BlockStore VMs that have this public key in their wg-mesh.conf.
+                relayPrivateKey = node.RelayInfo.WireGuardPrivateKey;
+                relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
+                _logger.LogInformation(
+                    "Reusing existing WireGuard keypair for relay on node {NodeId} (public key: {PubKey})",
+                    node.Id, relayPublicKey);
+            }
+            else
+            {
+                // Fresh deployment — generate new keypair.
+                relayPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
+                relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
+                _logger.LogInformation(
+                    "Generated new WireGuard keypair for relay on node {NodeId} (public key: {PubKey})",
+                    node.Id, relayPublicKey);
+            }
 
             // ========================================
             // STEP 2: Create relay VM specification
