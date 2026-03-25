@@ -27,6 +27,7 @@ public interface ICentralCaddyManager
         string domain,
         string upstream,
         CancellationToken ct = default);
+}
 
     public class CentralCaddyManager : ICentralCaddyManager
 {
