@@ -18,9 +18,17 @@ public interface ICentralCaddyManager
     Task<bool> RemoveRouteAsync(string subdomain, CancellationToken ct = default);
     Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, IEnumerable<CustomDomain>? customDomains = null, CancellationToken ct = default);
     Task<string?> GetWildcardCertStatusAsync(CancellationToken ct = default);
-}
+    /// <summary>
+    /// Ensure a permanent reverse-proxy route exists for the orchestrator's own domain.
+    /// Called on startup — idempotent, survives reloads because it is re-registered
+    /// every time the orchestrator starts.
+    /// </summary>
+    Task EnsureOrchestratorRouteAsync(
+        string domain,
+        string upstream,
+        CancellationToken ct = default);
 
-public class CentralCaddyManager : ICentralCaddyManager
+    public class CentralCaddyManager : ICentralCaddyManager
 {
     private readonly HttpClient _httpClient;
     private readonly CentralIngressOptions _options;
@@ -141,6 +149,82 @@ public class CentralCaddyManager : ICentralCaddyManager
         {
             return "unknown";
         }
+    }
+
+    // In implementation:
+    public async Task EnsureOrchestratorRouteAsync(
+        string domain,
+        string upstream,
+        CancellationToken ct = default)
+    {
+        // Build a simple reverse-proxy route for the orchestrator domain.
+        // This is inserted at index 0 so it takes priority over wildcard VM routes.
+        var route = new
+        {
+            match = new[] { new { host = new[] { domain } } },
+            handle = new object[]
+            {
+                new
+                {
+                    handler = "reverse_proxy",
+                    upstreams = new[] { new { dial = upstream } },
+                    headers = new
+                    {
+                        request = new
+                        {
+                            set = new Dictionary<string, string[]>
+                            {
+                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
+                                ["X-Forwarded-For"]   = new[] { "{http.request.remote.host}" },
+                                ["X-Real-IP"]         = new[] { "{http.request.remote.host}" }
+                            }
+                        }
+                    },
+                    transport = new
+                    {
+                        protocol = "http",
+                        read_timeout = "300s",
+                        response_header_timeout = "300s"
+                    }
+                }
+            },
+            terminal = true
+        };
+
+        // Check if route already exists for this domain
+        try
+        {
+            var existing = await _httpClient.GetAsync(
+                "/config/apps/http/servers/central_ingress/routes", ct);
+
+            if (existing.IsSuccessStatusCode)
+            {
+                var json = await existing.Content.ReadAsStringAsync(ct);
+                if (json.Contains(domain))
+                {
+                    _logger.LogDebug(
+                        "Orchestrator route already exists for {Domain}", domain);
+                    return;
+                }
+            }
+        }
+        catch { /* continue to add */ }
+
+        // Insert at position 0 (before any VM wildcard routes)
+        var response = await _httpClient.PostAsJsonAsync(
+            "/config/apps/http/servers/central_ingress/routes/0",
+            route, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"Failed to register orchestrator route for {domain}: {error}");
+        }
+
+        _logger.LogInformation(
+            "✓ Orchestrator route added: {Domain} → {Upstream}",
+            domain, upstream);
     }
 
     private async Task<bool> ApplyConfigAsync(object config, CancellationToken ct)

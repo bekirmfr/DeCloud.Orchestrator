@@ -434,6 +434,36 @@ if (mongoDatabase != null)
 
                 logger.LogInformation("✓ CentralIngress initialization complete");
 
+                if (ingressService.IsEnabled)
+                {
+                    try
+                    {
+                        var orchestratorDomain = builder.Configuration
+                            .GetValue<string>("CentralIngress:OrchestratorDomain");
+
+                        if (!string.IsNullOrEmpty(orchestratorDomain))
+                        {
+                            var caddyManager = scope.ServiceProvider
+                                .GetRequiredService<ICentralCaddyManager>();
+
+                            await caddyManager.EnsureOrchestratorRouteAsync(
+                                orchestratorDomain,
+                                $"localhost:{builder.Configuration.GetValue<int>("ApiPort", 5050)}",
+                                CancellationToken.None);
+
+                            logger.LogInformation(
+                                "✓ Orchestrator route registered: https://{Domain} → localhost:5050",
+                                orchestratorDomain);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex,
+                            "Failed to register orchestrator domain route — " +
+                            "dashboard accessible via direct port");
+                    }
+                }
+
                 // ==================== Restore WireGuard Peers for Relay Nodes ====================
                 logger.LogInformation("🔄 Restoring WireGuard peers for relay nodes...");
 

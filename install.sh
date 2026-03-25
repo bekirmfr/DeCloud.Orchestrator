@@ -137,6 +137,7 @@ JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
 # Central Ingress (Caddy)
 INSTALL_CADDY=false
 INGRESS_DOMAIN=""
+ORCHESTRATOR_DOMAIN="decloud.stackfi.tech" # e.g. decloud.stackfi.tech
 ENABLE_INGRESS="false"
 CADDY_EMAIL=""
 CADDY_STAGING=false
@@ -231,6 +232,10 @@ parse_args() {
                 INGRESS_DOMAIN="$2"
                 INSTALL_CADDY=true
                 ENABLE_INGRESS="true"
+                shift 2
+                ;;
+            --orchestrator-domain)
+                ORCHESTRATOR_DOMAIN="$2"
                 shift 2
                 ;;
             --caddy-email)
@@ -1364,6 +1369,7 @@ create_configuration() {
   "CentralIngress": {
     "Enabled": ${ENABLE_INGRESS},
     "BaseDomain": "${INGRESS_DOMAIN}",
+    "OrchestratorDomain": "${ORCHESTRATOR_DOMAIN}",
     "CaddyAdminUrl": "http://localhost:2019",
     "AcmeEmail": "${CADDY_EMAIL}",
     "DnsProvider": "${DNS_PROVIDER}",
