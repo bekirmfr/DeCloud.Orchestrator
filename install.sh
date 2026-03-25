@@ -983,8 +983,135 @@ EOF
     
     chown caddy:caddy /etc/caddy/Caddyfile
     chmod 644 /etc/caddy/Caddyfile
+
+    # ── Bootstrap base Caddy config via admin API ─────────────────
+    # Caddy must have the central_ingress server with :80/:443 listeners
+    # from the start. Without this, the orchestrator's CentralCaddyManager
+    # has no server to push routes into on first startup.
+    # This is idempotent — safe to run on reinstall.
+    bootstrap_caddy_base_config
+    # ───────────────────────────────────────────────────────────────────
     
     log_success "Caddy configured"
+}
+
+bootstrap_caddy_base_config() {
+    if [ "$INSTALL_CADDY" = false ]; then
+        return
+    fi
+
+    log_step "Bootstrapping Caddy base ingress config..."
+
+    # Start Caddy temporarily if not running so admin API is available
+    local caddy_was_stopped=false
+    if ! systemctl is-active --quiet caddy; then
+        systemctl start caddy
+        sleep 3
+        caddy_was_stopped=true
+    fi
+
+    # Wait for admin API to be ready (max 15s)
+    local retries=0
+    until curl -sf http://localhost:2019/config/ > /dev/null 2>&1; do
+        retries=$((retries + 1))
+        if [ $retries -ge 15 ]; then
+            log_warn "Caddy admin API not ready after 15s — skipping base config bootstrap"
+            return
+        fi
+        sleep 1
+    done
+
+    # Build TLS config based on whether we have Cloudflare credentials
+    local tls_config='{}'
+    if [ -n "$CLOUDFLARE_TOKEN" ] && [ -n "$CLOUDFLARE_ZONE_ID" ]; then
+        tls_config=$(cat << TLSJSON
+{
+  "automation": {
+    "policies": [
+      {
+        "subjects": ["*.${INGRESS_DOMAIN}"],
+        "issuers": [
+          {
+            "module": "acme",
+            "email": "${CADDY_EMAIL}",
+            "challenges": {
+              "dns": {
+                "provider": {
+                  "name": "cloudflare",
+                  "api_token": "${CLOUDFLARE_TOKEN}"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "issuers": [
+          {
+            "module": "acme",
+            "email": "${CADDY_EMAIL}"
+          }
+        ]
+      }
+    ]
+  }
+}
+TLSJSON
+)
+    fi
+
+    # Push base config — central_ingress server listening on :80/:443
+    local response
+    response=$(curl -sf -X POST http://localhost:2019/load \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"admin\": {\"listen\": \"localhost:2019\"},
+            \"logging\": {
+                \"logs\": {
+                    \"default\": {
+                        \"writer\": {\"output\": \"file\", \"filename\": \"${CADDY_LOG_DIR}/caddy.log\"},
+                        \"encoder\": {\"format\": \"json\"},
+                        \"level\": \"INFO\"
+                    }
+                }
+            },
+            \"apps\": {
+                \"http\": {
+                    \"servers\": {
+                        \"central_ingress\": {
+                            \"listen\": [\":80\", \":443\"],
+                            \"routes\": [],
+                            \"protocols\": [\"h1\"],
+                            \"automatic_https\": {
+                                \"disable\": false,
+                                \"disable_redirects\": false
+                            }
+                        },
+                        \"health\": {
+                            \"listen\": [\":8081\"],
+                            \"routes\": [
+                                {\"match\": [{\"path\": [\"/health\"]}], \"handle\": [{\"handler\": \"static_response\", \"body\": \"OK\", \"status_code\": 200}]},
+                                {\"match\": [{\"path\": [\"/ready\"]}], \"handle\": [{\"handler\": \"static_response\", \"body\": \"OK\", \"status_code\": 200}]}
+                            ]
+                        }
+                    }
+                },
+                \"tls\": ${tls_config}
+            }
+        }" 2>&1) || true
+
+    if curl -sf "http://localhost:2019/config/apps/http/servers/central_ingress/listen" \
+        | grep -q "443" 2>/dev/null; then
+        log_success "Caddy central_ingress server bootstrapped on :80/:443"
+
+        # Save as golden master so init-decloud-caddy.sh finds it on restart
+        mkdir -p "$CADDY_BACKUP_DIR"
+        curl -sf http://localhost:2019/config/ > "${CADDY_BACKUP_DIR}/golden-master.json" 2>/dev/null || true
+        log_success "Golden master config saved: ${CADDY_BACKUP_DIR}/golden-master.json"
+    else
+        log_warn "Could not verify Caddy is listening on :443 — orchestrator will initialize on first start"
+        log_info "Response: $response"
+    fi
 }
 
 install_fail2ban() {
