@@ -20,6 +20,7 @@
 11. [GPU Proxy (CUDA Virtualization)](#gpu-proxy-cuda-virtualization)
 12. [Block Store & Storage Economics](#block-store--storage-economics)
 13. [Future Features](#future-features)
+14. [Lightweight Node Support](#lightweight-node-support)
 
 ---
 
@@ -1895,6 +1896,71 @@ Shim must precede PyTorch stubs to win symbol resolution.
 - Mobile integration (two-tier architecture)
 - Smart contract coordination
 - DeCloud Relay SDK (standalone product)
+
+---
+
+## Lightweight Node Support
+
+**Status:** 🔲 Planned
+**Strategic Value:** Dramatically expands the supply side — any machine can contribute to the network
+
+### Motivation
+
+Nodes without KVM hardware virtualization (VPS with disabled nested virt, Raspberry Pi,
+old laptops, mobile devices via Termux) cannot run full VMs. Under QEMU TCG software
+emulation, a single DHT VM takes 1-2 hours to boot. These nodes are currently excluded
+from the network entirely — but they can contribute meaningfully without VMs.
+
+### Node Classes
+```
+NodeClass.Full         KVM available → full VM scheduling + system VMs (current)
+NodeClass.Container    Docker available, no KVM → container workloads + native system services
+NodeClass.Lightweight  No KVM, no Docker → native system services only
+```
+
+### What Lightweight Nodes Can Contribute
+
+**All non-KVM nodes:**
+- **Relay** — WireGuard relay as a native host process (no VM needed, already nearly stateless)
+- **DHT** — libp2p DHT as a native systemd service (binary already built by GoBinaryBuildStartupService)
+- **BlockStore** — content-addressed block storage as a native service (no virtualization required)
+- **Storage duty** — nodes with large disks contribute block storage regardless of CPU capability
+
+**Nodes with Docker:**
+- **Container templates** — stateless workloads via `DeploymentMode.Container` (enum already exists)
+- CPU-based ML inference, web servers, APIs, databases
+- Marketplace `lightweight` tag so operators know what hardware to expect
+
+### Architecture Changes Required
+
+**Orchestrator:**
+- `NodeClass` enum on `Node` model — detected at registration from `KvmAvailable` + `DockerAvailable`
+- `ObligationEligibility` — assign system obligations with `NativeProcess` deployment mode on non-KVM nodes
+- `SystemVmReconciliationService` — new `InstallNativeService` command path alongside `CreateVm`
+- `VmSchedulingService` — allow `Container` VmType on Docker-capable nodes
+
+**Node Agent:**
+- `InstallNativeService` command handler — drops binary + systemd unit directly on host
+- DHT and BlockStore binaries already compiled on host by `GoBinaryBuildStartupService`
+- No libvirt involvement for native services
+
+**Marketplace:**
+- `lightweight` capability tag on node advertisements
+- Container template category
+- Clear UX indicator: "Runs as container" vs "Full VM"
+
+### Practical Impact
+
+- A Raspberry Pi 5 with 4TB USB storage → legitimate BlockStore + DHT contributor
+- A $5/month VPS with no KVM → relay + DHT + BlockStore via native processes, boots in seconds
+- An Android device (Termux) → relay node, expands geographic coverage
+- The orchestrator seeding node itself → all system services as native processes, no VM overhead
+
+### Immediate Value
+
+The current orchestrator seeding node (`KvmAvailable: false`) could run relay, DHT,
+and blockstore as native systemd services today — fully functional infrastructure
+contribution with zero VM overhead.
 
 ---
 
