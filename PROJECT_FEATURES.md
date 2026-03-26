@@ -21,6 +21,7 @@
 12. [Block Store & Storage Economics](#block-store--storage-economics)
 13. [Future Features](#future-features)
 14. [Lightweight Node Support](#lightweight-node-support)
+15. [Alpine Linux System VM Images](#alpine-linux-system-vm-images)
 
 ---
 
@@ -1963,5 +1964,82 @@ and blockstore as native systemd services today — fully functional infrastruct
 contribution with zero VM overhead.
 
 ---
+
+## Alpine Linux System VM Images
+
+**Status:** 🔲 Planned
+**Strategic Value:** 40x smaller base image → faster node onboarding, lower storage overhead per node
+
+### Motivation
+
+All system VMs (Relay, DHT, BlockStore) currently use `debian-12-genericcloud` (~400MB,
+down from `debian-12-generic` ~2GB). The next step is Alpine Linux — the industry
+standard for minimal service VMs and containers. The Alpine cloud image is **~50MB**,
+boots in under 10 seconds with KVM, and has all required packages available via `apk`.
+
+### Size comparison
+
+| Image | Compressed size | Boot time (KVM) | apt/apk install |
+|---|---|---|---|
+| debian-12-generic | ~2.0 GB | ~20s | ~3-5 min (cold) |
+| debian-12-genericcloud | ~400 MB | ~10s | ~1-2 min (cold) |
+| alpine-3.x (target) | ~50 MB | ~5s | ~15s |
+
+### What works out of the box on Alpine
+
+All packages needed by system VMs are available via `apk`:
+- `wireguard-tools` — WireGuard support
+- `nginx` — reverse proxy (only `nginx` package, already minimal)
+- `python3` — relay API and DHT dashboard
+- `qemu-guest-agent` — readiness monitoring
+- `curl`, `jq`, `openssl` — scripting dependencies
+
+### What requires changes
+
+**1. Package manager** — `apt-get` / `apt` → `apk add` in the `packages:` block.
+Cloud-init on Alpine uses `tiny-cloud` which supports `packages:` but calls `apk` instead.
+
+**2. Init system** — Alpine defaults to **OpenRC**, not systemd.
+Cloud-init templates use `systemctl`, `systemd` drop-ins, and `wg-quick@` units
+extensively. Two options:
+- Install `systemd` on Alpine (adds ~50MB, defeats part of the purpose)
+- Rewrite templates to use OpenRC `rc-update` / `rc-service` (more effort, lighter result)
+
+**3. `cloud-init` variant** — Alpine uses `tiny-cloud`, a minimal cloud-init compatible
+layer. Most directives work (`packages`, `write_files`, `runcmd`, `bootcmd`) but
+some advanced features may differ. Needs validation.
+
+**4. WireGuard** — Alpine includes WireGuard in the kernel since 5.15. `wg-quick`
+works via `wireguard-tools`. The `wg-mesh-enroll.sh` script needs minor path adjustments
+(`/etc/init.d/` vs `/etc/systemd/`).
+
+### Implementation Plan
+
+**Phase 1 — Validate Alpine + systemd (low effort)**
+Install `systemd` on Alpine cloud image, test existing templates unchanged.
+If systemd overhead is acceptable (~50MB), this is a near-zero-change migration.
+
+**Phase 2 — Full OpenRC rewrite (high effort, maximum benefit)**
+Rewrite all three system VM cloud-init templates to use OpenRC natively.
+No systemd dependency. True ~50MB footprint. Boot time under 5 seconds.
+Create `alpine-relay`, `alpine-dht`, `alpine-blockstore` image IDs in `ArchitectureHelper.cs`.
+
+### Files to change
+
+| File | Change |
+|---|---|
+| `ArchitectureHelper.cs` | Add Alpine image URLs for amd64 + arm64 |
+| `VmService.cs` | Add `alpine-*` → URL mappings |
+| `DataStore.cs` | Register `alpine-relay`, `alpine-dht`, `alpine-blockstore` image entries |
+| `relay-vm-cloudinit.yaml` | `apt` → `apk`, systemctl → rc-service (Phase 2 only) |
+| `dht-vm-cloudinit.yaml` | Same |
+| `blockstore-vm-cloudinit.yaml` | Same |
+
+### Dependency
+
+This feature pairs naturally with **Lightweight Node Support** (Section 14) — Alpine
+is the ideal base for native process deployment on lightweight nodes, where the
+goal is minimum footprint on the host. The same Alpine templates could run either
+as VMs on KVM nodes or as native OCI containers on Docker-capable lightweight nodes.
 
 *For strategic roadmap and business context, see [PROJECT_MEMORY.md](file:///c:/Users/BMA/source/repos/DeCloud.Orchestrator/PROJECT_MEMORY.md)*

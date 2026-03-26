@@ -1128,8 +1128,8 @@ public class VmService : IVmService
             "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/alpine-virt-3.19.0-x86_64.qcow2",
             // System VMs use Debian 12 (~2 GiB) — smaller than Ubuntu (~3.5 GiB), systemd-compatible
             // so cloud-init templates work as-is. Both share the same cached base image.
-            "debian-12-dht" or "debian-12-relay" =>
-                "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
+            "debian-12-dht" or "debian-12-relay" or "debian-12-blockstore" =>
+                "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2",
             _ => null
         };
     }

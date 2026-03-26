@@ -969,6 +969,7 @@ Based on strategic analysis, these should be **deferred or rejected**:
 - ❌ More seed templates (have 6, target 10-15)
 - ❌ No collaboration features (Phase 3)
 - ❌ Lightweight node support (native process deployment for non-KVM nodes — see PROJECT_FEATURES.md)
+- ❌ Alpine Linux system VM images (50MB base image, 40x smaller than current — see PROJECT_FEATURES.md §15)
 
 **Strategic Position:**
 - **Unique Value Prop:** Censorship-resistant compute with full VMs
