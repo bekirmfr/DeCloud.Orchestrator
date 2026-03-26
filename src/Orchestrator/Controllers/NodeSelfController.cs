@@ -1,9 +1,10 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Orchestrator.Services;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
+using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Controllers;
@@ -18,6 +19,7 @@ public class NodeSelfController : ControllerBase
     private readonly NodePerformanceEvaluator _evaluator;
     private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly INodeMarketplaceService _marketplaceService;
+    private readonly SystemVmReconciliationService _reconciler;
     private readonly ILogger<NodeSelfController> _logger;
 
     public NodeSelfController(
@@ -26,6 +28,7 @@ public class NodeSelfController : ControllerBase
         NodePerformanceEvaluator evaluator,
         NodeCapacityCalculator capacityCalculator,
         INodeMarketplaceService marketplaceService,
+        SystemVmReconciliationService reconciler,
         ILogger<NodeSelfController> logger)
     {
         _dataStore = dataStore;
@@ -33,6 +36,7 @@ public class NodeSelfController : ControllerBase
         _evaluator = evaluator;
         _capacityCalculator = capacityCalculator;
         _marketplaceService = marketplaceService;
+        _reconciler = reconciler;
         _logger = logger;
     }
 
@@ -212,8 +216,18 @@ public class NodeSelfController : ControllerBase
         node.HardwareInventory = inventory;
         node.PerformanceEvaluation = evaluation;
 
-        // Persist updated node
+        // Persist updated node before reconciling so EnsureObligationsAsync
+        // sees the fresh evaluation when computing eligible roles.
         await _dataStore.SaveNodeAsync(node);
+
+        // Re-evaluate obligations against updated capabilities and deploy
+        // any newly eligible roles (e.g., node gained enough storage for
+        // BlockStore, or benchmark now meets a higher tier threshold).
+        await _reconciler.EnsureAndReconcileAsync(node, ct);
+
+        _logger.LogInformation(
+            "Node {NodeId} re-evaluation complete — obligations reconciled",
+            nodeId);
 
         return Ok(evaluation);
     }

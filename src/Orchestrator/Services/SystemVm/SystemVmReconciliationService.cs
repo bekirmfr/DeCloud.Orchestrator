@@ -625,6 +625,17 @@ public class SystemVmReconciliationService : BackgroundService
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
+    /// Public entry point for on-demand reconciliation (e.g., after re-evaluation).
+    /// Equivalent to one background loop iteration for a single node:
+    /// ensures obligations reflect current capabilities, then reconciles state.
+    /// </summary>
+    public async Task EnsureAndReconcileAsync(Node node, CancellationToken ct = default)
+    {
+        await EnsureObligationsAsync(node, ct);
+        await ReconcileNodeAsync(node, ct);
+    }
+
+    /// <summary>
     /// Ensure a node's obligation list reflects its current capabilities.
     /// Handles three cases:
     ///   1. Legacy nodes with an empty obligations list (registered before the obligation system)
