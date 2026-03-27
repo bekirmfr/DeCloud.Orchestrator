@@ -1129,7 +1129,7 @@ public class VmService : IVmService
             // System VMs use Debian 12 (~2 GiB) — smaller than Ubuntu (~3.5 GiB), systemd-compatible
             // so cloud-init templates work as-is. Both share the same cached base image.
             "debian-12-dht" or "debian-12-relay" or "debian-12-blockstore" =>
-                "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2",
+                "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
             _ => null
         };
     }
