@@ -325,7 +325,7 @@ public class VmSpec
     /// Affects scheduling: replicationFactor > 0 requires an Active BlockStore
     /// on the target node.
     /// </summary>
-    public int ReplicationFactor { get; set; } = 3;
+    public int ReplicationFactor { get; set; } = 0;
 }
 
 public class VmNetworkConfig

@@ -305,6 +305,29 @@ public class BlockStoreController : ControllerBase
             request.ManifestType,
             request.TotalBytes);
 
+        // Update VM lazysync status: Seeding during initial push, Replicating once
+        // the first full manifest is registered and awaiting DHT confirmation.
+        if (request.IsSeeding == true)
+        {
+            var vm = await _dataStore.GetVmAsync(request.VmId);
+            if (vm != null && vm.LazysyncStatus == LazysyncStatus.Pending)
+            {
+                vm.LazysyncStatus = LazysyncStatus.Seeding;
+                await _dataStore.SaveVmAsync(vm);
+            }
+        }
+        else if (manifest.Version == 1)
+        {
+            // First complete manifest registered — advance to Replicating
+            // (LazysyncManager will advance to Protected once DHT confirms)
+            var vm = await _dataStore.GetVmAsync(request.VmId);
+            if (vm != null && vm.LazysyncStatus is LazysyncStatus.Pending or LazysyncStatus.Seeding)
+            {
+                vm.LazysyncStatus = LazysyncStatus.Replicating;
+                await _dataStore.SaveVmAsync(vm);
+            }
+        }
+
         return Ok(new { success = true, manifestVersion = manifest.Version });
     }
 
@@ -383,4 +406,10 @@ public class BlockStoreManifestRequest
     public int BlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
     public ManifestType ManifestType { get; set; } = ManifestType.VmOverlay;
     public long TotalBytes { get; set; }
+    /// <summary>
+    /// True when the lazysync daemon is still in the initial seeding phase
+    /// (state.Version == 0, not all chunks pushed yet). Used by the orchestrator
+    /// to set LazysyncStatus.Seeding on the VM record.
+    /// </summary>
+    public bool? IsSeeding { get; set; }
 }

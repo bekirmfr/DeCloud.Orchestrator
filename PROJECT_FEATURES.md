@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-03-28
 **Purpose:** Technical documentation of all major platform features and innovations
 
 ---
@@ -1972,18 +1972,63 @@ contribution with zero VM overhead.
 
 ### Motivation
 
-All system VMs (Relay, DHT, BlockStore) currently use `debian-12-genericcloud` (~400MB,
-down from `debian-12-generic` ~2GB). The next step is Alpine Linux — the industry
-standard for minimal service VMs and containers. The Alpine cloud image is **~50MB**,
-boots in under 10 seconds with KVM, and has all required packages available via `apk`.
+All system VMs (Relay, DHT, BlockStore) currently use `debian-12-generic` (~427MB).
+The next step is Alpine Linux — the industry standard for minimal service VMs and
+containers. The Alpine cloud image is **~50MB**, boots in under 10 seconds with KVM,
+and has all required packages available via `apk`.
 
-### Size comparison
+### Image progression and lessons learned (2026-03-28)
 
-| Image | Compressed size | Boot time (KVM) | apt/apk install |
-|---|---|---|---|
-| debian-12-generic | ~2.0 GB | ~20s | ~3-5 min (cold) |
-| debian-12-genericcloud | ~400 MB | ~10s | ~1-2 min (cold) |
-| alpine-3.x (target) | ~50 MB | ~5s | ~15s |
+The path from the original working image to Alpine is not a single step. A failed
+intermediate migration to `debian-12-genericcloud` revealed a critical kernel difference
+that must be accounted for in any future image change.
+
+| Image | Compressed size | Boot time (KVM) | NoCloud ISO detection | Status |
+|---|---|---|---|---|
+| `debian-12-generic` | ~427 MB | ~20s | ✅ Reliable — AHCI compiled into kernel | **Current (reverted to)** |
+| `debian-12-genericcloud` | ~334 MB | ~10s | ❌ Broken — AHCI loaded as module, timing race | **Attempted, rejected** |
+| `alpine-3.x` (target) | ~50 MB | ~5s | ✅ Reliable — virtio/AHCI compiled in by default | **Planned** |
+
+#### Why `debian-12-genericcloud` was rejected (2026-03-28)
+
+`debian-12-genericcloud` uses `linux-image-cloud-amd64` — a stripped cloud-optimized
+kernel where the AHCI and SATA drivers are **loadable modules** (`ahci`, `ata_piix`)
+rather than compiled in. The NoCloud datasource's `cloud-init-local` service runs
+at early boot before `udev` finishes loading SATA modules, so `blkid -tLABEL=cidata`
+returns nothing — the cidata ISO attached as `/dev/sda` doesn't exist yet when the
+scan fires. `ds-identify` finds no datasource, `cloud-init-generator` enables no
+units, and `cloud-init` runs but falls back to `DataSourceNone` with no user-data.
+
+The attempted workarounds (injecting `datasource_list: [NoCloud, None]` into
+`/etc/cloud/cloud.cfg.d/99_datasource.cfg` via `CloudInitCleaner`) got cloud-init
+to run but still failed because the NoCloud probe calls `blkid` internally — same
+race, same empty result. The correct fix is to seed user-data at
+`/var/lib/cloud/seed/nocloud/` inside the overlay before first boot (no block device
+scan needed), but this requires a guestmount step in `LibvirtVmManager` before
+VM start. Full solution documented in the `InjectCloudInitSeedAsync` approach.
+
+By contrast, `debian-12-generic` uses `linux-image-amd64` with AHCI compiled in —
+`/dev/sda` is present before `cloud-init-local` starts, `blkid` finds the cidata
+label immediately, and everything works.
+
+**Alpine is immune to this problem.** The Alpine cloud image kernel has `virtio-blk`
+and `ahci` compiled in by default, and Alpine uses `tiny-cloud` which checks
+`/var/lib/cloud/seed/nocloud/` first — no block device scan at all.
+
+#### Additional finding: `CloudInitCleaner` must inject datasource config
+
+Even on `debian-12-generic`, a defensive fix was added to `CloudInitCleaner` to
+inject `datasource_list: [NoCloud, None]` into the base image during the cleaning
+step. Without this, future Debian image updates (e.g., a point release that silently
+tightens `ds-identify` behavior) could re-introduce the same failure. This config
+is written once when the image is first downloaded and cached via the
+`.cloudinit-cleaned` marker file.
+
+```csharp
+// CloudInitCleaner.cs — added to all three clean methods
+"rm -f /etc/cloud/cloud-init.disabled",
+"mkdir -p /etc/cloud/cloud.cfg.d && echo 'datasource_list: [NoCloud, None]' > /etc/cloud/cloud.cfg.d/99_datasource.cfg",
+```
 
 ### What works out of the box on Alpine
 
@@ -1997,12 +2042,12 @@ All packages needed by system VMs are available via `apk`:
 ### What requires changes
 
 **1. Package manager** — `apt-get` / `apt` → `apk add` in the `packages:` block.
-Cloud-init on Alpine uses `tiny-cloud` which supports `packages:` but calls `apk` instead.
+Alpine's cloud-init variant (`tiny-cloud`) supports `packages:` but calls `apk` instead.
 
 **2. Init system** — Alpine defaults to **OpenRC**, not systemd.
 Cloud-init templates use `systemctl`, `systemd` drop-ins, and `wg-quick@` units
 extensively. Two options:
-- Install `systemd` on Alpine (adds ~50MB, defeats part of the purpose)
+- Install `systemd` on Alpine (adds ~50MB, partially defeats the purpose)
 - Rewrite templates to use OpenRC `rc-update` / `rc-service` (more effort, lighter result)
 
 **3. `cloud-init` variant** — Alpine uses `tiny-cloud`, a minimal cloud-init compatible
@@ -2013,16 +2058,31 @@ some advanced features may differ. Needs validation.
 works via `wireguard-tools`. The `wg-mesh-enroll.sh` script needs minor path adjustments
 (`/etc/init.d/` vs `/etc/systemd/`).
 
+**5. NoCloud seed path (advantage)** — Alpine's `tiny-cloud` checks
+`/var/lib/cloud/seed/nocloud/` before any block device scan. If the
+`InjectCloudInitSeedAsync` approach is implemented in `LibvirtVmManager`
+(writing `user-data` + `meta-data` into the overlay before VM start), Alpine
+will find its config instantly with zero timing dependency and no need for
+the cidata ISO at all.
+
 ### Implementation Plan
 
 **Phase 1 — Validate Alpine + systemd (low effort)**
 Install `systemd` on Alpine cloud image, test existing templates unchanged.
-If systemd overhead is acceptable (~50MB), this is a near-zero-change migration.
+If systemd overhead is acceptable (~50MB extra), this is a near-zero-change migration.
+The `datasource_list` injection issue does not apply — Alpine's tiny-cloud doesn't
+use `ds-identify`.
 
 **Phase 2 — Full OpenRC rewrite (high effort, maximum benefit)**
 Rewrite all three system VM cloud-init templates to use OpenRC natively.
 No systemd dependency. True ~50MB footprint. Boot time under 5 seconds.
 Create `alpine-relay`, `alpine-dht`, `alpine-blockstore` image IDs in `ArchitectureHelper.cs`.
+
+**Phase 2 prerequisite — `InjectCloudInitSeedAsync` in `LibvirtVmManager`**
+Write `user-data` + `meta-data` directly into the overlay at
+`/var/lib/cloud/seed/nocloud/` before VM start. This eliminates the cidata ISO
+timing dependency entirely for all image types and is the correct long-term
+approach regardless of Alpine migration.
 
 ### Files to change
 
@@ -2031,7 +2091,9 @@ Create `alpine-relay`, `alpine-dht`, `alpine-blockstore` image IDs in `Architect
 | `ArchitectureHelper.cs` | Add Alpine image URLs for amd64 + arm64 |
 | `VmService.cs` | Add `alpine-*` → URL mappings |
 | `DataStore.cs` | Register `alpine-relay`, `alpine-dht`, `alpine-blockstore` image entries |
-| `relay-vm-cloudinit.yaml` | `apt` → `apk`, systemctl → rc-service (Phase 2 only) |
+| `LibvirtVmManager.cs` | Add `InjectCloudInitSeedAsync` — write seed into overlay before VM start |
+| `CloudInitCleaner.cs` | Already updated — injects `datasource_list` + removes `cloud-init.disabled` |
+| `relay-vm-cloudinit.yaml` | `apt` → `apk`, `systemctl` → `rc-service` (Phase 2 only) |
 | `dht-vm-cloudinit.yaml` | Same |
 | `blockstore-vm-cloudinit.yaml` | Same |
 
