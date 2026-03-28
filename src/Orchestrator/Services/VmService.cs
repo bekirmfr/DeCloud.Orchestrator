@@ -952,6 +952,7 @@ public class VmService : IVmService
                 UserData = processedUserData, // Cloud-init template (with variables substituted)
                 Labels = vm.Labels,
                 // Per-service readiness definitions for VmReadinessMonitor on node agent
+                ReplicationFactor = vm.Spec.ReplicationFactor,
                 Services = vm.Services.Select(s => new
                 {
                     s.Name,
