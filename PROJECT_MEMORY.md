@@ -746,6 +746,69 @@ Based on strategic analysis, these should be **deferred or rejected**:
 
 ---
 
+## System VM Boot Performance Analysis (2026-03-28)
+
+### Measured Timing — BlockStore VM (DedixlabVM, clean deploy)
+
+| Phase | Duration | Notes |
+|---|---|---|
+| VM boot (QEMU/libvirt) | 71s | Fixed cost |
+| cloud-init: user-data parsing (gz+b64 binary) | 34s | cloud-init decodes binary in Python |
+| cloud-init: apt-get update | ~190s | 44 MB package list fetch — dominant cost |
+| cloud-init: package install | ~40s | 11 packages, 1,242 kB, fast once lists fetched |
+| cloud-init total | 343s (5m43s) | `cloud-init analyze show` confirmed |
+| snapd + LXD services (Ubuntu base image) | ~50s | Pre-installed, useless in system VMs |
+| blockstore-node startup | 1s | libp2p peer ID in 300ms |
+| orchestrator reconciliation | ~90s | 15s heartbeat + 30s CheckDeploymentProgressAsync |
+| **Total DeployedAt → ActiveAt** | **~11 minutes** | Measured from MongoDB timestamps |
+
+### Root Causes (confirmed from logs)
+
+**1. `apt-get update` fetches 44 MB of package metadata** (~190s)
+- `cloud-init analyze show`: `config-package_update_upgrade_install: 230.415s`
+- The packages themselves install in <1s after lists are fetched
+- Fix: `package_update: false` + `package_upgrade: false` in all system VM cloud-init YAMLs
+
+**2. snapd + LXD run inside every system VM** (~50s)
+- `systemd-analyze blame`: `snapd.seeded.service 24.7s`, `snapd.service 11.9s`, `snap.lxd.activate.service 3.5s`
+- Ubuntu 22.04 cloud image ships with snapd and LXD pre-installed — completely unused in system VMs
+- Fix: Mask in `bootcmd` before any service starts:
+```yaml
+  bootcmd:
+    - rm -f /etc/machine-id /var/lib/dbus/machine-id
+    - systemd-machine-id-setup
+    - systemctl mask snapd.service snapd.socket snapd.seeded.service snap.lxd.activate.service 2>/dev/null || true
+```
+
+**3. Binary embedded as gz+b64 in cloud-init YAML** (34s)
+- cloud-init parses the entire YAML in Python before writing files — multi-MB binary causes 34s decode
+- Fix (longer term): Serve binary via NodeAgent HTTP endpoint (curl from runcmd)
+
+**4. `notify-ready.sh` callback never fired**
+- Callback log was empty — orchestrator found readiness via 15s heartbeat + 30s reconciliation polling
+- Fix: Push immediate reconciliation from `BlockStoreCallbackController.BlockStoreReady()`
+
+### Redundant packages removed from relay-vm-cloudinit.yaml
+- `python3-pip` — never used (relay API uses stdlib only)
+- `htop`, `iftop`, `net-tools` — diagnostic tools, install on demand
+- `nginx` (full) → `nginx-light` — only basic reverse proxy features used
+
+### Expected improvement after fixes
+
+| Fix | Saves |
+|---|---|
+| `package_update: false` + `package_upgrade: false` | ~190s |
+| Mask snapd/LXD in bootcmd | ~50s |
+| Push reconciliation from callback | ~45s |
+| **Total** | **~285s (~4.75 min)** |
+
+**Projected: ~11 min → ~6.5 min** with quick fixes.
+**Pre-baked base image** (no apt at all) would bring this to ~2.5 min.
+
+### Pre-baked system VM base image (future work)
+All three system VMs install identical packages: `qemu-guest-agent curl jq openssl python3 wireguard wireguard-tools nginx-light`. A single pre-baked qcow2 with these packages removes apt from the boot path entirely. Build via `virt-customize` as part of `install.sh` or `GoBinaryBuildStartupService`.
+---
+
 ## Approach & Patterns
 
 ### Development Workflow
