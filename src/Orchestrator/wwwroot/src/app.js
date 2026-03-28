@@ -95,6 +95,29 @@ const BANDWIDTH_TIERS = {
     3: { name: 'Unmetered', speed: 'No cap', burst: 'No cap', hourlyRate: 0.040, description: 'No artificial bandwidth cap. Limited only by host NIC.' }
 };
 
+const REPLICATION_TIERS = {
+    0: {
+        label:       'Ephemeral',
+        description: 'No replication. Data is lost permanently if the node fails. Use for stateless workloads, batch jobs, CI runners.',
+        badge:       'No protection'
+    },
+    1: {
+        label:       'Single replica (1×)',
+        description: 'One replica. Survives if at least 1 block store provider holds the blocks.',
+        badge:       'Basic protection'
+    },
+    3: {
+        label:       'Standard (3×)',
+        description: 'Three replicas. Survives loss of 2 provider nodes simultaneously. Recommended for all production workloads.',
+        badge:       'Standard protection'
+    },
+    5: {
+        label:       'High Availability (5×)',
+        description: 'Five replicas. Survives loss of 4 provider nodes. Use for databases, ML checkpoints, critical stateful services.',
+        badge:       'Maximum protection'
+    }
+};
+
 const VmAction = {
     Start: 0,
     Stop: 1,
@@ -142,6 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     updateTierInfo();
     updateBandwidthInfo();
+    updateReplicationInfo();
     updateEstimatedCost();
 });
 
@@ -152,6 +176,7 @@ document.getElementById('vm-cpu').addEventListener('change', updateEstimatedCost
 document.getElementById('vm-memory').addEventListener('change', updateEstimatedCost);
 document.getElementById('vm-disk').addEventListener('change', updateEstimatedCost);
 document.getElementById('bandwidth-tier').addEventListener('change', updateBandwidthInfo);
+document.getElementById('replication-factor')?.addEventListener('change', updateReplicationInfo);
 
 // ============================================
 // APPKIT INITIALIZATION
@@ -1474,6 +1499,7 @@ async function createVM() {
     const imageId = document.getElementById('vm-image').value;
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
+    const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
     const region = document.getElementById('vm-region')?.value || null;
     const zone = document.getElementById('vm-zone')?.value || null;
 
@@ -1498,6 +1524,7 @@ async function createVM() {
                 imageId: imageId,
                 qualityTier: qualityTier,
                 bandwidthTier: bandwidthTier,
+                replicationFactor: replicationFactor,
                 region: region,
                 zone: zone
             }
@@ -1532,11 +1559,13 @@ async function createVM() {
             document.getElementById('vm-name').value = '';
             document.getElementById('quality-tier').value = '1';  // ← RESET TO STANDARD
             document.getElementById('bandwidth-tier').value = '3'; // ← RESET TO UNMETERED
+            document.getElementById('replication-factor').value = '3'; // ← RESET TO STANDARD
             document.getElementById('vm-region').value = '';  // ← RESET REGION
             document.getElementById('vm-zone').value = '';    // ← RESET ZONE
             document.getElementById('vm-zone').disabled = true;  // ← DISABLE ZONE
             updateTierInfo();  // ← REFRESH TIER INFO
             updateBandwidthInfo();
+            updateReplicationInfo();
 
             await refreshData();
         } else {
@@ -1698,6 +1727,31 @@ function updateBandwidthInfo() {
             <span class="tier-multiplier">+$${bw.hourlyRate.toFixed(3)}/hr</span>
         </div>
     `;
+
+    updateEstimatedCost();
+}
+
+function updateReplicationInfo() {
+    const select = document.getElementById('replication-factor');
+    if (!select) return;
+    const factor = parseInt(select.value);
+    const tier = REPLICATION_TIERS[factor] || REPLICATION_TIERS[3];
+
+    const helpText = document.getElementById('replication-help-text');
+    if (helpText) helpText.textContent = tier.label;
+
+    const infoDiv = document.getElementById('replication-info');
+    if (infoDiv) {
+        infoDiv.innerHTML = `
+            <div class="tier-description">${tier.description}</div>
+            <div class="tier-pricing">
+                <span class="tier-points">${tier.badge}</span>
+                ${factor === 0
+                    ? '<span class="tier-multiplier">No storage cost</span>'
+                    : `<span class="tier-multiplier">+storage replication cost (${factor}×)</span>`}
+            </div>
+        `;
+    }
 
     updateEstimatedCost();
 }
@@ -2462,6 +2516,7 @@ window.createVM = createVM;
 window.updateTierInfo = updateTierInfo;
 window.updateEstimatedCost = updateEstimatedCost;
 window.updateBandwidthInfo = updateBandwidthInfo;
+window.updateReplicationInfo = updateReplicationInfo;
 window.startVM = startVM;
 window.restartVM = restartVM;
 window.stopVM = stopVM;

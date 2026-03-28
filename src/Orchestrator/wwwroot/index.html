@@ -653,6 +653,24 @@
                     </div>
                 </div>
 
+                <!-- Replication Factor Section -->
+                <div class="form-group">
+                    <label for="replication-factor" class="form-label">
+                        Replication Factor
+                        <span class="quality-tier-help" id="replication-help-text">Standard (3×)</span>
+                    </label>
+                    <select id="replication-factor" class="form-control" onchange="updateReplicationInfo()">
+                        <option value="0">Ephemeral — no replication (data lost on node failure)</option>
+                        <option value="1">Single replica (1×) — survives 1 node failure</option>
+                        <option value="3" selected>Standard (3×) — survives 2 simultaneous failures</option>
+                        <option value="5">High Availability (5×) — survives 4 simultaneous failures</option>
+                    </select>
+                    <div class="tier-info" id="replication-info">
+                        <!-- Populated by updateReplicationInfo() on init -->
+                    </div>
+                    <p class="form-help" style="margin-top: 4px; font-size: 0.75rem; color: var(--color-text-tertiary, #718096);">Cannot be changed after VM creation.</p>
+                </div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label for="vm-region" class="form-label">
@@ -872,6 +890,20 @@
                                 <!-- Options populated by JS based on template minimums -->
                             </select>
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Replication Factor</label>
+                        <select class="form-input" id="deploy-replication-factor"
+                            onchange="window.templateDetail.updateDeployCostEstimate()">
+                            <option value="0">Ephemeral (no replication)</option>
+                            <option value="1">Single replica (1×)</option>
+                            <option value="3" selected>Standard (3×)</option>
+                            <option value="5">High Availability (5×)</option>
+                        </select>
+                        <p class="form-help" style="margin-top: 4px; font-size: 0.75rem; color: var(--color-text-tertiary, #718096);">
+                            Cannot be changed after VM creation. Requires Active BlockStore on target node (except Ephemeral).
+                        </p>
                     </div>
 
                     <div class="form-row">

@@ -396,6 +396,8 @@ export function closeDeployTemplateModal() {
         modal.classList.remove('active');
         document.body.style.overflow = '';
     }
+    const replicationSelect = document.getElementById('deploy-replication-factor');
+    if (replicationSelect) replicationSelect.value = '3';
 }
 
 /**
@@ -485,6 +487,7 @@ export async function deployFromTemplate() {
     const diskGb = parseInt(document.getElementById('deploy-disk').value);
     const qualityTier = parseInt(document.getElementById('deploy-quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('deploy-bandwidth-tier').value);
+    const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
     const region = document.getElementById('deploy-region')?.value || null;
     const zone = document.getElementById('deploy-zone')?.value || null;
 
@@ -544,6 +547,7 @@ export async function deployFromTemplate() {
                     requiresGpu: currentTemplate?.requiresGpu || false,
                     qualityTier: qualityTier,
                     bandwidthTier: bandwidthTier,
+                    replicationFactor: replicationFactor,
                     region: region,
                     zone: zone
                 }
@@ -623,10 +627,15 @@ function updateDeployCostEstimate() {
     const resourceCost = (cpuCost + memCost + diskCost) * qualityTier.priceMultiplier;
     const totalHourly = resourceCost + bwTier.hourlyRate;
 
+    const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
+
     // Update display
     const costDisplay = document.getElementById('deploy-cost-estimate');
     if (costDisplay) {
-        costDisplay.textContent = `~$${totalHourly.toFixed(4)}/hr (default rates)`;
+        const replicationNote = replicationFactor > 0
+            ? ` + storage replication (${replicationFactor}×)`
+            : '';
+        costDisplay.textContent = `~$${totalHourly.toFixed(4)}/hr (default rates)${replicationNote}`;
     }
 }
 
