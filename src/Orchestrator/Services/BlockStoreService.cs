@@ -193,6 +193,7 @@ public interface IBlockStoreService
         int blockSizeKb,
         ManifestType manifestType,
         long totalBytes,
+        int replicationFactor = 3,
         CancellationToken ct = default);
 
     // Replication audit (Phase D implementation; interface defined now)
@@ -459,6 +460,7 @@ public async Task<ManifestRecord> RegisterManifestAsync(
         int blockSizeKb,
         ManifestType manifestType,
         long totalBytes,
+        int replicationFactor = 3,
         CancellationToken ct = default)
     {
         // Try to load existing from MongoDB to preserve immutable fields
@@ -481,6 +483,7 @@ public async Task<ManifestRecord> RegisterManifestAsync(
                 ManifestType     = manifestType,
                 TotalBytes       = totalBytes,
                 RegisteredAt     = DateTime.UtcNow,
+                ReplicationFactor = replicationFactor
             };
         }
         else if (version > existing.Version)

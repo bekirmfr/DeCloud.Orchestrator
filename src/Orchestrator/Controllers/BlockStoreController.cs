@@ -303,7 +303,8 @@ public class BlockStoreController : ControllerBase
             request.BlockCount,
             request.BlockSizeKb,
             request.ManifestType,
-            request.TotalBytes);
+            request.TotalBytes,
+            request.ReplicationFactor);
 
         // Update VM lazysync status: Seeding during initial push, Replicating once
         // the first full manifest is registered and awaiting DHT confirmation.
@@ -412,4 +413,5 @@ public class BlockStoreManifestRequest
     /// to set LazysyncStatus.Seeding on the VM record.
     /// </summary>
     public bool? IsSeeding { get; set; }
+    public int ReplicationFactor { get; set; } = 3;
 }
