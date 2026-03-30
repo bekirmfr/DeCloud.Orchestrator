@@ -14,7 +14,7 @@ public sealed class ObligationEligibility : IObligationEligibility
     // ── Relay thresholds ──────────────────────────────────────────────────
 
     /// <summary>Minimum physical CPU cores for a relay node.</summary>
-    public const int RelayMinComputePoints = 10;
+    public const int RelayMinComputePoints = 8;
 
     /// <summary>Minimum total RAM for a relay node (4 GB).</summary>
     public const long RelayMinRamBytes = 4L * 1024 * 1024 * 1024;
