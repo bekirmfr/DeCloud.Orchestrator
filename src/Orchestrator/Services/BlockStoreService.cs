@@ -277,9 +277,18 @@ public class BlockStoreService : IBlockStoreService
             }
 
             // ================================================================
-            // STEP 3: Collect bootstrap peers
+            // STEP 3: Bootstrap peers — DHT VM only (blockstores discover each other via Kademlia)
             // ================================================================
-            var bootstrapPeers = CollectBootstrapPeers(allNodes, excludeNodeId: node.Id);
+
+            var bootstrapPeers = new List<string>();
+
+            if (node.DhtInfo != null &&
+                !string.IsNullOrEmpty(node.DhtInfo.ListenAddress) &&
+                !string.IsNullOrEmpty(node.DhtInfo.PeerId))
+            {
+                var ip = node.DhtInfo.ListenAddress.Split(':')[0];
+                bootstrapPeers.Add($"/ip4/{ip}/tcp/4001/p2p/{node.DhtInfo.PeerId}");
+            }
 
             // ================================================================
             // STEP 4: Generate auth token for VM → orchestrator authentication
