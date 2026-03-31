@@ -336,6 +336,80 @@ public class NodeSelfController : ControllerBase
     }
 
     /// <summary>
+    /// Returns this node's SystemVmObligations array — which system VM roles
+    /// are assigned to this node, their current fulfilment status, and any
+    /// error information. Used by the node dashboard to show obligation state
+    /// on the system VM cards.
+    ///
+    /// Response shape:
+    /// {
+    ///   "obligations": [
+    ///     {
+    ///       "role":         0,          // SystemVmRole int (0=Dht,1=Relay,2=BlockStore)
+    ///       "roleName":     "Dht",
+    ///       "vmId":         "f3f9...",  // null if not yet deployed
+    ///       "status":       2,          // SystemVmStatus int (0=Pending,1=Deploying,2=Active)
+    ///       "statusName":   "Active",
+    ///       "failureCount": 0,
+    ///       "lastError":    null,
+    ///       "deployedAt":   "2026-...",
+    ///       "activeAt":     "2026-..."
+    ///     }
+    ///   ]
+    /// }
+    /// </summary>
+    [HttpGet("obligations")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult> GetObligations()
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+            return NotFound("Node not registered");
+
+        // Map the obligation role int to a readable name
+        static string RoleName(int role) => role switch
+        {
+            0 => "Dht",
+            1 => "Relay",
+            2 => "BlockStore",
+            _ => $"Role{role}"
+        };
+
+        // Map the obligation status int to a readable name
+        static string StatusName(int status) => status switch
+        {
+            0 => "Pending",
+            1 => "Deploying",
+            2 => "Active",
+            3 => "Failed",
+            _ => $"Status{status}"
+        };
+
+        var obligations = (node.SystemVmObligations ?? [])
+            .Select(o => new
+            {
+                role = (int)o.Role,
+                roleName = RoleName((int)o.Role),
+                vmId = o.VmId,
+                status = (int)o.Status,
+                statusName = StatusName((int)o.Status),
+                failureCount = o.FailureCount,
+                lastError = o.LastError,
+                deployedAt = o.DeployedAt?.ToString("O"),
+                activeAt = o.ActiveAt?.ToString("O")
+            })
+            .ToList();
+
+        return Ok(new { obligations });
+    }
+
+    /// <summary>
     /// Update pricing for this node. Rates are clamped to platform floor minimums.
     /// </summary>
     [HttpPatch("pricing")]
