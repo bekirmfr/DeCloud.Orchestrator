@@ -71,8 +71,13 @@ public static class BlockSizeConstants
 /// Created by lazysync daemon (Phase D) and registered via POST /api/blockstore/manifest.
 /// Persisted to MongoDB in Phase D (in-memory only in Phase A).
 /// </summary>
+[MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
 public class ManifestRecord
 {
+    [MongoDB.Bson.Serialization.Attributes.BsonId]
+    [MongoDB.Bson.Serialization.Attributes.BsonRepresentation(MongoDB.Bson.BsonType.ObjectId)]
+    public string? Id { get; set; }
+
     public string VmId { get; set; } = string.Empty;
 
     /// <summary>Root CID of the manifest DAG for this version.</summary>
