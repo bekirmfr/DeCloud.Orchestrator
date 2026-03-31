@@ -20,6 +20,7 @@ public class NodeSelfController : ControllerBase
     private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly INodeMarketplaceService _marketplaceService;
     private readonly SystemVmReconciliationService _reconciler;
+    private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeSelfController> _logger;
 
     public NodeSelfController(
@@ -29,6 +30,7 @@ public class NodeSelfController : ControllerBase
         NodeCapacityCalculator capacityCalculator,
         INodeMarketplaceService marketplaceService,
         SystemVmReconciliationService reconciler,
+        ICentralIngressService ingressService,
         ILogger<NodeSelfController> logger)
     {
         _dataStore = dataStore;
@@ -37,6 +39,7 @@ public class NodeSelfController : ControllerBase
         _capacityCalculator = capacityCalculator;
         _marketplaceService = marketplaceService;
         _reconciler = reconciler;
+        _ingressService = ingressService;
         _logger = logger;
     }
 
@@ -266,6 +269,70 @@ public class NodeSelfController : ControllerBase
             return NotFound("Node not registered");
 
         return Ok(node.Pricing);
+    }
+
+    /// <summary>
+    /// Returns the public ingress URL for every VM currently running on this node.
+    /// Called by the NodeAgent dashboard to resolve real stored URLs from the DB
+    /// rather than constructing them from a formula.
+    ///
+    /// Response shape:
+    /// {
+    ///   "vmId-1": "https://my-vm.vms.stackfi.tech",
+    ///   "vmId-2": "https://other-vm.vms.stackfi.tech",
+    ///   ...
+    /// }
+    /// Only VMs with an active or known ingress route are included.
+    /// VMs without a route are omitted (dashboard falls back to formula).
+    /// </summary>
+    [HttpGet("vm-ingress")]
+    [ProducesResponseType(typeof(Dictionary<string, string>), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<Dictionary<string, string>>> GetVmIngressUrls()
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+            return NotFound("Node not registered");
+
+        // Get all VMs on this node from the orchestrator data store
+        var vms = await _dataStore.GetVmsByNodeAsync(nodeId);
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var vm in vms)
+        {
+            // Priority 1: active route in the central ingress service (in-memory, authoritative)
+            var route = await _ingressService.GetRouteAsync(vm.Id);
+            if (route != null && !string.IsNullOrEmpty(route.Subdomain))
+            {
+                result[vm.Id] = route.PublicUrl;  // "https://{subdomain}"
+                continue;
+            }
+
+            // Priority 2: subdomain stored on the VM record itself (persisted across restarts)
+            if (!string.IsNullOrEmpty(vm.IngressConfig?.DefaultSubdomain)
+                && vm.IngressConfig.DefaultSubdomainEnabled)
+            {
+                result[vm.Id] = $"https://{vm.IngressConfig.DefaultSubdomain}";
+                continue;
+            }
+
+            // Priority 3: synthesise from base domain + vm name (same formula as GenerateSubdomain)
+            // This covers VMs created before ingress was enabled or before IngressConfig was written.
+            if (_ingressService.IsEnabled
+                && !string.IsNullOrEmpty(_ingressService.BaseDomain)
+                && !string.IsNullOrEmpty(vm.Name))
+            {
+                result[vm.Id] = $"https://{vm.Name}.{_ingressService.BaseDomain}";
+            }
+        }
+
+        return Ok(result);
     }
 
     /// <summary>
