@@ -93,7 +93,7 @@ public class LazysyncManager : BackgroundService
     }
 
     private async Task AuditManifestAsync(
-        ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
+            ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
     {
         if (manifest.ChangedBlockCids.Count == 0)
         {
@@ -103,7 +103,7 @@ public class LazysyncManager : BackgroundService
             return;
         }
 
-        var dhtApiUrl = await ResolveDhtApiUrlAsync(manifest.VmId, dataStore);
+        var (dhtApiUrl, localPeerId) = await ResolveDhtApiUrlAndLocalPeerAsync(manifest.VmId, dataStore);
         if (dhtApiUrl == null)
         {
             _logger.LogWarning(
@@ -125,8 +125,16 @@ public class LazysyncManager : BackgroundService
 
             try
             {
-                var count = await GetProviderCountAsync(dhtApiUrl, cid, ct);
-                if (count < manifest.ReplicationFactor)
+                // Count only REMOTE providers — local blockstore on the
+                // hosting node is never counted as replication. A block
+                // sitting only on the same machine as the VM it protects
+                // provides zero node-failure resilience.
+                var providers = await GetProvidersAsync(dhtApiUrl, cid, ct);
+                var remoteCount = string.IsNullOrEmpty(localPeerId)
+                    ? providers.Count
+                    : providers.Count(p => p != localPeerId);
+
+                if (remoteCount < manifest.ReplicationFactor)
                     underReplicated.Add(cid);
             }
             catch (Exception ex)
@@ -141,8 +149,8 @@ public class LazysyncManager : BackgroundService
         if (underReplicated.Count > 0)
         {
             _logger.LogDebug(
-                "VM {VmId} v{Version}: {Under}/{Total} CIDs under-replicated " +
-                "(need {N} providers) — will retry next cycle",
+             "VM {VmId} v{Version}: {Under}/{Total} CIDs under-replicated " +
+                "(need {N} remote providers, local excluded) — will retry next cycle",
                 manifest.VmId, manifest.Version,
                 underReplicated.Count, cidsToCheck.Count,
                 manifest.ReplicationFactor);
@@ -172,23 +180,27 @@ public class LazysyncManager : BackgroundService
             manifest.BlockCount, manifest.BlockSizeKb, manifest.ReplicationFactor);
     }
 
-    private async Task<string?> ResolveDhtApiUrlAsync(string vmId, DataStore dataStore)
+    private async Task<(string? dhtApiUrl, string? localPeerId)> ResolveDhtApiUrlAndLocalPeerAsync(
+        string vmId, DataStore dataStore)
     {
         var vm = await dataStore.GetVmAsync(vmId);
-        if (vm == null || string.IsNullOrEmpty(vm.NodeId)) return null;
+        if (vm == null || string.IsNullOrEmpty(vm.NodeId)) return (null, null);
 
         var node = await dataStore.GetNodeAsync(vm.NodeId);
         if (node?.DhtInfo == null || string.IsNullOrEmpty(node.DhtInfo.ListenAddress))
-            return null;
+            return (null, null);
 
-        // ListenAddress = "10.20.1.199:4001" — extract WG tunnel IP, use ApiPort
         var ip = node.DhtInfo.ListenAddress.Split(':')[0];
         var port = node.DhtInfo.ApiPort > 0 ? node.DhtInfo.ApiPort : 5080;
+        var dhtApiUrl = $"http://{ip}:{port}";
 
-        return $"http://{ip}:{port}";
+        // Local blockstore peer ID — excluded from remote provider count
+        var localPeerId = node.BlockStoreInfo?.PeerId;
+
+        return (dhtApiUrl, localPeerId);
     }
 
-    private async Task<int> GetProviderCountAsync(
+    private async Task<List<string>> GetProvidersAsync(
         string dhtApiUrl, string cid, CancellationToken ct)
     {
         var url = $"{dhtApiUrl}/providers/{Uri.EscapeDataString(cid)}";
@@ -197,6 +209,16 @@ public class LazysyncManager : BackgroundService
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(
             cancellationToken: ct);
-        return json.TryGetProperty("count", out var el) ? el.GetInt32() : 0;
+
+        if (json.TryGetProperty("providers", out var providersEl) &&
+            providersEl.ValueKind == JsonValueKind.Array)
+        {
+            return providersEl.EnumerateArray()
+                .Select(p => p.GetString() ?? string.Empty)
+                .Where(p => !string.IsNullOrEmpty(p))
+                .ToList();
+        }
+
+        return [];
     }
 }
