@@ -119,16 +119,16 @@ public class VmLifecycleManager : IVmLifecycleManager
     // Valid state transitions. Key = current status, Value = set of allowed next statuses.
     private static readonly Dictionary<VmStatus, HashSet<VmStatus>> ValidTransitions = new()
     {
-        [VmStatus.Pending]       = [VmStatus.Scheduling, VmStatus.Provisioning, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Scheduling]    = [VmStatus.Provisioning, VmStatus.Pending, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Provisioning]  = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Running]       = [VmStatus.Stopping, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Stopping]      = [VmStatus.Stopped, VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Stopped]       = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Error],
-        [VmStatus.Deleting]      = [VmStatus.Deleted, VmStatus.Error, VmStatus.Running], // Running = recovery from false-positive delete
-        [VmStatus.Migrating]     = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Error]         = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Stopped, VmStatus.Error],
-        [VmStatus.Deleted]       = [] // Terminal state
+        [VmStatus.Pending] = [VmStatus.Scheduling, VmStatus.Provisioning, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Scheduling] = [VmStatus.Provisioning, VmStatus.Pending, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Provisioning] = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Running] = [VmStatus.Stopping, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Stopping] = [VmStatus.Stopped, VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Stopped] = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Error],
+        [VmStatus.Deleting] = [VmStatus.Deleted, VmStatus.Error, VmStatus.Running], // Running = recovery from false-positive delete
+        [VmStatus.Migrating] = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
+        [VmStatus.Error] = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Stopped, VmStatus.Error],
+        [VmStatus.Deleted] = [] // Terminal state
     };
 
     public VmLifecycleManager(
@@ -414,6 +414,12 @@ public class VmLifecycleManager : IVmLifecycleManager
             await _dataStore.DeleteManifestAsync(vm.Id);
             _logger.LogInformation("VM {VmId}: manifest record deleted", vm.Id);
         }, "Manifest deletion", vm.Id);
+
+        // Publish vm-deleted event via GossipSub so all blockstore nodes
+        // holding replicas of this VM's blocks evict them immediately.
+        await SafeExecuteAsync(
+            () => PublishVmDeletedEventAsync(vm),
+            "GossipSub vm-deleted event", vm.Id);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -578,6 +584,116 @@ public class VmLifecycleManager : IVmLifecycleManager
                 "Error settling template fee for VM {VmId}, template {TemplateId}",
                 vm.Id, template.Id);
         }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // GossipSub VM-Deleted Event
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Publishes a signed vm-deleted event to the GossipSub mesh via any
+    /// reachable DHT VM. All blockstore nodes subscribed to
+    /// "decloud/blockstore/vm-deleted" will evict blocks owned by this VM.
+    /// Tries hosting node's DHT first, falls back to any other active DHT VM.
+    /// Non-fatal — if all DHT VMs are unreachable, LRU + TTL expiry handles cleanup.
+    /// </summary>
+    private async Task PublishVmDeletedEventAsync(VirtualMachine vm)
+    {
+        var nodes = await _dataStore.GetAllNodesAsync();
+
+        // Hosting node first, then any other active DHT VM
+        var dhtCandidates = nodes
+            .Where(n => n.DhtInfo != null &&
+                        n.DhtInfo.Status == DhtStatus.Active &&
+                        !string.IsNullOrEmpty(n.DhtInfo.ListenAddress))
+            .OrderByDescending(n => n.Id == vm.NodeId)
+            .ToList();
+
+        if (dhtCandidates.Count == 0)
+        {
+            _logger.LogWarning(
+                "VM {VmId}: no active DHT VM found — remote block cleanup skipped", vm.Id);
+            return;
+        }
+
+        // Get blockstore auth token from hosting node obligation
+        var hostingNode = nodes.FirstOrDefault(n => n.Id == vm.NodeId);
+        var authToken = hostingNode?.SystemVmObligations
+            .FirstOrDefault(o => o.Role == SystemVmRole.BlockStore)?.AuthToken;
+
+        if (string.IsNullOrEmpty(authToken))
+        {
+            _logger.LogWarning(
+                "VM {VmId}: no blockstore auth token on hosting node — remote block cleanup skipped",
+                vm.Id);
+            return;
+        }
+
+        // Sign: HMAC-SHA256(authToken, vmId:nodeId:timestamp)
+        var timestamp = System.DateTime.UtcNow.ToString("O");
+        var message = $"{vm.Id}:{vm.NodeId}:{timestamp}";
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(authToken));
+        var signature = Convert.ToBase64String(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(message)));
+
+        var eventPayload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            vmId = vm.Id,
+            nodeId = vm.NodeId,
+            timestamp,
+            signature
+        });
+
+        var publishBody = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            topic = "decloud/blockstore/vm-deleted",
+            data = eventPayload
+        });
+
+        // Try each DHT VM until one accepts the publish
+        using var http = new System.Net.Http.HttpClient
+        {
+            Timeout = System.TimeSpan.FromSeconds(10)
+        };
+
+        foreach (var node in dhtCandidates)
+        {
+            var ip = node.DhtInfo!.ListenAddress.Split(':')[0];
+            var port = node.DhtInfo.ApiPort > 0 ? node.DhtInfo.ApiPort : 5080;
+            var url = $"http://{ip}:{port}/publish";
+
+            try
+            {
+                var response = await http.PostAsync(url,
+                    new System.Net.Http.StringContent(
+                        publishBody,
+                        System.Text.Encoding.UTF8,
+                        "application/json"));
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation(
+                        "VM {VmId}: vm-deleted event published via DHT node {NodeId}",
+                        vm.Id, node.Id);
+                    return;
+                }
+
+                _logger.LogDebug(
+                    "VM {VmId}: DHT node {NodeId} returned {Status} — trying next",
+                    vm.Id, node.Id, response.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex,
+                    "VM {VmId}: DHT node {NodeId} unreachable — trying next",
+                    vm.Id, node.Id);
+            }
+        }
+
+        _logger.LogWarning(
+            "VM {VmId}: all DHT VMs unreachable — remote block cleanup will rely on TTL expiry",
+            vm.Id);
     }
 
     // ════════════════════════════════════════════════════════════════════════
