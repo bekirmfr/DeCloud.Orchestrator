@@ -406,6 +406,14 @@ public class VmLifecycleManager : IVmLifecycleManager
 
         // Track successful completion in node reputation
         await IncrementNodeCompletionsAsync(vm);
+
+        // Delete blockstore manifest record — stops audit loop from
+        // querying DHT for a VM that no longer exists.
+        await SafeExecuteAsync(async () =>
+        {
+            await _dataStore.DeleteManifestAsync(vm.Id);
+            _logger.LogInformation("VM {VmId}: manifest record deleted", vm.Id);
+        }, "Manifest deletion", vm.Id);
     }
 
     // ════════════════════════════════════════════════════════════════════════
