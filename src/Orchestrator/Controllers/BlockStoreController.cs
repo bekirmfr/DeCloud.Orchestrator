@@ -143,6 +143,18 @@ public class BlockStoreController : ControllerBase
         var bootstrapPeers = await _blockStoreService.GetBootstrapPeersAsync(
             excludeNodeId: request.NodeId);
 
+        // Prepend the local DHT VM's virbr0 multiaddr so the blockstore can
+        // reconnect to its co-located DHT after DHT VM redeployment.
+        // virbr0 IP is used (not WireGuard) — same host, direct connection.
+        if (node.DhtInfo != null && !string.IsNullOrEmpty(node.DhtInfo.PeerId))
+        {
+            var dhtVm = await _dataStore.GetVmAsync(node.DhtInfo.DhtVmId);
+            var dhtLocalIp = dhtVm?.NetworkConfig?.PrivateIp;
+            if (!string.IsNullOrEmpty(dhtLocalIp))
+                bootstrapPeers.Insert(0,
+                    $"/ip4/{dhtLocalIp}/tcp/4001/p2p/{node.DhtInfo.PeerId}");
+        }
+
         _logger.LogInformation(
             "Block store VM {VmId} joined on node {NodeId}: peerId={PeerId}, capacity={GB} GB, bootstrap peers={Count}",
             request.VmId, request.NodeId,

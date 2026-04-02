@@ -50,19 +50,19 @@ public enum ManifestType
 /// </summary>
 public static class BlockSizeConstants
 {
-    public const int VmOverlayKb     = 1024;        // 1 MB
-    public const int ModelShardKb    = 64 * 1024;   // 64 MB
-    public const int LoraAdapterKb   = 256;          // 256 KB
+    public const int VmOverlayKb = 1024;        // 1 MB
+    public const int ModelShardKb = 64 * 1024;   // 64 MB
+    public const int LoraAdapterKb = 256;          // 256 KB
     public const int ImageTemplateKb = 4 * 1024;    // 4 MB
 
     /// <summary>Returns the canonical block size in KB for a manifest type.</summary>
     public static int ForType(ManifestType type) => type switch
     {
-        ManifestType.VmOverlay     => VmOverlayKb,
-        ManifestType.ModelShard    => ModelShardKb,
-        ManifestType.LoraAdapter   => LoraAdapterKb,
+        ManifestType.VmOverlay => VmOverlayKb,
+        ManifestType.ModelShard => ModelShardKb,
+        ManifestType.LoraAdapter => LoraAdapterKb,
         ManifestType.ImageTemplate => ImageTemplateKb,
-        _                          => VmOverlayKb,
+        _ => VmOverlayKb,
     };
 }
 
@@ -71,13 +71,8 @@ public static class BlockSizeConstants
 /// Created by lazysync daemon (Phase D) and registered via POST /api/blockstore/manifest.
 /// Persisted to MongoDB in Phase D (in-memory only in Phase A).
 /// </summary>
-[MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
 public class ManifestRecord
 {
-    [MongoDB.Bson.Serialization.Attributes.BsonId]
-    [MongoDB.Bson.Serialization.Attributes.BsonRepresentation(MongoDB.Bson.BsonType.ObjectId)]
-    public string? Id { get; set; }
-
     public string VmId { get; set; } = string.Empty;
 
     /// <summary>Root CID of the manifest DAG for this version.</summary>
@@ -277,17 +272,39 @@ public class BlockStoreService : IBlockStoreService
             }
 
             // ================================================================
-            // STEP 3: Bootstrap peers — DHT VM only (blockstores discover each other via Kademlia)
+            // STEP 3: Bootstrap peer — co-located DHT VM via virbr0
             // ================================================================
-
+            // The blockstore only ever dials out to its co-located DHT VM.
+            // All other connectivity (bitswap from remote peers) is inbound.
+            // We use the DHT VM's virbr0 IP (192.168.122.x) rather than its
+            // WireGuard IP because:
+            //   - Both VMs share the same virbr0 bridge → direct, zero hops
+            //   - WireGuard IP requires relay hairpin that races against enrollment
+            //     and fails consistently on CGNAT nodes
+            //   - virbr0 IP is assigned by libvirt at VM creation, always available
             var bootstrapPeers = new List<string>();
 
             if (node.DhtInfo != null &&
-                !string.IsNullOrEmpty(node.DhtInfo.ListenAddress) &&
+                !string.IsNullOrEmpty(node.DhtInfo.DhtVmId) &&
                 !string.IsNullOrEmpty(node.DhtInfo.PeerId))
             {
-                var ip = node.DhtInfo.ListenAddress.Split(':')[0];
-                bootstrapPeers.Add($"/ip4/{ip}/tcp/4001/p2p/{node.DhtInfo.PeerId}");
+                var dhtVm = await _dataStore.GetVmAsync(node.DhtInfo.DhtVmId);
+                var dhtLocalIp = dhtVm?.NetworkConfig?.PrivateIp;
+
+                if (!string.IsNullOrEmpty(dhtLocalIp))
+                {
+                    bootstrapPeers.Add($"/ip4/{dhtLocalIp}/tcp/4001/p2p/{node.DhtInfo.PeerId}");
+                    _logger.LogInformation(
+                        "Block store bootstrap peer: DHT VM {DhtVmId} at virbr0 {Ip}",
+                        node.DhtInfo.DhtVmId[..8], dhtLocalIp);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "DHT VM {DhtVmId} has no IpAddress yet — blockstore deploys with no " +
+                        "bootstrap peers. Bootstrap poll will connect via /api/blockstore/join.",
+                        node.DhtInfo.DhtVmId[..8]);
+                }
             }
 
             // ================================================================
@@ -465,17 +482,17 @@ public class BlockStoreService : IBlockStoreService
     // Manifest lifecycle — Phase D implementation (stub returns in Phase A)
     // ════════════════════════════════════════════════════════════════════════
 
-public async Task<ManifestRecord> RegisterManifestAsync(
-        string vmId,
-        string rootCid,
-        int version,
-        List<string> changedBlockCids,
-        int blockCount,
-        int blockSizeKb,
-        ManifestType manifestType,
-        long totalBytes,
-        int replicationFactor = 3,
-        CancellationToken ct = default)
+    public async Task<ManifestRecord> RegisterManifestAsync(
+            string vmId,
+            string rootCid,
+            int version,
+            List<string> changedBlockCids,
+            int blockCount,
+            int blockSizeKb,
+            ManifestType manifestType,
+            long totalBytes,
+            int replicationFactor = 3,
+            CancellationToken ct = default)
     {
         // Try to load existing from MongoDB to preserve immutable fields
         var existing = await _dataStore.GetManifestAsync(vmId)
@@ -488,27 +505,27 @@ public async Task<ManifestRecord> RegisterManifestAsync(
             // First registration for this VM
             record = new ManifestRecord
             {
-                VmId             = vmId,
-                RootCid          = rootCid,
-                Version          = version,
+                VmId = vmId,
+                RootCid = rootCid,
+                Version = version,
                 ChangedBlockCids = changedBlockCids,
-                BlockCount       = blockCount,
-                BlockSizeKb      = blockSizeKb > 0 ? blockSizeKb : BlockSizeConstants.ForType(manifestType),
-                ManifestType     = manifestType,
-                TotalBytes       = totalBytes,
-                RegisteredAt     = DateTime.UtcNow,
+                BlockCount = blockCount,
+                BlockSizeKb = blockSizeKb > 0 ? blockSizeKb : BlockSizeConstants.ForType(manifestType),
+                ManifestType = manifestType,
+                TotalBytes = totalBytes,
+                RegisteredAt = DateTime.UtcNow,
                 ReplicationFactor = replicationFactor
             };
         }
         else if (version > existing.Version)
         {
             // Advance to newer version — BlockSizeKb and ManifestType are immutable
-            existing.RootCid          = rootCid;
-            existing.Version          = version;
+            existing.RootCid = rootCid;
+            existing.Version = version;
             existing.ChangedBlockCids = changedBlockCids;
-            existing.BlockCount       = blockCount;
-            existing.TotalBytes       = totalBytes;
-            existing.RegisteredAt     = DateTime.UtcNow;
+            existing.BlockCount = blockCount;
+            existing.TotalBytes = totalBytes;
+            existing.RegisteredAt = DateTime.UtcNow;
             record = existing;
         }
         else
@@ -547,13 +564,13 @@ public async Task<ManifestRecord> RegisterManifestAsync(
 
         return new ReplicationAudit
         {
-            VmId                         = vmId,
-            Version                      = manifest?.Version ?? 0,
-            TotalChunks                  = manifest?.BlockCount ?? 0,
+            VmId = vmId,
+            Version = manifest?.Version ?? 0,
+            TotalChunks = manifest?.BlockCount ?? 0,
             ChunksWithSufficientProviders = manifest?.ConfirmedVersion == manifest?.Version
                                             ? manifest?.BlockCount ?? 0
                                             : 0,
-            UnderReplicatedChunks        = [],
+            UnderReplicatedChunks = [],
             // Phase D: LazysyncManager populates UnderReplicatedChunks from DHT audit
         };
     }
