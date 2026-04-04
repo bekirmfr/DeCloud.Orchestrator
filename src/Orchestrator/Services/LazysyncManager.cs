@@ -191,7 +191,7 @@ public class LazysyncManager : BackgroundService
             return (null, null);
 
         var ip = node.DhtInfo.ListenAddress.Split(':')[0];
-        var port = node.DhtInfo.ApiPort > 0 ? node.DhtInfo.ApiPort : 5080;
+        var port = 8080; // dht-dashboard.py proxy, binds 0.0.0.0, proxies /providers/*
         var dhtApiUrl = $"http://{ip}:{port}";
 
         // Local blockstore peer ID — excluded from remote provider count
