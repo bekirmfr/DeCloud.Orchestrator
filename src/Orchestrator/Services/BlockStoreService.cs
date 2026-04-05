@@ -90,6 +90,14 @@ public class ManifestRecord
     public List<string> ChangedBlockCids { get; set; } = [];
 
     /// <summary>
+    /// Rolling sample of CIDs accumulated across all versions (capped at 200).
+    /// Used by LazysyncManager to audit the full block set, not just the latest delta.
+    /// New ChangedBlockCids are merged in on each version advance; oldest are dropped
+    /// when the cap is exceeded to keep the sample representative over time.
+    /// </summary>
+    public List<string> CumulativeBlockCids { get; set; } = [];
+
+    /// <summary>
     /// Total number of chunks in the current manifest (all chunks, not just changed ones).
     /// Used for exact block-count billing: cost = BlockCount × (BlockSizeKb/1024) × N × rate.
     /// Updated by LazysyncManager each audit cycle.
@@ -514,6 +522,7 @@ public class BlockStoreService : IBlockStoreService
                 RootCid = rootCid,
                 Version = version,
                 ChangedBlockCids = changedBlockCids,
+                CumulativeBlockCids = changedBlockCids.Take(200).ToList(),
                 BlockCount = blockCount,
                 BlockSizeKb = blockSizeKb > 0 ? blockSizeKb : BlockSizeConstants.ForType(manifestType),
                 ManifestType = manifestType,
@@ -531,6 +540,16 @@ public class BlockStoreService : IBlockStoreService
             existing.BlockCount = blockCount;
             existing.TotalBytes = totalBytes;
             existing.RegisteredAt = DateTime.UtcNow;
+
+            // Accumulate changed CIDs into the rolling sample so the audit
+            // covers the full block set across all versions, not just the delta.
+            const int CumulativeCap = 200;
+            existing.CumulativeBlockCids.AddRange(
+                changedBlockCids.Except(existing.CumulativeBlockCids));
+            if (existing.CumulativeBlockCids.Count > CumulativeCap)
+                existing.CumulativeBlockCids =
+                    existing.CumulativeBlockCids[^CumulativeCap..];
+
             record = existing;
         }
         else

@@ -1,31 +1,51 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-03-28
-**Purpose:** Technical documentation of all major platform features and innovations
+**Last Updated:** 2026-04-05
+**Purpose:** Technical reference for all implemented and planned platform features.
 
 ---
 
 ## Table of Contents
 
-1. [Core Architecture](#core-architecture)
-2. [Relay Infrastructure](#relay-infrastructure)
-3. [VM Proxy System](#vm-proxy-system)
-4. [Authentication & Security](#authentication--security)
-5. [Billing & Economics](#billing--economics)
-6. [Marketplace & Discovery](#marketplace--discovery)
-7. [Resource Management](#resource-management)
-8. [Monitoring & Health](#monitoring--health)
-9. [Per-Service VM Readiness Tracking](#per-service-vm-readiness-tracking)
-10. [DHT Infrastructure](#dht-infrastructure)
-11. [GPU Proxy (CUDA Virtualization)](#gpu-proxy-cuda-virtualization)
-12. [Block Store & Storage Economics](#block-store--storage-economics)
-13. [Future Features](#future-features)
-14. [Lightweight Node Support](#lightweight-node-support)
-15. [Alpine Linux System VM Images](#alpine-linux-system-vm-images)
+**Implemented**
+1. [Core Architecture](#1-core-architecture)
+2. [Networking Infrastructure](#2-networking-infrastructure)
+   - [CGNAT Relay System](#cgnat-relay-system)
+   - [Smart Port Allocation (Direct Access)](#smart-port-allocation-direct-access)
+   - [CentralIngress-Aware Port Allocation](#centralingress-aware-port-allocation)
+3. [VM Infrastructure](#3-vm-infrastructure)
+   - [VM Proxy System](#vm-proxy-system)
+   - [VM Lifecycle Management](#vm-lifecycle-management)
+   - [Per-Service Readiness Tracking](#per-service-readiness-tracking)
+4. [Authentication & Security](#4-authentication--security)
+5. [Economics](#5-economics)
+   - [Billing & Compute Pricing](#billing--compute-pricing)
+   - [Bandwidth Tiers](#bandwidth-tiers)
+   - [Hybrid Pricing Model](#hybrid-pricing-model)
+6. [Marketplace & Discovery](#6-marketplace--discovery)
+   - [Node Marketplace](#node-marketplace)
+   - [VM Template Marketplace](#vm-template-marketplace)
+   - [Reputation System](#reputation-system)
+7. [Monitoring & Health](#7-monitoring--health)
+8. [Advanced Compute](#8-advanced-compute)
+   - [GPU Proxy (CUDA Virtualization)](#gpu-proxy-cuda-virtualization)
+   - [DHT Infrastructure](#dht-infrastructure)
+   - [Block Store & Storage Economics](#block-store--storage-economics)
+9. [Node Operations](#9-node-operations)
+   - [Resource Management](#resource-management)
+   - [Windows WSL2 Auto-Start](#windows-wsl2-auto-start)
+
+**Planned**
+
+10. [Planned Features](#10-planned-features)
+    - [Prebuilt Binary Distribution](#prebuilt-binary-distribution)
+    - [Lightweight Node Support](#lightweight-node-support)
+    - [Alpine Linux System VMs](#alpine-linux-system-vms)
+    - [Phase 3+ Roadmap](#phase-3-roadmap)
 
 ---
 
-## Core Architecture
+## 1. Core Architecture
 
 ### Orchestrator-Node Model
 
@@ -35,7 +55,7 @@ DeCloud uses a coordinator-worker architecture:
 User → Orchestrator (Central Brain) → Node Agents (Distributed Workers)
 ```
 
-**Orchestrator Responsibilities:**
+**Orchestrator responsibilities:**
 - VM scheduling and lifecycle management
 - Node registration and health monitoring
 - Resource allocation using compute points
@@ -43,7 +63,7 @@ User → Orchestrator (Central Brain) → Node Agents (Distributed Workers)
 - Relay infrastructure coordination
 - Marketplace and discovery APIs
 
-**Node Agent Responsibilities:**
+**Node Agent responsibilities:**
 - KVM/libvirt virtualization
 - Resource discovery (CPU, memory, GPU, storage)
 - VM provisioning and management
@@ -51,410 +71,141 @@ User → Orchestrator (Central Brain) → Node Agents (Distributed Workers)
 - Local proxy for VM ingress traffic
 
 **Communication:**
-- Heartbeat system (15-second intervals)
+- Heartbeat every 15 seconds; 2-minute silence → node marked offline
 - REST APIs for VM operations
 - WebSocket support for real-time features
 - WireGuard tunnels for secure overlay networking
 
+### VM Types
+
+| Type | Purpose |
+|---|---|
+| **General VMs** | User workloads — AI, web apps, databases |
+| **Relay VMs** | Auto-deployed on public nodes to serve CGNAT nodes |
+| **DHT VMs** | Decentralized coordination via libp2p over WireGuard mesh |
+| **Block Store VMs** | Distributed content-addressed storage (5% storage duty) |
+
+### Quality Tiers
+
+| Tier | Overcommit | Use Case |
+|---|---|---|
+| Guaranteed | 1:1 | Production databases, critical workloads |
+| Standard | 1.5:1 | Web apps, APIs |
+| Balanced | 2:1 | Development environments |
+| Burstable | 4:1 | Batch jobs, testing |
+
+CPU compute points are calculated via sysbench benchmarking and normalized against a baseline. Formula: `computePoints = (nodePerformance / baselinePerformance) × coreCount`.
+
 ---
 
-## Relay Infrastructure
+## 2. Networking Infrastructure
 
-### Critical Innovation: CGNAT Bypass via Automated WireGuard Tunnels
+### CGNAT Relay System
 
-**The Problem:**  
-Approximately 60-80% of internet users (mobile networks, residential ISPs) are behind **CGNAT (Carrier-Grade NAT)**, meaning they do not have a unique public IP address. Without special handling, these nodes cannot accept inbound connections, making them unable to host VMs that users need to access.
+**Status:** ✅ Production-ready
 
-**The Solution:**  
-DeCloud's relay infrastructure automatically creates secure tunnels from public-IP nodes to CGNAT nodes, enabling universal participation.
+**The problem:** 60–80% of internet users (mobile networks, residential ISPs) are behind CGNAT and have no unique public IP. Without handling, these nodes cannot accept inbound connections and cannot host VMs.
 
-### How It Works
+**The solution:** When the orchestrator detects a CGNAT node during registration, it automatically deploys a lightweight relay VM on a public-IP node and establishes a WireGuard tunnel. NAT rules on both ends route traffic transparently.
 
-#### 1. Node Registration & Detection
-
-When a node registers with the Orchestrator:
-
-```csharp
-// NodeService.cs - Registration flow
-public async Task<Node> RegisterNodeAsync(NodeRegistrationRequest request)
-{
-    // Detect if node is behind CGNAT
-    var isPublicIp = await _networkAnalyzer.IsPublicIpAsync(request.PublicIp);
-    var isCgnat = !isPublicIp || request.ReportedCgnat;
-    
-    node.IsBehindCgnat = isCgnat;
-    node.RequiresRelay = isCgnat;
-    
-    // If CGNAT detected, trigger relay assignment
-    if (isCgnat)
-    {
-        await _relayService.AssignRelayAsync(node.Id);
-    }
-}
-```
-
-**Detection Logic:**
-- Check if reported IP matches actual source IP
-- Validate IP is not in private ranges (10.x, 192.168.x, 172.16.x)
-- Allow manual CGNAT flag for complex network setups
-- Track connectivity status in node metadata
-
-#### 2. Relay VM Deployment
-
-The Orchestrator automatically deploys a lightweight **Relay VM** on a node with a static public IP:
-
-```csharp
-// RelayService.cs - Relay assignment
-public async Task AssignRelayAsync(string cgnatNodeId)
-{
-    // Find suitable relay node (public IP, sufficient resources)
-    var relayNode = await FindBestRelayNodeAsync();
-    
-    // Deploy lightweight relay VM
-    var relayVm = await _vmService.CreateVmAsync(
-        systemUserId: "relay-system",
-        request: new CreateVmRequest
-        {
-            Name = $"relay-{cgnatNodeId}",
-            VmType = VmType.Relay,
-            Memory = 512,  // 512MB is sufficient
-            Cpu = 1,
-            Storage = 5,   // 5GB for logs
-            Template = "relay-wireguard"
-        },
-        targetNodeId: relayNode.Id
-    );
-    
-    // Store relay relationship
-    await _relayRepository.CreateRelayAsync(new Relay
-    {
-        RelayNodeId = relayNode.Id,
-        RelayVmId = relayVm.Id,
-        CgnatNodeId = cgnatNodeId,
-        Status = RelayStatus.Provisioning
-    });
-}
-```
-
-**Relay Node Selection Criteria:**
-- Must have public static IP
-- Must be online and healthy
-- Sufficient available resources
-- Geographic proximity (future: latency-based selection)
-- Load balancing across relay providers
-
-#### 3. WireGuard Tunnel Establishment
-
-Once the relay VM is deployed, it establishes a secure WireGuard tunnel to the CGNAT node:
-
-**Relay VM Configuration (`relay-wireguard` template):**
-```yaml
-#cloud-config
-packages:
-  - wireguard
-  - iptables
-  - nginx
-
-write_files:
-  - path: /etc/wireguard/wg0.conf
-    content: |
-      [Interface]
-      PrivateKey = ${RELAY_PRIVATE_KEY}
-      Address = 10.200.0.1/24
-      ListenPort = 51820
-      
-      # NAT rules for forwarding traffic
-      PostUp = iptables -A FORWARD -i wg0 -j ACCEPT
-      PostUp = iptables -A FORWARD -o wg0 -j ACCEPT
-      PostUp = iptables -t nat -A PREROUTING -p tcp --dport 2222 -j DNAT --to-destination 10.200.0.2:22
-      PostUp = iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-      
-      PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
-      PostDown = iptables -D FORWARD -o wg0 -j ACCEPT
-      PostDown = iptables -t nat -D PREROUTING -p tcp --dport 2222 -j DNAT --to-destination 10.200.0.2:22
-      PostDown = iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
-      
-      [Peer]
-      PublicKey = ${CGNAT_NODE_PUBLIC_KEY}
-      AllowedIPs = 10.200.0.2/32
-      PersistentKeepalive = 25
-
-runcmd:
-  - systemctl enable wg-quick@wg0
-  - systemctl start wg-quick@wg0
-```
-
-**CGNAT Node Configuration:**
-```ini
-[Interface]
-PrivateKey = <node_private_key>
-Address = 10.200.0.2/24
-
-[Peer]
-PublicKey = <relay_public_key>
-Endpoint = <relay_public_ip>:51820
-AllowedIPs = 10.200.0.0/24
-PersistentKeepalive = 25
-```
-
-**Key Configuration Details:**
-- **Relay Side:** 10.200.0.1 (tunnel endpoint)
-- **CGNAT Side:** 10.200.0.2 (tunnel endpoint)
-- **PersistentKeepalive:** 25 seconds prevents NAT timeout
-- **DNAT Rules:** Port mapping from relay public IP to CGNAT node VMs
-- **MASQUERADE:** Enables outbound traffic from CGNAT node
-
-#### 4. Traffic Routing & Port Mapping
-
-When a user accesses a VM on a CGNAT node, traffic flows through the relay:
+#### Traffic flow
 
 ```
 User Browser (HTTPS)
   ↓
-  → Relay Node Public IP (e.g., 203.0.113.50:443)
-  ↓
-  → iptables DNAT rule intercepts
-  ↓
-  → WireGuard tunnel (10.200.0.1 → 10.200.0.2)
-  ↓
-  → CGNAT Node (receives as local traffic)
-  ↓
-  → VM on CGNAT Node (192.168.122.x:port)
+Relay Node public IP (iptables DNAT)
+  ↓ WireGuard tunnel (10.20.x.x)
+CGNAT Node (receives as local traffic)
+  ↓ libvirt bridge
+VM (192.168.122.x:port)
 ```
 
-**Dynamic Port Allocation:**
-```csharp
-// RelayService.cs - Port mapping
-public async Task AllocatePortForVmAsync(string vmId, int vmPort)
-{
-    var vm = await _vmRepository.GetByIdAsync(vmId);
-    var relay = await _relayRepository.GetByCgnatNodeIdAsync(vm.AssignedNodeId);
-    
-    // Find available port on relay node
-    var relayPort = await FindAvailablePortAsync(relay.RelayNodeId);
-    
-    // Configure iptables DNAT rule on relay VM
-    await ExecuteOnRelayVmAsync(relay.RelayVmId, 
-        $"iptables -t nat -A PREROUTING -p tcp --dport {relayPort} " +
-        $"-j DNAT --to-destination 10.200.0.2:{vmPort}");
-    
-    // Store mapping
-    await _portMappingRepository.CreateAsync(new PortMapping
-    {
-        RelayId = relay.Id,
-        VmId = vmId,
-        RelayPort = relayPort,
-        VmPort = vmPort,
-        Protocol = "tcp"
-    });
-    
-    // Return public access URL
-    return $"https://{relay.RelayNodePublicIp}:{relayPort}";
-}
-```
+#### Relay lifecycle
 
-#### 5. Health Monitoring
+1. Node registers → orchestrator detects private IP / CGNAT indicators
+2. Orchestrator deploys relay VM on a suitable public-IP node (cloud-init)
+3. Relay VM enrolls in WireGuard mesh via `wg-mesh-enroll.sh`
+4. CGNAT node establishes outbound WireGuard tunnel to relay
+5. Traffic forwarded; relay node earns 20% of VM revenue passively
 
-The `RelayHealthMonitor` service continuously monitors relay status:
+#### Revenue split
 
-```csharp
-// RelayHealthMonitorService.cs
-public class RelayHealthMonitorService : BackgroundService
-{
-    protected override async Task ExecuteAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            var activeRelays = await _relayRepository.GetActiveRelaysAsync();
-            
-            foreach (var relay in activeRelays)
-            {
-                // Check WireGuard tunnel status
-                var tunnelUp = await CheckWireGuardTunnelAsync(relay);
-                
-                // Check port forwarding rules
-                var portsValid = await ValidatePortMappingsAsync(relay);
-                
-                // Update relay status
-                relay.Status = (tunnelUp && portsValid) 
-                    ? RelayStatus.Active 
-                    : RelayStatus.Degraded;
-                
-                relay.LastHealthCheckAt = DateTime.UtcNow;
-                
-                // Trigger repair if needed
-                if (!tunnelUp || !portsValid)
-                {
-                    await _relayRepairService.RepairRelayAsync(relay.Id);
-                }
-            }
-            
-            await Task.Delay(TimeSpan.FromMinutes(1), ct);
-        }
-    }
-}
-```
+| Role | Share |
+|---|---|
+| CGNAT node (VM host) | 80% |
+| Relay node (connectivity) | 20% |
 
-**Monitored Metrics:**
-- WireGuard tunnel connectivity (peer handshake)
-- Port mapping rule validity
-- Bandwidth utilization
-- Latency between relay and CGNAT node
-- Resource usage on relay VM
+#### WireGuard Mesh Enrollment
 
-### Symbiotic Economics
+The enrollment script (`wg-mesh-enroll.sh`) uses a two-strategy approach:
 
-The relay system creates a win-win-win scenario:
+1. **Strategy 1 (primary):** POST to NodeAgent proxy via virbr0 default gateway (`/api/relay/wg-mesh-enroll`) — solves port 8080 unreachability from NAT'd VMs
+2. **Strategy 2 (fallback):** Direct relay API (`POST http://<relay-ip>:8080/api/relay/add-peer`)
 
-**For Relay Node Operators:**
-- **Passive Income:** Earn USDC for providing connectivity and bandwidth
-- **Low Resource Cost:** Relay VMs use minimal resources (512MB RAM, 1 CPU)
-- **Predictable Earnings:** Percentage of all VMs hosted on connected CGNAT nodes
-- **Example:** Relay node connecting 5 CGNAT nodes earning 20% commission = steady revenue stream
+The NodeAgent proxy (`WgMeshEnrollController`) finds the relay VM's bridge IP via `IPortForwardingManager.GetRelayVmIpAsync()` and forwards the enrollment request. For CGNAT hosts without a local relay VM, the proxy discovers the relay tunnel gateway from the host's WireGuard interface addresses.
 
-**For CGNAT Node Operators:**
-- **Market Access:** Can host VMs and earn income despite CGNAT
-- **No Infrastructure Changes:** No need to change ISP or get static IP
-- **80% Share:** Keep 80% of VM revenue (20% to relay)
-- **Example:** Home server behind mobile network can now earn from GPU hosting
+#### Implementation files
 
-**For the Platform:**
-- **Massive Market Expansion:** 60-80% more potential nodes
-- **Network Effects:** More nodes → more capacity → more users → more value
-- **Competitive Advantage:** Akash and most competitors don't support CGNAT nodes
-- **Geographic Diversity:** Mobile and residential nodes provide global coverage
+| File | Purpose |
+|---|---|
+| `RelayService.cs` | Relay VM deployment and lifecycle |
+| `RelayController.cs` | REST API (`/api/relays`) |
+| `relay-vm-cloudinit.yaml` | Relay VM cloud-init (nginx, WireGuard, NAT rules) |
+| `relay-api.py` | Relay management API (peer add/remove, NAT rules) |
+| `WgMeshEnrollController.cs` | NodeAgent proxy for DHT/BlockStore VM enrollment |
+| `wg-mesh-enroll.sh` | Two-strategy WG mesh enrollment script |
 
-### Technical Components
+#### Strategic value: "DeCloud Relay SDK"
 
-#### RelayService
-**Location:** `src/Orchestrator/Services/RelayService.cs`
-
-**Responsibilities:**
-- Relay node selection and assignment
-- Port allocation and mapping
-- Configuration generation (WireGuard keys, iptables rules)
-- Relay lifecycle management
-
-**Key Methods:**
-- `AssignRelayAsync(cgnatNodeId)` - Find and assign relay node
-- `AllocatePortForVmAsync(vmId, vmPort)` - Create port mapping
-- `UpdateRelayConfigurationAsync(relayId)` - Reconfigure relay
-- `RemoveRelayAsync(relayId)` - Clean up relay when CGNAT node leaves
-
-#### RelayHealthMonitor
-**Location:** `src/Orchestrator/Services/RelayHealthMonitorService.cs`
-
-**Responsibilities:**
-- Monitor WireGuard tunnel status
-- Validate port forwarding rules
-- Detect and repair relay failures
-- Track performance metrics
-
-**Monitoring Intervals:**
-- Tunnel status: Every 60 seconds
-- Port mappings: Every 5 minutes
-- Bandwidth metrics: Every 30 seconds
-
-#### RelayController
-**Location:** `src/Orchestrator/Controllers/RelayController.cs`
-
-**API Endpoints:**
-- `GET /api/relays` - List all active relays
-- `GET /api/relays/{id}` - Get relay details
-- `POST /api/relays/{id}/repair` - Manually trigger relay repair
-- `GET /api/relays/stats` - Platform-wide relay statistics
-
-### Strategic Value
-
-#### Standalone Product Opportunity: "DeCloud Relay SDK"
-
-The relay infrastructure is architected to be **platform-agnostic** and could be packaged as a standalone product:
-
-**Potential Use Cases:**
-- **Akash Network:** Enable CGNAT nodes to participate as providers
-- **Filecoin:** Allow residential nodes to provide storage
-- **Blockchain Nodes:** Run validators from home connections
-- **Gaming Servers:** Host game servers behind CGNAT
-- **IoT Networks:** Connect edge devices without public IPs
-
-**Licensing Model:**
-- Open-source core (build community)
-- Enterprise support subscriptions
-- SaaS management dashboard
-- Custom integration consulting
-
-**Estimated Market:**
-- 100+ decentralized platforms need CGNAT solutions
-- $50K-$250K licensing per platform
-- Total addressable: $5M-$25M
+The relay infrastructure is platform-agnostic and could be packaged as a standalone product for other decentralized platforms (Akash, Filecoin, residential blockchain validators). Estimated addressable market: $5M–$25M.
 
 ---
 
-## Smart Port Allocation (Direct Access)
+### Smart Port Allocation (Direct Access)
 
-### Overview
+**Status:** ✅ Production-ready (all 5 bugs fixed, end-to-end tested)
 
-The Smart Port Allocation system enables external TCP/UDP access to VM services through automated port forwarding. For CGNAT nodes, it implements a 3-hop forwarding architecture through relay nodes, while public nodes use direct forwarding.
+Enables external TCP/UDP access to VM services through automated port forwarding. CGNAT nodes use 3-hop forwarding through relay nodes; public nodes use direct forwarding.
 
-**Key Features:**
-- Automatic relay forwarding for CGNAT nodes
-- Direct forwarding for public nodes (bypasses relay)
-- Database-backed persistence with reconciliation
-- Protocol support: TCP, UDP, or both
-- Port range: 40000-65535 (25,536 assignable ports)
-
-### 3-Hop Forwarding Architecture
-
-For VMs on CGNAT nodes, traffic flows through three hops:
+#### 3-hop architecture (CGNAT nodes)
 
 ```
-External Client:40000
+External Client :40000
   ↓ (Internet)
-Relay Node iptables DNAT
-  PublicPort:40000 → TunnelIP:40000
+Relay Node iptables DNAT  (PublicPort → TunnelIP:PublicPort)
   ↓ (WireGuard tunnel)
-CGNAT Node iptables DNAT
-  PublicPort:40000 → VM:22
+CGNAT Node iptables DNAT  (PublicPort → VM:ServicePort)
   ↓ (libvirt bridge)
-VM SSH Server:22
+VM service
 ```
 
-**Direct forwarding** (public nodes):
+#### Direct forwarding (public nodes)
+
 ```
-External Client:40000
+External Client :40000
   ↓ (Internet)
-Node iptables DNAT
-  PublicPort:40000 → VM:22
+Node iptables DNAT  (PublicPort → VM:ServicePort)
   ↓ (libvirt bridge)
-VM SSH Server:22
+VM service
 ```
 
-### Port Allocation Flow
+#### Port allocation flow
 
-1. **User requests port** - VM service port (e.g., SSH 22) → public port (e.g., 40000)
-2. **Orchestrator validates:**
-   - Port in valid range (40000-65535)
-   - Port not already allocated
-   - VM exists and is running
-3. **Orchestrator identifies path:**
-   - **CGNAT node:** Finds assigned relay node → sends commands to both nodes
-   - **Public node:** Sends command directly to node
-4. **Nodes create iptables rules:**
-   - DNAT: `PublicPort → TargetIP:TargetPort`
-   - FORWARD: Accept forwarded packets
-5. **Database persistence:**
-   - Both nodes store mapping in SQLite
-   - Survives service restarts
+1. User requests port mapping (VM port → public port)
+2. Orchestrator validates: range (40000–65535), not already allocated, VM running
+3. Orchestrator identifies path (CGNAT → relay + node commands; public → node only)
+4. Nodes create iptables DNAT + FORWARD rules
+5. SQLite database persists mappings on each node
 
-### Database Schema
+#### Database schema
 
 ```sql
 CREATE TABLE PortMappings (
     Id TEXT PRIMARY KEY,
     VmId TEXT NOT NULL,
-    VmPrivateIp TEXT NOT NULL,  -- For CGNAT: VM IP, For Relay: Tunnel IP
-    VmPort INTEGER NOT NULL,     -- For CGNAT: VM port, For Relay: 0
-    PublicPort INTEGER NOT NULL UNIQUE,
+    VmPrivateIp TEXT NOT NULL,
+    VmPort INTEGER NOT NULL,     -- 0 = relay mapping marker
+    PublicPort INTEGER UNIQUE NOT NULL,
     Protocol INTEGER NOT NULL,   -- 0=TCP, 1=UDP, 2=Both
     Label TEXT,
     CreatedAt TEXT NOT NULL,
@@ -462,1411 +213,342 @@ CREATE TABLE PortMappings (
 );
 ```
 
-**Special marker for relay mappings:** `VmPort = 0`
+`VmPort = 0` marks relay-side forwarding rules, enabling correct match/delete logic.
 
-This marker distinguishes relay forwarding rules from direct VM forwarding rules, enabling correct matching and deletion logic.
+#### Reconciliation & self-healing
 
-### Port Deletion - Critical Bug Fixes (2026-02-08)
+`PortForwardingReconciliationService` runs at startup: flushes iptables chain and recreates all rules from database. Database is the single source of truth.
 
-Port deletion for relay nodes required fixing **5 interconnected bugs**:
+#### Implementation files
 
-#### Bug #1: Deadlock in CreateForwardingAsync
-**Symptom:** Port allocation hung indefinitely  
-**Root Cause:** Method held lock while calling `GetRelayVmIpAsync`, which also tried to acquire same lock  
-**Fix:** Refactored to `CreateForwardingInternalAsync` (lock-free internal method) - [commit 73d5ee7]  
-**Files:** `PortForwardingManager.cs`
-
-#### Bug #2: VmPort Mismatch in Orchestrator
-**Symptom:** Relay `RemovePort` payload had `vmPort=22` instead of `0`  
-**Root Cause:** Orchestrator used original VM port instead of relay's special `VmPort=0`  
-**Fix:** Detect relay forwarding and send `VmPort=0` in RemovePort command - [commit 9a76f41]  
-**Files:** `DirectAccessService.cs`
-
-#### Bug #3: IP Address Mismatch
-**Symptom:** iptables deletion used VM IP (192.168.x.x) instead of tunnel IP (10.20.x.x)  
-**Root Cause:** Relay forwarding uses tunnel IP, not VM IP  
-**Fix:** Resolve relay VM's tunnel IP before calling RemoveForwardingAsync - [commit 2add8d8]  
-**Files:** `CommandProcessorService.cs`
-
-#### Bug #4: PublicPort Matching
-**Symptom:** Deleted wrong relay mapping (e.g., SSH instead of Redis)  
-**Root Cause:** All relay mappings have `VmPort=0`, so matching by VmPort returned first mapping  
-**Fix:** Extract `PublicPort` from payload and match by `PublicPort` when `VmPort=0` - [commits b8d505f, 3b46fed]  
-**Files:** `DirectAccessService.cs`, `CommandProcessorService.cs`
-
-Example:
-```csharp
-// Orchestrator: Send PublicPort in relay RemovePort
-payload["publicPort"] = mapping.PublicPort;
-
-// NodeAgent: Match by PublicPort when VmPort=0
-if (vmPort.Value == 0 && publicPort.HasValue)
-    mapping = mappings.FirstOrDefault(m => m.PublicPort == publicPort.Value);
-else
-    mapping = mappings.FirstOrDefault(m => m.VmPort == vmPort.Value);
-```
-
-#### Bug #5: Database Deletion
-**Symptom:** All relay mappings deleted when removing one port  
-**Root Cause:** After correct matching, code called `RemoveAsync(vmId, vmPort=0)` which matched ALL relay mappings  
-
-SQL executed:
-```sql
-DELETE FROM PortMappings WHERE VmId = '...' AND VmPort = 0  -- Deletes all!
-```
-
-**Fix:** Added `RemoveByPublicPortAsync` method, use it for relay mappings - [commit 75934c8]  
-**Files:** `PortMappingRepository.cs`, `CommandProcessorService.cs`
-
-```csharp
-// Delete by PublicPort for relay mappings
-if (vmPort.Value == 0)
-    removed = await _portMappingRepository.RemoveByPublicPortAsync(mapping.PublicPort);
-else
-    removed = await _portMappingRepository.RemoveAsync(vmId, vmPort.Value);
-```
-
-### Reconciliation & Self-Healing
-
-**Startup Reconciliation:**
-- `PortForwardingReconciliationService` runs on node startup
-- Reads all active mappings from database
-- Flushes iptables chain
-- Recreates all rules from database
-- **Database is source of truth** - iptables synced to match
-
-**Self-Healing Scenarios:**
-
-| Scenario | Behavior |
-|----------|----------|
-| Service restart | ✅ All rules recreated from database |
-| iptables flushed | ✅ Rules recreated on next restart |
-| Database deleted | ❌ All mappings lost (DB is source of truth) |
-| Orphaned iptables rules | ❌ Not detected (acceptable - DB drives state) |
-
-**Design Decision:** One-way reconciliation (DB → iptables) is correct architecture.
-
-### Health Monitoring & Failure Handling
-
-**Node Health Detection:**
-- `NodeHealthMonitorService` runs every 30 seconds
-- No heartbeat for 2 minutes → node marked `Offline`
-- All VMs on offline node marked `Error`
-- Billing stops for Error VMs
-
-**Failure Handling Strategy:**
-
-When CGNAT node goes offline:
-1. **Immediate:** Node marked `Offline`, VMs marked `Error`, billing stops
-2. **User decision:** Wait for recovery OR delete VM
-3. **On deletion:** Orchestrator triggers port cleanup on relay nodes
-4. **Future:** Auto-delete after grace period (e.g., 24 hours)
-
-**Design rationale:**
-- ❌ Don't auto-cleanup immediately → prevents unintended service interruptions
-- ✅ Mark as Error + stop billing → fair to users, allows investigation
-- ✅ Manual or delayed cleanup → gives users control
-
-### Implementation Files
-
-**Orchestrator:**
-- `DirectAccessService.cs` - Port allocation coordinator
-- `NodeService.cs` - Health monitoring
-- `BackgroundServices.cs` - NodeHealthMonitorService
-
-**NodeAgent:**
-- `PortForwardingManager.cs` - iptables management
-- `PortMappingRepository.cs` - Database persistence
-- `CommandProcessorService.cs` - Command handling
-- `PortForwardingReconciliationService.cs` - Startup reconciliation
-
-### Production Status
-
-✅ **All critical bugs fixed** (5 bugs, 6 commits)  
-✅ **Database persistence working**  
-✅ **Reconciliation on restart**  
-✅ **Health monitoring active**  
-✅ **End-to-end tested and verified**  
-
-The 3-hop port forwarding system is **production-ready** for CGNAT bypass scenarios.
-
-
-## VM Proxy System
-
-### Unified HTTP and WebSocket Proxy
-
-The Node Agent includes a sophisticated proxy system that handles all ingress traffic to VMs, automatically detecting and routing both HTTP and WebSocket requests.
-
-**Location:** `src/DeCloud.NodeAgent/Controllers/GenericProxyController.cs`
-
-### Architecture
-
-```
-External Request (HTTP/HTTPS/WSS)
-  ↓
-Caddy (Central Ingress or Local)
-  ↓
-GenericProxyController (/api/vms/{vmId}/proxy/http/{port}/*)
-  ↓
-Automatic WebSocket Detection
-  ├─ HTTP Request → Standard HTTP Proxy
-  └─ WebSocket Upgrade → WebSocket Tunnel
-       ↓
-VM Service (192.168.122.x:port)
-```
-
-### HTTP Proxying
-
-**Standard HTTP/HTTPS requests** are proxied with:
-
-- Header forwarding (Host, User-Agent, Authorization, etc.)
-- Query string preservation
-- Request body streaming (no buffering to avoid data loss)
-- Proper status code and header passthrough
-- Timeout handling
-
-**Code Example:**
-```csharp
-// GenericProxyController.cs - HTTP proxying
-public async Task<IActionResult> ProxyHttp(
-    string vmId, int port, CancellationToken ct)
-{
-    // Validate port is allowed
-    if (!_allowedPorts.Contains(port))
-        return BadRequest("Port not allowed");
-    
-    // Check if WebSocket upgrade request
-    if (IsWebSocketUpgradeRequest())
-    {
-        await HandleWebSocketTunnel(vmId, vmIp, port, ct);
-        return new EmptyResult();
-    }
-    
-    // Standard HTTP proxy
-    var targetPath = Request.Path.Value.Replace($"/api/vms/{vmId}/proxy/http/{port}", "");
-    var targetUrl = $"http://{vmIp}:{port}{targetPath}{Request.QueryString}";
-    
-    using var httpClient = _httpClientFactory.CreateClient("VMProxy");
-    var request = new HttpRequestMessage(Request.Method, targetUrl);
-    
-    // Forward headers
-    foreach (var header in Request.Headers)
-    {
-        if (!_skipHeaders.Contains(header.Key))
-            request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
-    }
-    
-    // Stream request body
-    if (Request.Body != null)
-        request.Content = new StreamContent(Request.Body);
-    
-    // Execute and return response
-    var response = await httpClient.SendAsync(request, ct);
-    return new ProxyResult(response);
-}
-```
-
-### WebSocket Proxying (Critical Innovation)
-
-**Problem Solved:**  
-Web-based IDEs (code-server, JupyterLab) and real-time applications require WebSocket connections. Previous implementation failed because WebSocket upgrade requests were not properly detected and handled.
-
-**Solution Implemented (2026-02-02):**  
-Automatic WebSocket detection with **WebSocket-to-WebSocket bridging**.
-
-#### WebSocket Detection
-
-```csharp
-private bool IsWebSocketUpgradeRequest()
-{
-    var connectionHeader = Request.Headers["Connection"].ToString();
-    var upgradeHeader = Request.Headers["Upgrade"].ToString();
-    
-    return connectionHeader.Contains("Upgrade", StringComparison.OrdinalIgnoreCase) &&
-           upgradeHeader.Equals("websocket", StringComparison.OrdinalIgnoreCase);
-}
-```
-
-**Headers Checked:**
-- `Connection: Upgrade`
-- `Upgrade: websocket`
-
-#### WebSocket Tunnel Establishment
-
-```csharp
-private async Task HandleWebSocketTunnel(
-    string vmId, string vmIp, int port, CancellationToken ct)
-{
-    // Extract actual backend path (remove proxy prefix)
-    var proxyPrefix = $"/api/vms/{vmId}/proxy/http/{port}";
-    var backendPath = Request.Path.ToString().Replace(proxyPrefix, "");
-    
-    // Connect to backend WebSocket using ClientWebSocket
-    using var backendWs = new ClientWebSocket();
-    var backendUrl = $"ws://{vmIp}:{port}{backendPath}{Request.QueryString}";
-    
-    _logger.LogInformation(
-        "Establishing WebSocket tunnel to {Url} for VM {VmId}",
-        backendUrl, vmId);
-    
-    await backendWs.ConnectAsync(new Uri(backendUrl), ct);
-    
-    // Accept client WebSocket
-    var clientWs = await HttpContext.WebSockets.AcceptWebSocketAsync();
-    
-    _logger.LogInformation("WebSocket tunnel established for VM {VmId}", vmId);
-    
-    // Bidirectional relay between client and backend
-    await Task.WhenAll(
-        RelayWebSocketAsync(clientWs, backendWs, "client->backend", ct),
-        RelayWebSocketAsync(backendWs, clientWs, "backend->client", ct)
-    );
-}
-```
-
-**Key Implementation Details:**
-1. **ClientWebSocket:** Creates proper WebSocket connection to backend (not raw TCP)
-2. **Path Extraction:** Removes proxy prefix to get actual backend path
-3. **Query String Preservation:** Maintains full URL including parameters
-4. **Bidirectional Relay:** Two concurrent tasks relay data in both directions
-
-#### WebSocket Frame Relay
-
-```csharp
-private async Task RelayWebSocketAsync(
-    WebSocket source, WebSocket destination, 
-    string direction, CancellationToken ct)
-{
-    var buffer = new byte[8192];
-    
-    try
-    {
-        while (source.State == WebSocketState.Open &&
-               destination.State == WebSocketState.Open)
-        {
-            var result = await source.ReceiveAsync(
-                new ArraySegment<byte>(buffer), ct);
-            
-            if (result.MessageType == WebSocketMessageType.Close)
-            {
-                await destination.CloseAsync(
-                    WebSocketCloseStatus.NormalClosure,
-                    result.CloseStatusDescription, ct);
-                break;
-            }
-            
-            await destination.SendAsync(
-                new ArraySegment<byte>(buffer, 0, result.Count),
-                result.MessageType,
-                result.EndOfMessage,
-                ct);
-        }
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError(ex, 
-            "WebSocket relay error ({Direction}) for VM {VmId}", 
-            direction, vmId);
-    }
-}
-```
-
-**Frame Preservation:**
-- **Message Type:** Text, Binary, or Close frames preserved
-- **Message Boundaries:** `EndOfMessage` flag maintained
-- **No Buffering:** Direct relay for low latency
-- **Error Handling:** Graceful connection cleanup
-
-### Traffic Flow Examples
-
-#### HTTP Request Flow
-```
-User → https://myapp-abc123.vms.stackfi.tech/api/data
-  ↓
-Caddy → https://node-ip:5100/api/vms/{vmId}/proxy/http/8080/api/data
-  ↓
-GenericProxyController
-  → No WebSocket headers detected
-  → HTTP proxy mode
-  ↓
-VM → http://192.168.122.50:8080/api/data
-  ↓
-Response flows back through same path
-```
-
-#### WebSocket Flow (e.g., code-server)
-```
-Browser → wss://code-server-xyz.vms.stackfi.tech/stable-xxx/socket
-  ↓ (Connection: Upgrade, Upgrade: websocket)
-Caddy → https://node-ip:5100/api/vms/{vmId}/proxy/http/8080/stable-xxx/socket
-  ↓
-GenericProxyController
-  → WebSocket upgrade detected
-  → Create ClientWebSocket to backend
-  → Accept client WebSocket
-  → Bridge the two connections
-  ↓
-VM code-server → ws://192.168.122.50:8080/stable-xxx/socket
-  ↓ (Full WebSocket protocol handshake)
-Bidirectional WebSocket frames relay
-```
-
-### Allowed Ports
-
-```csharp
-private static readonly HashSet<int> _allowedPorts = new()
-{
-    22,    // SSH
-    80,    // HTTP
-    443,   // HTTPS
-    3000,  // Common dev servers
-    5000,  // ASP.NET default
-    8000,  // Common HTTP
-    8080,  // Common HTTP alt
-    8443,  // HTTPS alt
-    9000   // Various services
-};
-```
-
-**Security:** Only whitelisted ports are proxied to prevent abuse.
-
-### Performance Considerations
-
-- **No Request Body Buffering:** Streams directly to avoid memory issues
-- **Concurrent WebSocket Relay:** Both directions handled in parallel
-- **Connection Pooling:** HTTP client factory reuses connections
-- **Timeout Management:** 100-second timeout for long-running requests
-
----
-
-## Authentication & Security
-
-### Wallet-Based Authentication
-
-**No passwords, no KYC, no email.** DeCloud uses Ethereum wallet signatures for authentication.
-
-**Flow:**
-1. User connects wallet (MetaMask, WalletConnect, etc.)
-2. Frontend requests signature of deterministic message
-3. Backend verifies signature recovers wallet address
-4. Wallet address is the user ID
-
-**Benefits:**
-- **Privacy:** No personal information required
-- **Decentralized:** No centralized auth provider
-- **Censorship-Resistant:** Cannot be banned by email/phone provider
-- **Interoperable:** Works with any Ethereum-compatible wallet
-
-**Code Example:**
-```csharp
-// AuthController.cs
-public async Task<IActionResult> VerifyWallet([FromBody] WalletVerifyRequest request)
-{
-    var message = $"DeCloud Login: {request.Nonce}";
-    var signer = _ethService.RecoverSignerAddress(message, request.Signature);
-    
-    if (signer.ToLower() != request.WalletAddress.ToLower())
-        return Unauthorized("Invalid signature");
-    
-    var user = await _userRepository.GetOrCreateByWalletAsync(signer);
-    var token = _jwtService.GenerateToken(user.Id, signer);
-    
-    return Ok(new { token, walletAddress = signer });
-}
-```
-
-### Encrypted VM Access
-
-**SSH Passwords:**  
-When creating a VM, the user provides a password which is **encrypted with their wallet's public key**:
-
-```csharp
-var encryptedPassword = await _walletCrypto.EncryptAsync(
-    plainPassword, userWalletAddress);
-
-vm.EncryptedPassword = encryptedPassword;
-```
-
-**Decryption:**  
-Only the wallet owner can decrypt the password.
-
-**Security Properties:**
-- Orchestrator never stores plaintext passwords
-- Node agents receive encrypted passwords (can't read them)
-- Users must have wallet access to retrieve passwords
-- Lost wallet = lost VM access (user responsibility)
-
----
-
-## Billing & Economics
-
-### USDC-Based Payments (Polygon Network)
-
-All payments are in **USDC stablecoin** on the **Polygon blockchain** for low fees and fast settlement.
-
-**Pricing Model:**
-- **Compute Points:** CPUs benchmarked and normalized to standard units
-- **Per-Hour Billing:** `hourlyRate = computePoints * nodePricePerPoint`
-- **Quality Tiers:** Guaranteed (1:1), Standard (1.5:1), Balanced (2:1), Burstable (4:1)
-
-**Payment Flow:**
-1. User deposits USDC to their account (on-chain transaction)
-2. Orchestrator tracks VM usage per hour
-3. Billing service calculates charges and deducts from balance
-4. Node operators accumulate earnings
-5. Payout service transfers earnings to node wallets (weekly batches)
-
-**Relay Revenue Split:**
-- **CGNAT Node:** 80% of VM revenue
-- **Relay Node:** 20% of VM revenue (passive income)
-
----
-
-## Marketplace & Discovery
-
-### Node Marketplace
-
-**Features:**
-- Search and filter nodes by tags, region, price, GPU, uptime
-- Featured nodes (top performers with 95%+ uptime)
-- One-click VM deployment to specific nodes
-- Real-time availability and pricing
-- Node profiles with descriptions and custom tags
-
-**API:** `/api/marketplace/nodes`
-
-### VM Template Marketplace (COMPLETE - Phase 1.2)
-
-**Status:** ✅ Fully implemented with backend API, frontend UI, and 5 seed templates
-
-**Implementation:**
-- VmTemplate model with cloud-init scripts, variable substitution, specs, pricing, ratings
-- TemplateService: CRUD, search/filter, validation, deployment helpers
-- TemplateSeederService: Auto-seeds on startup with semantic version comparison
-- MarketplaceController: Full REST API (browse, featured, detail, create, update, delete, publish, deploy)
-- Community templates: User-created with draft→publish workflow
-- Paid templates: PerDeploy pricing model (85/15 author/platform split via escrow)
-- ReviewService: Universal review system with eligibility proofs
-- Frontend: marketplace-templates.js, my-templates.js, template-detail.js
-
-**Seed Templates (6):**
-- Stable Diffusion WebUI (AI image generation, GPU required) ✅
-- PostgreSQL Database (production-ready) ✅
-- VS Code Server (code-server, browser IDE) ✅
-- Private Browser (Neko/WebRTC streaming) ✅
-- Privacy Proxy (Shadowsocks, TCP+UDP) ✅
-- Web Proxy Browser (Ultraviolet, private browsing) ✅
-
-**Planned Additional Templates:**
-- Nextcloud (personal cloud)
-- Whisper AI (speech-to-text)
-- Mastodon (social network)
-- Minecraft server
-- VPN/Tor relay
-- Jellyfin (media server)
-- AI chatbot (Ollama)
-
----
-
-## VM Lifecycle Management
-
-### Centralized State Machine (VmLifecycleManager)
-
-**Status:** ✅ Implemented (2026-02-09)
-**Location:** `src/Orchestrator/Services/VmLifecycleManager.cs`
-
-All confirmed VM state transitions flow through a single entry point: `VmLifecycleManager.TransitionAsync()`. This replaces the previous pattern where 5 separate code paths changed VM status with inconsistent side effects.
-
-### Design Principles
-
-1. **Single entry point** — Every confirmed status change goes through `TransitionAsync`
-2. **Validate first, persist second, effects third** — Invalid transitions rejected before any mutation
-3. **Side effects keyed by (from, to) pair** — Different transitions trigger different effects
-4. **Individual error isolation** — `SafeExecuteAsync` wraps each side effect; one failure never aborts the chain
-5. **Persist-first** — Status saved before effects run; crash mid-effects leaves VM in correct state for reconciliation
-
-### State Transition Map
-
-```
-Pending       → Scheduling, Provisioning, Error, Deleting
-Scheduling    → Provisioning, Pending, Error, Deleting
-Provisioning  → Running, Error, Deleting
-Running       → Stopping, Error, Deleting
-Stopping      → Stopped, Running, Error, Deleting
-Stopped       → Provisioning, Running, Deleting, Error
-Deleting      → Deleted, Error
-Migrating     → Running, Error, Deleting
-Error         → Provisioning, Running, Deleting, Stopped, Error
-Deleted       → (terminal — no transitions)
-```
-
-Invalid transitions (e.g., `Deleted → Running`) are rejected with a warning log.
-
-### Side Effect Dispatch
-
-| Transition | Handler | Effects |
-|---|---|---|
-| `Provisioning/Stopped/Error → Running` | `OnVmBecameRunningAsync` | Wait for PrivateIp → Ingress registration → Template port auto-allocation → Template fee settlement |
-| `Running → Stopping/Deleting/Error` | `OnVmLeavingRunningAsync` | Ingress cleanup |
-| `* → Stopped` | `OnVmStoppedAsync` | Ingress cleanup |
-| `* → Deleted` | `OnVmDeletedAsync` | Ingress deletion → DirectAccess port cleanup → Free node resources → Free user quotas → Increment node reputation |
-
-Key behaviors:
-- `Error → Running` does **not** re-allocate ports or re-charge template fees
-- `Stopped → Deleting` does **not** run ingress cleanup (VM wasn't serving)
-- `Running → Running` (same status) is a no-op, preventing duplicate side effects
-
-### PrivateIp Timing Resolution
-
-VM private IPs arrive via heartbeat, often after the command ack sets status to Running. The lifecycle manager handles this with two mechanisms:
-
-1. **Structural fix:** The heartbeat path persists PrivateIp to the datastore **before** calling `TransitionAsync`, so IP is available when side effects fire
-2. **Safety net:** `WaitForPrivateIpAsync` polls the datastore every 2 seconds for up to 30 seconds, accommodating the ~15-second IP discovery delay on nodes
-
-If the IP still isn't available after 30 seconds, effects are deferred (not failed). A future reconciliation service or the next heartbeat can retry.
-
-### Transition Context
-
-Every transition carries metadata about what triggered it:
-
-| Trigger | Source | Use Case |
-|---|---|---|
-| `CommandAck` | NodeService command acknowledgment | Node confirmed a create/stop/delete completed |
-| `Heartbeat` | NodeService heartbeat sync | Node reports VM status different from Orchestrator's record |
-| `Manual` | VmService / SignalR hub | Admin or API-initiated status change |
-| `Timeout` | BackgroundServices stale command cleanup | Command not acknowledged within timeout window |
-| `NodeOffline` | NodeService health check | Node missed heartbeats, all its VMs marked Error |
-| `CommandFailed` | NodeService command acknowledgment | Node reported command execution failure |
-
-Context is used for structured logging and debugging — every transition log includes the trigger type, source, and relevant IDs.
-
-### Call Sites (5 entry points, 1 destination)
-
-All confirmed transitions route through `IVmLifecycleManager.TransitionAsync()`:
-
-1. **Command acknowledgment** (`NodeService.ProcessCommandAcknowledgmentAsync`) — Node confirms create → Running, stop → Stopped, delete → Deleted, or failure → Error
-2. **Heartbeat sync** (`NodeService.SyncVmStateFromHeartbeatAsync`) — Node reports a VM status that differs from the Orchestrator's record
-3. **Node offline** (`NodeService.MarkNodeVmsAsErrorAsync`) — Health check detects node went offline, all VMs → Error
-4. **Background timeout** (`BackgroundServices.CleanupExpiredCommands`) — Command not acknowledged within timeout → Error
-5. **Manual/API** (`VmService.UpdateVmStatusAsync`) — SignalR hub or API-initiated status change
-
-**Note:** "Command issuance" paths (setting `Provisioning` on create, `Stopping` on stop, `Deleting` on delete) intentionally set status directly as optimistic updates before the node confirms. These are not confirmed transitions and do not trigger side effects.
-
-### Implementation Files
-
-| File | Change |
+| File | Purpose |
 |---|---|
-| `Services/VmLifecycleManager.cs` | New — lifecycle manager with interface, context, and all side effect handlers |
-| `Program.cs` | DI registration (`AddSingleton<IVmLifecycleManager, VmLifecycleManager>`) |
-| `Services/NodeService.cs` | Command ack, heartbeat, and node-offline paths route through lifecycle manager |
-| `Services/VmService.cs` | `UpdateVmStatusAsync` delegates to lifecycle manager; removed ~280 lines of dead code |
-| `Background/BackgroundServices.cs` | Command timeout path routes through lifecycle manager |
-
-### Previous Issues Fixed
-
-- **Auto port allocation never fired:** `AutoAllocateTemplatePortsAsync` only existed in `VmService.UpdateVmStatusAsync`, which was only called from the SignalR hub. The actual VM lifecycle paths (command ack, heartbeat) set `vm.Status` directly, bypassing all side effects.
-- **PrivateIp timing race:** Heartbeat path set status to Running and saved, then set PrivateIp afterward. Side effects requiring IP would fail because IP wasn't persisted yet.
-- **Fire-and-forget anti-pattern:** Old code used `_ = Task.Run(async () => ...)` for side effects, which was unreliable and swallowed exceptions silently.
-- **Inconsistent cleanup on deletion:** `NodeService.CompleteVmDeletionAsync` freed node resources but not DirectAccess ports. `VmService.CompleteVmDeletionAsync` freed quotas but used different logic. Now unified in `OnVmDeletedAsync`.
+| `DirectAccessService.cs` | Port allocation coordinator (Orchestrator) |
+| `PortForwardingManager.cs` | iptables management (NodeAgent) |
+| `PortMappingRepository.cs` | SQLite persistence (NodeAgent) |
+| `CommandProcessorService.cs` | Command handling (NodeAgent) |
+| `PortForwardingReconciliationService.cs` | Startup reconciliation (NodeAgent) |
 
 ---
 
-## Web Proxy Browser Template (Ultraviolet)
+### CentralIngress-Aware Port Allocation
 
-### Overview
+**Status:** ✅ Complete (2026-02-09)
 
-**Status:** ✅ Production-ready (v3.0.0, 2026-02-09)
-**Template slug:** `web-proxy-browser`
-**Category:** Privacy & Security
-
-A privacy-focused web proxy that runs entirely within a VM, allowing users to browse the internet through a service-worker-based proxy (Ultraviolet). The template deploys the official [titaniumnetwork-dev/Ultraviolet-App](https://github.com/nickerlass/Ultraviolet-App) behind nginx with HTTP Basic Auth.
-
-### Architecture
-
-```
-User Browser
-  ↓ (HTTPS via CentralIngress subdomain)
-nginx (:8080) — COOP/COEP headers + Basic Auth
-  ├─ / → Ultraviolet frontend (proxy_pass :3000)
-  ├─ /uv/ → UV service worker assets
-  ├─ /epoxy/ → Epoxy transport (SharedArrayBuffer-based)
-  ├─ /baremux/ → BareMux shared worker
-  └─ /wisp/ → Wisp WebSocket endpoint (proxy_pass :3000, WS upgrade)
-         ↓
-Ultraviolet-App (Node.js :3000)
-  ↓ (Wisp protocol over WebSocket)
-Target Website
-```
-
-### Critical Fix: Cross-Origin Isolation (v2.0.0 → v3.0.0)
-
-**Problem:** The Ultraviolet proxy loaded the initial HTML page successfully but all sub-resources (CSS, JS, images) failed silently. Console showed `bare-mux: recieved request for port from sw` followed by service worker errors.
-
-**Root Cause:** The **epoxy transport** uses `SharedArrayBuffer` for Wisp communication between the BareMux shared worker and the service worker. Browsers only expose `SharedArrayBuffer` when the page has **Cross-Origin Isolation** headers:
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-
-Without these headers, the initial fetch worked (handled by the service worker directly), but all subsequent sub-resource fetches through the BareMux transport failed because the shared worker couldn't allocate `SharedArrayBuffer`.
-
-**Fix:** Added COOP/COEP headers to the nginx server block and added WebSocket-friendly settings for the wisp endpoint:
-
-```nginx
-server {
-    listen 8080;
-    server_name _;
-
-    # Cross-Origin Isolation headers - REQUIRED for SharedArrayBuffer
-    add_header Cross-Origin-Opener-Policy "same-origin";
-    add_header Cross-Origin-Embedder-Policy "require-corp";
-
-    auth_basic "Private Browser";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / { proxy_pass http://127.0.0.1:3000; auth_basic off; }
-
-    location /wisp/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_buffering off;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        auth_basic off;
-    }
-
-    location /uv/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
-    location /epoxy/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
-    location /baremux/ { proxy_pass http://127.0.0.1:3000; auth_basic off; }
-}
-```
-
-### Version History
-
-| Version | Change | Issue |
-|---------|--------|-------|
-| v1.0.0 | Initial template with custom npm packages | Non-existent `@nicotine33/*` packages, crashes on start |
-| v2.0.0 | Switch to official Ultraviolet-App repo | Sub-resources fail — missing COOP/COEP headers |
-| v3.0.0 | Add Cross-Origin Isolation headers + WS tuning | ✅ Production-ready |
-
-### Privacy Use Case
-
-The Web Proxy Browser enables ephemeral private browsing: deploy a VM, browse the web through the proxy (traffic exits from the VM's IP, not the user's), then delete the VM. No browsing history persists. Combined with wallet-based auth (no KYC), this provides strong privacy guarantees.
-
----
-
-## CentralIngress-Aware Port Allocation
-
-### Overview
-
-**Status:** ✅ Implemented (2026-02-09)
-**Location:** `VmLifecycleManager.AutoAllocateTemplatePortsAsync()`
-
-When a template-based VM starts, the lifecycle manager auto-allocates direct access ports (iptables DNAT rules) for the template's exposed ports. However, HTTP and WebSocket ports are already handled by CentralIngress (Caddy subdomain routing), making iptables port allocation redundant for those protocols.
-
-### Problem
-
-Before this fix, all public template ports received direct access allocation, including HTTP ports like 8080. This created redundant iptables rules for ports that were already accessible via CentralIngress subdomains (e.g., `web-proxy-browser-xyz.vms.stackfi.tech` → VM:8080).
-
-### Solution
-
-The `AutoAllocateTemplatePortsAsync` method now filters out protocols handled by CentralIngress:
+HTTP/HTTPS/WS/WSS traffic is already routed by Caddy subdomain routing (CentralIngress). Auto-allocating iptables rules for those protocols would be redundant. `AutoAllocateTemplatePortsAsync` filters them out:
 
 ```csharp
-// Skip http/ws protocol ports — those are handled by CentralIngress subdomain routing
-// (Caddy reverse proxy handles both HTTP and WebSocket upgrades on the same port)
 var ingressProtocols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     { "http", "https", "ws", "wss" };
 
 var portsToAllocate = template.ExposedPorts
     .Where(p => p.IsPublic)
     .Where(p => !ingressProtocols.Contains(p.Protocol ?? ""))
-    .Where(p => vm.DirectAccess?.PortMappings?.Any(m => m.VmPort == p.Port) != true)
     .ToList();
 ```
 
-### Protocol Routing Summary
+#### Protocol routing summary
 
 | Protocol | Routing Method | Example |
-|----------|---------------|---------|
-| `http` | CentralIngress (Caddy subdomain) | `app-xyz.vms.stackfi.tech` → VM:8080 |
-| `https` | CentralIngress (Caddy subdomain) | Same as HTTP with TLS termination |
-| `ws` | CentralIngress (Caddy WebSocket upgrade) | Transparent over same HTTP connection |
-| `wss` | CentralIngress (Caddy WebSocket upgrade) | Same as WS with TLS |
-| `tcp` | Direct Access (iptables DNAT) | `publicIP:40001` → VM:22 (SSH) |
-| `udp` | Direct Access (iptables DNAT) | `publicIP:40002` → VM:8388 (Shadowsocks) |
-| `both` | Direct Access (iptables DNAT, TCP+UDP) | `publicIP:40003` → VM:8388 |
+|---|---|---|
+| `http` / `https` | CentralIngress (Caddy subdomain) | `app-xyz.vms.stackfi.tech` → VM:8080 |
+| `ws` / `wss` | CentralIngress (Caddy WebSocket upgrade) | Transparent on same connection |
+| `tcp` | Direct Access (iptables DNAT) | `publicIP:40001` → VM:22 |
+| `udp` | Direct Access (iptables DNAT) | `publicIP:40002` → VM:8388 |
+| `both` | Direct Access (TCP+UDP DNAT) | `publicIP:40003` → VM:8388 |
 
-### Impact by Template
+#### Impact by template
 
-| Template | Exposed Ports | Direct Access Allocated |
-|----------|--------------|------------------------|
-| Stable Diffusion | 7860 (http) | None (CentralIngress) |
-| PostgreSQL | 5432 (tcp) | ✅ 5432 → 40xxx |
-| VS Code Server | 8080 (http) | None (CentralIngress) |
-| Private Browser | 8080 (http) | None (CentralIngress) |
-| Shadowsocks | 8388 (both) | ✅ 8388 → 40xxx (TCP+UDP) |
-| Web Proxy Browser | 8080 (http) | None (CentralIngress) |
+| Template | Ports | Direct Access |
+|---|---|---|
+| Stable Diffusion | 7860 (http) | None — CentralIngress |
+| PostgreSQL | 5432 (tcp) | ✅ → 40xxx |
+| VS Code Server | 8080 (http) | None — CentralIngress |
+| Shadowsocks | 8388 (both) | ✅ → 40xxx (TCP+UDP) |
+| Web Proxy Browser | 8080 (http) | None — CentralIngress |
 
 ---
 
-## Resource Management
+## 3. VM Infrastructure
 
-### CPU Benchmarking
+### VM Proxy System
 
-**sysbench-based:** Normalized CPU performance across heterogeneous hardware
+**Status:** ✅ Production-ready
 
-```bash
-sysbench cpu --threads=$(nproc) --time=10 run
+The Node Agent includes a unified proxy (`GenericProxyController`) that handles all ingress traffic to VMs, routing HTTP, WebSocket, and raw TCP connections.
+
+#### Routes
+
+```
+/api/vms/{vmId}/proxy/http/{port}/{**path}   HTTP/HTTPS proxy
+/api/vms/{vmId}/proxy/ws/{port}              WebSocket tunnel (SSH, SFTP, etc.)
+/api/vms/{vmId}/proxy/tcp/{port}             Raw TCP over WebSocket
 ```
 
-**Compute Points Calculation:**
-```
-computePoints = (nodePerformance / baselinePerformance) * coreCount
-```
+#### Security: allowed ports
 
-### Quality Tiers
-
-| Tier | Overcommit Ratio | Use Case |
-|------|------------------|----------|
-| Guaranteed | 1:1 | Production databases, critical apps |
-| Standard | 1.5:1 | Web apps, APIs |
-| Balanced | 2:1 | Development environments |
-| Burstable | 4:1 | Batch jobs, testing |
+Access is restricted to infrastructure ports (22 SSH, 80 HTTP, 9999 attestation) plus any ports defined in the VM's template `ExposedPorts`. Arbitrary port access is blocked.
 
 ---
 
-## Monitoring & Health
+### VM Lifecycle Management
+
+**Status:** ✅ Complete (2026-02-09)
+**Location:** `src/Orchestrator/Services/VmLifecycleManager.cs`
+
+All confirmed VM state transitions flow through a single entry point: `VmLifecycleManager.TransitionAsync()`. This replaced 5 separate code paths that changed VM status with inconsistent side effects, removing ~460 lines of duplicated code.
+
+#### Design principles
+
+1. **Single entry point** — every status change goes through `TransitionAsync`
+2. **Validate → persist → effects** — invalid transitions rejected before any write
+3. **Side effects keyed by (from, to) pair** — ingress setup, port allocation, template fee settlement, resource cleanup
+4. **SafeExecuteAsync pattern** — each side effect is individually isolated; one failure does not block others
+5. **Persist-first** — status persisted before effects run; crash-safe by design
+
+#### State machine call sites
+
+5 call sites routed through the lifecycle manager: command acknowledgement, heartbeat processing, health check, timeout handler, manual admin action.
+
+---
+
+### Per-Service Readiness Tracking
+
+**Status:** Orchestrator complete (2026-02-10) | NodeAgent implementation pending
+**Location:** Orchestrator models and services
+
+Distinguishes "VM running" (hypervisor reports domain active) from "VM ready for service" (application-level services responding). Uses `qemu-guest-agent` — no direct network access to the VM is required.
+
+#### Service list structure
+
+Every VM has an ordered service list:
+1. **System** (always first) — `CloudInitDone` check via `cloud-init status`
+2. **Template services** — one entry per `ExposedPorts` item in the template
+
+#### Check types
+
+| Type | Mechanism | Example |
+|---|---|---|
+| `CloudInitDone` | `cloud-init status --wait` via guest agent | System service |
+| `TcpPort` | Connect attempt to port | PostgreSQL :5432 |
+| `HttpGet` | HTTP request via guest agent | Stable Diffusion `/api/v1/sd-models` |
+| `ExecCommand` | Command execution via guest agent | `pg_isready` |
+
+Check type is auto-inferred from protocol (`http` → `HttpGet`, `tcp` → `TcpPort`) with explicit override support.
+
+#### Pending work
+
+- NodeAgent `VmReadinessMonitor` background service (spec in `NODE_AGENT_READINESS_CHANGES.md`)
+- Frontend per-service status display under VM details
+
+---
+
+## 4. Authentication & Security
+
+**Status:** ✅ Production-ready
+
+### Wallet-Based Authentication
+
+All user identity is anchored to Ethereum wallet signatures. No usernames, no passwords, no KYC.
+
+- Frontend: WalletConnect / Reown AppKit (MetaMask, Coinbase Wallet, WalletConnect QR)
+- Backend: Signature verification against wallet address
+- Node identity: `SHA256(machineId + walletAddress)` — deterministic and stable
+
+### SSH Access
+
+Two modes:
+
+1. **User-registered SSH keys** — preferred; user's own public key injected via cloud-init
+2. **Wallet-derived SSH keys** — derived from wallet signature when no key is registered; private key displayed once at VM creation
+
+All SSH access uses certificate-based authentication via a per-platform CA. VM certificates carry principal `vm-{vmId}`, enforcing tenant isolation — User A's certificate cannot authenticate to User B's VM.
+
+**CA management:** `SshCertificateService.cs`, `WalletSshKeyService.cs`
+
+### VM Attestation
+
+Each VM runs an attestation agent (`/usr/local/bin/decloud-agent`) that exposes a challenge/response endpoint at port 9999. The orchestrator verifies VM identity before issuing certificates. Agent is deployed via cloud-init with `NoNewPrivileges`, `ProtectSystem=strict`, and `PrivateTmp` hardening.
+
+### Template Security Validation
+
+`TemplateService` validates all community-submitted cloud-init scripts for dangerous patterns before publish:
+- Fork bombs (`:(){ :|:& };:`)
+- Destructive commands (`rm -rf /`)
+- Untrusted pipe-to-shell patterns (`curl ... | bash`)
+
+---
+
+## 5. Economics
+
+### Billing & Compute Pricing
+
+**Status:** ✅ Production-ready
+
+**Compute points:** Nodes are benchmarked with sysbench and assigned normalized compute points. VMs are priced per compute-point-hour.
+
+**Billing formula:**
+```
+hourlyRate = (computePoints × nodePricePerPoint × tierMultiplier) + bandwidthRate
+```
+
+**Payment flow:**
+1. User deposits USDC to account (on-chain transaction)
+2. Orchestrator tracks VM usage per hour
+3. Billing service calculates charges and deducts from balance
+4. Node operators accumulate earnings
+5. Payout service transfers to node wallets (weekly batches)
+
+**Paid templates:** PerDeploy pricing with 85/15 author/platform split via escrow settlement at VM termination.
+
+---
+
+### Bandwidth Tiers
+
+**Status:** ✅ Complete (2026-02-02)
+
+Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` elements on virtio NIC interfaces. Both x86_64 and ARM paths apply matching rules.
+
+| Tier | Speed | Multiplier | Rate |
+|---|---|---|---|
+| Basic | 10 Mbps | 0.8× | +$0.005/hr |
+| Standard | 50 Mbps | 1.0× | +$0.015/hr |
+| Performance | 200 Mbps | 1.2× | +$0.040/hr |
+| Unmetered | Host NIC limit | 1.5× | +$0.040/hr |
+
+---
+
+### Hybrid Pricing Model
+
+**Status:** ✅ Complete (2026-02-03)
+
+- **Platform floor rates:** Minimum per-resource prices nodes cannot undercut
+- **Node operator pricing:** Operators set custom rates (CPU, RAM, storage, GPU per hour)
+- **Floor enforcement:** `Math.Max(operatorRate, floorRate)` applied server-side on every pricing update
+- **Configuration:** Operators set pricing via `appsettings.json`, environment variables, or `PATCH /api/nodes/me/pricing`
+
+---
+
+## 6. Marketplace & Discovery
+
+### Node Marketplace
+
+**Status:** ✅ Complete (2026-01-30)
+
+**API:** `GET /api/marketplace/nodes`
+
+**Features:**
+- Search and filter by tags, region, price, GPU, uptime, compute capacity
+- Featured nodes (top 10 by uptime and capacity, requires 95%+ uptime)
+- One-click "Deploy VM" from any node card — pre-populates VM creation modal
+- Node detail modal with full hardware specs, reputation stats, pricing
+- Operator profile management (`PATCH /api/marketplace/nodes/{id}/profile`)
+
+---
+
+### VM Template Marketplace
+
+**Status:** ✅ Complete (2026-02-09)
+
+**Implementation files:** `TemplateService.cs` (715 lines), `TemplateSeederService.cs` (1,828 lines), `MarketplaceController.cs`
+
+**Features:**
+- Full template CRUD with community and platform-curated templates
+- 5 seed categories: AI & ML, Databases, Dev Tools, Web Apps, Privacy & Security
+- Cloud-init variable substitution (`${DECLOUD_VM_ID}`, `${DECLOUD_PASSWORD}`, `${DECLOUD_DOMAIN}`, etc.)
+- Community templates: draft → publish workflow
+- Paid templates: PerDeploy pricing (85/15 author/platform split via escrow)
+- Template deployment hooks into per-service readiness tracking
+- Security validation (dangerous command detection)
+- Frontend: `marketplace-templates.js`, `my-templates.js`, `template-detail.js`
+
+**Seed templates (6):**
+
+| Template | Category | GPU | Direct Access |
+|---|---|---|---|
+| Stable Diffusion WebUI | AI & ML | Required | None (CentralIngress) |
+| PostgreSQL Database | Databases | No | ✅ TCP :5432 |
+| VS Code Server | Dev Tools | No | None (CentralIngress) |
+| Private Browser (Neko) | Privacy & Security | No | None (CentralIngress) |
+| Shadowsocks Proxy | Privacy & Security | No | ✅ Both :8388 |
+| Web Proxy Browser (Ultraviolet) | Privacy & Security | No | None (CentralIngress) |
+
+**Planned templates:** Nextcloud, Whisper AI, Ollama chatbot, Minecraft server, Jellyfin, VPN/Tor relay, Mastodon.
+
+---
+
+### Reputation System
+
+**Status:** ✅ Core complete (2026-01-30 + 2026-02-09) | Frontend polish pending
+
+**Uptime tracking:**
+- 30-day rolling window, precision to 15-second heartbeat intervals
+- `FailedHeartbeatsByDay` dictionary on the Node model; auto-cleaned after 30 days
+- Formula: `uptime% = (expected – failed) / expected × 100`
+- Integrated with `NodeHealthMonitorService` — no separate monitoring infrastructure
+
+**Metrics tracked:**
+- Uptime percentage (30-day rolling)
+- Total VMs hosted (lifetime counter)
+- Successful VM completions (clean terminations)
+
+**Review system:**
+- Universal: covers both nodes and templates (1–5 stars, title, comment)
+- Eligibility-verified: proof of deployment/usage required before review submission
+- Denormalized rating aggregates on templates (`AverageRating`, `TotalReviews`, `RatingDistribution`)
+- API endpoints: submit, get reviews, check user's own review
+
+**Pending frontend work:** trust badges (99.9% uptime, 100+ VMs hosted), node rating aggregate display, review prompts after VM termination.
+
+---
+
+## 7. Monitoring & Health
 
 ### Node Health Monitoring
 
-**Heartbeat System:**
+**Heartbeat system:**
 - Nodes send heartbeat every 15 seconds
-- 2-minute timeout → marked offline
-- Failed heartbeats tracked per day
-- 30-day rolling uptime calculated
+- 2-minute silence → node marked offline
+- All VMs on offline node marked Error, billing stops
 
-**Reputation Metrics:**
-- **Uptime Percentage:** Based on heartbeat history
-- **Total VMs Hosted:** Lifetime counter
-- **Successful Completions:** VMs terminated cleanly
+**Failure handling:**
+- Immediate: offline + Error + billing stop
+- User decision: wait for recovery or delete VM
+- On deletion: orchestrator triggers port cleanup on relay nodes
+- Future: auto-delete after grace period (planned)
 
 ### Relay Health Monitoring
 
-**Monitoring:**
-- WireGuard tunnel status (every 60s)
-- Port mapping validation (every 5min)
-- Bandwidth utilization tracking
-- Automatic repair on failures
+- WireGuard tunnel status check every 60 seconds
+- Port mapping validation every 5 minutes
+- Automatic repair on detected failures
 
 ---
 
-## Per-Service VM Readiness Tracking
+## 8. Advanced Compute
 
-### Overview
+### GPU Proxy (CUDA Virtualization)
 
-**Status:** Orchestrator side complete (2026-02-10), NodeAgent implementation pending
-**Location:** Multiple files across Orchestrator models and services
+**Status:** ✅ Production-ready (2026-03-13)
+**Verified workloads:** Ollama/ggml inference (436 tok/s), PyTorch inference, PyTorch training (backward pass + AdamW), LoRA fine-tuning via PEFT (1,038 tok/s, 1,360 MB VRAM)
 
-Distinguishes "VM Running" (hypervisor reports domain active) from "VM Ready for Service" (application-level services are actually responding). Uses **qemu-guest-agent** to probe service readiness from the hypervisor level — no network access to the VM needed.
+**The problem:** Nodes without IOMMU (WSL2, consumer PCs, most VPS) cannot do GPU passthrough to VMs. This excludes the majority of GPU-equipped nodes from the network.
 
-### The Problem
+**The solution:** A CUDA virtualization layer — shim libraries inside the VM intercept all CUDA calls and forward them via TCP RPC to a daemon on the host that holds the real GPU.
 
-Previously, a VM was marked "Running" as soon as the libvirt domain started, but cloud-init could still be installing packages, services could be starting up, and the actual application might not respond for 30-120+ seconds. Users saw "Running" but got connection refused. There was no visibility into what was actually ready inside the VM.
-
-### Solution: Universal qemu-guest-agent Probing
-
-Every VM gets per-service readiness tracking via the qemu-guest-agent virtio channel:
-
-1. **System service** (cloud-init) is always tracked — gates all other checks
-2. **Template-specific services** are inferred from `ExposedPorts` or explicitly defined per template
-3. **Node agent polls** via `virsh qemu-agent-command` every 10 seconds
-4. **Results reported** to orchestrator via existing 15-second heartbeat
-5. **Frontend displays** individual service status (Pending → Checking → Ready / TimedOut / Failed)
-
-### Architecture
+#### Architecture
 
 ```
-Template Creation (Orchestrator):
-  VmTemplate.ExposedPorts[].ReadinessCheck
-    ↓ (VmService.BuildServiceList)
-  VirtualMachine.Services[]
-    ↓ (CreateVm command payload)
-
-Node Agent:
-  CommandProcessorService parses services from payload
-    ↓
-  VmInstance.Services[] (persisted in SQLite)
-    ↓
-  VmReadinessMonitor polls via qemu-guest-agent (10s cycle)
-    ↓
-  HeartbeatService reports services[] per VM (15s cycle)
-    ↓
-
-Orchestrator:
-  NodeService.ProcessHeartbeatAsync reads services[]
-    ↓
-  VirtualMachine.Services[] updated
-    ↓
-  Frontend displays per-service status
+VM (Guest)                          Host
+─────────────────────────────────   ────────────────────────
+PyTorch / Ollama                    gpu-proxy-daemon
+  ↓ LD_PRELOAD                        ↓ real CUDA runtime
+libdecloud_cuda_shim.so              nvidia-smi / libcuda.so
+libcuda_pytorch_stubs.so
+libcudart.so.12
+  ↓ TCP RPC (vsock or TCP)
+  ────────────────────────────────→
 ```
-
-### Check Types
-
-| Check Type | Method | Use Case |
-|------------|--------|----------|
-| `CloudInitDone` | `cloud-init status --format json` | System service (always first) |
-| `TcpPort` | `nc -zv -w2 localhost {port}` | Databases, SSH, generic TCP |
-| `HttpGet` | `curl -sf -o /dev/null http://localhost:{port}{path}` | Web apps, APIs |
-| `ExecCommand` | Arbitrary command, exit 0 = ready | Custom checks (e.g., `pg_isready`) |
-
-All checks execute inside the VM via `virsh qemu-agent-command` using the `guest-exec` / `guest-exec-status` QMP protocol. No network access to the VM is required — communication happens through the virtio-serial channel.
-
-### Service Readiness States
-
-```
-Pending     → VM just started, waiting
-Checking    → Actively being probed
-Ready       → Check passed (service responding)
-TimedOut    → Timeout expired without success
-Failed      → cloud-init reported error (System service only)
-```
-
-**Gating Rule:** All non-System services wait for the System (cloud-init) service to reach Ready before their own checks begin.
-
-### Auto-Inference from Template Protocols
-
-When a template port has no explicit `ReadinessCheck`, the check strategy is inferred:
-
-| Protocol | Inferred Check | Notes |
-|----------|---------------|-------|
-| `http`, `https`, `ws`, `wss` | HttpGet `/` | Web services, verified via HTTP probe |
-| `tcp`, `both` | TcpPort | Raw TCP connection check |
-| `udp` | TcpPort (fallback) | UDP not directly probeable; TCP fallback |
-
-### Explicit Template Checks
-
-Templates can override auto-inference with explicit `ReadinessCheck` on `TemplatePort`:
-
-```csharp
-// Stable Diffusion — API model list endpoint, 600s timeout
-new TemplatePort { Port = 7860, Protocol = "http",
-    ReadinessCheck = new ServiceCheck {
-        Strategy = CheckStrategy.HttpGet,
-        HttpPath = "/api/v1/sd-models",
-        TimeoutSeconds = 600
-    }
-}
-
-// PostgreSQL — pg_isready command, 120s timeout
-new TemplatePort { Port = 5432, Protocol = "tcp",
-    ReadinessCheck = new ServiceCheck {
-        Strategy = CheckStrategy.ExecCommand,
-        ExecCommand = "pg_isready -U postgres",
-        TimeoutSeconds = 120
-    }
-}
-```
-
-### Service List Building
-
-`VmService.BuildServiceList()` constructs the service list when creating a VM:
-
-1. **Always adds "System" service** — `CloudInitDone` check, 300s timeout
-2. **For each template ExposedPort:**
-   - If `ReadinessCheck` is defined → use explicit strategy, path, command, timeout
-   - If no `ReadinessCheck` → auto-infer from protocol
-3. **Bare VMs** (no template) → System-only service list
-
-### Lifecycle Integration
-
-- **On VM creation:** Service list built from template, stored on `VirtualMachine.Services[]`, sent in CreateVm command payload to node agent
-- **On VM becomes Running:** `VmLifecycleManager.OnVmBecameRunningAsync()` resets all services to `Pending` (handles restart/recovery scenarios)
-- **On heartbeat:** `NodeService.UpdateServiceReadiness()` updates service statuses from node agent reports
-- **IsFullyReady:** Computed property — `true` when all services report `Ready`
-
-### Relay VM Separation of Concerns
-
-Relay VMs have existing callback mechanisms (`RelayNatCallbackController`, `RelayController.RegisterCallback`) that perform **infrastructure actions** (iptables NAT rules, WireGuard peer registration). These callbacks remain unchanged — they are action triggers, not readiness signals.
-
-Relay VM readiness is now tracked via the universal qemu-guest-agent system like all other VMs. This cleanly separates:
-- **Callbacks** = infrastructure plumbing (VM needs host/orchestrator to do things)
-- **qemu-agent** = readiness observation (is the service actually responding?)
-
-### ARM Architecture Support
-
-The ARM domain XML (`GenerateLibvirtXmlMultiArch()` in `LibvirtVmManager.cs`) was missing several devices compared to x86_64. Fixed by adding:
-- `<serial>` — console access
-- `<video>` — `virtio` model (not `qxl`, which is x86-specific)
-- `<rng>` — hardware random number generator
-- `<channel>` — qemu-guest-agent virtio channel (critical for readiness monitoring)
-
-### Implementation Files
-
-**Orchestrator (complete):**
-
-| File | Change |
-|------|--------|
-| `Models/VmTemplate.cs` | `ServiceCheck` class, `CheckStrategy` enum, `ReadinessCheck` on `TemplatePort` |
-| `Models/VirtualMachine.cs` | `VmServiceStatus`, `CheckType`, `ServiceReadiness` enums, `Services` list, `IsFullyReady`, updated `VmSummary` |
-| `Models/Node.cs` | `HeartbeatServiceInfo`, `Services` on `HeartbeatVmInfo` |
-| `Services/VmService.cs` | `BuildServiceList()`, `BuildDefaultServiceList()`, `InferCheckStrategy()`, services in CreateVm payload |
-| `Services/NodeService.cs` | `UpdateServiceReadiness()` in heartbeat processing |
-| `Services/VmLifecycleManager.cs` | Reset services to Pending on Running transition |
-| `Services/TemplateSeederService.cs` | Explicit checks for Stable Diffusion (HttpGet) and PostgreSQL (ExecCommand) |
-
-**NodeAgent (implementation spec created, pending development):**
-
-| File | Change |
-|------|--------|
-| `Core/Models/VmModels.cs` | `VmServiceStatus`, `CheckType`, `ServiceReadiness` on `VmInstance` |
-| `Services/VmReadinessMonitor.cs` | **NEW** — Background service polling via `virsh qemu-agent-command` |
-| `Services/HeartbeatService.cs` | Include `Services` in VM summary sent to orchestrator |
-| `Services/CommandProcessorService.cs` | Parse services from CreateVm payload |
-| `Infrastructure/Persistence/VmRepository.cs` | Persist `Services` JSON to SQLite |
-| `Program.cs` | Register `VmReadinessMonitor` as hosted service |
-| `Infrastructure/Libvirt/LibvirtVmManager.cs` | ARM XML: added serial, video, rng, guest-agent channel |
-
-### Design Advantages
-
-- **Minimal NodeAgent changes** — Intelligence lives in orchestrator (template→service list building, auto-inference, state management). NodeAgent is a simple executor that runs `virsh` commands and reports results.
-- **No network dependency** — qemu-guest-agent communicates through virtio-serial, not the VM's network stack. Works even if VM networking is misconfigured.
-- **Universal** — Works for all VM types (general, relay, template-based, bare).
-- **Template-extensible** — New templates automatically get readiness checks via protocol inference. Custom templates can define explicit checks.
-- **Industry-aligned** — Follows patterns from Kubernetes readiness probes, AWS CloudFormation cfn-signal, and VMware Tools.
-
----
-
-## DHT Infrastructure
-
-### Overview
-
-**Status:** ✅ Production-verified (2026-02-15)
-**Purpose:** Decentralized coordination layer using libp2p DHT nodes connected via WireGuard mesh
-
-DeCloud deploys dedicated DHT VMs that form a peer-to-peer coordination network over the relay's WireGuard mesh. Each DHT node runs a libp2p binary that discovers and connects to other DHT peers, creating a decentralized overlay independent of the central orchestrator.
-
-### Architecture
-
-```
-Orchestrator
-  ↓ (deploys DHT VMs with WG mesh labels)
-Node Agent (host)
-  ↓ (cloud-init provisions VM)
-DHT VM (QEMU/KVM)
-  ├─ WireGuard mesh enrollment (wg-mesh interface)
-  ├─ DHT bootstrap polling (orchestrator /api/dht/join)
-  └─ libp2p DHT binary (connects to peers over WG mesh)
-```
-
-**End-to-end flow:**
-1. Orchestrator deploys DHT VM with WG mesh labels (`wg-relay-endpoint`, `wg-relay-pubkey`, `wg-tunnel-ip`, `wg-relay-api`)
-2. Cloud-init writes labels to `/etc/decloud/wg-mesh.env` and runs `wg-mesh-enroll.sh`
-3. Enrollment script generates WG keypair, registers with relay, starts `wg-mesh` interface
-4. `dht-bootstrap-poll.sh` calls `POST /api/dht/join` on orchestrator to discover bootstrap peers
-5. DHT binary connects to peers over WireGuard mesh tunnel IPs (e.g., `10.20.1.199:4001`)
-6. DHT VM calls `POST /api/dht/ready` callback to report its peer ID
-
-### WireGuard Mesh Enrollment
-
-**Script:** `src/DeCloud.NodeAgent/CloudInit/Templates/shared/wg-mesh-enroll.sh`
-
-DHT VMs join the relay's WireGuard mesh to communicate with each other over private tunnel IPs. The enrollment script:
-
-1. **Sources environment** from `/etc/decloud/wg-mesh.env` (uses `set -a` for auto-export)
-2. **Generates WG keypair** via `wg genkey` / `wg pubkey`
-3. **Writes WG config** to `/etc/wireguard/wg-mesh.conf` with relay as peer
-4. **Registers with relay** using two-strategy approach:
-   - **Strategy 1:** NodeAgent proxy via virbr0 default gateway (`POST http://<gateway>:5100/api/relay/wg-mesh-enroll`)
-   - **Strategy 2:** Direct relay API fallback (`POST http://<relay-ip>:8080/api/relay/add-peer`)
-5. **Starts WG interface** via `wg-quick up wg-mesh`
-6. **Verifies connectivity** by pinging relay gateway over tunnel
-
-#### NodeAgent WG Mesh Enrollment Proxy
-
-**Controller:** `src/DeCloud.NodeAgent/Controllers/WgMeshEnrollController.cs`
-**Endpoint:** `POST /api/relay/wg-mesh-enroll`
-
-DHT VMs run inside QEMU with NAT networking (virbr0). Only UDP/51820 is NAT-forwarded from the host to the relay VM — port 8080 (relay API) is not reachable from inside other VMs. The NodeAgent proxy solves this by:
-
-1. DHT VM discovers NodeAgent via default gateway (virbr0 bridge IP, port 5100)
-2. NodeAgent finds relay VM's bridge IP via `IPortForwardingManager.GetRelayVmIpAsync()`
-3. NodeAgent forwards enrollment request to `http://<relay-bridge-ip>:8080/api/relay/add-peer`
-
-For CGNAT hosts without a local relay VM, the proxy discovers the relay's tunnel gateway IP (10.20.x.254) from the host's WireGuard interface addresses.
-
-```csharp
-// Two-strategy relay discovery
-// Strategy 1: Local relay VM (co-located on same host)
-var relayIp = await _portForwardingManager.GetRelayVmIpAsync(ct);
-
-// Strategy 2: Relay tunnel gateway (CGNAT host with WG tunnel)
-var relayTunnelIp = await DiscoverRelayTunnelGatewayAsync(ct);
-```
-
-### DHT Bootstrap Polling
-
-**Script:** `dht-bootstrap-poll.sh` (runs inside DHT VM)
-**Orchestrator endpoint:** `POST /api/dht/join`
-
-After WireGuard mesh enrollment, the DHT binary needs bootstrap peers to join the DHT network. The bootstrap poll script:
-
-1. Calls `POST /api/dht/join` on the orchestrator with the VM's peer ID and tunnel IP
-2. Orchestrator returns a list of known DHT peers (peer IDs + WG mesh addresses)
-3. DHT binary connects to peers over WireGuard tunnel (e.g., `10.20.1.199:4001`)
-
-### DHT Ready Callback
-
-**Controller:** `src/DeCloud.NodeAgent/Controllers/DhtCallbackController.cs`
-**Endpoint:** `POST /api/dht/ready`
-
-When the DHT binary starts and obtains a libp2p peer ID, the VM calls back to the NodeAgent:
-
-1. **Authentication:** HMAC-SHA256 token using machine ID as secret (`X-DHT-Token` header)
-2. **Service update:** Marks the VM's System service as `Ready` with `peerId=<libp2p-peer-id>`
-3. **Persistence:** Stores peer ID to `/var/lib/decloud/vms/{vmId}/dht-peer-id` for heartbeat reporting
-4. **Idempotency:** Updates peer ID even if service was already marked Ready (handles race with cloud-init readiness monitor)
-
-### Critical Bug Fixes (2026-02-15)
-
-Two bugs prevented WireGuard mesh enrollment from succeeding:
-
-#### Bug #1: Environment Variables Not Exported to Child Process
-
-**Symptom:** `wg-mesh-enroll.sh` logged `ERROR: Missing required env: WG_RELAY_ENDPOINT` despite `/etc/decloud/wg-mesh.env` containing correct values.
-
-**Root Cause:** Cloud-init runcmd used `bash -c 'source wg-mesh.env && bash wg-mesh-enroll.sh'`. The `source` command set shell variables in the parent `bash -c` context, but spawning `bash wg-mesh-enroll.sh` as a child process did not inherit them (shell variables are not exported by default).
-
-**Fix:**
-1. Modified `dht-vm-cloudinit.yaml` runcmd to use `set -a` (allexport) before sourcing
-2. Modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as a belt-and-suspenders approach
-
-```bash
-# Before (broken):
-bash -c 'source /etc/decloud/wg-mesh.env && bash /usr/local/bin/wg-mesh-enroll.sh'
-
-# After (fixed):
-bash -c 'set -a && source /etc/decloud/wg-mesh.env && set +a && /usr/local/bin/wg-mesh-enroll.sh'
-```
-
-#### Bug #2: Relay API Port 8080 Unreachable from DHT VM
-
-**Symptom:** Even with env vars fixed, `curl http://<relay-public-ip>:8080/api/relay/add-peer` from inside the DHT VM would fail because only UDP/51820 is NAT-forwarded.
-
-**Root Cause:** Both relay and DHT VMs use libvirt's `default` network (NAT via virbr0). The relay VM's port 8080 is only accessible from the host via the bridge IP, not from other VMs via the public IP.
-
-**Fix:** Created `WgMeshEnrollController` proxy on the NodeAgent. DHT VMs discover the NodeAgent via their default gateway (virbr0), and the NodeAgent proxies the enrollment request to the relay VM's bridge IP.
-
-### Production Verification
-
-Both DHT nodes confirmed connected after fixes:
-- **Node 1** (us-east-1): peerId `12D3KooWD8zw...B8n1`, advertiseIp `10.20.1.199`, connectedPeers: 1
-- **Node 2** (tr-south): peerId `12D3KooWHNLM...j8Yx`, advertiseIp `10.20.1.202`, connectedPeers: 1
-
-### Implementation Files
-
-**NodeAgent:**
-
-| File | Change |
-|------|--------|
-| `CloudInit/Templates/shared/wg-mesh-enroll.sh` | Self-sourcing env file + two-strategy registration (NodeAgent proxy first, direct fallback) |
-| `CloudInit/Templates/dht-vm-cloudinit.yaml` | Fixed runcmd to use `set -a` for env var export |
-| `Controllers/WgMeshEnrollController.cs` | **NEW** — Proxy endpoint for WG mesh enrollment |
-| `Controllers/DhtCallbackController.cs` | DHT ready callback with HMAC auth |
-
-**Orchestrator:**
-
-| File | Change |
-|------|--------|
-| `Services/DhtNodeService.cs` | DHT VM deployment with WG mesh labels |
-| `Controllers/DhtController.cs` | `/api/dht/join` endpoint for bootstrap peer discovery |
-
-**Relay VM:**
-
-| File | Change |
-|------|--------|
-| `CloudInit/Templates/relay-vm/relay-api.py` | `add_cgnat_peer` handles mesh enrollment; stale peer cleanup protects DHT peers (last octet >= 198) |
-
----
-
-## Block Store & Storage Economics
-
-**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D (Lazysync) 🔲 Next
-
-### Overview
-
-Every DeCloud node with ≥100 GB storage and ≥2 GB RAM runs a **Block Store VM**
-as a network duty obligation, contributing 5% of its total storage to a
-distributed, content-addressed storage network. This network serves two purposes:
-
-1. **VM resilience** — VM overlay disks are continuously replicated via lazysync.
-   When a node fails, its VMs can be reconstructed on another node from the
-   confirmed manifest without data loss.
-2. **AI model distribution** — Large language models are chunked and distributed
-   across block store nodes, enabling decentralized model serving and
-   pipeline-parallel distributed inference.
-
-### Variable Chunk Sizes by Manifest Type
-
-Block size is a **per-manifest-type constant** enforced by the block store binary
-at write time. Different content types have optimal chunk sizes based on access
-patterns, update frequency, and scale:
-
-| Manifest Type | Chunk Size | Rationale |
-|---|---|---|
-| `vm-overlay` | **1 MB** | Aligns with QEMU dirty bitmap granularity. ~5,120 chunks for a 5 GB overlay. Content addressing means unchanged regions are never re-transferred. |
-| `model-shard` | **64 MB** | Aligns with transformer layer boundaries. Llama-3 70B Q4 (~40 GB) = 640 chunks. Efficient for bitswap bulk transfer and pipeline-parallel inference routing. |
-| `lora-adapter` | **256 KB** | Fine-grained deduplication across fine-tuned model variants that share base layer weights. |
-| `image-template` | **4 MB** | Base OS images → 500–1,000 chunks. Good deduplication across Ubuntu/Debian variants. |
-
-**Model shard chunk counts:**
-
-| Model | Precision | Size | 64 MB Chunks |
-|---|---|---|---|
-| Llama-3 8B | FP16 | ~16 GB | 256 |
-| Llama-3 70B | Q4_K_M | ~40 GB | 640 |
-| Llama-3 70B | FP16 | ~140 GB | 2,240 |
-
-All manifest types have a **tail block exception**: the final chunk may be smaller
-than `blockSizeBytes` and is billed as one full block. Maximum over-billing per
-VM: one block of storage.
-
-### Block-Based Pricing
-
-Storage replication cost uses block count as the billing unit — not estimated
-overlay size in GB. This is deterministic, exact, and trustless:
-storage_cost = blockCount × replicationFactor × costPerMbPerHour × (blockSizeKb / 1024)
-- `blockCount` — exact count from the confirmed manifest. Updated by
-  `LazysyncManager` each audit cycle. No estimation.
-- `costPerMbPerHour` — single platform rate applied to all manifest types,
-  normalizing cost per MB regardless of chunk size.
-- `blockSizeKb / 1024` — scales cost proportionally: a 64 MB model shard block
-  costs 64× a 1 MB VM overlay block. Same rate per MB, different block sizes.
-
-**Example costs at $0.000001/MB/hour:**
-
-| Workload | Blocks | Block Size | N | Storage cost/hr |
-|---|---|---|---|---|
-| Typical VM, light use | 512 | 1 MB | 3 | $0.001536 |
-| Typical VM, active | 4,096 | 1 MB | 3 | $0.012288 |
-| Llama-3 70B Q4 | 640 | 64 MB | 3 | $0.122880 |
-| Fine-tune adapter | 200 | 256 KB | 3 | $0.000015 |
-
-### Storage Revenue Distribution
-
-Block store contributors (nodes running BlockStore VMs) earn a share of the
-storage replication costs collected from tenant VMs. This creates two independent
-revenue streams for node operators:
-
-- **Compute earnings** — for VMs hosted on their node (existing)
-- **Storage earnings** — for blocks held by their BlockStore VM (new)
-
-**Distribution formula:**
-reward_i = storagePool × (node_i.UsedBytes / Σ allNodes.UsedBytes)
-
-Proportional to actual bytes stored — nodes that store more blocks earn more.
-Calculated on-chain from raw byte counts — the orchestrator cannot manipulate
-share allocation.
-
-### DeCloudEscrow: `settleCycle()` (Atomic Settlement)
-
-The existing escrow contract is extended with `settleCycle()`, which replaces the
-separate `batchReportUsage()` + distribution flow with a single atomic transaction
-per billing cycle:
-settleCycle(
-// Per-VM billing arrays
-users[], computeNodes[],
-computeAmounts[],         ← CPU + memory + disk + bandwidth
-blockCounts[],            ← manifest chunk count (verifiable)
-blockSizeKbs[],           ← 1024 / 65536 / 256 / 4096
-replicationFactors[],     ← 0 / 1 / 3 / 5 (immutable)
-vmIds[],
-// Per-storage-node arrays
-storageNodes[],           ← BlockStore operator wallets
-storageBytes[],           ← node.BlockStoreInfo.UsedBytes
-cycleId                   ← ISO timestamp for auditability
-)
-
-**What happens in one transaction:**
-1. Deducts `computeAmount + storageAmount` from each user
-2. Credits hosting node with 85% of compute cost
-3. Accumulates 85% of storage cost into `storagePool`
-4. Divides `storagePool` among storage nodes proportional to `storageBytes`
-5. Credits storage node earnings to `nodePendingPayouts` (same withdrawal path)
-6. Platform retains 15% of both compute and storage costs
-
-**Atomicity guarantee:** storage fees are always distributed in the same
-transaction they are collected. The `storagePool` balance on-chain represents
-only integer division dust, rolling over automatically to the next cycle.
-
-**New contract events:**
-- `StorageCollected(user, vmId, storageAmount, platformFee, poolContribution)`
-  — emitted per VM when storage cost flows into pool
-- `StorageRewarded(storageNode, rewardAmount, contributedBytes, totalNetworkBytes, cycleId)`
-  — emitted per storage node per cycle, with full context to verify the
-  proportional calculation from chain data alone
-
-**Backward compatibility:** `reportUsage()` and `batchReportUsage()` are
-unchanged — used for ephemeral VMs (`replicationFactor=0`) where
-`storageAmount` is always zero.
-
-### Replication Factor Tiers
-
-| Factor | Semantics | Scheduler requirement | Cost |
-|---|---|---|---|
-| 0 | Ephemeral — no replication | None | No storage cost |
-| 1 | Single replica | Active BlockStore on target node | 1× storage rate |
-| 3 | Standard (default) | Active BlockStore on target node | 3× storage rate |
-| 5 | High availability | Active BlockStore on target node | 5× storage rate |
-
-`replicationFactor` is set at VM creation and is immutable. The scheduler
-rejects nodes without an Active BlockStore VM for any `replicationFactor > 0`.
-
-### Implementation Files
-
-| File | Purpose |
-|---|---|
-| `contracts/DeCloudEscrow.sol` | `settleCycle()`, `storagePool`, `costPerMbPerHour`, `StorageCollected` + `StorageRewarded` events |
-| `Models/VirtualMachine.cs` | `ReplicationFactor`, `LazysyncStatus`, `CurrentManifestBlockCount` on `VmSpec`/`VirtualMachine` |
-| `Services/VmService.cs` | `CalculateHourlyRate` uses block-count formula; system VMs forced to factor=0 |
-| `Services/VmScheduling/VmSchedulingService.cs` | Filter 8: Active BlockStore required for factor > 0 |
-| `Services/Blockchain/BlockchainService.cs` | `ExecuteSettlementAsync` calls `settleCycle()`; updated ABI |
-| `blockstore-node-src/main.go` | `ManifestTypeBlockSize` map; write-time block size enforcement; tail block handling |
-| `Models/Payment/PricingConfig.cs` | `StoragePerMbPerHour` replaces `StoragePerGbPerHour` |
-| `Services/BlockStore/LazysyncManager.cs` | Updates `BlockCount` on `ManifestRecord` and `VirtualMachine` each cycle |
----
-
-## GPU Proxy (CUDA Virtualization)
-
-**Status:** ✅ Production-ready (2026-03-13) — Ollama inference + PyTorch inference + training + LoRA confirmed
-
-### Overview
-
-The GPU proxy enables VMs without physical GPUs to run GPU-accelerated workloads through CUDA API-level interception and TCP RPC forwarding. This unlocks GPU hosting on nodes without IOMMU (WSL2, consumer PCs) — estimated 60-80% of potential node operators.
-
-### Architecture
-
-```
-VM (no GPU)                          Host (real GPU)
-┌──────────────────────┐             ┌─────────────────────┐
-│ Application          │             │ gpu-proxy-daemon     │
-│ (Ollama / PyTorch)   │             │   ↓ real CUDA calls  │
-│   ↓ cuda*() calls    │             │ NVIDIA Driver + GPU  │
-│ libcudart.so.12 shim │──TCP RPC──→│                      │
-│ libcuda.so.1 shim    │  port 9999  │                      │
-│ libcublas_stub.so    │             │                      │
-│ libcublasLt_stub.so  │             │                      │
-└──────────────────────┘             └─────────────────────┘
-```
-
-### Key Capabilities
-
-- **35+ protocol commands** covering memory, execution, streams, events, modules, cuBLAS GEMM
-- **Streaming module upload** — 1.56GB fatbin from mmap, zero-copy
-- **Real kernel attributes** via daemon RPC (not hardcoded)
-- **cuBLAS GEMM proxy** for GQA attention (batched + strided)
-- **cublasLtMatmul proxy** — intercepts all PyTorch GEMM ops (matmul, linear, attention projection)
-- **Per-VM token auth** with SIGHUP reload
-- **Resource metering** — memory quota, kernel count, kernel time, peak memory
-- **CUDA 12 ABI compatibility** — correct `cudaDeviceProp` offsets for SM8.9 (RTX 4060)
-
-### Performance (RTX 4060 Laptop GPU)
-
-#### Ollama Inference (llama3.2:1b)
-
-| Metric | Value |
-|--------|-------|
-| Prompt eval (warm) | 436 tok/s |
-| Prompt eval (cold) | 188 tok/s |
-| Token generation | 13-21 tok/s |
-| RPC round-trip | <1ms |
-| Model load (warm) | ~130ms |
-
-#### PyTorch Inference & Training (GPT-2, batch=4, seq=128, RTX 4060)
-
-| Workload | ms/step | Tokens/sec | Peak VRAM |
-|----------|---------|------------|-----------|
-| Full fine-tune (AdamW, 125M params) | 409ms | 1,252 tok/s | ~3,500MB |
-| LoRA fine-tune (r=8, 811K trainable) | 493ms | 1,038 tok/s | 1,360MB |
-
-**Training confirmed working end-to-end (2026-03-13):**
-- Forward pass ✅
-- Backward pass (autograd through all 12 transformer layers) ✅
-- AdamW `optimizer.step()` ✅ (moment accumulation + weight update kernels proxied)
-- LoRA via PEFT ✅ (loss decreasing, VRAM efficient, ~0.65% trainable params)
-- Loss decreasing correctly across all 3 benchmark runs ✅
-
-### Confirmed Workload Support
-
-| Workload | Status | Notes |
-|----------|--------|-------|
-| Ollama / ggml LLM inference | ✅ Production | Llama, Mistral, Phi, Gemma families |
-| PyTorch eager inference | ✅ Confirmed | GPT-2, transformer forward pass |
-| PyTorch full fine-tuning | ✅ Confirmed | AdamW optimizer, all gradient ops |
-| PyTorch LoRA fine-tuning (PEFT) | ✅ Confirmed | r=4/8/16, causal LM task type |
-| JupyterLab kernel GPU access | ✅ Confirmed | Via `/etc/decloud/gpu-proxy.env` EnvironmentFile |
-| Stable Diffusion WebUI Forge | ⚠️ Partial | UI+model load OK; cuBLAS backward pass pending |
-| torch.compile / inductor | ❌ Not supported | Requires kernel driver — disabled via `TORCHINDUCTOR_DISABLE=1` |
-| CUDA Graphs | ❌ Not supported | Proxy is eager-mode only — noop stubs prevent crash |
-
-### Generic Proxy Design
-
-No hardcoded application or GPU vendor dependencies. All app-specific config driven by template `DefaultEnvironmentVariables` written to `/etc/decloud/gpu-proxy.env`:
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `DECLOUD_GPU_GRAPH_NOOP` | 1 | Graph stubs return success (1) or honest error (0) |
-| `DECLOUD_GPU_VMEM_PROXY` | 1 | Virtual memory APIs proxy to daemon — required for PyTorch |
-| `CUDA_MODULE_LOADING` | `EAGER` | Forces eager `__cudaRegisterFunction` (PyTorch CUDA 12 lazy loading bypass) |
-| `TORCHINDUCTOR_DISABLE` | 1 | Disables torch.compile (kernel driver required) |
-| `PYTORCH_CUDA_ALLOC_CONF` | `max_split_size_mb:128,expandable_segments:False` | Tuned for proxy RPC efficiency |
-| `DECLOUD_GPU_DEBUG` | (unset) | Gates all shim + stub debug logging |
-
-### Critical Fixes Applied (Bugs 1–17c)
-
-| Bug | Fix | Impact |
-|-----|-----|--------|
-| TCP delayed ACK (40ms/RPC) | `TCP_QUICKACK` re-armed before every `read()` | 150x speedup (0.07→436 tok/s) |
-| CUDA 12 lazy loading | `CUDA_MODULE_LOADING=EAGER` forced via env | PyTorch module registration works |
-| `maxThreadsPerMultiProcessor` wrong offset | Fixed to `raw+624` (0x270); `regsPerMultiprocessor=65536` at `raw+648` | Eliminated SIGFPE in GPT-2 sampling |
-| `static` occupancy functions invisible to PLT | Non-static exported wrappers in `cuda_driver_shim.c` | cuOccupancyMaxActiveBlocksPerMultiprocessor works |
-| cublasLt unconditional stderr logging | `DECLOUD_GPU_DEBUG` gate in `cublasLt_stub.c` | Clean output in normal operation |
-
-### CUDA 12.1 / PyTorch 2.3.1 Device Properties Offset Map
-
-Confirmed correct for RTX 4060 (SM8.9):
-
-| Offset | Field | Value |
-|--------|-------|-------|
-| 0x184 (388) | multiProcessorCount | 24 |
-| 0x270 (624) | maxThreadsPerMultiProcessor | 1536 |
-| 0x288 (648) | regsPerMultiprocessor | 65536 |
-| 0x2c8 (712) | maxBlocksPerMultiProcessor | 1024 |
-| 0x2d0 (720) | reservedSharedMemPerBlock | 65536 |
-
-### Critical Fix: TCP_QUICKACK
-
-TCP delayed ACK imposed 40ms wait per small RPC response (0.07 tok/s). `TCP_QUICKACK` eliminates this. Must be re-armed before every `read()` — Linux resets it per-operation. Combined with `TCP_NODELAY`, achieves sub-ms RPC latency.
-
-### Implementation Files
-
-| File | Purpose |
-|------|---------|
-| `src/gpu-proxy/shim/cuda_shim.c` | Runtime API shim (~1900 lines) |
-| `src/gpu-proxy/shim/cuda_driver_shim.c` | Driver API shim (~1800 lines) |
-| `src/gpu-proxy/shim/transport.c` | TCP/vsock transport with QUICKACK |
-| `src/gpu-proxy/stubs/cublasLt_stub.c` | cublasLtMatmul stub (29 versioned symbols) |
-| `src/gpu-proxy/stubs/cublas_stub.c` | cuBLAS stub (20+ versioned symbols) |
-| `src/gpu-proxy/daemon/gpu_proxy_daemon.c` | Host daemon (~2100 lines) |
-| `src/gpu-proxy/proto/gpu_proxy_proto.h` | Wire protocol definitions |
-| `LibvirtVmManager.cs` | `EnsureGpuProxyShim` — cloud-init injection |
-| `TemplateSeederService.cs` | PyTorch + Ollama template GPU env vars |
-| `GpuProxyService.cs` | Daemon lifecycle management |
-| `install.sh` | Build + deploy pipeline with symbol count verification |
-
-### Deployment
-
-Fully automated via cloud-init. `install.sh` builds shims and daemon on host, exposes via 9p share. Cloud-init copies shims into VM, replaces bundled CUDA libs (PyTorch ships its own `libcublas.so.12` — terminal scan replaces all with stubs), writes transport config, restarts application. Zero manual steps.
 
 **LD_PRELOAD order (critical):**
 ```
@@ -1874,234 +556,268 @@ libdecloud_cuda_shim.so:libcuda_pytorch_stubs.so:libcudart.so.12
 ```
 Shim must precede PyTorch stubs to win symbol resolution.
 
----
+#### Key engineering details
 
-## Future Features
+- **TCP_QUICKACK fix:** Eliminated 40ms delayed ACK per RPC, achieving 150× speedup (0.07 → 13+ tok/s initial, further optimized to 436 tok/s)
+- **CUDA 12 lazy loading:** `CUDA_MODULE_LOADING=EAGER` is mandatory for PyTorch — without it, module registration is deferred to `__cudaInitModule` which the proxy doesn't intercept
+- **CUDA graphs:** Pass-through (`cudaErrorNotSupported`) forces application fallback to direct kernel execution — correct approach vs attempting emulation
+- **PyTorch stubs:** `libcuda_pytorch_stubs.so` supplies `cudaMallocAsync`, `cudaFreeAsync`, and 22 more symbols required by `libtorch_cuda.so` but not implemented in the shim
+- **cuDNN stub:** `libcudnn_stub.so` (87 versioned symbols) satisfies `DT_NEEDED: libcudnn.so.8` in `libtorch_cuda.so` without implementing any cuDNN operations
 
-### Phase 2: User Engagement
-- Node operator dashboard
-- User reviews after VM termination
-- Enhanced reputation system
+#### Deployment
 
-### Phase 3: Collaboration
-- Shared VMs (multi-wallet access)
-- Infrastructure templates (multi-VM stacks)
-- Live network visualization
+Fully automated via cloud-init. `install.sh` builds shims and daemon on host, exposes via 9p share. Cloud-init copies shims into VM, replaces bundled CUDA libs (PyTorch ships its own `libcublas.so.12`), writes transport config, restarts application.
 
-### Phase 4: Monetization
-- Optional premium node staking (XDE token)
-- Advanced analytics dashboard
-- Enterprise features
+Template `DefaultEnvironmentVariables` drives application-specific config (GGML vars for Ollama, CUDA vars for PyTorch) via `/etc/decloud/gpu-proxy.env`.
 
-### Long-Term Vision
-- Mobile integration (two-tier architecture)
-- Smart contract coordination
-- DeCloud Relay SDK (standalone product)
+#### Implementation files
 
----
-
-## Lightweight Node Support
-
-**Status:** 🔲 Planned
-**Strategic Value:** Dramatically expands the supply side — any machine can contribute to the network
-
-### Motivation
-
-Nodes without KVM hardware virtualization (VPS with disabled nested virt, Raspberry Pi,
-old laptops, mobile devices via Termux) cannot run full VMs. Under QEMU TCG software
-emulation, a single DHT VM takes 1-2 hours to boot. These nodes are currently excluded
-from the network entirely — but they can contribute meaningfully without VMs.
-
-### Node Classes
-```
-NodeClass.Full         KVM available → full VM scheduling + system VMs (current)
-NodeClass.Container    Docker available, no KVM → container workloads + native system services
-NodeClass.Lightweight  No KVM, no Docker → native system services only
-```
-
-### What Lightweight Nodes Can Contribute
-
-**All non-KVM nodes:**
-- **Relay** — WireGuard relay as a native host process (no VM needed, already nearly stateless)
-- **DHT** — libp2p DHT as a native systemd service (binary already built by GoBinaryBuildStartupService)
-- **BlockStore** — content-addressed block storage as a native service (no virtualization required)
-- **Storage duty** — nodes with large disks contribute block storage regardless of CPU capability
-
-**Nodes with Docker:**
-- **Container templates** — stateless workloads via `DeploymentMode.Container` (enum already exists)
-- CPU-based ML inference, web servers, APIs, databases
-- Marketplace `lightweight` tag so operators know what hardware to expect
-
-### Architecture Changes Required
-
-**Orchestrator:**
-- `NodeClass` enum on `Node` model — detected at registration from `KvmAvailable` + `DockerAvailable`
-- `ObligationEligibility` — assign system obligations with `NativeProcess` deployment mode on non-KVM nodes
-- `SystemVmReconciliationService` — new `InstallNativeService` command path alongside `CreateVm`
-- `VmSchedulingService` — allow `Container` VmType on Docker-capable nodes
-
-**Node Agent:**
-- `InstallNativeService` command handler — drops binary + systemd unit directly on host
-- DHT and BlockStore binaries already compiled on host by `GoBinaryBuildStartupService`
-- No libvirt involvement for native services
-
-**Marketplace:**
-- `lightweight` capability tag on node advertisements
-- Container template category
-- Clear UX indicator: "Runs as container" vs "Full VM"
-
-### Practical Impact
-
-- A Raspberry Pi 5 with 4TB USB storage → legitimate BlockStore + DHT contributor
-- A $5/month VPS with no KVM → relay + DHT + BlockStore via native processes, boots in seconds
-- An Android device (Termux) → relay node, expands geographic coverage
-- The orchestrator seeding node itself → all system services as native processes, no VM overhead
-
-### Immediate Value
-
-The current orchestrator seeding node (`KvmAvailable: false`) could run relay, DHT,
-and blockstore as native systemd services today — fully functional infrastructure
-contribution with zero VM overhead.
+| File | Purpose |
+|---|---|
+| `shim/cuda_shim.c` | Runtime API shim (~1,900 lines) |
+| `shim/cuda_driver_shim.c` | Driver API shim (~1,800 lines) |
+| `shim/transport.c` | TCP/vsock transport with QUICKACK |
+| `stubs/cublasLt_stub.c` | cublasLtMatmul stub (29 versioned symbols) |
+| `stubs/cublas_stub.c` | cuBLAS stub (20+ versioned symbols) |
+| `stubs/libcudnn_stub.c` | cuDNN stub (87 versioned symbols) |
+| `daemon/gpu_proxy_daemon.c` | Host daemon (~2,100 lines) |
+| `proto/gpu_proxy_proto.h` | Wire protocol definitions |
+| `LibvirtVmManager.cs` | `EnsureGpuProxyShim` — cloud-init injection |
+| `GpuProxyService.cs` | Daemon lifecycle management |
+| `install.sh` | Build pipeline + symbol count verification |
 
 ---
 
-## Alpine Linux System VM Images
+### DHT Infrastructure
 
-**Status:** 🔲 Planned
-**Strategic Value:** 40x smaller base image → faster node onboarding, lower storage overhead per node
+**Status:** ✅ Production-verified (2026-02-15)
 
-### Motivation
+A libp2p-based DHT layer provides decentralized peer coordination. DHT nodes run as lightweight VMs over WireGuard mesh, connected to each other via the relay tunnel network.
 
-All system VMs (Relay, DHT, BlockStore) currently use `debian-12-generic` (~427MB).
-The next step is Alpine Linux — the industry standard for minimal service VMs and
-containers. The Alpine cloud image is **~50MB**, boots in under 10 seconds with KVM,
-and has all required packages available via `apk`.
+#### Verified deployment
 
-### Image progression and lessons learned (2026-03-28)
+- **Node 1** (us-east-1): peerId `12D3KooWD8zw...B8n1`, tunnelIP `10.20.1.199`, connectedPeers: 1
+- **Node 2** (tr-south): peerId `12D3KooWHNLM...j8Yx`, tunnelIP `10.20.1.202`, connectedPeers: 1
 
-The path from the original working image to Alpine is not a single step. A failed
-intermediate migration to `debian-12-genericcloud` revealed a critical kernel difference
-that must be accounted for in any future image change.
+#### DHT bootstrap flow
 
-| Image | Compressed size | Boot time (KVM) | NoCloud ISO detection | Status |
-|---|---|---|---|---|
-| `debian-12-generic` | ~427 MB | ~20s | ✅ Reliable — AHCI compiled into kernel | **Current (reverted to)** |
-| `debian-12-genericcloud` | ~334 MB | ~10s | ❌ Broken — AHCI loaded as module, timing race | **Attempted, rejected** |
-| `alpine-3.x` (target) | ~50 MB | ~5s | ✅ Reliable — virtio/AHCI compiled in by default | **Planned** |
+1. VM boots → WireGuard mesh enrollment (via NodeAgent proxy)
+2. DHT binary starts → obtains libp2p peer ID
+3. `dht-bootstrap-poll.sh` polls `POST /api/dht/join` → receives known peer list
+4. DHT binary connects to peers over WireGuard (e.g., `10.20.1.199:4001`)
+5. `POST /api/dht/ready` callback to NodeAgent → HMAC-SHA256 authenticated
 
-#### Why `debian-12-genericcloud` was rejected (2026-03-28)
+#### Implementation files
 
-`debian-12-genericcloud` uses `linux-image-cloud-amd64` — a stripped cloud-optimized
-kernel where the AHCI and SATA drivers are **loadable modules** (`ahci`, `ata_piix`)
-rather than compiled in. The NoCloud datasource's `cloud-init-local` service runs
-at early boot before `udev` finishes loading SATA modules, so `blkid -tLABEL=cidata`
-returns nothing — the cidata ISO attached as `/dev/sda` doesn't exist yet when the
-scan fires. `ds-identify` finds no datasource, `cloud-init-generator` enables no
-units, and `cloud-init` runs but falls back to `DataSourceNone` with no user-data.
+| File | Purpose |
+|---|---|
+| `DhtNodeService.cs` | DHT VM deployment (Orchestrator) |
+| `DhtController.cs` | `/api/dht/join` bootstrap endpoint |
+| `DhtCallbackController.cs` | `/api/dht/ready` ready callback (NodeAgent) |
+| `WgMeshEnrollController.cs` | WireGuard enrollment proxy (NodeAgent) |
+| `dht-vm-cloudinit.yaml` | DHT VM cloud-init template |
+| `wg-mesh-enroll.sh` | Two-strategy WireGuard enrollment script |
+| `dht-bootstrap-poll.sh` | Bootstrap peer polling (runs in VM) |
 
-The attempted workarounds (injecting `datasource_list: [NoCloud, None]` into
-`/etc/cloud/cloud.cfg.d/99_datasource.cfg` via `CloudInitCleaner`) got cloud-init
-to run but still failed because the NoCloud probe calls `blkid` internally — same
-race, same empty result. The correct fix is to seed user-data at
-`/var/lib/cloud/seed/nocloud/` inside the overlay before first boot (no block device
-scan needed), but this requires a guestmount step in `LibvirtVmManager` before
-VM start. Full solution documented in the `InjectCloudInitSeedAsync` approach.
+---
 
-By contrast, `debian-12-generic` uses `linux-image-amd64` with AHCI compiled in —
-`/dev/sda` is present before `cloud-init-local` starts, `blkid` finds the cidata
-label immediately, and everything works.
+### Block Store & Storage Economics
 
-**Alpine is immune to this problem.** The Alpine cloud image kernel has `virtio-blk`
-and `ahci` compiled in by default, and Alpine uses `tiny-cloud` which checks
-`/var/lib/cloud/seed/nocloud/` first — no block device scan at all.
+**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D (Lazysync) 🔲 Planned
 
-#### Additional finding: `CloudInitCleaner` must inject datasource config
+#### Overview
 
-Even on `debian-12-generic`, a defensive fix was added to `CloudInitCleaner` to
-inject `datasource_list: [NoCloud, None]` into the base image during the cleaning
-step. Without this, future Debian image updates (e.g., a point release that silently
-tightens `ds-identify` behavior) could re-introduce the same failure. This config
-is written once when the image is first downloaded and cached via the
-`.cloudinit-cleaned` marker file.
+Every eligible node (≥100 GB storage, ≥2 GB RAM) runs a Block Store VM as a network duty obligation, contributing 5% of its total storage to a distributed content-addressed storage network.
+
+**Two purposes:**
+1. **VM resilience** — overlay disks are continuously replicated; failed VMs can be reconstructed on another node
+2. **AI model distribution** — LLMs are chunked and distributed, enabling decentralized model serving and pipeline-parallel inference
+
+#### Variable chunk sizes
+
+| Manifest Type | Chunk Size | Rationale |
+|---|---|---|
+| `vm-overlay` | 1 MB | Aligns with QEMU dirty bitmap granularity |
+| `model-shard` | 64 MB | Aligns with transformer layer boundaries |
+
+#### Block Store VM spec
 
 ```csharp
-// CloudInitCleaner.cs — added to all three clean methods
-"rm -f /etc/cloud/cloud-init.disabled",
-"mkdir -p /etc/cloud/cloud.cfg.d && echo 'datasource_list: [NoCloud, None]' > /etc/cloud/cloud.cfg.d/99_datasource.cfg",
+VirtualCpuCores = 1
+MemoryBytes     = 512 MB
+DiskBytes       = 5% of node total storage
+QualityTier     = Burstable
+ImageId         = "debian-12-blockstore"
 ```
 
-### What works out of the box on Alpine
+#### Block Store binary features
 
-All packages needed by system VMs are available via `apk`:
-- `wireguard-tools` — WireGuard support
-- `nginx` — reverse proxy (only `nginx` package, already minimal)
-- `python3` — relay API and DHT dashboard
-- `qemu-guest-agent` — readiness monitoring
-- `curl`, `jq`, `openssl` — scripting dependencies
+- libp2p host with persistent Ed25519 identity
+- Bitswap client+server for block exchange
+- FlatFS backend (content-addressed flat files)
+- Storage quota enforcement (refuse writes when full)
+- GossipSub subscription (`decloud/blockstore/new-blocks`) for near-instant block discovery
+- Adaptive XOR threshold pull logic (closer DHT distance + more free space → more aggressive pulling)
+- Localhost HTTP API on port 5090
+- Garbage collection (LRU eviction within 5% budget)
 
-### What requires changes
+#### Authentication
 
-**1. Package manager** — `apt-get` / `apt` → `apk add` in the `packages:` block.
-Alpine's cloud-init variant (`tiny-cloud`) supports `packages:` but calls `apk` instead.
+```
+Orchestrator → VM:  auth token via cloud-init labels
+VM → Orchestrator:  HMAC-SHA256(authToken, nodeId:vmId) via X-BlockStore-Token header
+VM → NodeAgent:     HMAC-SHA256(machineId, vmId:peerId) via X-BlockStore-Token header
+```
 
-**2. Init system** — Alpine defaults to **OpenRC**, not systemd.
-Cloud-init templates use `systemctl`, `systemd` drop-ins, and `wg-quick@` units
-extensively. Two options:
-- Install `systemd` on Alpine (adds ~50MB, partially defeats the purpose)
-- Rewrite templates to use OpenRC `rc-update` / `rc-service` (more effort, lighter result)
+---
 
-**3. `cloud-init` variant** — Alpine uses `tiny-cloud`, a minimal cloud-init compatible
-layer. Most directives work (`packages`, `write_files`, `runcmd`, `bootcmd`) but
-some advanced features may differ. Needs validation.
+## 9. Node Operations
 
-**4. WireGuard** — Alpine includes WireGuard in the kernel since 5.15. `wg-quick`
-works via `wireguard-tools`. The `wg-mesh-enroll.sh` script needs minor path adjustments
-(`/etc/init.d/` vs `/etc/systemd/`).
+### Resource Management
 
-**5. NoCloud seed path (advantage)** — Alpine's `tiny-cloud` checks
-`/var/lib/cloud/seed/nocloud/` before any block device scan. If the
-`InjectCloudInitSeedAsync` approach is implemented in `LibvirtVmManager`
-(writing `user-data` + `meta-data` into the overlay before VM start), Alpine
-will find its config instantly with zero timing dependency and no need for
-the cidata ISO at all.
+**CPU benchmarking:**
+```bash
+sysbench cpu --threads=$(nproc) --time=10 run
+```
 
-### Implementation Plan
+Normalized against a reference baseline. Points scale linearly with core count and per-core performance. Used for scheduling, billing, and marketplace display.
 
-**Phase 1 — Validate Alpine + systemd (low effort)**
-Install `systemd` on Alpine cloud image, test existing templates unchanged.
-If systemd overhead is acceptable (~50MB extra), this is a near-zero-change migration.
-The `datasource_list` injection issue does not apply — Alpine's tiny-cloud doesn't
-use `ds-identify`.
+**Resource discovery:** CPU (cores, model, frequency), RAM, GPU (model, VRAM, IOMMU group, passthrough eligibility), storage (disks, available space), network bandwidth (ethtool or sysfs reported speed).
 
-**Phase 2 — Full OpenRC rewrite (high effort, maximum benefit)**
-Rewrite all three system VM cloud-init templates to use OpenRC natively.
-No systemd dependency. True ~50MB footprint. Boot time under 5 seconds.
-Create `alpine-relay`, `alpine-dht`, `alpine-blockstore` image IDs in `ArchitectureHelper.cs`.
+---
 
-**Phase 2 prerequisite — `InjectCloudInitSeedAsync` in `LibvirtVmManager`**
-Write `user-data` + `meta-data` directly into the overlay at
-`/var/lib/cloud/seed/nocloud/` before VM start. This eliminates the cidata ISO
-timing dependency entirely for all image types and is the correct long-term
-approach regardless of Alpine migration.
+### Windows WSL2 Auto-Start
 
-### Files to change
+**Status:** ✅ Complete (2026-04-05)
+
+Enables Windows users running the node agent inside WSL2 to survive reboots and crashes without manual intervention.
+
+#### The problem
+
+WSL2 does not start automatically on Windows boot. If an operator runs the node agent inside WSL2, it stops whenever Windows restarts or WSL is shut down — requiring manual re-entry.
+
+#### Solution: Windows Scheduled Task watchdog
+
+A single self-contained `DeCloud-Node-Setup.bat` (~23 KB) is distributed via the `releases/` folder. Double-clicking it handles UAC elevation internally and installs a Windows Scheduled Task that:
+
+1. Fires at Windows boot (30-second startup delay) and every 5 minutes (self-healing fallback)
+2. Runs as SYSTEM account — no user login required
+3. Ensures the WSL2 Ubuntu distro is running
+4. Enables systemd in WSL automatically if not already configured
+5. Starts or restarts `decloud-node-agent` via systemctl if not active
+6. Backs off exponentially after repeated failures (5 consecutive → 120-second pause)
+7. Rotates its own log file at 10 MB
+
+The watchdog script (`DeCloud-WslWatchdog.ps1`) is embedded as base64 in the `.bat` and extracted to `C:\ProgramData\DeCloud\` at install time. The install directory is ACL-locked to SYSTEM and Administrators only.
+
+#### install.sh integration
+
+When `install.sh` detects WSL2 (via `/proc/version` and `/dev/dxg`), `print_summary` automatically:
+- Downloads `DeCloud-Node-Setup.bat` to the Windows Desktop via `cmd.exe` interop and `wslpath`
+- Shows a clickable OSC 8 hyperlink in Windows Terminal pointing to the file
+- Falls back to manual instructions if the download fails
+
+WSL2 detection is handled by `detect_wsl2()` — a standalone function called early in `main()`, independent of GPU detection.
+
+#### Accessing the CLI
+
+While the watchdog keeps the agent running as SYSTEM in the background, users connect interactively at any time from Windows Terminal / PowerShell by typing `wsl`. This attaches a new session to the running WSL instance without affecting the background agent.
+
+#### Key files
+
+| File | Purpose |
+|---|---|
+| `releases/DeCloud-Node-Setup.bat` | Single-file Windows installer (double-click to run) |
+| `install.sh → detect_wsl2()` | Standalone WSL2 detection, runs early in `main()` |
+| `install.sh → stage_windows_installer()` | Downloads `.bat` to Windows Desktop via WSL interop |
+| `install.sh → make_hyperlink()` | Emits OSC 8 clickable terminal link |
+| `install.sh → print_summary()` | WSL2 notice block (conditional on `IS_WSL2=true`) |
+
+---
+
+## 10. Planned Features
+
+### Prebuilt Binary Distribution
+
+**Status:** 🔲 Planned | Tracked: `# TODO(future)` in `install.sh` above `download_node_agent()`
+**Effort:** Low (~1 week, primarily GitHub Actions + install.sh changes)
+
+**Current flow:** `git clone` → `dotnet publish` → ~5 min build, requires .NET SDK on every node
+**Target flow:** `curl` GitHub Release asset → extract → ~30 seconds, no SDK needed
+
+**What is needed:**
+1. GitHub Actions release workflow (`.github/workflows/release.yml`) — publishes `linux-amd64` and `linux-arm64` tarballs on every `git tag` push, bundling the DHT, BlockStore, and GPU proxy binaries
+2. Download URL replacing the current `git clone` + build steps in `install.sh`
+3. Removal of `install_dotnet` (SDK) from `main()` — only the .NET runtime is needed to run the agent
+4. `releases/` folder in git hosts distributable scripts only; compiled binaries go to GitHub Release assets
+
+---
+
+### Lightweight Node Support
+
+**Status:** 🔲 Planned
+**Strategic value:** Expands supply side — any machine can contribute to the network
+
+Nodes without KVM hardware virtualization (VPS with disabled nested virt, Raspberry Pi, old laptops, Termux on mobile) currently cannot run full VMs and are excluded entirely. These nodes can contribute meaningfully without VMs:
+
+**Proposed capabilities:**
+- Native process execution (run workloads directly on host, no VM overhead)
+- Docker container hosting (for Docker-capable nodes)
+- DHT participation (always possible regardless of compute capability)
+- Block store contribution (storage-only nodes)
+
+**Key constraint:** Security model changes — no VM isolation means different trust guarantees. Full design TBD.
+
+---
+
+### Alpine Linux System VMs
+
+**Status:** 🔲 Planned (two-phase approach)
+**Motivation:** Current system VMs (relay, DHT, block store) use Ubuntu Debian base images (~3.5 GB). Alpine cloud images are ~50 MB — 40–70× smaller, with sub-5-second boot time.
+
+#### Phase 1 — Alpine + systemd (low effort)
+
+Install `systemd` on Alpine cloud image; test existing cloud-init templates unchanged. Overhead: ~50 MB extra vs. full Alpine. Alpine's `tiny-cloud` doesn't use `ds-identify`, so the `datasource_list` injection issue doesn't apply.
+
+#### Phase 2 — Full OpenRC rewrite (high effort, maximum benefit)
+
+Rewrite all three system VM cloud-init templates to use OpenRC natively. True ~50 MB footprint. Boot time under 5 seconds. New image IDs: `alpine-relay`, `alpine-dht`, `alpine-blockstore`.
+
+**Phase 2 prerequisite:** `InjectCloudInitSeedAsync` in `LibvirtVmManager` — writes `user-data` + `meta-data` directly into the overlay at `/var/lib/cloud/seed/nocloud/` before VM start, eliminating the cidata ISO timing dependency entirely.
+
+#### Files to change
 
 | File | Change |
 |---|---|
 | `ArchitectureHelper.cs` | Add Alpine image URLs for amd64 + arm64 |
 | `VmService.cs` | Add `alpine-*` → URL mappings |
-| `DataStore.cs` | Register `alpine-relay`, `alpine-dht`, `alpine-blockstore` image entries |
-| `LibvirtVmManager.cs` | Add `InjectCloudInitSeedAsync` — write seed into overlay before VM start |
-| `CloudInitCleaner.cs` | Already updated — injects `datasource_list` + removes `cloud-init.disabled` |
-| `relay-vm-cloudinit.yaml` | `apt` → `apk`, `systemctl` → `rc-service` (Phase 2 only) |
+| `DataStore.cs` | Register Alpine image entries |
+| `LibvirtVmManager.cs` | Add `InjectCloudInitSeedAsync` |
+| `relay-vm-cloudinit.yaml` | `apt` → `apk`, `systemctl` → `rc-service` (Phase 2) |
 | `dht-vm-cloudinit.yaml` | Same |
 | `blockstore-vm-cloudinit.yaml` | Same |
 
-### Dependency
+This feature pairs naturally with **Lightweight Node Support** — Alpine is the ideal base for native process deployment on lightweight nodes.
 
-This feature pairs naturally with **Lightweight Node Support** (Section 14) — Alpine
-is the ideal base for native process deployment on lightweight nodes, where the
-goal is minimum footprint on the host. The same Alpine templates could run either
-as VMs on KVM nodes or as native OCI containers on Docker-capable lightweight nodes.
+---
 
-*For strategic roadmap and business context, see [PROJECT_MEMORY.md](file:///c:/Users/BMA/source/repos/DeCloud.Orchestrator/PROJECT_MEMORY.md)*
+### Phase 3+ Roadmap
+
+#### Shared VMs (Multi-Wallet Access)
+Multiple wallets can access the same VM. Enables team development environments. `authorizedWallets` list on the VM model; owner manages collaborators.
+
+#### Infrastructure Templates (Multi-VM)
+One-click deployment of interconnected VM stacks (e.g., web + database + Redis + load balancer). Templates define VM relationships and networking.
+
+#### Live Network Visualization
+Interactive globe/map showing nodes, VMs, and relay connections in real time. Public-facing for marketing.
+
+#### Optional Premium Node Staking
+XDE token staking for premium marketplace placement. Optional — free tier always available. Requires: >50 active nodes, >3 months operation, proven reputation data, XDE token launched.
+
+#### Advanced Analytics Dashboard
+Deep metrics for node operators: historical uptime trends, earnings projections, competitive benchmarking, resource utilization analytics.
+
+---
+
+*For strategic context, business priorities, and current development status, see PROJECT_MEMORY.md.*

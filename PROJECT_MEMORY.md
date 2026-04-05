@@ -166,6 +166,12 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 ✅ Per-service VM readiness tracking via qemu-guest-agent (Orchestrator side complete, NodeAgent pending)
 ✅ DHT infrastructure: libp2p DHT nodes over WireGuard mesh with bootstrap polling and NodeAgent enrollment proxy
 ✅ GPU Proxy: CUDA virtualization over TCP RPC — 436 tok/s prompt eval, 100% GPU offload, generic proxy with template-driven config
+✅ Windows WSL2 auto-start — **COMPLETE (2026-04-05)**
+  - `DeCloud-Node-Setup.bat`: single self-contained installer, auto-elevates via UAC, embeds watchdog as base64 payload
+  - Windows Scheduled Task (SYSTEM account): fires at boot + every 5 min for self-healing
+  - Watchdog: ensures WSL distro running, enables systemd if needed, restarts `decloud-node-agent` on failure, exponential backoff, log rotation
+  - `install.sh`: standalone `detect_wsl2()` called early in `main()`, WSL2 block in `print_summary()` downloads `.bat` to Windows Desktop and shows clickable OSC 8 terminal link
+  - `releases/` folder added to repo (removed from `.gitignore`); compiled binaries stay in GitHub Release assets
 
 ### Recent Achievements (2026-01-30)
 
@@ -1033,6 +1039,7 @@ All three system VMs install identical packages: `qemu-guest-agent curl jq opens
 - ❌ No collaboration features (Phase 3)
 - ❌ Lightweight node support (native process deployment for non-KVM nodes — see PROJECT_FEATURES.md)
 - ❌ Alpine Linux system VM images (50MB base image, 40x smaller than current — see PROJECT_FEATURES.md §15)
+- ❌ Prebuilt binary distribution (switch `install.sh` from build-from-source to GitHub Releases download — eliminates SDK requirement, reduces install time from ~5 min to ~30 sec — see `# TODO(future)` in `install.sh` and PROJECT_FEATURES.md §16)
 
 **Strategic Position:**
 - **Unique Value Prop:** Censorship-resistant compute with full VMs

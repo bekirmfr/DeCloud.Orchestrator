@@ -95,10 +95,16 @@ public class LazysyncManager : BackgroundService
     private async Task AuditManifestAsync(
             ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
     {
-        if (manifest.ChangedBlockCids.Count == 0)
+        // Audit the cumulative sample — covers full history, not just the latest delta.
+        // Falls back to ChangedBlockCids for manifests registered before this field existed.
+        var auditPool = manifest.CumulativeBlockCids.Count > 0
+            ? manifest.CumulativeBlockCids
+            : manifest.ChangedBlockCids;
+
+        if (auditPool.Count == 0)
         {
             _logger.LogDebug(
-                "VM {VmId} manifest v{Version}: no ChangedBlockCids — skipping",
+                "VM {VmId} manifest v{Version}: no CIDs to audit — skipping",
                 manifest.VmId, manifest.Version);
             return;
         }
@@ -112,8 +118,10 @@ public class LazysyncManager : BackgroundService
             return;
         }
 
-        // Audit up to MaxCidsPerManifestPerCycle to avoid blocking the cycle
-        var cidsToCheck = manifest.ChangedBlockCids
+        // Sample randomly from the cumulative pool so every audit cycle
+        // checks a different cross-section of the full block history.
+        var cidsToCheck = auditPool
+            .OrderBy(_ => Random.Shared.Next())
             .Take(MaxCidsPerManifestPerCycle)
             .ToList();
 
