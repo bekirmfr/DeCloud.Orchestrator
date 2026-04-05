@@ -391,11 +391,6 @@ public class SystemVmReconciliationService : BackgroundService
             obligation.FailureCount = 0;
             obligation.LastError = null;
 
-            // Stamp the binary version running inside this VM so future heartbeats
-            // can detect when the node upgrades past it.
-            if (obligation.CurrentBinaryVersion is not null)
-                obligation.DeployedBinaryVersion = obligation.CurrentBinaryVersion;
-
             _logger.LogInformation(
                 "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
                 obligation.Role, obligation.VmId, node.Id);
@@ -489,22 +484,24 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
-        // Stale binary check: if the node has rebuilt its system VM binaries since
-        // this VM was deployed, redeploy it to roll out the update.
-        // Both hashes must be non-null — null means "unknown" (pre-feature obligation
-        // or node hasn't reported yet), in which case we leave the VM alone.
-        if (obligation.DeployedBinaryVersion is not null
+        // Stale binary check: compare what the VM reports it is running against
+        // what the node currently has. Both values come from the node via heartbeat
+        // so no external calls are needed here.
+        // Skip if either is null — VM unreachable or node hasn't reported yet.
+        // Relay is excluded: its runtime hash is incompatible with the node-side hash.
+        if (obligation.Role != SystemVmRole.Relay
+            && obligation.RunningBinaryVersion is not null
             && obligation.CurrentBinaryVersion is not null
-            && obligation.CurrentBinaryVersion != obligation.DeployedBinaryVersion)
+            && obligation.RunningBinaryVersion != obligation.CurrentBinaryVersion)
         {
             _logger.LogInformation(
                 "{Role} VM {VmId} on node {NodeId} has stale binary — redeploying " +
-                "({Old} → {New})",
+                "({Running} → {Current})",
                 obligation.Role, obligation.VmId, node.Id,
-                obligation.DeployedBinaryVersion[..8], obligation.CurrentBinaryVersion[..8]);
+                obligation.RunningBinaryVersion[..8], obligation.CurrentBinaryVersion[..8]);
 
             await RedeploySystemVmAsync(node, obligation,
-                $"Binary updated: {obligation.DeployedBinaryVersion[..8]} → {obligation.CurrentBinaryVersion[..8]}");
+                $"Binary updated: {obligation.RunningBinaryVersion[..8]} → {obligation.CurrentBinaryVersion[..8]}");
             return;
         }
 

@@ -466,6 +466,11 @@ public class HeartbeatVmInfo
     public string? Name { get; set; }
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
     public string OwnerId { get; set; } = string.Empty;  // Owner ID
+    /// <summary>
+    /// Binary version reported by the VM's /diagnostics endpoint.
+    /// Non-null only for running Dht and BlockStore VMs.
+    /// </summary>
+    public string? BinaryVersion { get; set; }
     public bool IsIpAssigned { get; set; } = false;
     public string? IpAddress { get; set; }
     /// <summary>

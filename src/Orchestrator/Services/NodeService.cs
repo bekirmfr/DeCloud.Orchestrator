@@ -485,13 +485,25 @@ public class NodeService : INodeService
             await SyncCgnatStateFromHeartbeatAsync(node, heartbeat.CgnatInfo, ct);
         }
 
-        // Propagate current binary version into each obligation so
-        // SystemVmReconciliationService can detect stale system VMs without
-        // any extra lookups — everything it needs is on the obligation itself.
-        if (heartbeat.SystemVmBinaryVersion is not null)
+        // Propagate binary versions into each obligation so reconciliation
+        // can detect stale system VMs with no extra lookups.
+        if (heartbeat.SystemVmBinaryVersion is not null || heartbeat.ActiveVms is { Count: > 0 })
         {
             foreach (var obligation in node.SystemVmObligations)
-                obligation.CurrentBinaryVersion = heartbeat.SystemVmBinaryVersion;
+            {
+                // Node-side hash: what binary the node currently has built
+                if (heartbeat.SystemVmBinaryVersion is not null)
+                    obligation.CurrentBinaryVersion = heartbeat.SystemVmBinaryVersion;
+
+                // VM-side hash: what binary is actually running inside the VM
+                if (obligation.VmId is not null && heartbeat.ActiveVms is not null)
+                {
+                    var vmInfo = heartbeat.ActiveVms
+                        .FirstOrDefault(v => v.VmId == obligation.VmId);
+                    if (vmInfo?.BinaryVersion is not null)
+                        obligation.RunningBinaryVersion = vmInfo.BinaryVersion;
+                }
+            }
         }
 
         // Log discrepancy between node-reported and orchestrator-tracked resources

@@ -33,17 +33,14 @@ public class SystemVmObligation
     public string? AuthToken { get; set; }
 
     /// <summary>
-    /// Combined binary/template hash stamped when this VM was deployed.
-    /// Null on obligations deployed before this feature — stale detection
-    /// is skipped until the next redeploy stamps it.
+    /// Binary version the VM is currently running, reported via /diagnostics.
+    /// Updated every heartbeat. Null if VM is unreachable or not yet queried.
     /// </summary>
-    public string? DeployedBinaryVersion { get; set; }
+    public string? RunningBinaryVersion { get; set; }
 
     /// <summary>
-    /// Combined binary/template hash last reported by the node agent via heartbeat.
-    /// Updated every heartbeat. When it diverges from DeployedBinaryVersion,
-    /// VerifyActiveAsync triggers a graceful VM redeploy.
-    /// Null until the node sends its first heartbeat with binary version info.
+    /// Combined binary/template hash the node agent currently has on disk.
+    /// Updated every heartbeat from .sha256 files. Null until first report.
     /// </summary>
     public string? CurrentBinaryVersion { get; set; }
 }
