@@ -454,7 +454,7 @@ public record NodeHeartbeat(
     /// Null for agents that pre-date this feature — obligations with null
     /// CurrentBinaryVersion are never redeployed on that basis.
     /// </summary>
-    string? SystemVmBinaryVersion = null
+    Dictionary<string, string>? SystemVmBinaryVersions = null
 );
 
 /// <summary>
