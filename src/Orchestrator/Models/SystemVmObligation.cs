@@ -31,6 +31,21 @@ public class SystemVmObligation
     /// and verified on incoming API calls (e.g., POST /api/dht/join).
     /// </summary>
     public string? AuthToken { get; set; }
+
+    /// <summary>
+    /// Combined binary/template hash stamped when this VM was deployed.
+    /// Null on obligations deployed before this feature — stale detection
+    /// is skipped until the next redeploy stamps it.
+    /// </summary>
+    public string? DeployedBinaryVersion { get; set; }
+
+    /// <summary>
+    /// Combined binary/template hash last reported by the node agent via heartbeat.
+    /// Updated every heartbeat. When it diverges from DeployedBinaryVersion,
+    /// VerifyActiveAsync triggers a graceful VM redeploy.
+    /// Null until the node sends its first heartbeat with binary version info.
+    /// </summary>
+    public string? CurrentBinaryVersion { get; set; }
 }
 
 public enum SystemVmRole

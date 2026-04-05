@@ -447,8 +447,14 @@ public record NodeHeartbeat(
     NodeMetrics Metrics,
     ResourceSnapshot AvailableResources,
     int SchedulingConfigVersion,
-    List<HeartbeatVmInfo>? ActiveVms = null,  // detailed VM information
-    CgnatNodeInfo? CgnatInfo = null
+    List<HeartbeatVmInfo>? ActiveVms = null,
+    CgnatNodeInfo? CgnatInfo = null,
+    /// <summary>
+    /// Combined hash of all system VM binaries/templates on this node.
+    /// Null for agents that pre-date this feature — obligations with null
+    /// CurrentBinaryVersion are never redeployed on that basis.
+    /// </summary>
+    string? SystemVmBinaryVersion = null
 );
 
 /// <summary>

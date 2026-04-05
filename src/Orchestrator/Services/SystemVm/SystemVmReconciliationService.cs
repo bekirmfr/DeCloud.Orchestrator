@@ -391,6 +391,11 @@ public class SystemVmReconciliationService : BackgroundService
             obligation.FailureCount = 0;
             obligation.LastError = null;
 
+            // Stamp the binary version running inside this VM so future heartbeats
+            // can detect when the node upgrades past it.
+            if (obligation.CurrentBinaryVersion is not null)
+                obligation.DeployedBinaryVersion = obligation.CurrentBinaryVersion;
+
             _logger.LogInformation(
                 "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
                 obligation.Role, obligation.VmId, node.Id);
@@ -481,6 +486,25 @@ public class SystemVmReconciliationService : BackgroundService
                 "{Role} obligation on node {NodeId} is Active with no VM ID — resetting to Pending",
                 obligation.Role, node.Id);
             ResetObligation(node, obligation);
+            return;
+        }
+
+        // Stale binary check: if the node has rebuilt its system VM binaries since
+        // this VM was deployed, redeploy it to roll out the update.
+        // Both hashes must be non-null — null means "unknown" (pre-feature obligation
+        // or node hasn't reported yet), in which case we leave the VM alone.
+        if (obligation.DeployedBinaryVersion is not null
+            && obligation.CurrentBinaryVersion is not null
+            && obligation.CurrentBinaryVersion != obligation.DeployedBinaryVersion)
+        {
+            _logger.LogInformation(
+                "{Role} VM {VmId} on node {NodeId} has stale binary — redeploying " +
+                "({Old} → {New})",
+                obligation.Role, obligation.VmId, node.Id,
+                obligation.DeployedBinaryVersion[..8], obligation.CurrentBinaryVersion[..8]);
+
+            await RedeploySystemVmAsync(node, obligation,
+                $"Binary updated: {obligation.DeployedBinaryVersion[..8]} → {obligation.CurrentBinaryVersion[..8]}");
             return;
         }
 
@@ -890,7 +914,10 @@ public class SystemVmReconciliationService : BackgroundService
     /// can track the delete flow: Deleting → node confirms → Deleted → reset → redeploy.
     /// This prevents deploying a new VM while the old one still exists on the node.
     /// </summary>
-    private async Task RedeployDhtVmAsync(Node node, SystemVmObligation obligation, string reason)
+    private Task RedeployDhtVmAsync(Node node, SystemVmObligation obligation, string reason)
+        => RedeploySystemVmAsync(node, obligation, reason);
+
+    private async Task RedeploySystemVmAsync(Node node, SystemVmObligation obligation, string reason)
     {
         // Guard: only redeploy VMs that are actually Running
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
