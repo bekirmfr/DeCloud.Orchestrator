@@ -391,6 +391,11 @@ public class SystemVmReconciliationService : BackgroundService
             obligation.FailureCount = 0;
             obligation.LastError = null;
 
+            // Stamp the binary version running inside this VM so future heartbeats
+            // can detect when the node upgrades past it.
+            if (obligation.CurrentBinaryVersion is not null)
+                obligation.RunningBinaryVersion = obligation.CurrentBinaryVersion;
+
             _logger.LogInformation(
                 "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
                 obligation.Role, obligation.VmId, node.Id);
@@ -492,14 +497,8 @@ public class SystemVmReconciliationService : BackgroundService
         if (obligation.Role != SystemVmRole.Relay
             && obligation.RunningBinaryVersion is not null
             && obligation.CurrentBinaryVersion is not null
-            && obligation.RunningBinaryVersion != obligation.CurrentBinaryVersion)
+            && obligation.CurrentBinaryVersion != obligation.RunningBinaryVersion)
         {
-            _logger.LogInformation(
-                "{Role} VM {VmId} on node {NodeId} has stale binary — redeploying " +
-                "({Running} → {Current})",
-                obligation.Role, obligation.VmId, node.Id,
-                obligation.RunningBinaryVersion[..8], obligation.CurrentBinaryVersion[..8]);
-
             await RedeploySystemVmAsync(node, obligation,
                 $"Binary updated: {obligation.RunningBinaryVersion[..8]} → {obligation.CurrentBinaryVersion[..8]}");
             return;
@@ -916,7 +915,6 @@ public class SystemVmReconciliationService : BackgroundService
 
     private async Task RedeploySystemVmAsync(Node node, SystemVmObligation obligation, string reason)
     {
-        // Guard: only redeploy VMs that are actually Running
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
         if (vm == null || vm.Status != VmStatus.Running)
         {
@@ -925,6 +923,10 @@ public class SystemVmReconciliationService : BackgroundService
                 obligation.Role, obligation.VmId, node.Id, vm?.Status);
             return;
         }
+
+        _logger.LogInformation(
+            "{Role} VM {VmId} on node {NodeId} transitioning to Deleting — {Reason}",
+            obligation.Role, obligation.VmId, node.Id, reason);
 
         try
         {
