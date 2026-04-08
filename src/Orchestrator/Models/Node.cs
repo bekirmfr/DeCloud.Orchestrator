@@ -603,6 +603,7 @@ public enum NodeCommandType
     CollectDiagnostics,
     AllocatePort,      // Smart Port Allocation: Allocate public port for VM
     RemovePort,        // Smart Port Allocation: Remove port mapping
+    ReseedVm,          // Replication recovery: delete lazysync.json to force full reseed
 }
 
 public record CommandAcknowledgment(

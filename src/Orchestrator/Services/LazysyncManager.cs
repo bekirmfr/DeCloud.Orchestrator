@@ -142,6 +142,17 @@ public class LazysyncManager : BackgroundService
                     ? providers.Count
                     : providers.Count(p => p != localPeerId);
 
+                if (remoteCount == 0)
+                {
+                    // No remote providers at all — total block loss, not just
+                    // under-replication. Reset manifest and trigger full reseed.
+                    _logger.LogWarning(
+                        "VM {VmId} CID {Cid}: zero remote providers — total loss detected, triggering reseed",
+                        manifest.VmId, cid[..Math.Min(12, cid.Length)]);
+                    await TriggerReseedAsync(manifest, dataStore, ct);
+                    return;
+                }
+
                 if (remoteCount < manifest.ReplicationFactor)
                     underReplicated.Add(cid);
             }
@@ -186,6 +197,54 @@ public class LazysyncManager : BackgroundService
             "({Blocks} × {BlockSizeKb} KB, replication={Factor}x confirmed)",
             manifest.VmId, manifest.ConfirmedVersion,
             manifest.BlockCount, manifest.BlockSizeKb, manifest.ReplicationFactor);
+    }
+
+    private async Task TriggerReseedAsync(
+        ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
+    {
+        // Reset manifest so the audit loop re-confirms from scratch once
+        // the daemon has re-pushed all blocks after the reseed.
+        manifest.Version = 0;
+        manifest.ConfirmedVersion = 0;
+        manifest.ConfirmedRootCid = null;
+        manifest.ChangedBlockCids.Clear();
+        manifest.CumulativeBlockCids.Clear();
+        await dataStore.SaveManifestAsync(manifest);
+
+        // Update VM status so the dashboard reflects recovery in progress
+        var vm = await dataStore.GetVmAsync(manifest.VmId);
+        if (vm != null)
+        {
+            vm.LazysyncStatus = LazysyncStatus.Replicating;
+            await dataStore.SaveVmAsync(vm);
+        }
+
+        // Push ReseedVm command to the hosting NodeAgent.
+        // NodeAgent deletes lazysync.json; LazysyncDaemon reseeds on next cycle.
+        if (vm?.NodeId == null) return;
+        var node = await dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null) return;
+
+        try
+        {
+            var commandService = _serviceProvider.GetRequiredService<INodeCommandService>();
+            var command = new NodeCommand(
+                Guid.NewGuid().ToString(),
+                NodeCommandType.ReseedVm,
+                JsonSerializer.Serialize(new { vmId = manifest.VmId }),
+                RequiresAck: true
+            );
+            await commandService.DeliverCommandAsync(node.Id, command, ct);
+            _logger.LogInformation(
+                "VM {VmId}: ReseedVm command delivered to node {NodeId}",
+                manifest.VmId, node.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "VM {VmId}: failed to deliver ReseedVm to node {NodeId}",
+                manifest.VmId, vm.NodeId);
+        }
     }
 
     private async Task<(string? dhtApiUrl, string? localPeerId)> ResolveDhtApiUrlAndLocalPeerAsync(

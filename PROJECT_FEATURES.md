@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-04-08
 **Purpose:** Technical reference for all implemented and planned platform features.
 
 ---
@@ -37,7 +37,14 @@
 
 **Planned**
 
-10. [Planned Features](#10-planned-features)
+10. [Compliance & Legal Framework](#10-compliance--legal-framework)
+    - [CSAM Proactive Filtering](#csam-proactive-filtering)
+    - [Terms of Service](#terms-of-service)
+    - [Abuse Reporting & AI Triage](#abuse-reporting--ai-triage)
+    - [Template Review Gate](#template-review-gate)
+    - [Enforcement Mechanism](#enforcement-mechanism)
+    - [DMCA Agent & Safe Harbor](#dmca-agent--safe-harbor)
+11. [Planned Features](#11-planned-features)
     - [Prebuilt Binary Distribution](#prebuilt-binary-distribution)
     - [Lightweight Node Support](#lightweight-node-support)
     - [Alpine Linux System VMs](#alpine-linux-system-vms)
@@ -1075,7 +1082,262 @@ While the watchdog keeps the agent running as SYSTEM in the background, users co
 
 ---
 
-## 10. Planned Features
+## 10. Compliance & Legal Framework
+
+**Status:** 🔲 Planned — Pre-Launch Requirement
+**Reference:** Full specification in `COMPLIANCE.md`
+
+DeCloud's censorship-resistance mission protects political speech, privacy, and legitimate AI workloads. It explicitly does not protect content that is illegal in every jurisdiction — CSAM, illegal marketplaces, malware infrastructure. The compliance framework draws this line operationally without compromising the platform's core value proposition.
+
+The framework rests on four pillars, all required before public launch:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  DeCloud Compliance Stack                        │
+├─────────────────┬──────────────────┬──────────────┬────────────┤
+│  CSAM           │  Terms of        │  Abuse       │  Template  │
+│  Proactive      │  Service         │  Reporting   │  Review    │
+│  Filtering      │  (with teeth)    │  + AI Triage │  Gate      │
+│                 │                  │              │            │
+│  Keeps platform │  Legal standing  │  Reactive    │  Blocks    │
+│  out of federal │  to act +        │  detection + │  amplifi-  │
+│  criminal       │  DMCA safe       │  triage +    │  cation of │
+│  exposure       │  harbor          │  SLA queue   │  harm at   │
+│                 │                  │              │  source    │
+└─────────────────┴──────────────────┴──────────────┴────────────┘
+```
+
+---
+
+### CSAM Proactive Filtering
+
+**Status:** 🔲 Planned — Pre-Launch Requirement (Non-Negotiable)
+
+**Why non-negotiable:** CSAM exposure carries federal criminal liability (18 U.S.C. § 2258A). It is the only compliance failure that cannot be remediated retroactively.
+
+**Implementation:** Hash-based detection at Block Store ingestion using the NCMEC PhotoDNA hash database. No content inspection — only hash comparison against known illegal material. Preserves the censorship-resistance architecture entirely.
+
+**Detection response:**
+1. Block quarantined immediately (removed from serving, preserved for evidence)
+2. NCMEC CyberTipline report filed within 24 hours (legally required)
+3. Associated wallet blacklisted, all VMs terminated
+4. Incident written to enforcement audit trail
+
+**Limitation:** Catches known material only. The Template Review Gate is the complementary control for generation pipelines that could produce new material.
+
+**Key files to create:**
+
+| File | Purpose |
+|---|---|
+| `NcmecHashService.cs` | Hash lookup at Block Store ingestion |
+| `CsamQuarantineService.cs` | Block quarantine and CyberTipline reporting |
+
+---
+
+### Terms of Service
+
+**Status:** 🔲 Planned — Pre-Launch Requirement
+
+**What it achieves:**
+- Legal standing to suspend wallets, forfeit escrow, and terminate VMs without those actions being challengeable as arbitrary
+- DMCA Section 512 safe harbor prerequisite
+- Framework for law enforcement cooperation
+- Section 230 / Article 14 (EU) shield
+
+**Wallet-signed acceptance** — cryptographically verifiable, not just a checkbox:
+```
+Wallet connects →
+Platform presents ToS + document hash →
+User signs: { tosVersion, tosHash, walletAddress, timestamp } →
+Signature stored in TosAcceptances collection →
+VM creation gated until signature confirmed
+```
+
+**Required wallet-auth specific clauses:**
+- **User responsibility** — all content associated with the wallet address is the user's sole responsibility
+- **Escrow forfeiture** — violation may result in forfeiture of escrow balance toward damages, no court order required
+- **Blockchain transparency** — wallet address and on-chain history shareable with law enforcement upon valid legal process
+- **Prohibited content** — explicit enumeration: CSAM, illegal marketplaces, C2 infrastructure, malware hosting, human trafficking facilitation
+- **Law enforcement cooperation** — platform will cooperate with valid legal process including NCMEC CyberTipline mandates
+- **Repeat infringer termination** — required for Section 512 DMCA safe harbor
+
+**Key models/collections to create:**
+
+| Item | Detail |
+|---|---|
+| `TosAcceptance` model | `{ walletAddress, tosVersion, tosHash, signature, signedAt }` |
+| `TosAcceptances` MongoDB collection | Queried at VM creation to verify current acceptance |
+| ToS version bump flow | Material changes prompt re-signature; VM creation blocked after 30 days without re-sign |
+
+---
+
+### Abuse Reporting & AI Triage
+
+**Status:** 🔲 Planned — Pre-Launch Requirement
+
+**Public intake endpoint:** `POST /api/abuse` — unauthenticated, anyone can submit.
+
+**Urgency tiers:**
+
+| Category | Priority | SLA | Auto-Action |
+|---|---|---|---|
+| CSAM | P0 — Immediate | 2 hours | Block quarantine, NCMEC flag |
+| Active malware / C2 | P1 — Critical | 4 hours | None (human decision) |
+| Illegal marketplace | P1 — Critical | 8 hours | None (human decision) |
+| DMCA copyright | P2 — Standard | 48 hours | None (human decision) |
+| ToS violation | P3 — Normal | 72 hours | None (human decision) |
+| Spam / low-quality | P4 — Low | Best effort | None |
+
+**AI triage pipeline** (AI-assisted, always human-decided):
+1. Incoming report → AI classifies category and assigns urgency
+2. For template reports: AI re-analyzes the template specifically through the lens of the reported concern
+3. Multiple reports about the same resource are aggregated and summarized for the reviewer
+4. Human reviewer sees AI assessment, reported resource, and wallet enforcement history
+5. Human makes all enforcement decisions — AI never acts autonomously
+
+**Prompt injection hardening:** The AI receives untrusted user content. System prompt explicitly treats all report and template content as untrusted input. Output is always structured JSON, never interpreted as instructions.
+
+**Enforcement audit trail:** Every action logged to append-only `EnforcementActions` collection — retained indefinitely, never updated or deleted.
+
+**Key files to create:**
+
+| File | Purpose |
+|---|---|
+| `AbuseController.cs` | `POST /api/abuse` public intake |
+| `AiReviewService.cs` | AI triage + template review (shared service, two methods) |
+| `AbuseReport.cs` | MongoDB model with reference ID, category, urgency, triage result |
+| `EnforcementAction.cs` | Append-only audit log model |
+
+---
+
+### Template Review Gate
+
+**Status:** 🔲 Planned — Pre-Launch Requirement
+
+**Why highest-leverage:** A single malicious public template can be deployed by thousands of users. Blocking one template blocks thousands of potential deployments. The marketplace is the primary amplification risk vector.
+
+**Review workflow:**
+```
+Author submits → Draft
+Author requests publish → PendingReview
+AI review runs (async) → AI assessment stored on template
+Admin reviews AI assessment + template → Published / Rejected / Request Changes
+```
+
+Community templates always go through this workflow. Publish is not automatic on author request — human admin approval is required.
+
+**AI review scope:**
+- Intent vs. description coherence (does the script actually do what it claims?)
+- Obfuscated commands (base64 payloads, eval chains, aliased shell functions, heredoc encoding)
+- Data exfiltration patterns (phone-home scripts, unexpected outbound connections, credential harvesting)
+- Known malicious tooling signatures (C2 frameworks, RAT components, cryptominer installers)
+- Category coherence (an "AI/ML" template installing network scanners is misclassified)
+- Prompt injection attempts in template content (itself a red flag, logged as a concern)
+
+**AI output stored on `VmTemplate` document:**
+```json
+{
+  "riskLevel": "Low | Medium | High | Reject",
+  "concerns": ["string"],
+  "recommendation": "Approve | RequestChanges | Reject",
+  "reasoning": "string",
+  "reviewedAt": "ISO 8601"
+}
+```
+
+**Changes to existing infrastructure:**
+
+| Item | Change |
+|---|---|
+| `TemplateStatus` enum | Add `PendingReview` between `Draft` and `Published` |
+| `VmTemplate` model | Add `AiAssessment` field (nullable) |
+| `TemplateService.PublishTemplateAsync` | Gate on admin-set `IsVerified`, not just author request |
+| Existing `ValidateTemplateAsync` | Remains as fast pre-filter; AI review runs after it passes |
+
+**Retroactive review required:** The Private Browser (Ultraviolet) and Shadowsocks seed templates predate this framework and must be reviewed against the rubric before public launch. Platform-authored templates are not exempt.
+
+---
+
+### Enforcement Mechanism
+
+**Status:** 🔲 Planned — Pre-Launch Requirement
+
+**Wallet blacklist** — `SuspendedWallets` MongoDB collection, checked at VM scheduling:
+
+```csharp
+// Added to VmService.CreateVmAsync before node scheduling
+var isSuspended = await _dataStore.IsWalletSuspendedAsync(userId);
+if (isSuspended)
+    throw new UnauthorizedAccessException("Account suspended. Contact support.");
+```
+
+**Admin takedown endpoint** — single atomic call orchestrating all enforcement steps:
+
+```
+POST /api/admin/takedown
+Authorization: Bearer <admin-token>
+
+{
+  "walletAddress": "0x... (optional)",
+  "vmId": "string (optional)",
+  "templateId": "string (optional)",
+  "reason": "string (required)",
+  "category": "csam | dmca | malware | tos_violation (required)",
+  "reportReference": "ABU-2026-00123 (optional)"
+}
+```
+
+Orchestrates in sequence: VM termination → template archiving → wallet suspension → audit log entry. Returns a summary of all actions taken.
+
+**Escrow forfeiture** — deliberately separate from takedown (irreversible, requires proportionality judgment):
+
+```
+POST /api/admin/escrow-forfeiture
+{ walletAddress, amount?, reason, enforcementActionId }
+```
+
+Uses the existing `DeCloudEscrow.sol` authorized caller mechanism. The ToS escrow forfeiture clause establishes the legal basis — no court order required.
+
+**Key files to create:**
+
+| File | Purpose |
+|---|---|
+| `SuspendedWallet.cs` | MongoDB model `{ walletAddress, reason, suspendedAt, suspendedBy, enforcementActionId, isPermanent, expiresAt }` |
+| `EnforcementAction.cs` | Append-only audit log `{ actionId, reportReference, actionType, targetWallet, targetVmId, targetTemplateId, reason, category, actingAdmin, timestamp }` |
+| `AdminComplianceController.cs` | `POST /api/admin/takedown` and `POST /api/admin/escrow-forfeiture` |
+| `WalletBlacklistService.cs` | Suspension check + blacklist management |
+
+---
+
+### DMCA Agent & Safe Harbor
+
+**Status:** 🔲 Planned — Pre-Launch Requirement (Primarily Administrative)
+
+**One-time filing:** Register a DMCA Designated Agent with the US Copyright Office at https://www.copyright.gov/dmca-directory/ ($6 USD). Grants Section 512 safe harbor — without it the platform is fully liable for all copyright infringement hosted by users.
+
+**DMCA intake flow:**
+1. Copyright holder submits notice via `POST /api/dmca` or published agent email
+2. AI triage classifies as P2, assigns 48h SLA, returns reference ID to claimant
+3. Human reviewer validates notice (required elements: copyrighted work identification, infringing material identification, contact info, good-faith statement, accuracy statement, signature)
+4. If valid: template archived or VM flagged, wallet warned, claimant notified within 48h
+5. Counter-notice process available to affected users — content restored after 10–14 business days if claimant does not file suit
+
+**ToS requirement:** Section 512 safe harbor also requires the ToS to state that repeat infringers will be terminated. This clause must be present in the ToS document.
+
+**Pre-launch administrative checklist:**
+- [ ] Retain legal counsel familiar with CFAA, DMCA, and 18 U.S.C. § 2258A
+- [ ] File DMCA Designated Agent (https://www.copyright.gov/dmca-directory/)
+- [ ] Establish NCMEC CyberTipline account and reporting procedure
+- [ ] Draft and legally review ToS document
+- [ ] Retroactive rubric review of Private Browser and Shadowsocks seed templates
+
+---
+
+*For the complete compliance specification — wallet identity analysis, full liability framework, build checklist, and operational procedures — see `COMPLIANCE.md`.*
+
+---
+
+## 11. Planned Features
 
 ### Prebuilt Binary Distribution
 
