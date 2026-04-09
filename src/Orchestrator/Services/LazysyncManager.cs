@@ -143,17 +143,9 @@ public class LazysyncManager : BackgroundService
                     : providers.Count(p => p != localPeerId);
 
                 if (remoteCount == 0)
-                {
-                    // No remote providers at all — total block loss, not just
-                    // under-replication. Reset manifest and trigger full reseed.
-                    _logger.LogWarning(
-                        "VM {VmId} CID {Cid}: zero remote providers — total loss detected, triggering reseed",
-                        manifest.VmId, cid[..Math.Min(12, cid.Length)]);
-                    await TriggerReseedAsync(manifest, dataStore, ct);
-                    return;
-                }
+                    underReplicated.Add(cid); // treat zero as under-replicated for counting
 
-                if (remoteCount < manifest.ReplicationFactor)
+                else if (remoteCount < manifest.ReplicationFactor)
                     underReplicated.Add(cid);
             }
             catch (Exception ex)
@@ -165,10 +157,26 @@ public class LazysyncManager : BackgroundService
             }
         }
 
+        // Total loss: all sampled CIDs have zero or insufficient providers AND
+        // blocks were previously confirmed (ConfirmedVersion > 0).
+        // Guards against false positives during initial seeding and transient
+        // DHT routing failures affecting only a subset of CIDs.
+        if (manifest.ConfirmedVersion > 0
+            && underReplicated.Count == cidsToCheck.Count
+            && cidsToCheck.Count > 0)
+        {
+            _logger.LogWarning(
+                "VM {VmId}: all {Count} sampled CIDs under-replicated or missing " +
+                "(ConfirmedVersion={Version}) — total loss detected, triggering reseed",
+                manifest.VmId, cidsToCheck.Count, manifest.ConfirmedVersion);
+            await TriggerReseedAsync(manifest, dataStore, ct);
+            return;
+        }
+
         if (underReplicated.Count > 0)
         {
             _logger.LogDebug(
-             "VM {VmId} v{Version}: {Under}/{Total} CIDs under-replicated " +
+                "VM {VmId} v{Version}: {Under}/{Total} CIDs under-replicated " +
                 "(need {N} remote providers, local excluded) — will retry next cycle",
                 manifest.VmId, manifest.Version,
                 underReplicated.Count, cidsToCheck.Count,
