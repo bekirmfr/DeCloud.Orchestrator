@@ -76,7 +76,7 @@ public class ManifestRecord
 {
     [MongoDB.Bson.Serialization.Attributes.BsonId]
     [MongoDB.Bson.Serialization.Attributes.BsonRepresentation(MongoDB.Bson.BsonType.ObjectId)]
-    public string? Id { get; set; }
+    public string Id { get; set; } = MongoDB.Bson.ObjectId.GenerateNewId().ToString();
 
     public string VmId { get; set; } = string.Empty;
 
@@ -518,6 +518,7 @@ public class BlockStoreService : IBlockStoreService
             // First registration for this VM
             record = new ManifestRecord
             {
+                Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString(),
                 VmId = vmId,
                 RootCid = rootCid,
                 Version = version,
