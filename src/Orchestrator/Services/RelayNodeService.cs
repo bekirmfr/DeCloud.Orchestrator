@@ -117,9 +117,21 @@ public class RelayNodeService : IRelayNodeService
         try
         {
             // ========================================
-            // STEP 0: Allocate unique subnet for this relay
+            // STEP 0: Allocate unique subnet for this relay, reuse if node already has one
             // ========================================
-            var relaySubnet = await AllocateRelaySubnetAsync();
+            int relaySubnet;
+            if (node.RelayInfo?.RelaySubnet > 0)
+            {
+                relaySubnet = node.RelayInfo.RelaySubnet;
+                _logger.LogInformation(
+                    "Reusing existing relay subnet {Subnet} for node {NodeId}",
+                    relaySubnet, node.Id);
+            }
+            else
+            {
+                relaySubnet = await AllocateRelaySubnetAsync();
+            }
+
             var relayTunnelIp = $"10.20.{relaySubnet}.254";
 
             _logger.LogInformation(
