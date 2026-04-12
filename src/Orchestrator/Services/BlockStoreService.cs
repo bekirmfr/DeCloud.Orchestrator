@@ -138,6 +138,8 @@ public class ManifestRecord
     /// Replaced on every version advance (not accumulated).
     /// Key: byte offset in the overlay. Value: CIDv1 string.
     /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonDictionaryOptions(
+        MongoDB.Bson.Serialization.Options.DictionaryRepresentation.ArrayOfArrays)]
     public Dictionary<long, string> CurrentChunkMap { get; set; } = new();
 
     /// <summary>
@@ -146,6 +148,8 @@ public class ManifestRecord
     /// This is what migration uses: target node fetches each CID from the block
     /// store network and writes it at the correct byte offset in the new overlay.
     /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonDictionaryOptions(
+        MongoDB.Bson.Serialization.Options.DictionaryRepresentation.ArrayOfArrays)]
     public Dictionary<long, string> ConfirmedChunkMap { get; set; } = new();
 
     /// <summary>Per-VM replication factor. 0 = ephemeral (no replication).</summary>
