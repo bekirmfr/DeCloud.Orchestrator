@@ -903,37 +903,47 @@ PersistentKeepalive = 25";
     }
 
     /// <summary>
-    /// Helper: Clean up database state (remove from ConnectedNodeIds, update load)
-    /// Extracted to avoid duplication and ensure consistent cleanup
+    /// Helper: Clean up database state for both relay and cgnat node after peer removal.
+    /// Clears relay's ConnectedNodeIds/load AND cgnat node's CgnatInfo so the next
+    /// heartbeat doesn't re-detect the same (now-invalid) relay assignment and loop.
     /// </summary>
     private async Task CleanupDatabaseState(Node cgnatNode, Node relayNode)
     {
-        if (relayNode.RelayInfo?.ConnectedNodeIds == null)
+        // ── 1. Clean relay side ────────────────────────────────────────────────
+        if (relayNode.RelayInfo?.ConnectedNodeIds != null)
         {
-            return;
+            bool needsRelaySave = false;
+
+            if (relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id))
+                needsRelaySave = true;
+
+            var correctLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
+            if (relayNode.RelayInfo.CurrentLoad != correctLoad)
+            {
+                relayNode.RelayInfo.CurrentLoad = correctLoad;
+                needsRelaySave = true;
+            }
+
+            if (needsRelaySave)
+            {
+                await _dataStore.SaveNodeAsync(relayNode);
+                _logger.LogDebug(
+                    "Database cleanup: Removed node {NodeId} from relay {RelayId}, CurrentLoad={Load}",
+                    cgnatNode.Id, relayNode.Id, correctLoad);
+            }
         }
 
-        bool needsSave = false;
-
-        if (relayNode.RelayInfo.ConnectedNodeIds.Contains(cgnatNode.Id))
+        // ── 2. Clean cgnat node side ───────────────────────────────────────────
+        // CRITICAL: Clear CgnatInfo so the next heartbeat does NOT detect the same
+        // invalid relay and loop. A fresh assignment will be created by
+        // FindAndAssignNewRelayAsync when a relay becomes available.
+        if (cgnatNode.CgnatInfo != null)
         {
-            relayNode.RelayInfo.ConnectedNodeIds.Remove(cgnatNode.Id);
-            needsSave = true;
-        }
-
-        var correctLoad = relayNode.RelayInfo.ConnectedNodeIds.Count;
-        if (relayNode.RelayInfo.CurrentLoad != correctLoad)
-        {
-            relayNode.RelayInfo.CurrentLoad = correctLoad;
-            needsSave = true;
-        }
-
-        if (needsSave)
-        {
-            await _dataStore.SaveNodeAsync(relayNode);
-            _logger.LogDebug(
-                "Database cleanup: Removed node {NodeId} from relay {RelayId}, CurrentLoad={Load}",
-                cgnatNode.Id, relayNode.Id, correctLoad);
+            cgnatNode.CgnatInfo = null;
+            await _dataStore.SaveNodeAsync(cgnatNode);
+            _logger.LogInformation(
+                "Database cleanup: Cleared CgnatInfo for node {NodeId} (was assigned to relay {RelayId})",
+                cgnatNode.Id, relayNode.Id);
         }
     }
 
