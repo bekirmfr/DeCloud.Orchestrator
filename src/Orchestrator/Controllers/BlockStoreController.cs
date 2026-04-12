@@ -2,8 +2,6 @@ using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace Orchestrator.Controllers;
 
@@ -316,7 +314,8 @@ public class BlockStoreController : ControllerBase
             request.BlockSizeKb,
             request.ManifestType,
             request.TotalBytes,
-            request.ReplicationFactor);
+            request.ReplicationFactor,
+            request.ChunkMap);
 
         // Update VM lazysync status: Seeding during initial push, Replicating once
         // the first full manifest is registered and awaiting DHT confirmation.
@@ -415,6 +414,12 @@ public class BlockStoreManifestRequest
     public string RootCid { get; set; } = string.Empty;
     public int Version { get; set; }
     public List<string>? ChangedBlockCids { get; set; }
+    /// <summary>
+    /// Full offset→CID map for this manifest version.
+    /// Key: byte offset (long). Value: CIDv1 string.
+    /// Nullable — older daemon versions omit it; treated as empty if missing.
+    /// </summary>
+    public Dictionary<long, string>? ChunkMap { get; set; }
     public int BlockCount { get; set; }
     public int BlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
     public ManifestType ManifestType { get; set; } = ManifestType.VmOverlay;

@@ -187,6 +187,7 @@ public class LazysyncManager : BackgroundService
         // All sampled CIDs confirmed — advance ConfirmedVersion
         manifest.ConfirmedVersion = manifest.Version;
         manifest.ConfirmedRootCid = manifest.RootCid;
+        manifest.ConfirmedChunkMap = manifest.CurrentChunkMap;
         await dataStore.SaveManifestAsync(manifest);
 
         // Sync block count to VM record for accurate billing

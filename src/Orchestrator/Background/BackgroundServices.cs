@@ -267,7 +267,8 @@ public class VmSchedulerService : BackgroundService
                 IsMigration = true,
                 ManifestRootCid = plan.ConfirmedManifestRootCid,
                 ConfirmedVersion = plan.ConfirmedVersion,
-                SourceNodeId = sourceNodeId
+                SourceNodeId = sourceNodeId,
+                ChunkMap = plan.ChunkMap
             }),
             RequiresAck: true,
             TargetResourceId: fresh.Id

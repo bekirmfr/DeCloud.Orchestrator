@@ -132,6 +132,22 @@ public class ManifestRecord
     /// <summary>Root CID of the confirmed version (used for migration/recovery).</summary>
     public string? ConfirmedRootCid { get; set; }
 
+    /// <summary>
+    /// Full offset→CID map for the current manifest version.
+    /// Sent by LazysyncDaemon each cycle alongside ChangedBlockCids.
+    /// Replaced on every version advance (not accumulated).
+    /// Key: byte offset in the overlay. Value: CIDv1 string.
+    /// </summary>
+    public Dictionary<long, string> CurrentChunkMap { get; set; } = new();
+
+    /// <summary>
+    /// Snapshot of CurrentChunkMap at the moment ConfirmedVersion advanced.
+    /// Written by LazysyncManager when all chunks are confirmed ≥N providers.
+    /// This is what migration uses: target node fetches each CID from the block
+    /// store network and writes it at the correct byte offset in the new overlay.
+    /// </summary>
+    public Dictionary<long, string> ConfirmedChunkMap { get; set; } = new();
+
     /// <summary>Per-VM replication factor. 0 = ephemeral (no replication).</summary>
     public int ReplicationFactor { get; set; } = 3;
 }
@@ -164,6 +180,13 @@ public class MigrationPlan
     public string VmId { get; set; } = string.Empty;
     public string? TargetNodeId { get; set; }
     public string? ConfirmedManifestRootCid { get; set; }
+    /// <summary>
+    /// Offset→CID map from the confirmed manifest.
+    /// Passed in the CreateVm payload so the target NodeAgent can reconstruct
+    /// the overlay by fetching each block from the network and writing it at
+    /// the correct byte offset.
+    /// </summary>
+    public Dictionary<long, string> ChunkMap { get; set; } = new();
     public int ConfirmedVersion { get; set; }
     public string MigrationStatus { get; set; } = "NotStarted";
     public string? Reason { get; set; }
@@ -207,6 +230,7 @@ public interface IBlockStoreService
         ManifestType manifestType,
         long totalBytes,
         int replicationFactor = 3,
+        Dictionary<long, string>? chunkMap = null,
         CancellationToken ct = default);
 
     // Replication audit (Phase D implementation; interface defined now)
@@ -508,6 +532,7 @@ public class BlockStoreService : IBlockStoreService
             ManifestType manifestType,
             long totalBytes,
             int replicationFactor = 3,
+            Dictionary<long, string>? chunkMap = null,
             CancellationToken ct = default)
     {
         // Try to load existing from MongoDB to preserve immutable fields
@@ -527,6 +552,7 @@ public class BlockStoreService : IBlockStoreService
                 Version = version,
                 ChangedBlockCids = changedBlockCids,
                 CumulativeBlockCids = changedBlockCids.Take(200).ToList(),
+                CurrentChunkMap = chunkMap ?? new(),
                 BlockCount = blockCount,
                 BlockSizeKb = blockSizeKb > 0 ? blockSizeKb : BlockSizeConstants.ForType(manifestType),
                 ManifestType = manifestType,
@@ -553,6 +579,7 @@ public class BlockStoreService : IBlockStoreService
             if (existing.CumulativeBlockCids.Count > CumulativeCap)
                 existing.CumulativeBlockCids =
                     existing.CumulativeBlockCids[^CumulativeCap..];
+            existing.CurrentChunkMap = chunkMap ?? existing.CurrentChunkMap;
 
             record = existing;
         }
@@ -739,6 +766,7 @@ public class BlockStoreService : IBlockStoreService
             TargetNodeId = target.Node.Id,
             ConfirmedManifestRootCid = manifest.ConfirmedRootCid,
             ConfirmedVersion = manifest.ConfirmedVersion,
+            ChunkMap = manifest.ConfirmedChunkMap,
             MigrationStatus = manifest.ConfirmedVersion == manifest.Version
                 ? "Ready"       // fully caught up — no data loss
                 : "ReadyWithDataLoss",  // confirmed lags current — minor loss possible
