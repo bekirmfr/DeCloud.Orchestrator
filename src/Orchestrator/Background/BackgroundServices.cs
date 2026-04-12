@@ -1,5 +1,6 @@
 using Orchestrator.Persistence;
 using Orchestrator.Models;
+using System.Text.Json;
 
 namespace Orchestrator.Services;
 
@@ -44,7 +45,10 @@ public class NodeHealthMonitorService : BackgroundService
 }
 
 /// <summary>
-/// Background service that schedules pending VMs
+/// Scans for VMs stranded on offline nodes and triggers migration to a healthy node.
+///
+/// Runs every 10 seconds (existing _scheduleInterval). New-VM scheduling (which
+/// needs plain-text passwords) remains commented out below.
 /// </summary>
 public class VmSchedulerService : BackgroundService
 {
@@ -62,13 +66,33 @@ public class VmSchedulerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("VM Scheduler started");
+        _logger.LogInformation("VmSchedulerService started (migration scan active)");
 
-        return;
+        // 2-minute startup delay — let NodeHealthMonitor mark offline nodes first.
+        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
 
-        // Scheduling pending vms requires access to plain text passwords,
-        // which we cannot do in this background service for security reasons.
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                await ScanMigratingVmsAsync(scope.ServiceProvider, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "VmSchedulerService scan failed");
+            }
 
+            await Task.Delay(_scheduleInterval, stoppingToken);
+        }
+
+        _logger.LogInformation("VmSchedulerService stopped");
+
+        // ── Original new-VM scheduler (needs plain-text passwords — cannot run here) ──
         /*
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -76,17 +100,185 @@ public class VmSchedulerService : BackgroundService
             {
                 using var scope = _serviceProvider.CreateScope();
                 var vmService = scope.ServiceProvider.GetRequiredService<IVmService>();
-
                 await vmService.SchedulePendingVmsAsync();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error scheduling VMs");
             }
-
             await Task.Delay(_scheduleInterval, stoppingToken);
         }
         */
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Migration scan
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Finds VMs in Error + {Migrating | Recovering} with no command in flight
+    /// and issues a CreateVm command to the best available target node.
+    /// </summary>
+    private async Task ScanMigratingVmsAsync(
+        IServiceProvider services, CancellationToken ct)
+    {
+        var dataStore = services.GetRequiredService<DataStore>();
+        var blockStoreService = services.GetRequiredService<IBlockStoreService>();
+        var commandService = services.GetRequiredService<INodeCommandService>();
+
+        var candidates = dataStore.GetActiveVMs()
+            .Where(v =>
+                v.Status == VmStatus.Error &&
+                (v.LazysyncStatus == LazysyncStatus.Migrating ||
+                 v.LazysyncStatus == LazysyncStatus.Recovering) &&
+                string.IsNullOrEmpty(v.ActiveCommandId))
+            .ToList();
+
+        if (candidates.Count == 0) return;
+
+        _logger.LogInformation(
+            "VmSchedulerService: {Count} VM(s) pending migration", candidates.Count);
+
+        foreach (var vm in candidates)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            try
+            {
+                await MigrateVmAsync(vm, dataStore, blockStoreService, commandService, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Migration failed for VM {VmId}", vm.Id);
+            }
+        }
+    }
+
+    private async Task MigrateVmAsync(
+        VirtualMachine vm,
+        DataStore dataStore,
+        IBlockStoreService blockStoreService,
+        INodeCommandService commandService,
+        CancellationToken ct)
+    {
+        // ── Plan ────────────────────────────────────────────────────────────
+        var plan = await blockStoreService.PlanMigrationAsync(vm.Id, [], ct);
+
+        if (plan.TargetNodeId == null)
+        {
+            _logger.LogWarning(
+                "VM {VmId}: no migration target ({Status}: {Reason})",
+                vm.Id, plan.MigrationStatus, plan.Reason);
+            return;
+        }
+
+        // ── Re-fetch to avoid stale overwrite + re-check idempotency gate ───
+        var fresh = await dataStore.GetVmAsync(vm.Id);
+        if (fresh == null ||
+            fresh.ActiveCommandId != null ||
+            fresh.Status != VmStatus.Error)
+        {
+            _logger.LogDebug(
+                "VM {VmId}: state changed since scan — skipping", vm.Id);
+            return;
+        }
+
+        _logger.LogInformation(
+            "VM {VmId} ({LazysyncStatus}): {SourceNode} → {TargetNode} " +
+            "confirmedV={CV} ({PlanStatus})",
+            fresh.Id, fresh.LazysyncStatus,
+            fresh.NodeId ?? "none", plan.TargetNodeId,
+            plan.ConfirmedVersion, plan.MigrationStatus);
+
+        // ── Atomic authority transfer ────────────────────────────────────────
+        var sourceNodeId = fresh.NodeId;
+        var commandId = Guid.NewGuid().ToString();
+
+        fresh.NodeId = plan.TargetNodeId;
+        fresh.Status = VmStatus.Provisioning;
+        fresh.LazysyncStatus = LazysyncStatus.Migrating;
+        fresh.StatusMessage = $"Migrating to node {plan.TargetNodeId} " +
+                                      $"(confirmedV={plan.ConfirmedVersion}, {plan.MigrationStatus})";
+        fresh.ActiveCommandId = commandId;
+        fresh.ActiveCommandType = NodeCommandType.CreateVm;
+        fresh.ActiveCommandIssuedAt = DateTime.UtcNow;
+        fresh.UpdatedAt = DateTime.UtcNow;
+
+        await dataStore.SaveVmAsync(fresh);
+
+        dataStore.RegisterCommand(
+            commandId, fresh.Id, plan.TargetNodeId, NodeCommandType.CreateVm);
+
+        // ── SSH key ──────────────────────────────────────────────────────────
+        string? sshPublicKey = fresh.Spec.SshPublicKey;
+        if (string.IsNullOrEmpty(sshPublicKey) &&
+            !string.IsNullOrEmpty(fresh.OwnerId) &&
+            dataStore.Users.TryGetValue(fresh.OwnerId, out var owner) &&
+            owner.SshKeys.Any())
+        {
+            sshPublicKey = string.Join("\n", owner.SshKeys.Select(k => k.PublicKey));
+        }
+
+        // ── CreateVm command ─────────────────────────────────────────────────
+        var command = new NodeCommand(
+            CommandId: commandId,
+            Type: NodeCommandType.CreateVm,
+            Payload: JsonSerializer.Serialize(new
+            {
+                VmId = fresh.Id,
+                Name = fresh.Name,
+                OwnerId = fresh.OwnerId ?? "",
+                VmType = (int)(fresh.Spec.VmType ?? VmType.General),
+                VirtualCpuCores = fresh.Spec.VirtualCpuCores,
+                QualityTier = (int)fresh.Spec.QualityTier,
+                ComputePointCost = fresh.Spec.ComputePointCost,
+                MemoryBytes = fresh.Spec.MemoryBytes,
+                DiskBytes = fresh.Spec.DiskBytes,
+                ImageId = fresh.Spec.ImageId,
+                BaseImageUrl = (string?)null,   // NodeAgent resolves from ImageId
+                SshPublicKey = sshPublicKey,
+                GpuMode = (int)fresh.Spec.GpuMode,
+                GpuPciAddress = (string?)null,    // re-assigned by target scheduler
+                ContainerImage = fresh.Spec.ContainerImage,
+                Network = new
+                {
+                    MacAddress = "",
+                    IpAddress = (string?)null,    // new IP on target
+                    Gateway = "",
+                    VxlanVni = 0,
+                    AllowedPorts = new List<int>()
+                },
+                Password = (string?)null,    // SSH key + wallet decryption instead
+                UserData = fresh.Spec.UserData,
+                Labels = fresh.Labels,
+                ReplicationFactor = fresh.Spec.ReplicationFactor,
+                Services = fresh.Services.Select(s => new
+                {
+                    s.Name,
+                    s.Port,
+                    s.Protocol,
+                    CheckType = s.CheckType.ToString(),
+                    s.HttpPath,
+                    s.ExecCommand,
+                    s.TimeoutSeconds
+                }).ToList(),
+
+                // Migration fields — read by NodeAgent disk reconstruction (Phase D step 4)
+                IsMigration = true,
+                ManifestRootCid = plan.ConfirmedManifestRootCid,
+                ConfirmedVersion = plan.ConfirmedVersion,
+                SourceNodeId = sourceNodeId
+            }),
+            RequiresAck: true,
+            TargetResourceId: fresh.Id
+        );
+
+        var result = await commandService.DeliverCommandAsync(plan.TargetNodeId, command, ct);
+
+        _logger.LogInformation(
+            "VM {VmId}: CreateVm delivered to {TargetNode} " +
+            "(delivery={Method}, commandId={CommandId})",
+            fresh.Id, plan.TargetNodeId, result.Method, commandId);
     }
 }
 

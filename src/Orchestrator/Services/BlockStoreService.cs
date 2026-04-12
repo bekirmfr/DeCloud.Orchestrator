@@ -239,9 +239,12 @@ public class BlockStoreService : IBlockStoreService
     // LazysyncManager reads from DataStore.GetPendingAuditManifestsAsync() directly.
     private readonly ConcurrentDictionary<string, ManifestRecord> _manifestCache = new();
 
-    public BlockStoreService(DataStore dataStore, ILogger<BlockStoreService> logger)
+    private readonly IVmSchedulingService _schedulingService;
+
+    public BlockStoreService(DataStore dataStore, IVmSchedulingService schedulingService, ILogger<BlockStoreService> logger)
     {
         _dataStore = dataStore;
+        _schedulingService = schedulingService;
         _logger = logger;
     }
 
@@ -600,22 +603,152 @@ public class BlockStoreService : IBlockStoreService
         };
     }
 
-    public Task<MigrationPlan> PlanMigrationAsync(
+    /// <summary>
+    /// Select the best migration target for a VM whose host node went offline.
+    ///
+    /// Steps:
+    ///   1. Fetch the VM — provides spec (CPU/RAM/disk/GPU/tier) and source node ID.
+    ///   2. Fetch the manifest — confirms a recoverable confirmed version exists.
+    ///   3. Score all online nodes via the existing scheduling service (reuses all
+    ///      hard filters: Online, BlockStore Active, resource headroom, architecture,
+    ///      GPU, region). Exclude the offline source node.
+    ///   4. Return the highest-scoring eligible node.
+    ///
+    /// Block locality is not considered — the target fetches overlay blocks from
+    /// scattered DHT providers via bitswap after boot.
+    /// </summary>
+    public async Task<MigrationPlan> PlanMigrationAsync(
         string vmId, List<string> candidateNodeIds, CancellationToken ct = default)
     {
-        // Phase A stub — Phase D implements scheduling fit + resource headroom ranking
-        _logger.LogDebug("PlanMigrationAsync called for VM {VmId} — stub in Phase A", vmId);
+        // ── Step 1: Fetch VM ────────────────────────────────────────────────
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+        {
+            _logger.LogWarning("PlanMigrationAsync: VM {VmId} not found", vmId);
+            return new MigrationPlan
+            {
+                VmId = vmId,
+                MigrationStatus = "Error",
+                Reason = "VM not found"
+            };
+        }
 
-        _manifestCache.TryGetValue(vmId, out var manifest);
-        return Task.FromResult(new MigrationPlan
+        var sourceNodeId = vm.NodeId;
+
+        // ── Step 2: Fetch manifest ──────────────────────────────────────────
+        var manifest = await _dataStore.GetManifestAsync(vmId)
+            ?? _manifestCache.GetValueOrDefault(vmId);
+
+        if (manifest == null || manifest.ConfirmedVersion == 0)
+        {
+            _logger.LogWarning(
+                "PlanMigrationAsync: VM {VmId} has no confirmed replica — cannot migrate",
+                vmId);
+            return new MigrationPlan
+            {
+                VmId = vmId,
+                MigrationStatus = "Unrecoverable",
+                Reason = manifest == null
+                    ? "No manifest exists — lazysync never completed initial seeding"
+                    : "ConfirmedVersion is 0 — seeding started but no version was confirmed yet"
+            };
+        }
+
+        // ── Step 3: Derive scheduling hints from source node ────────────────
+        // Source node is offline but still in the DB — use its region and
+        // architecture so the replacement lands on compatible hardware.
+        var sourceNode = await _dataStore.GetNodeAsync(sourceNodeId ?? "");
+        var architecture = sourceNode?.Architecture;
+        var preferredRegion = sourceNode?.Region;
+
+        // ── Step 4: Score all online nodes ──────────────────────────────────
+        // GetScoredNodesForVmAsync enforces all hard filters internally:
+        //   NodeStatus.Online, BlockStore Active (when replicationFactor > 0),
+        //   CPU/RAM/disk headroom, architecture, GPU, load limits.
+        // We only need to additionally exclude the source node itself.
+        var tier = vm.Spec.QualityTier;
+
+        List<ScoredNode> scored;
+        try
+        {
+            scored = await _schedulingService.GetScoredNodesForVmAsync(
+                vm.Spec,
+                tier,
+                preferredRegion: preferredRegion,
+                preferredZone: null,
+                requiredArchitecture: architecture,
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "PlanMigrationAsync: scheduling service failed for VM {VmId}", vmId);
+            return new MigrationPlan
+            {
+                VmId = vmId,
+                ConfirmedManifestRootCid = manifest.ConfirmedRootCid,
+                ConfirmedVersion = manifest.ConfirmedVersion,
+                MigrationStatus = "Error",
+                Reason = $"Scheduling service error: {ex.Message}"
+            };
+        }
+
+        var target = scored
+            .Where(sn => sn.RejectionReason == null && sn.Node.Id != sourceNodeId)
+            .OrderByDescending(sn => sn.TotalScore)
+            .FirstOrDefault();
+
+        // ── Step 5: Return plan ─────────────────────────────────────────────
+        if (target == null)
+        {
+            var rejectionSummary = scored
+                .Where(sn => sn.Node.Id != sourceNodeId)
+                .GroupBy(sn => sn.RejectionReason)
+                .OrderByDescending(g => g.Count())
+                .Take(3)
+                .Select(g => $"{g.Key} ({g.Count()}×)")
+                .ToList();
+
+            _logger.LogWarning(
+                "PlanMigrationAsync: no eligible target for VM {VmId}. " +
+                "Top rejection reasons: {Reasons}",
+                vmId, string.Join("; ", rejectionSummary));
+
+            return new MigrationPlan
+            {
+                VmId = vmId,
+                ConfirmedManifestRootCid = manifest.ConfirmedRootCid,
+                ConfirmedVersion = manifest.ConfirmedVersion,
+                MigrationStatus = "NoTarget",
+                Reason = rejectionSummary.Count > 0
+                    ? $"No eligible node. Top rejections: {string.Join("; ", rejectionSummary)}"
+                    : "No other online nodes available"
+            };
+        }
+
+        _logger.LogInformation(
+            "PlanMigrationAsync: VM {VmId} → node {TargetNodeId} " +
+            "(score {Score:F2}, region {Region}, confirmedV={ConfirmedVersion}/{CurrentVersion})",
+            vmId, target.Node.Id, target.TotalScore,
+            target.Node.Region ?? "any",
+            manifest.ConfirmedVersion, manifest.Version);
+
+        return new MigrationPlan
         {
             VmId = vmId,
-            TargetNodeId = candidateNodeIds.FirstOrDefault(),
-            ConfirmedManifestRootCid = manifest?.ConfirmedRootCid,
-            ConfirmedVersion = manifest?.ConfirmedVersion ?? 0,
-            MigrationStatus = "NotStarted",
-            Reason = "Phase A stub — Phase D implements full migration planner",
-        });
+            TargetNodeId = target.Node.Id,
+            ConfirmedManifestRootCid = manifest.ConfirmedRootCid,
+            ConfirmedVersion = manifest.ConfirmedVersion,
+            MigrationStatus = manifest.ConfirmedVersion == manifest.Version
+                ? "Ready"       // fully caught up — no data loss
+                : "ReadyWithDataLoss",  // confirmed lags current — minor loss possible
+            Reason = $"Node {target.Node.Id} score {target.TotalScore:F2}, " +
+                     $"region {target.Node.Region ?? "any"}" +
+                     (manifest.ConfirmedVersion < manifest.Version
+                         ? $"; {manifest.Version - manifest.ConfirmedVersion} unconfirmed " +
+                           $"version(s) will be lost"
+                         : "")
+        };
     }
 
     // ════════════════════════════════════════════════════════════════════════

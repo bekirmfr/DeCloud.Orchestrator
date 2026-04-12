@@ -1937,26 +1937,119 @@ public class NodeService : INodeService
         }
     }
 
+    // ============================================================================
+    // Source-offline alerting
+    // ============================================================================
+
+    /// <summary>
+    /// Called when a node's heartbeat times out. Transitions every running tenant
+    /// VM on that node to VmStatus.Error and classifies its LazysyncStatus based
+    /// on manifest state so the dashboard and the migration trigger can act on it.
+    ///
+    /// Classification rules (in priority order):
+    ///   replicationFactor == 0           → Lost          (ephemeral — no alert)
+    ///   manifest missing / confirmedV==0 → Unrecoverable (seeding never finished)
+    ///   confirmedVersion < version       → Recovering    (stale confirmed copy)
+    ///   confirmedVersion == version      → Migrating     (fully caught up, no data loss)
+    /// </summary>
     private async Task MarkNodeVmsAsErrorAsync(string nodeId)
     {
         var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
 
-        nodeVms = nodeVms.Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
+        nodeVms = nodeVms
+            .Where(v => v.NodeId == nodeId && v.Status == VmStatus.Running)
             .ToList();
+
+        if (nodeVms.Count == 0) return;
+
+        _logger.LogWarning(
+            "Node {NodeId} offline — classifying {Count} running VM(s) for source-offline alerting",
+            nodeId, nodeVms.Count);
 
         var lifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
 
         foreach (var vm in nodeVms)
         {
-            _logger.LogWarning("VM {VmId} on offline node {NodeId} marked as error",
-                vm.Id, nodeId);
+            // Fetch manifest once — only for replicated VMs (saves DB round-trips for ephemeral).
+            var manifest = vm.Spec.ReplicationFactor > 0
+                ? await _dataStore.GetManifestAsync(vm.Id)
+                : null;
 
+            var lazysyncStatus = ClassifyOfflineVm(vm, manifest);
+            var statusMessage = BuildOfflineStatusMessage(lazysyncStatus, manifest);
+
+            // Transition VmStatus → Error (fires lifecycle side-effects: ingress, billing, events).
             await lifecycleManager.TransitionAsync(
                 vm.Id,
                 VmStatus.Error,
                 TransitionContext.NodeOffline(nodeId));
+
+            // Re-fetch after TransitionAsync — lifecycle manager persists the VM internally,
+            // so writing against the original vm object would produce a stale overwrite.
+            var updated = await _dataStore.GetVmAsync(vm.Id);
+            if (updated == null) continue;
+
+            updated.LazysyncStatus = lazysyncStatus;
+            updated.StatusMessage = statusMessage;
+            await _dataStore.SaveVmAsync(updated);
+
+            _logger.Log(
+                lazysyncStatus == LazysyncStatus.Unrecoverable ? LogLevel.Error :
+                lazysyncStatus == LazysyncStatus.Recovering ? LogLevel.Warning :
+                lazysyncStatus == LazysyncStatus.Migrating ? LogLevel.Information :
+                                                                 LogLevel.Debug,    // Lost
+                "VM {VmId} ({Name}) on offline node {NodeId}: {LazysyncStatus}",
+                vm.Id, vm.Name, nodeId, lazysyncStatus);
         }
     }
+
+    /// <summary>
+    /// Pure classification — no I/O. Determines the correct LazysyncStatus
+    /// for a VM whose host node has just gone offline.
+    /// </summary>
+    private static LazysyncStatus ClassifyOfflineVm(VirtualMachine vm, ManifestRecord? manifest)
+    {
+        // Ephemeral: user explicitly opted out of replication — data loss is expected.
+        if (vm.Spec.ReplicationFactor == 0)
+            return LazysyncStatus.Lost;
+
+        // Replicated, but no confirmed blocks exist yet (seeding never completed).
+        if (manifest == null || manifest.ConfirmedVersion == 0)
+            return LazysyncStatus.Unrecoverable;
+
+        // Confirmed copy exists but lags behind the latest lazysync cycle.
+        // Recovery is possible from confirmedVersion with minor data loss.
+        if (manifest.ConfirmedVersion < manifest.Version)
+            return LazysyncStatus.Recovering;
+
+        // Fully caught up — confirmed version matches current version.
+        // Migration can proceed with zero data loss.
+        return LazysyncStatus.Migrating;
+    }
+
+    /// <summary>
+    /// Builds a human-readable StatusMessage for a VM classified by ClassifyOfflineVm.
+    /// manifest is non-null whenever status is Recovering or Migrating.
+    /// </summary>
+    private static string BuildOfflineStatusMessage(LazysyncStatus status, ManifestRecord? manifest) =>
+        status switch
+        {
+            LazysyncStatus.Lost =>
+                "Node offline — ephemeral VM lost (replicationFactor=0, data loss expected)",
+
+            LazysyncStatus.Unrecoverable =>
+                "Node offline — no confirmed replica exists, redeployment from scratch required",
+
+            LazysyncStatus.Recovering =>
+                $"Node offline — recovering from confirmed v{manifest!.ConfirmedVersion} " +
+                $"(current v{manifest.Version}; changes since last confirmed version may be lost)",
+
+            LazysyncStatus.Migrating =>
+                $"Node offline — migrating from confirmed v{manifest!.ConfirmedVersion} " +
+                "(fully replicated, no data loss expected)",
+
+            _ => "Node offline"
+        };
 
     private string GenerateNodeJwtToken(string nodeId, string walletAddress, string machineId)
     {
