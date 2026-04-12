@@ -92,8 +92,7 @@ public class LazysyncManager : BackgroundService
         }
     }
 
-    private async Task AuditManifestAsync(
-            ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
+    private async Task AuditManifestAsync(ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
     {
         // Audit the cumulative sample — covers full history, not just the latest delta.
         // Falls back to ChangedBlockCids for manifests registered before this field existed.
@@ -190,8 +189,26 @@ public class LazysyncManager : BackgroundService
         manifest.ConfirmedChunkMap = manifest.CurrentChunkMap;
         await dataStore.SaveManifestAsync(manifest);
 
-        // Sync block count to VM record for accurate billing
         var vm = await dataStore.GetVmAsync(manifest.VmId);
+
+        // Fire-and-forget: push confirmed CID list to the hosting node's blockstore.
+        // The blockstore binary uses this list to prioritise eviction of already-safe
+        // blocks before falling back to LRU, freeing space for blocks still scattering.
+        // Non-fatal — if the push fails the binary falls back to pure LRU as before.
+        if (manifest.ConfirmedChunkMap.Count > 0)
+        {
+            var hostNode = await dataStore.GetNodeAsync(vm?.NodeId ?? "");
+            if (hostNode != null)
+            {
+                _ = PushConfirmedBlocksAsync(
+                        hostNode, manifest.VmId,
+                        manifest.ConfirmedChunkMap.Values.ToList(),
+                        ct);
+            }
+        }
+
+        // Sync block count to VM record for accurate billing
+        
         if (vm != null)
         {
             vm.CurrentManifestBlockCount = manifest.BlockCount;
@@ -206,6 +223,72 @@ public class LazysyncManager : BackgroundService
             "({Blocks} × {BlockSizeKb} KB, replication={Factor}x confirmed)",
             manifest.VmId, manifest.ConfirmedVersion,
             manifest.BlockCount, manifest.BlockSizeKb, manifest.ReplicationFactor);
+    }
+
+    /// <summary>
+    /// POST the confirmed CID list to the hosting NodeAgent → NodeAgent forwards
+    /// to the local BlockStore VM → binary writes confirmed/{vmId}.cids.
+    /// GC reads that file and evicts confirmed blocks before the LRU pass.
+    /// Non-fatal: failure is logged at Debug and the binary falls back to LRU.
+    /// </summary>
+    private async Task PushConfirmedBlocksAsync(
+        Node node, string vmId, List<string> confirmedCids, CancellationToken ct)
+    {
+        try
+        {
+            var agentUrl = GetNodeAgentUrl(node);
+            if (agentUrl == null)
+            {
+                _logger.LogDebug(
+                    "VM {VmId}: skipping confirmed-blocks push — node {NodeId} has no reachable URL",
+                    vmId, node.Id);
+                return;
+            }
+
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                vmId,
+                cids = confirmedCids
+            });
+
+            using var content = new StringContent(
+                payload, System.Text.Encoding.UTF8, "application/json");
+
+            // Short timeout — this is best-effort, not on the critical path.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+
+            var response = await _httpClient.PostAsync(
+                $"{agentUrl}/api/blockstore/confirmed", content, cts.Token);
+
+            if (response.IsSuccessStatusCode)
+                _logger.LogDebug(
+                    "VM {VmId}: pushed {Count} confirmed CIDs to node {NodeId}",
+                    vmId, confirmedCids.Count, node.Id);
+            else
+                _logger.LogDebug(
+                    "VM {VmId}: confirmed-blocks push returned {Status} from node {NodeId}",
+                    vmId, response.StatusCode, node.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "VM {VmId}: confirmed-blocks push to node {NodeId} failed (non-fatal)",
+                vmId, node.Id);
+        }
+    }
+
+    /// <summary>Returns the NodeAgent HTTP base URL for a node, handling CGNAT.</summary>
+    private static string? GetNodeAgentUrl(Node node)
+    {
+        if (string.IsNullOrEmpty(node.PublicIp)) return null;
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+
+        // CGNAT nodes: route via WireGuard tunnel IP
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+            return $"http://{node.CgnatInfo.TunnelIp}:{port}";
+
+        return $"http://{node.PublicIp}:{port}";
     }
 
     private async Task TriggerReseedAsync(
