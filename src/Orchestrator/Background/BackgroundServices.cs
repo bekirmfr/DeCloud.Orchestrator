@@ -119,14 +119,17 @@ public class VmSchedulerService : BackgroundService
     /// Finds VMs in Error + {Migrating | Recovering} with no command in flight
     /// and issues a CreateVm command to the best available target node.
     /// </summary>
-    private async Task ScanMigratingVmsAsync(
-        IServiceProvider services, CancellationToken ct)
+    private async Task ScanMigratingVmsAsync(IServiceProvider services, CancellationToken ct)
     {
         var dataStore = services.GetRequiredService<DataStore>();
         var blockStoreService = services.GetRequiredService<IBlockStoreService>();
         var commandService = services.GetRequiredService<INodeCommandService>();
 
-        var candidates = dataStore.GetActiveVMs()
+        // Query MongoDB directly — the in-memory ActiveVMs dict may not reflect
+        // LazysyncStatus updates written by MarkNodeVmsAsErrorAsync, which fetches
+        // and saves VMs via MongoDB bypassing the in-memory write path.
+        var allVms = await dataStore.GetAllVMsAsync();
+        var candidates = allVms
             .Where(v =>
                 v.Status == VmStatus.Error &&
                 (v.LazysyncStatus == LazysyncStatus.Migrating ||
