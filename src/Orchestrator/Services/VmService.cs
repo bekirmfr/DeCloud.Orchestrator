@@ -759,6 +759,7 @@ public class VmService : IVmService
         // STEP 4: Update VM assignment
         // ========================================
         vm.NodeId = selectedNode.Id;
+        vm.TargetNodeId = selectedNode.Id;
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
@@ -953,6 +954,7 @@ public class VmService : IVmService
                 Labels = vm.Labels,
                 // Per-service readiness definitions for VmReadinessMonitor on node agent
                 ReplicationFactor = vm.Spec.ReplicationFactor,
+                TargetNodeId = vm.TargetNodeId,
                 Services = vm.Services.Select(s => new
                 {
                     s.Name,

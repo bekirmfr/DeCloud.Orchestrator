@@ -195,6 +195,7 @@ public class VmSchedulerService : BackgroundService
         var commandId = Guid.NewGuid().ToString();
 
         fresh.NodeId = plan.TargetNodeId;
+        fresh.TargetNodeId = plan.TargetNodeId;
         fresh.Status = VmStatus.Provisioning;
         fresh.LazysyncStatus = LazysyncStatus.Migrating;
         fresh.StatusMessage = $"Migrating to node {plan.TargetNodeId} " +
@@ -268,7 +269,8 @@ public class VmSchedulerService : BackgroundService
                 ManifestRootCid = plan.ConfirmedManifestRootCid,
                 ConfirmedVersion = plan.ConfirmedVersion,
                 SourceNodeId = sourceNodeId,
-                ChunkMap = plan.ChunkMap
+                ChunkMap = plan.ChunkMap,
+                TargetNodeId = plan.TargetNodeId
             }),
             RequiresAck: true,
             TargetResourceId: fresh.Id

@@ -1,5 +1,4 @@
-﻿using Orchestrator.Services;
-using Orchestrator.Models;
+﻿using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services.VmScheduling;
 
