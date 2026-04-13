@@ -808,7 +808,7 @@ public class NodeService : INodeService
                     affectedVm.ActiveCommandId = null;
                     affectedVm.ActiveCommandType = null;
                     affectedVm.ActiveCommandIssuedAt = null;
-                    affectedVm.StatusMessage = "Deletion confirmed by node (reconciled - VM not found)";
+                    affectedVm.PushMessage("Deletion confirmed by node (reconciled — VM not found)", VmMessageLevel.Warning, "command");
                     await _dataStore.SaveVmAsync(affectedVm);
 
                     await failLifecycleManager.TransitionAsync(
@@ -887,7 +887,7 @@ public class NodeService : INodeService
             affectedVm.ActiveCommandId = null;
             affectedVm.ActiveCommandType = null;
             affectedVm.ActiveCommandIssuedAt = null;
-            affectedVm.StatusMessage = "Deletion confirmed by node";
+            affectedVm.PushMessage("Deletion confirmed by node", VmMessageLevel.Info, "command");
             await _dataStore.SaveVmAsync(affectedVm);
 
             await lifecycleManager.TransitionAsync(
@@ -1990,7 +1990,12 @@ public class NodeService : INodeService
             if (updated == null) continue;
 
             updated.LazysyncStatus = lazysyncStatus;
-            updated.StatusMessage = statusMessage;
+            var msgLevel = lazysyncStatus == LazysyncStatus.Unrecoverable
+                ? VmMessageLevel.Error
+                : lazysyncStatus == LazysyncStatus.Recovering
+                    ? VmMessageLevel.Warning
+                    : VmMessageLevel.Info;
+            updated.PushMessage(statusMessage, msgLevel, "healthmonitor");
             await _dataStore.SaveVmAsync(updated);
 
             _logger.Log(

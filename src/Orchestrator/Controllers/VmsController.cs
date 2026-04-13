@@ -191,6 +191,50 @@ public class VmsController : ControllerBase
     }
 
     /// <summary>
+    /// Update scheduling preferences (region/zone) on a stranded VM.
+    /// Only allowed when VM is in Error state — preferences are fixed once running.
+    /// The migration scheduler picks up the change on its next cycle (≤10 seconds).
+    /// </summary>
+    [HttpPatch("{vmId}/scheduling")]
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateSchedulingPreferences(
+        string vmId,
+        [FromBody] UpdateSchedulingRequest request)
+    {
+        var userId = GetUserId();
+        var vm = await _dataStore.GetVmAsync(vmId);
+
+        if (vm == null)
+            return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+            return Forbid();
+
+        if (vm.Status != VmStatus.Error)
+            return BadRequest(ApiResponse<bool>.Fail(
+                "INVALID_STATE",
+                "Scheduling preferences can only be changed when the VM is in Error state."));
+
+        vm.Spec.Region = string.IsNullOrWhiteSpace(request.Region) ? null : request.Region.Trim();
+        vm.Spec.Zone = string.IsNullOrWhiteSpace(request.Zone) ? null : request.Zone.Trim();
+        vm.StatusMessage = vm.Spec.Region == null
+            ? "Scheduling preference cleared — migrating to any available region."
+            : $"Scheduling preference updated to region '{vm.Spec.Region}'" +
+              (vm.Spec.Zone != null ? $" / zone '{vm.Spec.Zone}'" : "") +
+              " — awaiting eligible node.";
+        vm.UpdatedAt = DateTime.UtcNow;
+
+        await _dataStore.SaveVmAsync(vm);
+
+        _logger.LogInformation(
+            "VM {VmId}: scheduling preference updated to region={Region} zone={Zone} by user {UserId}",
+            vmId, vm.Spec.Region ?? "any", vm.Spec.Zone ?? "any", userId);
+
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    public record UpdateSchedulingRequest(string? Region, string? Zone);
+
+    /// <summary>
     /// Get VM metrics
     /// </summary>
     [HttpGet("{vmId}/metrics")]

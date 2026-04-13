@@ -519,7 +519,7 @@ public class VmService : IVmService
             _ => vm.Status
         };
 
-        vm.StatusMessage = $"Action {action} command {command.CommandId} sent to node";
+        vm.PushMessage($"{action} command sent to node.", VmMessageLevel.Info, "user");
 
         await _dataStore.SaveVmAsync(vm);
 
@@ -561,8 +561,9 @@ public class VmService : IVmService
         // Step 1: Mark as DELETING (waiting for node confirmation)
         var oldStatus = vm.Status;
         vm.Status = VmStatus.Deleting;
-        vm.StatusMessage = "Deletion initiated, waiting for node confirmation";
+        vm.Status = VmStatus.Deleting;
         vm.UpdatedAt = DateTime.UtcNow;
+        vm.PushMessage("Deletion initiated, waiting for node confirmation", VmMessageLevel.Info, "user");
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
@@ -601,7 +602,7 @@ public class VmService : IVmService
                 command.CommandId, vmId, vm.NodeId);
 
             // Update status message (keep command ID for legacy fallback)
-            vm.StatusMessage = $"Deletion command {command.CommandId} sent to node";
+            vm.PushMessage($"Delete command sent to node {vm.NodeId}.", VmMessageLevel.Info, "user");
             await _dataStore.SaveVmAsync(vm);
         }
         else

@@ -1234,6 +1234,15 @@ function renderVMsTable(vms) {
                            </button>`
             }
 
+                    <!-- Messages -->
+                    <button class="btn btn-sm btn-secondary" onclick="showVmMessages('${vm.id}', '${escapeHtml(vm.name)}')" title="View events"
+                        style="${(vm.messages?.length ?? 0) === 0 ? 'opacity:0.45' : ''}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        ${(vm.messages?.length ?? 0) > 0 ? `<span style="font-size:10px;font-weight:700;">${vm.messages.length}</span>` : ''}
+                    </button>
+
                     <!-- Delete -->
                     <button class="btn btn-sm btn-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2109,6 +2118,84 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
     modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 }
 
+/**
+ * Show the VM message queue in a modal timeline.
+ * Fetches the latest VM record so messages are always current.
+ */
+async function showVmMessages(vmId, vmName) {
+    const modal = document.getElementById('vm-messages-modal');
+    const body = document.getElementById('vm-messages-body');
+    const title = document.getElementById('vm-messages-title');
+    const sub = document.getElementById('vm-messages-subtitle');
+
+    title.textContent = `${vmName} — Events`;
+    sub.textContent = '';
+    body.innerHTML = '<div class="loading-spinner">Loading messages...</div>';
+    modal.classList.add('active');
+
+    try {
+        const res = await api(`/api/vms/${vmId}`);
+        const data = await res.json();
+        const vm = data?.data?.vm ?? data?.data ?? data;
+        const msgs = Array.isArray(vm?.messages) ? vm.messages : [];
+
+        sub.textContent = msgs.length
+            ? `${msgs.length} event${msgs.length !== 1 ? 's' : ''} — newest first`
+            : 'No events recorded yet';
+
+        if (msgs.length === 0) {
+            body.innerHTML = `
+                <div style="text-align:center;padding:48px 24px;color:var(--text-muted);">
+                    <div style="font-size:32px;margin-bottom:12px;">📋</div>
+                    <div style="font-size:14px;">No events recorded yet.</div>
+                    <div style="font-size:12px;margin-top:6px;">Events appear here as the VM changes state.</div>
+                </div>`;
+            return;
+        }
+
+        // Render newest first
+        const reversed = [...msgs].reverse();
+        body.innerHTML = `<div class="vm-msg-timeline">${reversed.map(renderVmMessage).join('')}</div>`;
+
+    } catch (err) {
+        console.error('[VM Messages] Failed to load:', err);
+        body.innerHTML = `<div style="padding:24px;color:var(--accent-danger);text-align:center;">Failed to load events.</div>`;
+    }
+}
+
+function renderVmMessage(msg) {
+    const level = (msg.level ?? 0); // 0=Info, 1=Warning, 2=Error
+    const dotCls = level === 2 ? 'msg-dot-error' : level === 1 ? 'msg-dot-warn' : 'msg-dot-info';
+    const ts = new Date(msg.timestamp);
+    const abs = ts.toLocaleString();
+    const rel = formatMsgAge(ts);
+    const src = escapeHtml(msg.source ?? 'system');
+    const text = escapeHtml(msg.text ?? '');
+
+    return `
+        <div class="vm-msg-row">
+            <div class="vm-msg-left">
+                <div class="vm-msg-dot ${dotCls}"></div>
+                <div class="vm-msg-line"></div>
+            </div>
+            <div class="vm-msg-content">
+                <div class="vm-msg-meta">
+                    <span class="vm-msg-source">${src}</span>
+                    <span class="vm-msg-time" title="${abs}">${rel}</span>
+                </div>
+                <div class="vm-msg-text">${text}</div>
+            </div>
+        </div>`;
+}
+
+function formatMsgAge(date) {
+    const secs = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
+}
+
 function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort) {
     // ========================================================================
     // SECURITY VALIDATION: Input Sanitization
@@ -2532,6 +2619,7 @@ window.showSshInstructions = showSshInstructions;
 window.openTerminal = openTerminal;
 window.openFileBrowser = openFileBrowser;
 window.showConnectInfo = showConnectInfo;
+window.showVmMessages = showVmMessages;
 window.showSSHConnectionModal = showSSHConnectionModal;
 window.downloadSSHBundle = downloadSSHBundle;
 window.downloadSSHConfig = downloadSSHConfig;

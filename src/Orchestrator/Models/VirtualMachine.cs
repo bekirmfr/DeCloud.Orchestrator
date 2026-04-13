@@ -175,6 +175,12 @@ public class VirtualMachine
     /// Used for timeout detection.
     /// </summary>
     public DateTime? ActiveCommandIssuedAt { get; set; }
+
+    /// <summary>
+    /// Bounded chronological log of significant VM lifecycle events.
+    /// Capped at 100 — oldest dropped when full. Persisted to MongoDB.
+    /// </summary>
+    public List<VmMessage> Messages { get; set; } = new();
 }
 
 public class VmSpec
@@ -327,6 +333,16 @@ public class VmSpec
     /// </summary>
     public int ReplicationFactor { get; set; } = 0;
 }
+
+public class VmMessage
+{
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public VmMessageLevel Level { get; set; } = VmMessageLevel.Info;
+    public string Source { get; set; } = string.Empty; // "scheduler", "healthmonitor", etc.
+    public string Text { get; set; } = string.Empty;
+}
+
+public enum VmMessageLevel { Info, Warning, Error }
 
 public class VmNetworkConfig
 {

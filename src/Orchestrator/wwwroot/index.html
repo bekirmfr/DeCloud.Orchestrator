@@ -13,9 +13,8 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap"
+          rel="stylesheet">
 
     <!-- Design System -->
     <link rel="stylesheet" href="/design-tokens.css">
@@ -107,8 +106,7 @@
                 <div class="nav-label" style="margin-top: 24px;">Infrastructure</div>
                 <a class="nav-item" data-page="marketplace-templates" onclick="showPage('marketplace-templates')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                            d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
                         <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
                         <line x1="12" y1="22.08" x2="12" y2="12" />
                     </svg>
@@ -141,16 +139,14 @@
                 <div class="nav-label" style="margin-top: 24px;">Configuration</div>
                 <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                            d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
                     </svg>
                     SSH Keys
                 </a>
                 <a class="nav-item" data-page="settings" onclick="showPage('settings')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3" />
-                        <path
-                            d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
                     </svg>
                     Settings
                 </a>
@@ -160,7 +156,7 @@
                 <div id="balance-container" class="balance-card balance-card-clickable" style="display: none;" onclick="handleBalanceCardClick()" title="View balance details">
                     <div class="balance-header">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
+                             stroke-width="2">
                             <circle cx="12" cy="12" r="10" />
                             <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
                             <path d="M12 18V6" />
@@ -179,9 +175,9 @@
                     <div class="wallet-dot"></div>
                     <span id="wallet-display">Not connected</span>
                     <button class="disconnect-btn" id="disconnect-btn" onclick="disconnect()" style="display: none;"
-                        title="Disconnect wallet">
+                            title="Disconnect wallet">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
+                             stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
@@ -202,7 +198,7 @@
                     <div class="header-actions">
                         <button class="btn btn-secondary" onclick="refreshData()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <path d="M23 4v6h-6M1 20v-6h6" />
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                             </svg>
@@ -210,7 +206,7 @@
                         </button>
                         <button class="btn btn-primary" onclick="openCreateVMModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
                             </svg>
@@ -224,7 +220,7 @@
                     <div class="stat-card">
                         <div class="stat-icon nodes">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <rect x="4" y="4" width="6" height="6" rx="1" />
                                 <rect x="14" y="4" width="6" height="6" rx="1" />
                                 <rect x="4" y="14" width="6" height="6" rx="1" />
@@ -237,7 +233,7 @@
                     <div class="stat-card">
                         <div class="stat-icon vms">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <rect x="2" y="3" width="20" height="14" rx="2" />
                                 <path d="M8 21h8M12 17v4" />
                             </svg>
@@ -248,7 +244,7 @@
                     <div class="stat-card">
                         <div class="stat-icon cpu">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <rect x="4" y="4" width="16" height="16" rx="2" />
                                 <rect x="9" y="9" width="6" height="6" />
                                 <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
@@ -260,7 +256,7 @@
                     <div class="stat-card">
                         <div class="stat-icon memory">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
                             </svg>
                         </div>
@@ -270,7 +266,7 @@
                     <div class="stat-card">
                         <div class="stat-icon storage">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <path d="M6 19v-3M10 19v-6M14 19v-9M18 19V5" />
                             </svg>
                         </div>
@@ -303,7 +299,7 @@
                     <div class="header-actions">
                         <button class="btn btn-primary" onclick="openCreateVMModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
                             </svg>
@@ -348,7 +344,7 @@
                     <div class="header-actions">
                         <button class="btn btn-secondary" onclick="loadNodes()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <path d="M23 4v6h-6M1 20v-6h6" />
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                             </svg>
@@ -364,7 +360,7 @@
                             <div class="filter-group filter-group-wide">
                                 <label class="form-label">Search Tags</label>
                                 <input type="text" class="form-input" id="mp-filter-tags"
-                                    placeholder="e.g. gpu, high-memory, nvme (comma-separated)">
+                                       placeholder="e.g. gpu, high-memory, nvme (comma-separated)">
                             </div>
                             <div class="filter-group">
                                 <label class="form-label">Region</label>
@@ -383,17 +379,17 @@
                             <div class="filter-group">
                                 <label class="form-label">Max Price (USDC/point/hr)</label>
                                 <input type="number" class="form-input" id="mp-filter-price" placeholder="e.g. 0.05"
-                                    step="0.001" min="0">
+                                       step="0.001" min="0">
                             </div>
                             <div class="filter-group">
                                 <label class="form-label">Min Uptime %</label>
                                 <input type="number" class="form-input" id="mp-filter-uptime" placeholder="e.g. 95"
-                                    min="0" max="100">
+                                       min="0" max="100">
                             </div>
                             <div class="filter-group">
                                 <label class="form-label">Min Compute Points</label>
                                 <input type="number" class="form-input" id="mp-filter-capacity" placeholder="e.g. 10"
-                                    min="0">
+                                       min="0">
                             </div>
                             <div class="filter-group filter-checkbox-group">
                                 <label class="filter-checkbox-label">
@@ -406,7 +402,7 @@
                             <div class="filter-group filter-actions">
                                 <button class="btn btn-primary" onclick="searchNodes()">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                        stroke-width="2">
+                                         stroke-width="2">
                                         <circle cx="11" cy="11" r="8" />
                                         <line x1="21" y1="21" x2="16.65" y2="16.65" />
                                     </svg>
@@ -422,8 +418,10 @@
                 <div id="mp-featured-section">
                     <h3 class="mp-section-title">Featured Nodes</h3>
                     <div class="mp-nodes-grid" id="mp-featured-nodes">
-                        <p class="text-muted" style="text-align: center; padding: 40px; grid-column: 1 / -1;">Loading
-                            featured nodes...</p>
+                        <p class="text-muted" style="text-align: center; padding: 40px; grid-column: 1 / -1;">
+                            Loading
+                            featured nodes...
+                        </p>
                     </div>
                 </div>
 
@@ -448,7 +446,7 @@
                     <div class="header-actions">
                         <button class="btn btn-primary" onclick="openAddSSHKeyModal()">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
+                                 stroke-width="2">
                                 <line x1="12" y1="5" x2="12" y2="19" />
                                 <line x1="5" y1="12" x2="19" y2="12" />
                             </svg>
@@ -494,7 +492,7 @@
                         <div class="form-group">
                             <label class="form-label">Orchestrator URL</label>
                             <input type="text" class="form-input" id="settings-orchestrator-url"
-                                placeholder="http://localhost:5050">
+                                   placeholder="http://localhost:5050">
                             <p class="form-help">
                                 The backend server URL for DeCloud services
                             </p>
@@ -502,7 +500,7 @@
                         <div class="form-group">
                             <label class="form-label">Connected Wallet</label>
                             <input type="text" class="form-input" id="settings-wallet"
-                                placeholder="Connect wallet to see address" disabled>
+                                   placeholder="Connect wallet to see address" disabled>
                             <p class="form-help">
                                 Your Ethereum wallet address used for authentication
                             </p>
@@ -525,12 +523,12 @@
                     <div class="page-header-actions">
                         <div class="search-box">
                             <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
-                                stroke="currentColor" stroke-width="2">
+                                 stroke="currentColor" stroke-width="2">
                                 <circle cx="11" cy="11" r="8"></circle>
                                 <path d="M21 21l-4.35-4.35"></path>
                             </svg>
                             <input type="text" class="search-input" id="template-search"
-                                placeholder="Search templates...">
+                                   placeholder="Search templates...">
                         </div>
                     </div>
                 </header>
@@ -626,7 +624,8 @@
                         <option value="2">Balanced (Cost-Optimized)</option>
                         <option value="3">Burstable (Lowest Cost)</option>
                     </select>
-                    <div class="tier-info" id="tier-info">updateTierInfo
+                    <div class="tier-info" id="tier-info">
+                        updateTierInfo
                         <div class="tier-description">
                             Balanced performance and cost, 2:1 CPU overcommit
                         </div>
@@ -758,7 +757,7 @@
                 <div class="form-group">
                     <label class="form-label">Public Key</label>
                     <textarea class="form-input" id="ssh-key-public" rows="5"
-                        placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
+                              placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
                     <p class="form-help">
                         Paste your SSH public key (usually from ~/.ssh/id_rsa.pub)
                     </p>
@@ -835,9 +834,8 @@
                 <div class="deploy-template-banner">
                     <div class="banner-icon">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path
-                                d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                             stroke-width="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
                             <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
                             <line x1="12" y1="22.08" x2="12" y2="12" />
                         </svg>
@@ -861,17 +859,17 @@
                         <div class="form-group">
                             <label class="form-label">CPU Cores</label>
                             <input type="number" class="form-input" id="deploy-cpu" value="2" min="1" max="32"
-                                onchange="window.templateDetail.updateDeployCostEstimate()">
+                                   onchange="window.templateDetail.updateDeployCostEstimate()">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Memory (MB)</label>
                             <input type="number" class="form-input" id="deploy-memory" value="2048" min="512" step="512"
-                                onchange="window.templateDetail.updateDeployCostEstimate()">
+                                   onchange="window.templateDetail.updateDeployCostEstimate()">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Disk (GB)</label>
                             <input type="number" class="form-input" id="deploy-disk" value="20" min="10"
-                                onchange="window.templateDetail.updateDeployCostEstimate()">
+                                   onchange="window.templateDetail.updateDeployCostEstimate()">
                         </div>
                     </div>
 
@@ -879,14 +877,14 @@
                         <div class="form-group">
                             <label class="form-label">Quality Tier</label>
                             <select class="form-input" id="deploy-quality-tier"
-                                onchange="window.templateDetail.updateDeployCostEstimate()">
+                                    onchange="window.templateDetail.updateDeployCostEstimate()">
                                 <!-- Options populated by JS based on template minimums -->
                             </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Bandwidth Tier</label>
                             <select class="form-input" id="deploy-bandwidth-tier"
-                                onchange="window.templateDetail.updateDeployCostEstimate()">
+                                    onchange="window.templateDetail.updateDeployCostEstimate()">
                                 <!-- Options populated by JS based on template minimums -->
                             </select>
                         </div>
@@ -895,7 +893,7 @@
                     <div class="form-group">
                         <label class="form-label">Replication Factor</label>
                         <select class="form-input" id="deploy-replication-factor"
-                            onchange="window.templateDetail.updateDeployCostEstimate()">
+                                onchange="window.templateDetail.updateDeployCostEstimate()">
                             <option value="0">Ephemeral (no replication)</option>
                             <option value="1">Single replica (1×)</option>
                             <option value="3" selected>Standard (3×)</option>
@@ -913,7 +911,7 @@
                                 <span class="label-hint">(Geographic location - important for privacy browsing)</span>
                             </label>
                             <select class="form-input" id="deploy-region"
-                                onchange="window.templateDetail.onRegionChange()">
+                                    onchange="window.templateDetail.onRegionChange()">
                                 <option value="">Any region (default)</option>
                                 <!-- Options populated by JS from online nodes -->
                             </select>
@@ -941,9 +939,11 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary"
-                    onclick="window.templateDetail.closeDeployTemplateModal()">Cancel</button>
+                        onclick="window.templateDetail.closeDeployTemplateModal()">
+                    Cancel
+                </button>
                 <button class="btn btn-primary" id="deploy-template-btn-submit"
-                    onclick="window.templateDetail.deployFromTemplate()">
+                        onclick="window.templateDetail.deployFromTemplate()">
                     Deploy Now
                 </button>
             </div>
@@ -1037,6 +1037,28 @@
     <!-- Main Application Script - Vite will handle this -->
     <script type="module" src="/src/app.js"></script>
     <script type="module" src="/src/direct-access.js"></script>
+    <!-- VM Messages Modal -->
+    <div class="modal-overlay" id="vm-messages-modal">
+        <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title" id="vm-messages-title">VM Events</h2>
+                    <p class="modal-subtitle" id="vm-messages-subtitle" style="font-size:12px;color:var(--text-muted);margin-top:2px;"></p>
+                </div>
+                <button class="modal-close" onclick="closeModal('vm-messages-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="vm-messages-body" style="padding: 0; max-height: 520px; overflow-y: auto;">
+                <div class="loading-spinner">Loading messages...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('vm-messages-modal')">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
-
 </html>

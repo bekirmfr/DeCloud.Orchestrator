@@ -172,6 +172,29 @@ public class VmSchedulerService : BackgroundService
             _logger.LogWarning(
                 "VM {VmId}: no migration target ({Status}: {Reason})",
                 vm.Id, plan.MigrationStatus, plan.Reason);
+
+            // Surface the stall reason to the user via StatusMessage so the
+            // dashboard shows why the VM hasn't migrated yet. The scheduler
+            // will retry automatically — no manual intervention needed unless
+            // the user wants to change their scheduling preference.
+            var strandedVm = await dataStore.GetVmAsync(vm.Id);
+            if (strandedVm != null)
+            {
+                var newMessage = plan.MigrationStatus == "NoTarget"
+                    ? $"Waiting for an available node ({plan.Reason}). " +
+                      $"Migration will proceed automatically when one becomes available, " +
+                      $"or update your region/zone preference to migrate sooner."
+                    : $"Migration blocked: {plan.Reason}";
+
+                // Only push a new message if the text changed — the scheduler
+                // retries every 10s and we don't want 6 identical entries per minute.
+                if (strandedVm.StatusMessage != newMessage)
+                {
+                    strandedVm.PushMessage(newMessage, VmMessageLevel.Warning, "scheduler");
+                    strandedVm.UpdatedAt = DateTime.UtcNow;
+                    await dataStore.SaveVmAsync(strandedVm);
+                }
+            }
             return;
         }
 
@@ -201,8 +224,10 @@ public class VmSchedulerService : BackgroundService
         fresh.TargetNodeId = plan.TargetNodeId;
         fresh.Status = VmStatus.Provisioning;
         fresh.LazysyncStatus = LazysyncStatus.Migrating;
-        fresh.StatusMessage = $"Migrating to node {plan.TargetNodeId} " +
-                                      $"(confirmedV={plan.ConfirmedVersion}, {plan.MigrationStatus})";
+        fresh.PushMessage(
+            $"Migrating to node {plan.TargetNodeId} " +
+            $"(confirmedV={plan.ConfirmedVersion}, {plan.MigrationStatus}).",
+            VmMessageLevel.Info, "scheduler");
         fresh.ActiveCommandId = commandId;
         fresh.ActiveCommandType = NodeCommandType.CreateVm;
         fresh.ActiveCommandIssuedAt = DateTime.UtcNow;

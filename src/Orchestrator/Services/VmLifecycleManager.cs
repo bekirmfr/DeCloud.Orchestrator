@@ -185,8 +185,27 @@ public class VmLifecycleManager : IVmLifecycleManager
         // ════════════════════════════════════════════════════════════════
 
         vm.Status = newStatus;
-        vm.StatusMessage = context.StatusMessage;
         vm.UpdatedAt = DateTime.UtcNow;
+
+        // Push status change into the message queue.
+        // StatusMessage is kept in sync by PushMessage for backwards compatibility.
+        if (!string.IsNullOrEmpty(context.StatusMessage))
+        {
+            var level = context.Trigger switch
+            {
+                TransitionTrigger.CommandFailed => VmMessageLevel.Error,
+                TransitionTrigger.Timeout => VmMessageLevel.Warning,
+                TransitionTrigger.NodeOffline => VmMessageLevel.Warning,
+                _ => VmMessageLevel.Info
+            };
+            var source = context.Source?.Split('.').Last() ?? "lifecycle";
+            vm.PushMessage(context.StatusMessage, level, source);
+        }
+        else
+        {
+            // No message text — just record the state change silently
+            vm.StatusMessage = null;
+        }
 
         // Update power state and timestamps based on target status
         switch (newStatus)
