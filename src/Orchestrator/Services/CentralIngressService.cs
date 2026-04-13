@@ -401,28 +401,16 @@ public class CentralIngressService : ICentralIngressService
 
         _logger.LogDebug("VM {VmId} started - checking for auto-registration", vmId);
 
-        // Check if VM already has a route or if it should be registered
-        if (!_routes.ContainsKey(vmId))
-        {
-            // Check if VM had ingress enabled before
-            var vm = await _dataStore.GetVmAsync(vmId);
-            if (vm != null)
-            {
-                if (vm.IngressConfig?.DefaultSubdomainEnabled != false)
-                {
-                    await RegisterVmAsync(vmId, vm.IngressConfig?.DefaultPort, ct);
-                }
-            }
-        }
-        else
-        {
-            // Re-activate existing route
-            if (_routes.TryGetValue(vmId, out var route))
-            {
-                route.Status = CentralRouteStatus.Active;
-                route.UpdatedAt = DateTime.UtcNow;
-            }
-        }
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null) return;
+
+        if (vm.IngressConfig?.DefaultSubdomainEnabled == false) return;
+
+        // Always re-register — the VM may have migrated to a different node
+        // since the route was first created. Re-registering rebuilds the
+        // upstream target from the current vm.NodeId, pointing Caddy to
+        // the correct node agent after migration.
+        await RegisterVmAsync(vmId, vm.IngressConfig?.DefaultPort, ct);
 
         // Re-activate paused custom domains for this VM
         var reactivated = false;

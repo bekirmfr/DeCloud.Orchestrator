@@ -87,13 +87,13 @@ public class TerminalService : ITerminalService
             return TerminalAccessResult.Fail($"VM is not running (status: {vm.Status})");
         }
 
-        // Get the node
-        var node = await _dataStore.GetNodeAsync(vmId);
-        if (string.IsNullOrEmpty(vm.NodeId) ||
-            node == null)
-        {
-            return TerminalAccessResult.Fail("Node not available");
-        }
+        // Get the node the VM is currently running on
+        if (string.IsNullOrEmpty(vm.NodeId))
+            return TerminalAccessResult.Fail("VM has no assigned node");
+
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
+            return TerminalAccessResult.Fail("Node not found");
 
         // Get VM IP
         var vmIp = vm.NetworkConfig?.PrivateIp;
