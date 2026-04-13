@@ -123,6 +123,7 @@ public class VmSchedulerService : BackgroundService
     {
         var dataStore = services.GetRequiredService<DataStore>();
         var blockStoreService = services.GetRequiredService<IBlockStoreService>();
+        var schedulingService = services.GetRequiredService<IVmSchedulingService>();
         var commandService = services.GetRequiredService<INodeCommandService>();
 
         // Query MongoDB directly — the in-memory ActiveVMs dict may not reflect
@@ -148,7 +149,7 @@ public class VmSchedulerService : BackgroundService
 
             try
             {
-                await MigrateVmAsync(vm, dataStore, blockStoreService, commandService, ct);
+                await MigrateVmAsync(vm, dataStore, blockStoreService, schedulingService, commandService, ct);
             }
             catch (Exception ex)
             {
@@ -161,33 +162,66 @@ public class VmSchedulerService : BackgroundService
         VirtualMachine vm,
         DataStore dataStore,
         IBlockStoreService blockStoreService,
+        IVmSchedulingService schedulingService,
         INodeCommandService commandService,
         CancellationToken ct)
     {
-        // ── Plan ────────────────────────────────────────────────────────────
-        var plan = await blockStoreService.PlanMigrationAsync(vm.Id, [], ct);
-
-        if (plan.TargetNodeId == null)
+        // ── Step 1: Get manifest from blockstore ─────────────────────────────
+        var manifest = await blockStoreService.GetMigrationManifestAsync(vm.Id, ct);
+        if (manifest == null)
         {
-            _logger.LogWarning(
-                "VM {VmId}: no migration target ({Status}: {Reason})",
-                vm.Id, plan.MigrationStatus, plan.Reason);
+            _logger.LogWarning("VM {VmId}: no confirmed replica — unrecoverable", vm.Id);
+            var unrecoverable = await dataStore.GetVmAsync(vm.Id);
+            if (unrecoverable != null)
+            {
+                unrecoverable.PushMessage(
+                    "No confirmed replica exists — VM cannot be migrated automatically. " +
+                    "Redeployment from scratch required.",
+                    VmMessageLevel.Error, "scheduler");
+                unrecoverable.UpdatedAt = DateTime.UtcNow;
+                await dataStore.SaveVmAsync(unrecoverable);
+            }
+            return;
+        }
 
-            // Surface the stall reason to the user via StatusMessage so the
-            // dashboard shows why the VM hasn't migrated yet. The scheduler
-            // will retry automatically — no manual intervention needed unless
-            // the user wants to change their scheduling preference.
+        // ── Step 2: Select target node ───────────────────────────────────────
+        // Region/zone come from vm.Spec — the user's preference, not the source
+        // node's geography. Architecture still required (binary compatibility).
+        var sourceNode = await dataStore.GetNodeAsync(vm.NodeId ?? "");
+        Node? targetNode;
+        try
+        {
+            targetNode = await schedulingService.SelectBestNodeForVmAsync(
+                vm.Spec,
+                vm.Spec.QualityTier,
+                preferredRegion: vm.Spec.Region,
+                preferredZone: vm.Spec.Zone,
+                requiredArchitecture: sourceNode?.Architecture,
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "VM {VmId}: scheduling service failed during migration", vm.Id);
+            return;
+        }
+
+        if (targetNode == null)
+        {
+            _logger.LogWarning("VM {VmId}: no eligible migration target", vm.Id);
+
             var strandedVm = await dataStore.GetVmAsync(vm.Id);
             if (strandedVm != null)
             {
-                var newMessage = plan.MigrationStatus == "NoTarget"
-                    ? $"Waiting for an available node ({plan.Reason}). " +
-                      $"Migration will proceed automatically when one becomes available, " +
-                      $"or update your region/zone preference to migrate sooner."
-                    : $"Migration blocked: {plan.Reason}";
+                var regionHint = !string.IsNullOrEmpty(vm.Spec.Region)
+                    ? $" in region '{vm.Spec.Region}'"
+                    : "";
+                var newMessage =
+                    $"Waiting for an available node{regionHint}. " +
+                    "Migration will proceed automatically when one becomes available" +
+                    (!string.IsNullOrEmpty(vm.Spec.Region)
+                        ? ", or update your region/zone preference to migrate sooner."
+                        : ".");
 
-                // Only push a new message if the text changed — the scheduler
-                // retries every 10s and we don't want 6 identical entries per minute.
                 if (strandedVm.StatusMessage != newMessage)
                 {
                     strandedVm.PushMessage(newMessage, VmMessageLevel.Warning, "scheduler");
@@ -198,45 +232,49 @@ public class VmSchedulerService : BackgroundService
             return;
         }
 
-        // ── Re-fetch to avoid stale overwrite + re-check idempotency gate ───
+        var migrationStatus = manifest.ConfirmedVersion == manifest.CurrentVersion
+            ? "Ready"
+            : "ReadyWithDataLoss";
+
+        // ── Re-fetch + idempotency gate ──────────────────────────────────────
+        // Another scan cycle or concurrent process may have already acted on this VM.
         var fresh = await dataStore.GetVmAsync(vm.Id);
         if (fresh == null ||
             fresh.ActiveCommandId != null ||
             fresh.Status != VmStatus.Error)
         {
-            _logger.LogDebug(
-                "VM {VmId}: state changed since scan — skipping", vm.Id);
+            _logger.LogDebug("VM {VmId}: state changed since scan — skipping", vm.Id);
             return;
         }
 
         _logger.LogInformation(
             "VM {VmId} ({LazysyncStatus}): {SourceNode} → {TargetNode} " +
-            "confirmedV={CV} ({PlanStatus})",
+            "confirmedV={CV} ({MigrationStatus})",
             fresh.Id, fresh.LazysyncStatus,
-            fresh.NodeId ?? "none", plan.TargetNodeId,
-            plan.ConfirmedVersion, plan.MigrationStatus);
+            fresh.NodeId ?? "none", targetNode.Id,
+            manifest.ConfirmedVersion, migrationStatus);
 
         // ── Atomic authority transfer ────────────────────────────────────────
         var sourceNodeId = fresh.NodeId;
         var commandId = Guid.NewGuid().ToString();
 
-        fresh.NodeId = plan.TargetNodeId;
-        fresh.TargetNodeId = plan.TargetNodeId;
+        fresh.NodeId = targetNode.Id;
+        fresh.TargetNodeId = targetNode.Id;
         fresh.Status = VmStatus.Provisioning;
         fresh.LazysyncStatus = LazysyncStatus.Migrating;
-        fresh.PushMessage(
-            $"Migrating to node {plan.TargetNodeId} " +
-            $"(confirmedV={plan.ConfirmedVersion}, {plan.MigrationStatus}).",
-            VmMessageLevel.Info, "scheduler");
         fresh.ActiveCommandId = commandId;
         fresh.ActiveCommandType = NodeCommandType.CreateVm;
         fresh.ActiveCommandIssuedAt = DateTime.UtcNow;
         fresh.UpdatedAt = DateTime.UtcNow;
+        fresh.PushMessage(
+            $"Migrating to node {targetNode.Id} " +
+            $"(confirmedV={manifest.ConfirmedVersion}, {migrationStatus}).",
+            VmMessageLevel.Info, "scheduler");
 
         await dataStore.SaveVmAsync(fresh);
 
         dataStore.RegisterCommand(
-            commandId, fresh.Id, plan.TargetNodeId, NodeCommandType.CreateVm);
+            commandId, fresh.Id, targetNode.Id, NodeCommandType.CreateVm);
 
         // ── SSH key ──────────────────────────────────────────────────────────
         string? sshPublicKey = fresh.Spec.SshPublicKey;
@@ -264,52 +302,36 @@ public class VmSchedulerService : BackgroundService
                 MemoryBytes = fresh.Spec.MemoryBytes,
                 DiskBytes = fresh.Spec.DiskBytes,
                 ImageId = fresh.Spec.ImageId,
-                BaseImageUrl = (string?)null,   // NodeAgent resolves from ImageId
+                BaseImageUrl = (string?)null,
                 SshPublicKey = sshPublicKey,
                 GpuMode = (int)fresh.Spec.GpuMode,
-                GpuPciAddress = (string?)null,    // re-assigned by target scheduler
+                GpuPciAddress = (string?)null,
                 ContainerImage = fresh.Spec.ContainerImage,
                 Network = new
                 {
                     MacAddress = "",
-                    IpAddress = (string?)null,    // new IP on target
+                    IpAddress = (string?)null,
                     Gateway = "",
                     VxlanVni = 0,
                     AllowedPorts = new List<int>()
                 },
-                Password = (string?)null,    // SSH key + wallet decryption instead
-                UserData = fresh.Spec.UserData,
-                Labels = fresh.Labels,
-                ReplicationFactor = fresh.Spec.ReplicationFactor,
-                Services = fresh.Services.Select(s => new
-                {
-                    s.Name,
-                    s.Port,
-                    s.Protocol,
-                    CheckType = s.CheckType.ToString(),
-                    s.HttpPath,
-                    s.ExecCommand,
-                    s.TimeoutSeconds
-                }).ToList(),
-
-                // Migration fields — read by NodeAgent disk reconstruction (Phase D step 4)
+                Password = (string?)null,
                 IsMigration = true,
-                ManifestRootCid = plan.ConfirmedManifestRootCid,
-                ConfirmedVersion = plan.ConfirmedVersion,
+                ManifestRootCid = manifest.ConfirmedRootCid,
+                ConfirmedVersion = manifest.ConfirmedVersion,
                 SourceNodeId = sourceNodeId,
-                ChunkMap = plan.ChunkMap,
-                TargetNodeId = plan.TargetNodeId
+                ChunkMap = manifest.ChunkMap,
+                TargetNodeId = targetNode.Id,
             }),
             RequiresAck: true,
             TargetResourceId: fresh.Id
         );
 
-        var result = await commandService.DeliverCommandAsync(plan.TargetNodeId, command, ct);
+        await commandService.DeliverCommandAsync(targetNode.Id, command);
 
         _logger.LogInformation(
-            "VM {VmId}: CreateVm delivered to {TargetNode} " +
-            "(delivery={Method}, commandId={CommandId})",
-            fresh.Id, plan.TargetNodeId, result.Method, commandId);
+            "Migration command {CommandId} delivered to node {NodeId} for VM {VmId}",
+            commandId, targetNode.Id, fresh.Id);
     }
 }
 
