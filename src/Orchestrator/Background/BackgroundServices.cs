@@ -322,6 +322,7 @@ public class VmSchedulerService : BackgroundService
                 SourceNodeId = sourceNodeId,
                 ChunkMap = manifest.ChunkMap,
                 TargetNodeId = targetNode.Id,
+                ReplicationFactor = fresh.Spec.ReplicationFactor
             }),
             RequiresAck: true,
             TargetResourceId: fresh.Id
