@@ -160,6 +160,38 @@ public class BlockStoreController : ControllerBase
             request.CapacityBytes / (1024 * 1024 * 1024),
             bootstrapPeers.Count);
 
+        // A blockstore joining (or rejoining after restart) may have lost its FlatFS data.
+        // Reset ConfirmedVersion so LazysyncManager re-audits actual DHT provider state.
+        // Awaited synchronously — GetVmsByNodeAsync is a single indexed MongoDB query
+        // and SaveManifestAsync is an upsert; the total latency is well under 100ms.
+        try
+        {
+            var hostedVms = await _dataStore.GetVmsByNodeAsync(request.NodeId);
+            foreach (var vm in hostedVms.Where(v =>
+                v.Status == VmStatus.Running &&
+                v.Spec.ReplicationFactor > 0))
+            {
+                var manifest = await _dataStore.GetManifestAsync(vm.Id);
+                if (manifest != null && manifest.ConfirmedVersion > 0)
+                {
+                    manifest.ConfirmedVersion = 0;
+                    manifest.ConfirmedRootCid = null;
+                    manifest.ConfirmedChunkMap = null;
+                    await _dataStore.SaveManifestAsync(manifest);
+                    _logger.LogInformation(
+                        "Blockstore join: reset ConfirmedVersion for VM {VmId} on node {NodeId} " +
+                        "— blockstore may have lost FlatFS data on restart",
+                        vm.Id, request.NodeId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Blockstore join: manifest reset sweep failed for node {NodeId} (non-fatal)",
+                request.NodeId);
+        }
+
         return Ok(new
         {
             success = true,
