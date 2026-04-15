@@ -328,12 +328,15 @@ public class BlockStoreController : ControllerBase
                 await _dataStore.SaveVmAsync(vm);
             }
         }
-        else if (manifest.Version == 1)
+        else if (manifest.Version >= 1)
         {
-            // First complete manifest registered — advance to Replicating
-            // (LazysyncManager will advance to Protected once DHT confirms)
+            // First complete manifest registered (or re-registered after migration) —
+            // advance to Replicating. LazysyncManager advances to Protected once DHT confirms.
+            // Migrating is included: after migration the daemon restarts its cycle and
+            // may push version 1 again — without this the status stays Migrating forever.
             var vm = await _dataStore.GetVmAsync(request.VmId);
-            if (vm != null && vm.LazysyncStatus is LazysyncStatus.Pending or LazysyncStatus.Seeding)
+            if (vm != null && vm.LazysyncStatus is
+                LazysyncStatus.Pending or LazysyncStatus.Seeding or LazysyncStatus.Migrating)
             {
                 vm.LazysyncStatus = LazysyncStatus.Replicating;
                 await _dataStore.SaveVmAsync(vm);

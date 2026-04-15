@@ -774,6 +774,13 @@ public class NodeService : INodeService
         affectedVm.ActiveCommandType = null;
         affectedVm.ActiveCommandIssuedAt = null;
 
+        // Persist the cleared ActiveCommandId unconditionally. The status-transition
+        // branches below may not match (e.g. VM is already Error due to a prior timeout)
+        // leaving the field dirty in memory only. Saving here ensures late acks always
+        // unblock the VM regardless of which branch fires.
+        affectedVm.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveVmAsync(affectedVm);
+
         // ====================================================================
         // HANDLE COMMAND FAILURE
         // ====================================================================
@@ -905,6 +912,72 @@ public class NodeService : INodeService
                 affectedVm.Id,
                 VmStatus.Running,
                 TransitionContext.CommandAck(commandId, nodeId, ack.CompletedAt));
+
+            // ── Post-migration replication recovery ──────────────────────────────
+            // LazysyncStatus.Migrating is only set by MigrateVmAsync — this branch
+            // fires exclusively on successful migration acks, not on fresh creates.
+            if (affectedVm.LazysyncStatus == LazysyncStatus.Migrating &&
+                affectedVm.Spec.ReplicationFactor > 0)
+            {
+                var postMigration = await _dataStore.GetVmAsync(affectedVm.Id);
+                if (postMigration != null)
+                {
+                    // Step 1: Invalidate the stale manifest confirmation.
+                    //
+                    // ConfirmedVersion was set pre-migration when blocks existed on the
+                    // source node. The source node's blockstore was wiped on restart.
+                    // Since Version == ConfirmedVersion, LazysyncManager never re-audits.
+                    // Resetting to 0 re-enters the manifest into the pending audit queue
+                    // (GetPendingAuditManifestsAsync filters: Version > ConfirmedVersion).
+                    var manifest = await _dataStore.GetManifestAsync(postMigration.Id);
+                    if (manifest != null)
+                    {
+                        manifest.ConfirmedVersion = 0;
+                        manifest.ConfirmedRootCid = null;
+                        manifest.ConfirmedChunkMap = null;
+                        await _dataStore.SaveManifestAsync(manifest);
+                        _logger.LogInformation(
+                            "VM {VmId}: manifest ConfirmedVersion reset to 0 — re-audit queued",
+                            postMigration.Id);
+                    }
+
+                    // Step 2: Trigger reseed on the target node.
+                    //
+                    // ReseedVm deletes lazysync.json → LazysyncDaemon re-pushes all blocks
+                    // to the local blockstore → re-announces each block in DHT and via
+                    // GossipSub new-blocks topic. Connected blockstores (e.g. source node
+                    // after restart) receive the announcements and fetch missing blocks via
+                    // bitswap, becoming remote DHT providers. LazysyncManager confirms once
+                    // ≥ RF remote providers are detected across the sampled CIDs.
+                    var commandSvc = _serviceProvider.GetRequiredService<INodeCommandService>();
+                    var reseedId = Guid.NewGuid().ToString();
+                    _dataStore.RegisterCommand(reseedId, postMigration.Id, nodeId, NodeCommandType.ReseedVm);
+                    var reseedCmd = new NodeCommand(
+                        reseedId,
+                        NodeCommandType.ReseedVm,
+                        JsonSerializer.Serialize(new { vmId = postMigration.Id }),
+                        RequiresAck: false,
+                        TargetResourceId: postMigration.Id);
+                    await commandSvc.DeliverCommandAsync(nodeId, reseedCmd);
+
+                    // Step 3: Reset LazysyncStatus.
+                    // Replicating = blocks in blockstore, awaiting DHT confirmation.
+                    // LazysyncManager will advance to Protected once RF providers confirmed.
+                    postMigration.LazysyncStatus = LazysyncStatus.Replicating;
+                    postMigration.UpdatedAt = DateTime.UtcNow;
+                    postMigration.PushMessage(
+                        "Migration complete — manifest re-audit and reseed triggered. " +
+                        "Waiting for external replication confirmation.",
+                        VmMessageLevel.Info, "migration");
+                    await _dataStore.SaveVmAsync(postMigration);
+
+                    _logger.LogInformation(
+                        "VM {VmId}: post-migration recovery initiated — " +
+                        "ConfirmedVersion reset, ReseedVm sent to node {NodeId}, " +
+                        "LazysyncStatus → Replicating",
+                        postMigration.Id, nodeId);
+                }
+            }
         }
         else if (affectedVm.Status == VmStatus.Stopping)
         {

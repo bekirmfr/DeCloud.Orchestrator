@@ -217,11 +217,16 @@ public class CentralIngressService : ICentralIngressService
             return null;
         }
 
-        var vmPrivateIp = vm.NetworkConfig.PrivateIp;
+        // VmPrivateIp is stored as metadata but is not used for Caddy routing
+        // (the upstream is the node agent at NodePublicIp:5100, which proxies
+        // internally to the VM). Log a warning for observability but continue.
+        var vmPrivateIp = vm.NetworkConfig?.PrivateIp ?? string.Empty;
         if (string.IsNullOrEmpty(vmPrivateIp))
         {
-            _logger.LogWarning("VM {VmId} has no private IP", vmId);
-            return null;
+            _logger.LogWarning(
+                "VM {VmId} has no private IP on orchestrator record — ingress will route " +
+                "via node agent ({NodeId}); this is normal for freshly migrated VMs",
+                vmId, vm.NodeId);
         }
 
         // Create or update route

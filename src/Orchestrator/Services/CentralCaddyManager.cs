@@ -267,8 +267,11 @@ public interface ICentralCaddyManager
         var existingRoutes = await GetExistingNonVmRoutesAsync(ct);
 
         // Build VM subdomain routes
+        // VmPrivateIp is metadata only — BuildRouteConfig routes to NodePublicIp:5100
+        // and rewrites to /api/vms/{vmId}/proxy/http/{port}. Filtering on VmPrivateIp
+        // silently drops migrated VMs whose private IP hasn't been updated on the new node.
         var caddyVmRoutes = vmRoutes
-            .Where(r => !string.IsNullOrEmpty(r.VmPrivateIp) && !string.IsNullOrEmpty(r.NodePublicIp))
+            .Where(r => !string.IsNullOrEmpty(r.NodePublicIp))
             .Select(BuildRouteConfig)
             .ToList();
 

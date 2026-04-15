@@ -266,6 +266,14 @@ public class VmSchedulerService : BackgroundService
         fresh.ActiveCommandType = NodeCommandType.CreateVm;
         fresh.ActiveCommandIssuedAt = DateTime.UtcNow;
         fresh.UpdatedAt = DateTime.UtcNow;
+        // Clear stale IP/access info from the source node. WaitForPrivateIpAsync in
+        // OnVmBecameRunningAsync will immediately return true on a non-null PrivateIp,
+        // causing RegisterVmAsync to build a Caddy upstream pointing to the old host's
+        // VM IP. The correct IP arrives from the target node's first heartbeat.
+        fresh.NetworkConfig ??= new VmNetworkConfig();
+        fresh.NetworkConfig.PrivateIp = null;
+        fresh.NetworkConfig.IsIpAssigned = false;
+        fresh.AccessInfo = null;
         fresh.PushMessage(
             $"Migrating to node {targetNode.Id} " +
             $"(confirmedV={manifest.ConfirmedVersion}, {migrationStatus}).",
@@ -414,6 +422,22 @@ public class CleanupService : BackgroundService
                     _logger.LogWarning(
                         "Marked VM {VmId} as Error due to command timeout",
                         vm.Id);
+                }
+
+                // Always clear ActiveCommandId after timeout — regardless of prior status.
+                // If not cleared, the migration scanner's ActiveCommandId == null filter
+                // permanently excludes this VM and it can never be re-attempted.
+                var vmAfterTimeout = await dataStore.GetVmAsync(command.TargetResourceId);
+                if (vmAfterTimeout != null && vmAfterTimeout.ActiveCommandId == command.CommandId)
+                {
+                    vmAfterTimeout.ActiveCommandId = null;
+                    vmAfterTimeout.ActiveCommandType = null;
+                    vmAfterTimeout.ActiveCommandIssuedAt = null;
+                    vmAfterTimeout.UpdatedAt = DateTime.UtcNow;
+                    await dataStore.SaveVmAsync(vmAfterTimeout);
+                    _logger.LogDebug(
+                        "Cleared ActiveCommandId on VM {VmId} after timeout",
+                        command.TargetResourceId);
                 }
             }
 
