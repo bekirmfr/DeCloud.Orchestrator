@@ -74,6 +74,14 @@ public interface ICentralIngressService
     Task<bool> ReloadAllAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Batch-restores routes for all Running VMs on orchestrator startup.
+    /// Populates _routes without triggering a per-VM Caddy reload,
+    /// then performs a single reload at the end.
+    /// Bypasses AutoRegisterOnStart — startup restoration is always required.
+    /// </summary>
+    Task RestoreRunningVmRoutesAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Called when a VM starts - auto-registers if enabled
     /// </summary>
     Task OnVmStartedAsync(string vmId, CancellationToken ct = default);
@@ -396,6 +404,66 @@ public class CentralIngressService : ICentralIngressService
     // =========================================================================
     // VM Lifecycle Hooks
     // =========================================================================
+
+    public async Task RestoreRunningVmRoutesAsync(CancellationToken ct = default)
+    {
+        if (!IsEnabled) return;
+
+        // Use ActiveVMs (in-memory hot cache) — already loaded by DataStore.LoadStateFromDatabaseAsync.
+        // Filtering here avoids a second full MongoDB scan on startup.
+        var runningVms = _dataStore.GetActiveVMs()
+            .Where(v => v.Status == VmStatus.Running &&
+                        v.IngressConfig?.DefaultSubdomainEnabled != false)
+            .ToList();
+
+        _logger.LogInformation(
+            "Restoring ingress routes for {Count} Running VMs on startup", runningVms.Count);
+
+        int restored = 0;
+        int skipped = 0;
+
+        foreach (var vm in runningVms)
+        {
+            if (string.IsNullOrEmpty(vm.NodeId)) { skipped++; continue; }
+
+            var node = await _dataStore.GetNodeAsync(vm.NodeId);
+            if (node == null) { skipped++; continue; }
+
+            // Build route directly — no per-VM Caddy reload.
+            // We call ReloadAllAsync once at the end.
+            var subdomain = GenerateSubdomain(vm);
+            var nodeHost = node.CgnatInfo?.TunnelIp ?? node.PublicIp ?? string.Empty;
+            if (string.IsNullOrEmpty(nodeHost)) { skipped++; continue; }
+
+            _routes[vm.Id] = new CentralIngressRoute
+            {
+                VmId = vm.Id,
+                VmName = vm.Name,
+                Subdomain = subdomain,
+                OwnerWallet = vm.OwnerWallet,
+                NodeId = vm.NodeId,
+                NodePublicIp = nodeHost,
+                VmPrivateIp = vm.NetworkConfig?.PrivateIp ?? string.Empty,
+                TargetPort = vm.IngressConfig?.DefaultPort ?? _options.DefaultTargetPort,
+                Status = CentralRouteStatus.Active,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _logger.LogDebug(
+                "Restored ingress route: {Subdomain} → {NodeHost} (VM {VmId})",
+                subdomain, nodeHost, vm.Id);
+            restored++;
+        }
+
+        // Single Caddy reload with the complete route set.
+        if (restored > 0)
+            await ReloadAllAsync(ct);
+
+        _logger.LogInformation(
+            "✓ Ingress route restore complete: {Restored} routes loaded, {Skipped} skipped",
+            restored, skipped);
+    }
 
     public async Task OnVmStartedAsync(string vmId, CancellationToken ct = default)
     {

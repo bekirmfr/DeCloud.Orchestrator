@@ -411,29 +411,14 @@ if (mongoDatabase != null)
             var ingressService = scope.ServiceProvider.GetRequiredService<ICentralIngressService>();
             if (ingressService.IsEnabled)
             {
-                logger.LogInformation("🔄 Initializing CentralIngress for running VMs...");
+                logger.LogInformation("🔄 Restoring CentralIngress routes for Running VMs...");
 
-                var runningVms = dataStore.GetActiveVMs()
-                    .Where(vm => vm.Status == VmStatus.Running)
-                    .ToList();
+                // RestoreRunningVmRoutesAsync batch-populates _routes and issues a single
+                // Caddy reload. It bypasses the AutoRegisterOnStart option gate intentionally —
+                // startup restoration must always run regardless of that flag.
+                await ingressService.RestoreRunningVmRoutesAsync();
 
-                logger.LogInformation("Found {Count} running VMs to register", runningVms.Count);
-
-                foreach (var vm in runningVms)
-                {
-                    try
-                    {
-                        await ingressService.OnVmStartedAsync(vm.Id);
-                        logger.LogInformation("✓ Registered VM {VmId} ({Name}) with CentralIngress",
-                            vm.Id, vm.Name);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Failed to register VM {VmId} with CentralIngress", vm.Id);
-                    }
-                }
-
-                logger.LogInformation("✓ CentralIngress initialization complete");
+                logger.LogInformation("✓ CentralIngress route restore complete");
 
                 if (ingressService.IsEnabled)
                 {
