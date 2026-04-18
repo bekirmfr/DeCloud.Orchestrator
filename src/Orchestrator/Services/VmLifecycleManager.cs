@@ -322,17 +322,24 @@ public class VmLifecycleManager : IVmLifecycleManager
                 vm.Id, vm.Services.Count);
         }
 
-        // Wait for PrivateIp to be available (heartbeat may not have delivered it yet)
+        // 1. Ingress registration — does NOT require PrivateIp.
+        // Caddy routes to the node agent (node.PublicIp / CgnatInfo.TunnelIp), not the VM's
+        // private IP. Registering here unconditionally ensures ingress is always active after
+        // migration, where the new node's heartbeat hasn't delivered the updated PrivateIp yet.
+        // Running → Running is a no-op in TransitionAsync, so there is no later retry window —
+        // ingress must be registered now regardless of IP readiness.
+        await SafeExecuteAsync(
+            () => _ingressService.OnVmStartedAsync(vm.Id),
+            "Ingress registration", vm.Id);
+
+        // 2. Wait for PrivateIp — required for DirectAccess port allocation only.
         var ipReady = await WaitForPrivateIpAsync(vm.Id, TimeSpan.FromSeconds(30));
         if (!ipReady)
         {
             _logger.LogWarning(
-                "VM {VmId} is Running but PrivateIp not assigned after 30s. " +
-                "Ingress and port allocation deferred until next heartbeat confirms IP.",
+                "VM {VmId} is Running but PrivateIp not assigned after 30s — " +
+                "DirectAccess port allocation deferred. Ingress already registered.",
                 vm.Id);
-            // Don't fail the transition — VM is running, side effects will be retried
-            // when the heartbeat delivers the IP and triggers Running → Running (no-op transition).
-            // A reconciliation background service can also catch these.
             return;
         }
 
@@ -340,19 +347,14 @@ public class VmLifecycleManager : IVmLifecycleManager
         var freshVm = await _dataStore.GetVmAsync(vm.Id);
         if (freshVm == null) return;
 
-        // 1. Ingress registration
-        await SafeExecuteAsync(
-            () => _ingressService.OnVmStartedAsync(freshVm.Id),
-            "Ingress registration", freshVm.Id);
-
-        // 2. Auto-allocate ports from template
+        // 3. Auto-allocate ports from template (requires PrivateIp for iptables DNAT rules)
         if (!string.IsNullOrEmpty(freshVm.TemplateId))
         {
             await SafeExecuteAsync(
                 () => AutoAllocateTemplatePortsAsync(freshVm),
                 "Template port auto-allocation", freshVm.Id);
 
-            // 3. Settle template fee
+            // 4. Settle template fee
             await SafeExecuteAsync(
                 () => SettleTemplateFeeAsync(freshVm),
                 "Template fee settlement", freshVm.Id);

@@ -81,28 +81,221 @@ No single pillar is sufficient alone. CSAM filtering without a ToS gives you no 
 
 ### Why Non-Negotiable
 
-Child Sexual Abuse Material is illegal in every jurisdiction on Earth. Hosting it, even unknowingly, exposes platform operators to federal criminal liability under 18 U.S.C. § 2258A (US) and equivalent statutes elsewhere. Unlike all other content violations, this one carries criminal — not merely civil — exposure.
+Child Sexual Abuse Material is illegal in every jurisdiction on Earth. Hosting it, even
+unknowingly, exposes platform operators to federal criminal liability under
+18 U.S.C. § 2258A (US) and equivalent statutes elsewhere. Unlike all other content
+violations, this one carries criminal — not merely civil — exposure.
 
-### Implementation Approach
+### Why Block-Level Hash Checking Does Not Work
 
-**Hash-based detection at Block Store ingestion.** DeCloud's Block Store is content-addressed (CID-based). NCMEC (National Center for Missing & Exploited Children) maintains a hash database of known CSAM material (PhotoDNA). At block ingestion, each block's hash is compared against the NCMEC database. No content inspection is required — only hash comparison. This approach:
+DeCloud's Block Store is content-addressed (CID-based) and stores raw 1 MB disk sectors
+at arbitrary byte offsets (e.g. offset `2684354560`). These blocks are filesystem
+fragments — partial inodes, journal entries, EXT4 metadata, or fractions of a file split
+across non-contiguous sectors.
 
-- Preserves the censorship-resistance architecture (we read no content, only compare hashes)
-- Catches all known CSAM material reliably
-- Is the industry standard (used by Google, Microsoft, Facebook, Apple, Cloudflare)
+CSAM hash databases (PhotoDNA, NCMEC) operate on **decoded, whole files** — a JPEG,
+PNG, or video file whose bytes are intact and decodable. A JPEG split across three
+non-adjacent 1 MB blocks will never produce a matching hash at the block level regardless
+of the database used.
 
-**Limitation:** Hash matching only catches *known* CSAM already in the NCMEC database. Newly generated material will not yet be in the database. This is a known, accepted limitation industry-wide. The Template Review Gate (Pillar 4) is the complementary control that prevents the most obvious CSAM-generation pipelines from being publicly listed.
+Block-level CSAM checking is therefore technically infeasible and is NOT implemented.
+The correct detection surface is the **filesystem layer on the hosting node**, where
+whole files are accessible in their decoded form before replication.
+
+### Detection Architecture — Node-Level Filesystem Scanning
+
+The hosting node is the only point in the architecture with plaintext access to VM
+overlay data. Detection is performed here, before encryption and before replication,
+on reconstructed files from the overlay filesystem.
+
+#### Scan Scope
+
+| Cycle | Scan Scope | Rationale |
+|---|---|---|
+| **Initial (seeding)** | **Skipped** | Overlay is clean by construction — VMs deploy from vetted templates or empty disk. No user data exists yet at first-cycle time (3 min after boot). |
+| **Incremental** | Files touching `changedChunks` offsets only | Efficient targeted scan of only newly written content. |
+| **Template publish** | Full filesystem scan of template image | Separate pipeline; gates template availability before any VM can be deployed from it. |
+
+The initial cycle is skipped because:
+- VMs created from scratch have an empty overlay at deploy time
+- VMs created from templates deploy from operator-vetted images scanned at publish time
+- The 3-minute startup delay means the first lazysync cycle runs before meaningful user
+  data can have been written
+
+#### Per-Cycle Pipeline
+
+```
+LazysyncDaemon — incremental cycle:
+
+1. Export overlay → tmp.raw                    (existing)
+
+2. Map changed blocks → changedChunks offsets  (existing)
+
+3. Mount overlay read-only via nbd             (new)
+   → qemu-nbd --connect=/dev/nbdN disk.qcow2
+   → mount -o ro /dev/nbdNpX /mnt/vm-scan
+
+4. Resolve files touching changedChunks        (new)
+   → walk filesystem inode table
+   → map block offsets → file paths
+   → collect only files overlapping changedChunks offsets
+   → skip non-file types (journals, swap, inodes)
+   → skip files not decodable as image/video
+
+5. CSAM scan resolved files                    (new)
+   → hash each file
+   → call Microsoft CSAM Matching API (or local PhotoDNA)
+   → collect any matches
+
+6. Unmount (always — even on match)            (new)
+   → umount /mnt/vm-scan
+   → qemu-nbd --disconnect /dev/nbdN
+
+7a. IF MATCH FOUND:
+    → suspend VM locally (halt replication, preserve process for evidence)
+    → POST /api/admin/csam-report to orchestrator
+    → orchestrator transitions VM → Suspended
+    → orchestrator alerts operator (email/webhook)
+    → abort cycle — do not encrypt, do not replicate
+
+7b. IF CLEAN:
+    → encrypt changedChunks with DEK (AES-256-GCM)   (new)
+    → POST encrypted blocks to local blockstore        (existing)
+    → blockstore publishes via GossipSub               (existing)
+    → register manifest with orchestrator              (existing)
+```
+
+#### CSAM Database Source
+
+**Microsoft CSAM Matching API** is used as the primary database source:
+- No local database to maintain or sync
+- Pay-per-call pricing — negligible cost at current scale
+- Covers NCMEC hash database plus PhotoDNA perceptual hashing
+- Requires Microsoft Azure account and CSAM API agreement
+
+Node agents require outbound HTTPS access to the Microsoft CSAM API endpoint.
+No file content is transmitted — only hashes.
+
+#### False Positive Handling
+
+PhotoDNA perceptual hashing has a non-zero false positive rate. A hash match does NOT
+automatically result in NCMEC reporting or wallet termination. The response pipeline is:
+
+1. VM suspended immediately (protective measure, reversible)
+2. Operator alerted with match metadata (file hash, file path, database source)
+3. Human review within 2 hours (P0 SLA)
+4. If confirmed CSAM: NCMEC report filed, wallet blacklisted, VM terminated
+5. If false positive: VM unsuspended, incident logged, no further action
+
+**Automated enforcement on CSAM detection is prohibited.** Human confirmation is
+required before NCMEC reporting and wallet termination. This protects against both
+false positive harm and adversarial exploit of the detection system.
+
+### VM Suspension State
+
+A detected match transitions the VM to `VmStatus.Suspended`:
+
+- Caddy route paused — VM unreachable publicly
+- VM process kept alive on node — overlay preserved for evidence
+- Cannot be transitioned to Running by user or automated paths
+- Can only be unsuspended by authenticated admin (`POST /api/admin/vms/{vmId}/unsuspend`)
+- VM deletion blocked until incident is resolved (evidence preservation)
 
 ### NCMEC Reporting
 
-Upon detection:
-1. Block is immediately quarantined (removed from serving, preserved for evidence)
-2. NCMEC CyberTipline report filed within 24 hours (legally required under 18 U.S.C. § 2258A)
-3. Associated wallet blacklisted
-4. All VMs owned by that wallet terminated
-5. Incident logged in enforcement audit trail
+Upon human-confirmed detection:
 
-**The AI abuse triage system must never be used to evaluate CSAM content directly.** AI triage role is limited to: classify the report category as CSAM, set urgency P0, trigger NCMEC protocol. No content analysis by AI.
+1. NCMEC CyberTipline report filed within 24 hours (legally required under
+   18 U.S.C. § 2258A for US operators)
+2. Report includes: file hash, platform VM identifier, wallet address, timestamp,
+   node region. Does NOT include file content.
+3. Associated wallet blacklisted platform-wide
+4. All VMs owned by that wallet suspended pending review
+5. Incident logged to append-only `EnforcementActions` collection
+
+### API Surface (Stub → Implementation)
+
+The following endpoints exist as stubs from platform launch and are implemented
+incrementally:
+
+#### `POST /api/admin/csam-report` — Internal, node API key auth
+```json
+{
+  "nodeId": "string",
+  "vmId": "string",
+  "matchedFileHash": "string",
+  "matchedFilePath": "string (relative path inside overlay — not the file)",
+  "databaseSource": "microsoft-csam-api | photodna-local",
+  "detectedAt": "ISO 8601"
+}
+```
+Response: `202 Accepted`
+
+#### `POST /api/admin/vms/{vmId}/suspend` — Admin auth
+```json
+{
+  "reason": "string",
+  "reportReferenceId": "string (optional)"
+}
+```
+
+#### `POST /api/admin/vms/{vmId}/unsuspend` — Admin auth
+Returns `501 Not Implemented` until full review flow is built.
+Intentionally blocked — unsuspend requires human confirmation by design.
+
+### Node Agent Interface
+
+```csharp
+public interface ICsamScanner
+{
+    /// <summary>
+    /// Scans files in the mounted overlay that touch the given block offsets.
+    /// mountPath is the read-only nbd mount point.
+    /// offsets is the set of changedChunks byte offsets from the current cycle.
+    /// Returns IsClean=true if no match found.
+    /// </summary>
+    Task<CsamScanResult> ScanAsync(
+        string vmId,
+        string mountPath,
+        IReadOnlySet<long> offsets,
+        CancellationToken ct);
+}
+
+public record CsamScanResult(
+    bool IsClean,
+    string? MatchedFileHash = null,
+    string? MatchedFilePath = null,
+    string? DatabaseSource = null);
+```
+
+Stub implementation returns `IsClean = true` immediately. LazysyncDaemon calls
+`ScanAsync` between mount and encrypt steps so the real implementation slots in
+without pipeline changes.
+
+### Template Review Gate (Complementary Control)
+
+Template images are scanned at publish time via a full filesystem scan — not per-VM
+at deploy time. This is the correct place to catch content baked into a template
+before it can be deployed to any VM. See Pillar 4 for the full template review pipeline.
+
+### Known Limitations
+
+**Novel CSAM.** Hash matching catches known material in the NCMEC database. Newly
+generated material not yet in any database will not be detected. This is a known,
+accepted limitation industry-wide. No platform-level scanning solves this — reactive
+abuse reporting is the complementary control.
+
+**Non-image/video content.** The scanner targets decodable image and video files.
+Documents, archives, encrypted files, and binary data are not evaluated. CSAM
+delivered inside encrypted archives or non-standard formats will not be detected.
+
+**Filesystem type dependency.** Initial implementation targets EXT4 overlays.
+NTFS and BTRFS overlays require additional inode-to-offset mapping logic.
+
+**End-to-end encrypted overlays.** If block encryption (Pillar: DEK) is in use,
+the scan must occur before encryption on the hosting node. The pipeline sequence
+(mount → scan → unmount → encrypt → replicate) enforces this. Replicating nodes
+receive only ciphertext and cannot scan.
 
 ---
 
