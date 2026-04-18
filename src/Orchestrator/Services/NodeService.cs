@@ -1572,7 +1572,7 @@ public class NodeService : INodeService
                             {
                                 DhtVmId = vm.Id,
                                 ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}",
-                                ApiPort = 5080,
+                                ApiPort = DhtNodeService.DhtApiPort,
                                 Status = DhtStatus.Active,
                                 LastHealthCheck = DateTime.UtcNow,
                             };

@@ -35,9 +35,10 @@ public class DhtNodeService : IDhtNodeService
     public const int DhtListenPort = 4001;
 
     /// <summary>
-    /// HTTP API port exposed by the DHT VM on localhost for the node agent to query.
+    /// HTTP API port exposed externally by the DHT VM via nginx proxy.
+    /// The DHT binary binds to 127.0.0.1:5080 internally; nginx forwards port 80.
     /// </summary>
-    private const int DhtApiPort = 5080;
+    public const int DhtApiPort = 80;
 
     public DhtNodeService(
         DataStore dataStore,

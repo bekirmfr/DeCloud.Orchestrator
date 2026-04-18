@@ -896,7 +896,7 @@ public class SystemVmReconciliationService : BackgroundService
         {
             DhtVmId = candidate.Id,
             ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}",
-            ApiPort = 5080,
+            ApiPort = DhtNodeService.DhtApiPort,
             Status = DhtStatus.Active,
             LastHealthCheck = DateTime.UtcNow,
         };
