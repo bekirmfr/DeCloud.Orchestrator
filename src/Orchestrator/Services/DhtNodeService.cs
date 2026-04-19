@@ -37,8 +37,16 @@ public class DhtNodeService : IDhtNodeService
     /// <summary>
     /// HTTP API port exposed externally by the DHT VM via nginx proxy.
     /// The DHT binary binds to 127.0.0.1:5080 internally; nginx forwards port 80.
+    /// Used by the orchestrator for health checks.
     /// </summary>
     public const int DhtApiPort = 80;
+
+    /// <summary>
+    /// Internal HTTP API port the DHT binary binds to (localhost only).
+    /// Used by cloud-init scripts inside the VM (bootstrap-poll, dashboard, health-check).
+    /// Must stay 5080 — changing this breaks the VM's internal service wiring.
+    /// </summary>
+    private const int DhtInternalApiPort = 5080;
 
     public DhtNodeService(
         DataStore dataStore,
@@ -107,7 +115,7 @@ public class DhtNodeService : IDhtNodeService
             {
                 { "role", "dht" },
                 { "dht-listen-port", DhtListenPort.ToString() },
-                { "dht-api-port", DhtApiPort.ToString() },
+                { "dht-api-port", DhtInternalApiPort.ToString() },
                 { "dht-advertise-ip", advertiseIp },
                 { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
                 { "dht-auth-token", authToken },
