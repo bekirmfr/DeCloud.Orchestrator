@@ -337,6 +337,20 @@ public class BlockStoreController : ControllerBase
         if (string.IsNullOrEmpty(request.VmId) || string.IsNullOrEmpty(request.RootCid))
             return BadRequest("Missing required fields: vmId, rootCid");
 
+        // Phase E item 38 — reject manifest pushes from non-authoritative nodes.
+        // Prevents a zombie (source node that came back online after migration) from
+        // overwriting the receiving node's manifest with stale pre-migration data.
+        var authorityVm = await _dataStore.GetVmAsync(request.VmId);
+        if (authorityVm == null)
+            return NotFound(new { error = "VM not found" });
+        if (authorityVm.NodeId != request.NodeId)
+        {
+            _logger.LogWarning(
+                "Rejecting manifest for VM {VmId} from node {Sender} — authorized node is {Owner}",
+                request.VmId, request.NodeId, authorityVm.NodeId);
+            return StatusCode(403, new { error = "Not the authorized host for this VM" });
+        }
+
         var manifest = await _blockStoreService.RegisterManifestAsync(
             request.VmId,
             request.RootCid,
@@ -446,6 +460,7 @@ public class BlockStoreAnnounceRequest
 public class BlockStoreManifestRequest
 {
     public string VmId { get; set; } = string.Empty;
+    public string NodeId { get; set; } = string.Empty;
     public string RootCid { get; set; } = string.Empty;
     public int Version { get; set; }
     public List<string>? ChangedBlockCids { get; set; }
