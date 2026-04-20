@@ -120,6 +120,11 @@ Current: Single-user VMs only
 Needed: Shared VMs, team workspaces, infrastructure sharing
 ```
 
+#### 1.5. **Live VM Migration** ✅ Complete (2026-04-20)
+```
+Auto-migration when source node goes offline. Overlay reconstructed from blockstore chunk map. User files, ingress, and browser terminal intact post-migration. System VM resilience watchdog remaining before MVP.
+```
+
 #### 2. **Visualization** ❌
 ```
 Current: No network map

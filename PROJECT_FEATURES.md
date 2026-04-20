@@ -967,7 +967,24 @@ Also modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as b
 
 ### Block Store & Storage Economics
 
-**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D (Lazysync) 🔲 Planned
+**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D–E (Lazysync + Live Migration) ✅ Complete (2026-04-20)
+
+#### Phase D–E: Lazysync & Live Migration
+
+**What was built:**
+- `LazysyncDaemon` — background service running on each node; every 5 minutes exports VM overlay disk in 1 MB content-addressed chunks and pushes new/changed blocks to the local BlockStore VM
+- Incremental dirty bitmap (`block-dirty-bitmap-add` via QMP) — after first full export, only clusters written since last cycle are exported via `drive-backup sync=incremental`
+- `RemoveDirtyBitmapAsync` — cleans the overlay-carried bitmap on the receiving node before re-adding, preventing `AddDirtyBitmap failed` fallback to full export every cycle
+- Node-offline detection triggers automatic migration: `MarkNodeVmsAsErrorAsync` classifies VMs as `Migrating` / `Recovering` / `Unrecoverable` / `Lost` based on manifest confirmed state
+- `MigrateVmAsync` in `BackgroundServices.cs` — selects best target node, fetches `MigrationManifest` (confirmed chunk map), sends `ProvisionVm` command with `OverlayChunkMap` to reconstruct the overlay
+- Migration cloud-init on receiving node: `package_update/upgrade: false`, `bootcmd` overwrites MAC-pinned netplan (`/etc/netplan/50-cloud-init.yaml`) before networkd starts — prevents `network-online.target` hanging forever
+- Ingress registered before `WaitForPrivateIpAsync` — domain live immediately after migration boot
+- Post-migration reseed: `ConfirmedVersion` reset to 0, `ReseedVm` command sent, LazysyncDaemon re-pushes all blocks so blockstore network replicates to RF providers on new node
+
+**Confirmed end-to-end (2026-04-20):**
+- VM created on MSI (Turkey, CGNAT) → versions 1–9 replicated incrementally to blockstore
+- MSI shutdown → orchestrator classifies VM as `Migrating` → overlay reconstructed on dedixlabvm (US East) from chunk map
+- Post-migration: user files preserved, browser terminal functional, ingress subdomain live, incremental replication resumes
 
 #### Overview
 
@@ -1433,6 +1450,9 @@ One-click deployment of interconnected VM stacks (e.g., web + database + Redis +
 
 #### Live Network Visualization
 Interactive globe/map showing nodes, VMs, and relay connections in real time. Public-facing for marketing.
+
+#### ✅ Live VM Migration — Complete (2026-04-20)
+Automatic VM migration when source node goes offline. Full pipeline: LazysyncDaemon incremental replication → node-offline detection → overlay reconstruction from chunk map → migration cloud-init (MAC-pinned netplan fix + minimal package config) → ingress registration → dirty bitmap reset on receiving node. Confirmed end-to-end: user files preserved, browser terminal and ingress functional post-migration.
 
 #### Optional Premium Node Staking
 XDE token staking for premium marketplace placement. Strictly optional — free tier always available. Must earn reputation first (95%+ uptime, 10+ completions). Stake lockable, not slashable (security deposit model).

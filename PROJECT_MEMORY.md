@@ -379,6 +379,8 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 ### Performance Insights
 
 - **CPU quota critical** — incorrect calculations caused 18-min boot times (vs. 2-min optimal)
+- **MAC-pinned netplan blocks migration boot** — overlay carries source node MAC in `/etc/netplan/50-cloud-init.yaml`; bootcmd must overwrite it before networkd starts or `network-online.target` hangs forever
+- **Dirty bitmap survives migration** — qcow2 persistent bitmap `lazysync` is carried in the overlay; receiving node must remove-then-add to avoid `AddDirtyBitmap failed` fallback to full export every cycle
 - **sysbench reliable** — provides consistent CPU performance normalization across hardware
 - **apt-get update dominant** — 190s of 343s cloud-init time is package list fetch; disabling it cuts boot by ~55%
 - **TCP_QUICKACK critical for RPC** — 40ms delayed ACK kills GPU proxy throughput; must re-arm before every `read()`
@@ -388,7 +390,7 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 
 - ❌ Custom VM image uploads — security risk, complex, low ROI
 - ❌ Mandatory staking — contradicts "universal participation" principle
-- ❌ Live migration — technically hard, low user demand
+- ~~❌ Live migration~~ → ✅ Implemented (2026-04-20) — node-offline triggers automatic overlay reconstruction and VM reboot on best available node
 - ❌ Team workspaces — niche until user base grows
 - ~~❌ DHT-based discovery~~ → ✅ Implemented (2026-02-15)
 
@@ -407,7 +409,7 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 - **Mobile integration:** Two-tier architecture
   - Mobile tier: WebAssembly tasks, ML inference, distributed storage
   - Server tier: full VM hosting (existing)
-- **Block Store Phase D:** Lazysync — continuous VM overlay replication across nodes
+- **Block Store Phase D–E:** Lazysync + Live Migration — ✅ Complete (2026-04-20). Continuous overlay replication, automatic node-offline migration, dirty bitmap incremental sync, overlay reconstruction from chunk map. System VM resilience watchdog remaining.
 - **Alpine base images:** 50 MB system VMs, 5-second boot, ~6.5-min → ~2-min total deploy time
 - **Smart contract coordination:** Move toward true decentralization
 
