@@ -183,6 +183,19 @@ public class BillingService : BackgroundService
             return;
         }
 
+        // Guard: OwnerId and NodeId must be present for billing to proceed
+        if (string.IsNullOrEmpty(vm.OwnerId))
+        {
+            _logger.LogWarning("VM {VmId}: OwnerId is null — skipping billing.", vm.Id);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(vm.NodeId))
+        {
+            _logger.LogWarning("VM {VmId}: NodeId is null — skipping billing.", vm.Id);
+            return;
+        }
+
         // ═══════════════════════════════════════════════════════════════════════
         // ATTESTATION CHECK - Core security feature
         // ═══════════════════════════════════════════════════════════════════════
@@ -242,10 +255,23 @@ public class BillingService : BackgroundService
 
         // Calculate billing cost
         var hourlyRate = vm.BillingInfo.HourlyRateCrypto;
+
+        if (hourlyRate <= 0)
+        {
+            _logger.LogWarning(
+                "VM {VmId} (owner={OwnerId}): HourlyRateCrypto is 0 — billing skipped. " +
+                "Rate was never assigned during VM scheduling.",
+                vm.Id, vm.OwnerId);
+            return;
+        }
+
         var cost = hourlyRate * (decimal)billingPeriod.TotalHours;
 
         if (cost < 0.01m) // Minimum 0.01 USDC
         {
+            _logger.LogDebug(
+                "VM {VmId}: cost {Cost:F6} USDC below 0.01 minimum — skipping.",
+                vm.Id, cost);
             return;
         }
 
