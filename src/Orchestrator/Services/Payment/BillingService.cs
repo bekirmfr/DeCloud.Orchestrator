@@ -267,10 +267,10 @@ public class BillingService : BackgroundService
 
         var cost = hourlyRate * (decimal)billingPeriod.TotalHours;
 
-        if (cost < 0.01m) // Minimum 0.01 USDC
+        if (cost < 0.0001m) // Minimum 0.0001 USDC (supports low-rate VMs at 5-min cadence)
         {
             _logger.LogDebug(
-                "VM {VmId}: cost {Cost:F6} USDC below 0.01 minimum — skipping.",
+                "VM {VmId}: cost {Cost:F6} USDC below 0.0001 minimum — skipping.",
                 vm.Id, cost);
             return;
         }
