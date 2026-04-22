@@ -480,7 +480,14 @@ public record NodeHeartbeat(
     /// Null for agents that pre-date this feature — obligations with null
     /// CurrentBinaryVersion are never redeployed on that basis.
     /// </summary>
-    Dictionary<string, string>? SystemVmBinaryVersions = null
+    Dictionary<string, string>? SystemVmBinaryVersions = null,
+    /// <summary>
+    /// Versions of obligation identity state currently stored in the node
+    /// agent's SQLite database, keyed by canonical role name.
+    /// Allows the orchestrator to detect stale state and signal a pull.
+    /// Absent or zero values mean the node has no state for that role.
+    /// </summary>
+    Dictionary<string, int>? ObligationStateVersions = null
 );
 
 /// <summary>
@@ -557,7 +564,16 @@ public record NodeHeartbeatResponse(
     /// NodeAgent must destroy these immediately — they belong to a
     /// different node, were deleted, or are from a previous registration.
     /// </summary>
-    List<string>? InvalidVmIds = null
+    List<string>? InvalidVmIds = null,
+    /// <summary>
+    /// Role names ("relay" | "dht" | "blockstore") where the orchestrator
+    /// has a higher StateVersion than the node reported in the heartbeat.
+    /// Node agent must call GET /api/nodes/me/obligations/{role}/state for
+    /// each listed role and persist the result via SaveStateAsync.
+    /// Null or empty = all states current.
+    /// </summary>
+    List<string>? ObligationStatesPending = null
+
 );
 
 /// <summary>

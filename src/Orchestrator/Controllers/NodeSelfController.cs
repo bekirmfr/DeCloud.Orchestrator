@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using DeCloud.Shared.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -95,6 +96,139 @@ public class NodeSelfController : ControllerBase
 
         var config = await _configService.GetConfigAsync(ct);
         return Ok(MapToAgentConfig(config));
+    }
+
+    /// <summary>
+    /// Returns the current identity state JSON for one obligation role.
+    /// Called by the node agent after a heartbeat signals ObligationStatesPending.
+    ///
+    /// SECURITY: The response contains private keys (WireGuard, Ed25519).
+    /// The endpoint is [Authorize(Roles = "node")] so only the authenticated
+    /// node agent for this node can retrieve its own state.
+    /// State JSON is never written to server-side logs — only role + version.
+    /// </summary>
+    [HttpGet("obligations/{role}/state")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> GetObligationState(string role)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var canonical = ObligationRole.Canonicalise(role);
+        if (canonical is null)
+            return BadRequest($"Unknown role '{role}'. Valid values: relay, dht, blockstore.");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node is null)
+            return NotFound("Node not registered");
+
+        var obligation = node.SystemVmObligations
+            .FirstOrDefault(o => o.Role.ToString().Equals(canonical, StringComparison.OrdinalIgnoreCase)
+                              || RoleToCanonical(o.Role) == canonical);
+
+        if (obligation is null || string.IsNullOrEmpty(obligation.StateJson))
+        {
+            _logger.LogDebug(
+                "GetObligationState [{Role}] for node {NodeId}: no state found",
+                canonical, nodeId);
+            return NotFound($"No obligation state found for role '{canonical}'.");
+        }
+
+        // Log role + version only — never the state JSON content.
+        _logger.LogDebug(
+            "GetObligationState [{Role}] v{Version} served to node {NodeId}",
+            canonical, obligation.StateVersion, nodeId);
+
+        return Content(obligation.StateJson, "application/json");
+    }
+
+    /// <summary>
+    /// Updates the persisted identity state for one obligation role.
+    /// Intended for admin key rotation. Enforces version > stored invariant.
+    ///
+    /// Body: { "stateJson": "...", "version": N }
+    ///
+    /// Returns 409 Conflict if the incoming version is not strictly greater
+    /// than the currently stored version.
+    /// </summary>
+    [HttpPut("obligations/{role}/state")]
+    [ProducesResponseType(200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(409)]
+    public async Task<IActionResult> UpdateObligationState(
+        string role,
+        [FromBody] UpdateObligationStateRequest request)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var canonical = ObligationRole.Canonicalise(role);
+        if (canonical is null)
+            return BadRequest($"Unknown role '{role}'. Valid values: relay, dht, blockstore.");
+
+        if (string.IsNullOrWhiteSpace(request.StateJson))
+            return BadRequest("StateJson must not be empty.");
+
+        if (request.Version < 1)
+            return BadRequest("Version must be >= 1.");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node is null)
+            return NotFound("Node not registered");
+
+        var obligation = node.SystemVmObligations
+            .FirstOrDefault(o => RoleToCanonical(o.Role) == canonical);
+
+        if (obligation is null)
+            return NotFound($"No obligation of role '{canonical}' assigned to this node.");
+
+        if (request.Version <= obligation.StateVersion)
+        {
+            _logger.LogWarning(
+                "UpdateObligationState [{Role}] rejected for node {NodeId}: " +
+                "incoming v{Incoming} <= stored v{Stored}",
+                canonical, nodeId, request.Version, obligation.StateVersion);
+            return Conflict(new
+            {
+                error = "VERSION_CONFLICT",
+                stored = obligation.StateVersion,
+                detail = $"Incoming version {request.Version} must be greater than stored version {obligation.StateVersion}."
+            });
+        }
+
+        obligation.StateJson = request.StateJson;
+        obligation.StateVersion = request.Version;
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "ObligationState [{Role}] updated to v{Version} for node {NodeId}",
+            canonical, request.Version, nodeId);
+
+        return Ok(new { role = canonical, version = request.Version });
+    }
+
+    private static string? RoleToCanonical(SystemVmRole role) => role switch
+    {
+        SystemVmRole.Relay => "relay",
+        SystemVmRole.Dht => "dht",
+        SystemVmRole.BlockStore => "blockstore",
+        _ => null
+    };
+
+    public class UpdateObligationStateRequest
+    {
+        /// <summary>JSON-serialised identity state blob.</summary>
+        public string StateJson { get; init; } = string.Empty;
+
+        /// <summary>Monotonic version — must be strictly greater than stored.</summary>
+        public int Version { get; init; }
     }
 
     /// <summary>

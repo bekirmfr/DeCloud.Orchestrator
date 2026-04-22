@@ -719,12 +719,51 @@ public class NodeService : INodeService
                 invalidVmIds = invalid;
         }
 
+        var obligationStatesPending = DetectStaleObligationStates(node, heartbeat.ObligationStateVersions);
+
         return new NodeHeartbeatResponse(
             true,
             commands.Count > 0 ? commands : null,
             agentSchedulingConfig,
             node.CgnatInfo,
             invalidVmIds);
+    }
+
+    /// <summary>
+    /// Compare orchestrator-stored obligation state versions against what the
+    /// node agent reported in the heartbeat. Returns role names where the
+    /// orchestrator has a higher version — the node must pull those states.
+    /// </summary>
+    private static List<string> DetectStaleObligationStates(
+        Node node,
+        Dictionary<string, int>? nodeReportedVersions)
+    {
+        if (node.SystemVmObligations is not { Count: > 0 })
+            return [];
+
+        nodeReportedVersions ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var pending = new List<string>();
+
+        foreach (var obligation in node.SystemVmObligations)
+        {
+            if (obligation.StateVersion == 0)
+                continue; // No state generated yet — registration handles this
+
+            var roleName = obligation.Role switch
+            {
+                SystemVmRole.Relay => "relay",
+                SystemVmRole.Dht => "dht",
+                SystemVmRole.BlockStore => "blockstore",
+                _ => null
+            };
+            if (roleName is null) continue;
+
+            nodeReportedVersions.TryGetValue(roleName, out var nodeVersion);
+            if (obligation.StateVersion > nodeVersion)
+                pending.Add(roleName);
+        }
+
+        return pending;
     }
 
     /// <summary>
