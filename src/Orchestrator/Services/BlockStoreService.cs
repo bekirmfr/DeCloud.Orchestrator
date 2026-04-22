@@ -343,9 +343,18 @@ public class BlockStoreService : IBlockStoreService
             }
 
             // ================================================================
-            // STEP 4: Generate auth token for VM → orchestrator authentication
+            // STEP 4: Resolve auth token for VM → orchestrator authentication.
+            // Hoisted here so the same variable serves both the label and the
+            // store-back in STEP 7. obligation.AuthToken is pre-populated from
+            // stored state by HydrateNodeFromObligationState.
             // ================================================================
-            var authToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var blockstoreObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.BlockStore);
+
+            var authToken = !string.IsNullOrEmpty(blockstoreObligation?.AuthToken)
+                ? blockstoreObligation.AuthToken
+                : Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+
             var vmName = $"blockstore-{node.Region ?? "default"}-{node.Id[..8]}";
 
             // ================================================================
@@ -398,10 +407,8 @@ public class BlockStoreService : IBlockStoreService
             };
 
             // Store auth token on the obligation for /api/blockstore/join verification
-            var obligation = node.SystemVmObligations
-                .FirstOrDefault(o => o.Role == SystemVmRole.BlockStore);
-            if (obligation != null)
-                obligation.AuthToken = authToken;
+            if (blockstoreObligation != null)
+                blockstoreObligation.AuthToken = authToken;
 
             await _dataStore.SaveNodeAsync(node);
 

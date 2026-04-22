@@ -107,9 +107,18 @@ public class DhtNodeService : IDhtNodeService
             }
 
             // ========================================
-            // STEP 3a: Generate auth token for DHT VM → orchestrator authentication
+            // STEP 3a: Resolve auth token for DHT VM → orchestrator authentication.
+            // Hoisted here so the same variable is used for both the label and
+            // the store-back in STEP 4 — avoids CS0128 duplicate declaration.
+            // obligation.AuthToken is pre-populated from stored state by
+            // HydrateNodeFromObligationState before deployment is called.
             // ========================================
-            var authToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            var dhtObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.Dht);
+
+            var authToken = !string.IsNullOrEmpty(dhtObligation?.AuthToken)
+                ? dhtObligation.AuthToken
+                : Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
             var labels = new Dictionary<string, string>
             {
@@ -153,9 +162,7 @@ public class DhtNodeService : IDhtNodeService
                 Status = DhtStatus.Initializing,
             };
 
-            // Store auth token on the DHT obligation for /api/dht/join verification
-            var dhtObligation = node.SystemVmObligations
-                .FirstOrDefault(o => o.Role == SystemVmRole.Dht);
+            // Store auth token on the DHT obligation for /api/dht/join verifications
             if (dhtObligation != null)
                 dhtObligation.AuthToken = authToken;
 

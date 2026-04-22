@@ -722,11 +722,11 @@ public class NodeService : INodeService
         var obligationStatesPending = DetectStaleObligationStates(node, heartbeat.ObligationStateVersions);
 
         return new NodeHeartbeatResponse(
-            true,
-            commands.Count > 0 ? commands : null,
-            agentSchedulingConfig,
-            node.CgnatInfo,
-            invalidVmIds);
+        true, 
+        commands.Count > 0 ? commands : null,
+        agentSchedulingConfig, 
+        node.CgnatInfo, invalidVmIds,
+        obligationStatesPending.Count > 0 ? obligationStatesPending : null);
     }
 
     /// <summary>

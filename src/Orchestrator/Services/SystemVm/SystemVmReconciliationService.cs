@@ -1,9 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services.SystemVm;
 
@@ -151,6 +148,11 @@ public class SystemVmReconciliationService : BackgroundService
 
     private async Task TryDeployAsync(Node node, SystemVmObligation obligation, CancellationToken ct)
     {
+        // Pre-populate node fields from stored obligation state so deployment
+        // services reuse the same identity on every redeploy instead of
+        // generating fresh credentials that break mesh connectivity.
+        HydrateNodeFromObligationState(node, obligation);
+
         if (!SystemVmDependencies.AreDependenciesMet(obligation.Role, node.SystemVmObligations))
             return; // Dependencies not met yet — will try again next cycle
 
@@ -983,6 +985,147 @@ public class SystemVmReconciliationService : BackgroundService
                 break;
         }
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Obligation state hydration — pre-populate node fields from stored state
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Reads identity from <paramref name="obligation"/>.StateJson and writes it
+    /// onto the node model so deployment services pick it up without changing
+    /// their own signatures.
+    ///
+    /// Relay  → node.RelayInfo.WireGuardPrivateKey / PublicKey / TunnelIp / RelaySubnet
+    ///           The existing reuse guard in RelayNodeService.DeployRelayVmAsync
+    ///           already checks node.RelayInfo?.WireGuardPrivateKey, so hydrating
+    ///           it here is all that is required.
+    ///
+    /// Dht    → obligation.AuthToken
+    ///           DhtNodeService reads node.SystemVmObligations to find this value.
+    ///
+    /// BlockStore → obligation.AuthToken
+    ///           BlockStoreService reads node.SystemVmObligations to find this value.
+    ///
+    /// Safe to call on first deploy (StateJson null/empty → method returns immediately,
+    /// deployment services generate fresh credentials as before).
+    /// </summary>
+    private void HydrateNodeFromObligationState(Node node, SystemVmObligation obligation)
+    {
+        if (string.IsNullOrEmpty(obligation.StateJson))
+            return;
+
+        var jsonOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        try
+        {
+            switch (obligation.Role)
+            {
+                // ── Relay ────────────────────────────────────────────────
+                case SystemVmRole.Relay:
+                    {
+                        var state = System.Text.Json.JsonSerializer
+                            .Deserialize<RelayObligationState>(obligation.StateJson, jsonOptions);
+
+                        if (state is null) return;
+
+                        node.RelayInfo ??= new RelayNodeInfo();
+
+                        // These are the exact three fields the existing
+                        // RelayNodeService reuse guard reads.
+                        node.RelayInfo.WireGuardPrivateKey = state.WireGuardPrivateKey;
+                        node.RelayInfo.WireGuardPublicKey = state.WireGuardPublicKey;
+                        node.RelayInfo.TunnelIp = state.TunnelIp;
+
+                        // Subnet slot: "10.20.5.0/24" → 5
+                        var slot = ParseRelaySubnetSlot(state.RelaySubnet);
+                        if (slot > 0)
+                            node.RelayInfo.RelaySubnet = slot;
+
+                        _logger.LogDebug(
+                            "Hydrated Relay state v{Version} onto node {NodeId} " +
+                            "(pubKey: {PubKey}, subnet: {Subnet})",
+                            state.Version, node.Id,
+                            state.WireGuardPublicKey.Length > 12
+                                ? state.WireGuardPublicKey[..12] + "..."
+                                : state.WireGuardPublicKey,
+                            state.RelaySubnet);
+                        break;
+                    }
+
+                // ── DHT ──────────────────────────────────────────────────
+                case SystemVmRole.Dht:
+                    {
+                        var state = System.Text.Json.JsonSerializer
+                            .Deserialize<DhtObligationState>(obligation.StateJson, jsonOptions);
+
+                        if (state is null) return;
+
+                        // AuthToken lives on the obligation itself — DhtNodeService
+                        // reads node.SystemVmObligations to get it.
+                        if (!string.IsNullOrEmpty(state.AuthToken))
+                            obligation.AuthToken = state.AuthToken;
+
+                        _logger.LogDebug(
+                            "Hydrated DHT state v{Version} onto obligation for node {NodeId} " +
+                            "(peerId: {PeerId})",
+                            state.Version, node.Id,
+                            state.PeerId.Length > 12
+                                ? state.PeerId[..12] + "..."
+                                : state.PeerId);
+                        break;
+                    }
+
+                // ── BlockStore ───────────────────────────────────────────
+                case SystemVmRole.BlockStore:
+                    {
+                        var state = System.Text.Json.JsonSerializer
+                            .Deserialize<BlockStoreObligationState>(obligation.StateJson, jsonOptions);
+
+                        if (state is null) return;
+
+                        if (!string.IsNullOrEmpty(state.AuthToken))
+                            obligation.AuthToken = state.AuthToken;
+
+                        _logger.LogDebug(
+                            "Hydrated BlockStore state v{Version} onto obligation for node {NodeId} " +
+                            "(peerId: {PeerId})",
+                            state.Version, node.Id,
+                            state.PeerId.Length > 12
+                                ? state.PeerId[..12] + "..."
+                                : state.PeerId);
+                        break;
+                    }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal — deployment proceeds with freshly generated credentials.
+            // Logs at Warning so operators can investigate if identity drift occurs.
+            _logger.LogWarning(ex,
+                "Could not deserialise obligation state for {Role} on node {NodeId} " +
+                "(StateVersion: {Version}) — deploying with freshly generated identity",
+                obligation.Role, node.Id, obligation.StateVersion);
+        }
+    }
+
+    /// <summary>
+    /// Extract the /24 slot integer from a relay subnet CIDR string.
+    /// "10.20.5.0/24" → 5.  Returns 0 on any parse failure.
+    /// </summary>
+    private static int ParseRelaySubnetSlot(string? relaySubnet)
+    {
+        if (string.IsNullOrEmpty(relaySubnet))
+            return 0;
+
+        // "10.20.{slot}.0/24" — the slot is the third octet
+        var withoutCidr = relaySubnet.Split('/')[0];
+        var octets = withoutCidr.Split('.');
+        return octets.Length >= 3 && int.TryParse(octets[2], out var slot) ? slot : 0;
+    }
+
 
     // ════════════════════════════════════════════════════════════════════════
     // Deployment dispatch (role → service)
