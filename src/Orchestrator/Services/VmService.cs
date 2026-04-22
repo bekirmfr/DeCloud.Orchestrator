@@ -698,8 +698,35 @@ public class VmService : IVmService
         Node? selectedNode = null;
         if (!string.IsNullOrEmpty(targetNodeId))
         {
-            // Use specified node (for system VM deployments: relay, DHT, etc.)
             selectedNode = await _dataStore.GetNodeAsync(targetNodeId);
+
+            // System VMs (Relay, DHT, BlockStore) are orchestrator-controlled:
+            // they target a specific node by design and bypass eligibility checks.
+            // User VMs must pass all hard filters even when the user picked a node
+            // directly from the marketplace — blockstore readiness, KVM, tier
+            // eligibility, architecture, and resource headroom all apply.
+            var isSystemVm = vm.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore;
+            if (!isSystemVm && selectedNode != null)
+            {
+                var rejectionReason = await _schedulingService.ValidateNodeForVmAsync(
+                    selectedNode,
+                    vm.Spec,
+                    vm.Spec.QualityTier,
+                    requiredRegion: vm.Spec.Region,
+                    requiredZone: vm.Spec.Zone,
+                    ct: default);
+
+                if (rejectionReason != null)
+                {
+                    _logger.LogWarning(
+                        "Targeted node {NodeId} rejected for VM {VmId}: {Reason}",
+                        targetNodeId, vm.Id, rejectionReason);
+                    vm.Status = VmStatus.Pending;
+                    vm.StatusMessage = $"Target node does not meet requirements: {rejectionReason}";
+                    throw new InvalidOperationException(vm.StatusMessage);
+                }
+            }
+
             _logger.LogInformation(
                 "Using target node {NodeId} for VM {VmId} ({VmType} deployment)",
                 targetNodeId, vm.Id, vm.VmType);

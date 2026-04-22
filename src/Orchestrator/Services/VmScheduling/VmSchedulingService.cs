@@ -41,6 +41,24 @@ public interface IVmSchedulingService
         string? preferredZone = null,
         string? requiredArchitecture = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Validate that a specific node can host the given VM spec.
+    /// Returns null when the node is eligible, or a human-readable rejection
+    /// reason when any hard filter fails.
+    ///
+    /// Used to validate user-targeted deployments (marketplace node selection)
+    /// through the same hard filters applied during normal scheduling — so the
+    /// rules are never duplicated and never drift.
+    /// </summary>
+    Task<string?> ValidateNodeForVmAsync(
+        Node node,
+        VmSpec spec,
+        QualityTier tier,
+        string? requiredArchitecture = null,
+        string? requiredRegion = null,
+        string? requiredZone = null,
+        CancellationToken ct = default);
 }
 
 /// <summary>
@@ -303,6 +321,26 @@ public class VmSchedulingService : IVmSchedulingService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<string?> ValidateNodeForVmAsync(
+        Node node,
+        VmSpec spec,
+        QualityTier tier,
+        string? requiredArchitecture = null,
+        string? requiredRegion = null,
+        string? requiredZone = null,
+        CancellationToken ct = default)
+    {
+        var config = await _configService.GetConfigAsync(ct);
+
+        if (!config.Tiers.TryGetValue(tier, out var tierConfig))
+            return $"No tier configuration found for tier {tier}";
+
+        return await ApplyHardFiltersAsync(
+            node, spec, tier, tierConfig, config,
+            requiredArchitecture, requiredRegion, requiredZone, ct);
+    }
+
     // ============================================================================
     // PRIVATE - Hard Filters
     // ============================================================================
@@ -427,7 +465,31 @@ public class VmSchedulingService : IVmSchedulingService
             return $"Insufficient free memory ({freeMemoryMb}MB < {config.Limits.MinFreeMemoryMb}MB)";
 
         // =====================================================
-        // FILTER 8: Active Block Store required for replicated VMs
+        // FILTER 8: All node obligations must be Active
+        //
+        // A node that hasn't completed its platform obligations (DHT, Relay,
+        // BlockStore, Ingress) is not fully onboarded and must not host user VMs.
+        // Obligations are seeded at registration and converged to Active by
+        // SystemVmReconciliationService. Any obligation still Pending, Deploying,
+        // or Failed means the node's infrastructure is not ready.
+        //
+        // This supersedes the previous per-obligation BlockStore check:
+        // SystemVmReconciliationService sets BlockStoreInfo.Status = Active
+        // atomically when the BlockStore obligation becomes Active, so an
+        // all-obligations-Active check implies BlockStore is Active too.
+        //
+        // Nodes with no obligations (hardware below DHT/Relay/BlockStore thresholds)
+        // have an empty list and pass this filter — they have nothing to fulfill.
+        // =====================================================
+        var unmetObligation = node.SystemVmObligations
+            .FirstOrDefault(o => o.Status != SystemVmStatus.Active);
+
+        if (unmetObligation != null)
+            return $"Node has unmet {unmetObligation.Role} obligation " +
+                   $"({unmetObligation.Status}) — node infrastructure not ready";
+
+        // =====================================================
+        // FILTER 8.1: Active Block Store required for replicated VMs
         //
         // When replicationFactor > 0, the node must have an Active BlockStore VM.
         // Without it, the lazysync daemon on this node has nowhere to push dirty
