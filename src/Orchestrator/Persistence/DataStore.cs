@@ -1362,6 +1362,18 @@ public class DataStore
                 SizeGb = 2,
                 IsPublic = false,
                 CreatedAt = DateTime.UtcNow
+            },
+            new VmImage
+            {
+                Id = "debian-12-blockstore",
+                Name = "Debian 12 (Block Store Node)",
+                Description = "Base image for Block Store system VMs — libp2p/bitswap node deployed via cloud-init",
+                OsFamily = "linux",
+                OsName = "debian",
+                Version = "12",
+                SizeGb = 2,
+                IsPublic = false,
+                CreatedAt = DateTime.UtcNow
             }
         };
 
