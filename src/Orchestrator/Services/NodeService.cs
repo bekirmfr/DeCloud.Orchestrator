@@ -77,6 +77,7 @@ public class NodeService : INodeService
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
     private readonly IConfiguration _configuration;
+    private readonly ObligationStateGenerator _stateGenerator;
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _registrationLocks = new();
@@ -95,7 +96,8 @@ public class NodeService : INodeService
         IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ObligationStateGenerator stateGenerator)
     {
         _dataStore = dataStore;
         _schedulingService = schedulingService;
@@ -111,6 +113,7 @@ public class NodeService : INodeService
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
         _configuration = configuration;
+        _stateGenerator = stateGenerator;
     }
 
     // ============================================================================
@@ -293,6 +296,9 @@ public class NodeService : INodeService
 
         var registrationLock = _registrationLocks.GetOrAdd(nodeId, _ => new SemaphoreSlim(1, 1));
         await registrationLock.WaitAsync(ct);
+
+        var obligationStates = new Dictionary<string, ObligationStatePayload>();
+
         try
         {
 
@@ -405,7 +411,14 @@ public class NodeService : INodeService
                 await reconciler.ReconcileNodeAsync(node);
             }
 
+            // Generate identity state for any new obligation (StateVersion == 0)
+            // or any obligation where the orchestrator's version exceeds what the
+            // node reported.  Must run after reconciliation so all obligations exist.
+            obligationStates = GenerateAndAttachObligationStates(
+                node, request.ObligationStateVersions);
+
             await _dataStore.SaveNodeAsync(node);
+
         }
         finally
         {
@@ -438,8 +451,90 @@ public class NodeService : INodeService
             schedulingConfig,
             orchestratorPublicKey,
             TimeSpan.FromSeconds(15),
-            dhtBootstrapPeers);
+            dhtBootstrapPeers,
+            obligationStates);
     }
+    /// <summary>
+    /// For each obligation on <paramref name="node"/>, generate fresh identity
+    /// state if none exists (StateVersion == 0), or re-send existing state if
+    /// the node's reported version is lower than the stored version.
+    ///
+    /// Mutates <c>node.SystemVmObligations[].StateJson / StateVersion</c> in place
+    /// so the caller's subsequent <c>SaveNodeAsync(node)</c> persists the state
+    /// to MongoDB.
+    ///
+    /// Returns a dictionary of payloads to include in the registration response —
+    /// only roles where the orchestrator has a version the node hasn't seen yet.
+    /// </summary>
+    private Dictionary<string, ObligationStatePayload> GenerateAndAttachObligationStates(
+        Node node,
+        Dictionary<string, int> nodeReportedVersions)
+    {
+        var result = new Dictionary<string, ObligationStatePayload>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var obligation in node.SystemVmObligations)
+        {
+            // Derive the canonical role name used as dictionary key and SQLite PK.
+            var roleName = obligation.Role switch
+            {
+                SystemVmRole.Relay => "relay",
+                SystemVmRole.Dht => "dht",
+                SystemVmRole.BlockStore => "blockstore",
+                _ => null
+            };
+
+            if (roleName is null)
+                continue;   // Ingress and other future roles handled later
+
+            // Determine what version the node currently has.
+            nodeReportedVersions.TryGetValue(roleName, out var nodeVersion);
+
+            // Generate fresh state if this is the first time (StateVersion == 0).
+            if (obligation.StateVersion == 0 || string.IsNullOrEmpty(obligation.StateJson))
+            {
+                var state = _stateGenerator.GenerateState(obligation.Role, node);
+                var stateJson = System.Text.Json.JsonSerializer.Serialize(
+                    state,
+                    state.GetType(),
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                    });
+
+                obligation.StateJson = stateJson;
+                obligation.StateVersion = state.Version; // always 1 on first generation
+
+                _logger.LogInformation(
+                    "Generated initial obligation state for role {Role} on node {NodeId} (v{Version})",
+                    obligation.Role, node.Id, state.Version);
+            }
+
+            // Include in response if orchestrator version > node-reported version.
+            if (obligation.StateVersion > nodeVersion)
+            {
+                result[roleName] = new ObligationStatePayload
+                {
+                    StateJson = obligation.StateJson!,
+                    Version = obligation.StateVersion,
+                };
+
+                _logger.LogDebug(
+                    "Including {Role} state v{OrchestratorVersion} in registration response " +
+                    "(node has v{NodeVersion})",
+                    roleName, obligation.StateVersion, nodeVersion);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "{Role} state is current on node (v{Version}) — skipping payload",
+                    roleName, obligation.StateVersion);
+            }
+        }
+
+        return result;
+    }
+
+
 
     private bool VerifyWalletSignature(string walletAddress, string message, string signature)
     {

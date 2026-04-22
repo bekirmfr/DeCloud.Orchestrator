@@ -418,6 +418,19 @@ public class NodeRegistrationRequest
     /// If null, platform defaults are used.
     /// </summary>
     public NodePricing? Pricing { get; set; }
+
+    /// <summary>
+    /// Versions of obligation identity state currently stored in the node agent's
+    /// SQLite database, keyed by canonical role name ("relay" | "dht" | "blockstore").
+    ///
+    /// The orchestrator compares these against the stored StateVersion on each
+    /// obligation. Only roles where orchestrator version > node version get a
+    /// state payload in the response — avoiding unnecessary retransmission.
+    ///
+    /// Absent or zero-valued entries mean the node has no state for that role.
+    /// </summary>
+    public Dictionary<string, int> ObligationStateVersions { get; set; } = new();
+
 }
 
 public record NodeRegistrationResponse(
@@ -425,19 +438,32 @@ public record NodeRegistrationResponse(
     NodePerformanceEvaluation performanceEvaluation,
     string ApiKey,
     SchedulingConfig SchedulingConfig,
-    /// <summary>
-    /// Orchestrator's WireGuard public key for relay configuration
-    /// Null if WireGuard is not enabled on orchestrator
-    /// </summary>
     string OrchestratorWireGuardPublicKey,
     TimeSpan HeartbeatInterval,
+    List<string> DhtBootstrapPeers,
     /// <summary>
-    /// libp2p multiaddrs of active DHT peers for bootstrap.
-    /// Format: "/ip4/{ip}/tcp/4001/p2p/{peerId}"
-    /// Empty list if no DHT peers are active yet (this node will be first).
+    /// Identity state payloads keyed by canonical role name.
+    /// Contains only roles where orchestrator version > node-reported version.
+    /// Empty if all states are already current on the node.
     /// </summary>
-    List<string> DhtBootstrapPeers
+    Dictionary<string, ObligationStatePayload> ObligationStates
 );
+
+
+/// <summary>
+/// Carries a single role's identity state in the NodeRegistrationResponse.
+/// The orchestrator populates this for every obligation where its stored
+/// StateVersion is greater than what the node reported in the request.
+/// </summary>
+public class ObligationStatePayload
+{
+    /// <summary>JSON-serialised identity state blob (see ObligationStateBase subclasses).</summary>
+    public string StateJson { get; init; } = string.Empty;
+
+    /// <summary>Monotonic version from the orchestrator — used for conflict resolution.</summary>
+    public int Version { get; init; }
+}
+
 
 /// <summary>
 /// Node heartbeat with enhanced VM information

@@ -18,7 +18,6 @@ using Serilog;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using static Orchestrator.Services.ICentralCaddyManager;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -164,6 +163,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 builder.Services.AddSingleton<IObligationEligibility, ObligationEligibility>();
+builder.Services.AddSingleton<ObligationStateGenerator>();
 
 // =====================================================
 // System VM Reconciliation (declarative, dependency-aware deployment)
