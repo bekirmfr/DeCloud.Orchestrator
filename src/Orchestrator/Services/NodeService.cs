@@ -402,6 +402,13 @@ public class NodeService : INodeService
                 "Node {NodeId} obligations computed: [{Roles}]",
                 node.Id, string.Join(", ", requiredRoles));
 
+            // Generate identity state for any new obligation (StateVersion == 0)
+            // or any obligation where the orchestrator's version exceeds what the
+            // node reported.  State generation must be first so HydrateNodeFromObligationState
+            // finds a populated StateJson when it runs inside TryDeployAsync
+            obligationStates = GenerateAndAttachObligationStates(
+                node, request.ObligationStateVersions);
+
             // Deploy obligations with no dependencies immediately (e.g., DHT).
             // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
             // the background SystemVmReconciliationService picks up Pending obligations
@@ -410,12 +417,6 @@ public class NodeService : INodeService
             {
                 await reconciler.ReconcileNodeAsync(node);
             }
-
-            // Generate identity state for any new obligation (StateVersion == 0)
-            // or any obligation where the orchestrator's version exceeds what the
-            // node reported.  Must run after reconciliation so all obligations exist.
-            obligationStates = GenerateAndAttachObligationStates(
-                node, request.ObligationStateVersions);
 
             await _dataStore.SaveNodeAsync(node);
 
