@@ -365,7 +365,6 @@ public class BlockStoreService : IBlockStoreService
                 { "role",                     "blockstore" },
                 { "blockstore-listen-port",   BlockStoreVmSpec.BitswapPort.ToString() },
                 { "blockstore-api-port",      BlockStoreVmSpec.ApiPort.ToString() },
-                { "blockstore-storage-bytes", vmSpec.DiskBytes.ToString() },
                 // blockstore-auth-token intentionally omitted — VM fetches auth token
                 // directly from NodeAgent /api/obligations/blockstore/state at runtime.
                 { "blockstore-advertise-ip",  advertiseIp },
