@@ -123,13 +123,15 @@ public class NodeMarketplaceService : INodeMarketplaceService
         // 2. Good capacity
         // 3. Online
         // 4. Has description (curated)
-        
+
         var featuredNodes = _dataStore.ActiveNodes.Values
-            .Where(n => 
+            .Where(n =>
                 n.Status == NodeStatus.Online &&
                 n.UptimePercentage >= 95.0 &&
                 !string.IsNullOrEmpty(n.Description) &&
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) > 10)
+                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) > 10 &&
+                (n.SystemVmObligations.Count == 0 ||
+                 n.SystemVmObligations.All(o => o.Status == SystemVmStatus.Active)))
             .OrderByDescending(n => n.UptimePercentage)
             .ThenByDescending(n => n.TotalVmsHosted)
             .Take(10)
