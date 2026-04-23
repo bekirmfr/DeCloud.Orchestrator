@@ -215,14 +215,25 @@ public class SystemVmReconciliationService : BackgroundService
 
                 if (existingVm.Status == VmStatus.Running)
                 {
-                    // VM is running — adopt it directly
-                    obligation.VmId = existingVm.Id;
-                    obligation.Status = SystemVmStatus.Deploying;
-                    obligation.ActiveAt = DateTime.UtcNow;
+                    if (existingVm.IsFullyReady)
+                    {
+                        obligation.VmId = existingVm.Id;
+                        obligation.Status = SystemVmStatus.Deploying;
+                        obligation.DeployedAt = DateTime.UtcNow;
 
-                    _logger.LogInformation(
-                        "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
+                        _logger.LogInformation(
+                            "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
+                            obligation.Role, existingVm.Id, node.Id);
+
+                        return;  // ← only return when healthy, fall through otherwise
+                    }
+
+                    _logger.LogWarning(
+                        "Existing {Role} VM {VmId} on node {NodeId} is Running but not fully ready " +
+                        "— skipping re-adoption, will deploy replacement",
                         obligation.Role, existingVm.Id, node.Id);
+
+                    // Fall through — do NOT return — allow fresh deployment below
                 }
                 else if (existingVm.Status == VmStatus.Deleting && existingVm.PowerState == VmPowerState.Running)
                 {
@@ -606,6 +617,7 @@ public class SystemVmReconciliationService : BackgroundService
                 "resetting obligation to Deploying",
                 obligation.Role, obligation.VmId, node.Id);
             obligation.Status = SystemVmStatus.Deploying;
+            obligation.DeployedAt = DateTime.UtcNow;
             return;
         }
 
