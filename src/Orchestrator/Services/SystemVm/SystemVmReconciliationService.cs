@@ -426,21 +426,7 @@ public class SystemVmReconciliationService : BackgroundService
                 obligation.Role, obligation.VmId, node.Id);
 
             // Sync role-specific info to Active now that VM is Running + Ready
-            if (obligation.Role == SystemVmRole.Relay && node.RelayInfo != null)
-            {
-                node.RelayInfo.Status = RelayStatus.Active;
-                node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-            }
-            else if (obligation.Role == SystemVmRole.Dht && node.DhtInfo != null)
-            {
-                node.DhtInfo.Status = DhtStatus.Active;
-                node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
-            }
-            else if (obligation.Role == SystemVmRole.BlockStore && node.BlockStoreInfo != null)
-            {
-                node.BlockStoreInfo.Status = BlockStoreStatus.Active;
-                node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
-            }
+            SyncRoleServiceInfo(node, obligation);
 
             return;
         }
@@ -625,16 +611,74 @@ public class SystemVmReconciliationService : BackgroundService
         // Reset to Deploying so the callback path gets another chance.
         if (!vm.IsFullyReady)
         {
+            // Only act if the service status is actually fresh.
+            // After a node agent restart, VmReadinessMonitor re-checks services
+            // on its own cycle — LastCheckAt will be stale until that completes.
+            // Resetting on stale data incorrectly degrades healthy obligations.
+            var lastCheck = vm.Services
+                .Select(s => s.LastCheckAt)
+                .Where(t => t.HasValue)
+                .Select(t => t!.Value)
+                .DefaultIfEmpty(DateTime.MinValue)
+                .Max();
+
+            if (lastCheck < node.LastHeartbeat - TimeSpan.FromMinutes(2))
+            {
+                _logger.LogDebug(
+                    "{Role} VM {VmId} on node {NodeId} services not ready but " +
+                    "LastCheckAt ({LastCheck}) predates last heartbeat — " +
+                    "readiness data stale, skipping reset",
+                    obligation.Role, obligation.VmId, node.Id, lastCheck);
+                return;
+            }
+
             _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} services are no longer ready — " +
-                "resetting obligation to Deploying",
-                obligation.Role, obligation.VmId, node.Id);
+                "{Role} VM {VmId} on node {NodeId} services confirmed not ready " +
+                "(LastCheckAt: {LastCheck}) — resetting to Deploying",
+                obligation.Role, obligation.VmId, node.Id, lastCheck);
             obligation.Status = SystemVmStatus.Deploying;
             obligation.DeployedAt = DateTime.UtcNow;
             return;
         }
 
+        // Self-heal: sync role-specific service info on every healthy verification.
+        // Covers drift from prior bugs (e.g. empty RelayVmId) without redeployment.
+        SyncRoleServiceInfo(node, obligation);
+
         // VM exists and is not in a terminal or transitional error state — still converged
+    }
+
+    /// <summary>
+    /// Sync role-specific service info to reflect the current Active obligation.
+    /// Called both on Deploying→Active transition and on every healthy VerifyActive
+    /// cycle so that drifted fields (e.g. RelayVmId, Status) self-correct.
+    /// New roles: add a case here only.
+    /// </summary>
+    private static void SyncRoleServiceInfo(Node node, SystemVmObligation obligation)
+    {
+        switch (obligation.Role)
+        {
+            case SystemVmRole.Relay:
+                node.RelayInfo ??= new RelayNodeInfo();
+                node.RelayInfo.RelayVmId = obligation.VmId ?? string.Empty;
+                node.RelayInfo.Status = RelayStatus.Active;
+                node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+                break;
+
+            case SystemVmRole.Dht:
+                node.DhtInfo ??= new DhtNodeInfo();
+                node.DhtInfo.DhtVmId = obligation.VmId ?? string.Empty;
+                node.DhtInfo.Status = DhtStatus.Active;
+                node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+                break;
+
+            case SystemVmRole.BlockStore:
+                node.BlockStoreInfo ??= new BlockStoreInfo();
+                node.BlockStoreInfo.BlockStoreVmId = obligation.VmId ?? string.Empty;
+                node.BlockStoreInfo.Status = BlockStoreStatus.Active;
+                node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
+                break;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
