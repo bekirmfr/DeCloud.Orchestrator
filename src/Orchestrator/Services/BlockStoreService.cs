@@ -724,7 +724,9 @@ public class BlockStoreService : IBlockStoreService
                 n.Id == node.CgnatInfo.AssignedRelayNodeId);
 
             if (relayNode?.RelayInfo != null &&
-                relayNode.RelayInfo.Status == RelayStatus.Active)
+                !string.IsNullOrEmpty(relayNode.RelayInfo.WireGuardPublicKey) &&
+                (relayNode.RelayInfo.Status == RelayStatus.Active ||
+                 !string.IsNullOrEmpty(relayNode.RelayInfo.WireGuardEndpoint)))
             {
                 var relayTunnelIp = relayNode.RelayInfo.TunnelIp;
 
