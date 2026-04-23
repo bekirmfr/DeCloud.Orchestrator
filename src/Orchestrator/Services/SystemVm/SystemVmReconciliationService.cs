@@ -148,6 +148,21 @@ public class SystemVmReconciliationService : BackgroundService
 
     private async Task TryDeployAsync(Node node, SystemVmObligation obligation, CancellationToken ct)
     {
+        // For CGNAT nodes, if CgnatInfo is not
+        // yet assigned, GetAdvertiseIp() falls back to the public IP which is
+        // unreachable via the overlay — defer until relay assignment is complete.
+        var isCgnat = node.RelayInfo == null && node.HardwareInventory.Network.NatType != NatType.None;
+        var hasCgnatAssignment = node.CgnatInfo != null;
+
+        if (isCgnat && !hasCgnatAssignment)
+        {
+            _logger.LogInformation(
+                "Deferring {Role} deployment on node {NodeId} — CgnatInfo not yet assigned, " +
+                "waiting for relay assignment before deploying overlay-dependent system VMs",
+                obligation.Role, node.Id);
+            return;
+        }
+
         // Pre-populate node fields from stored obligation state so deployment
         // services reuse the same identity on every redeploy instead of
         // generating fresh credentials that break mesh connectivity.
@@ -307,25 +322,6 @@ public class SystemVmReconciliationService : BackgroundService
                         obligation.Role, node.Id, existingVm.Id, existingVm.Status);
                     return;
                 }
-            }
-        }
-
-        // For CGNAT nodes, BlockStore and DHT require the WireGuard tunnel IP
-        // for their advertise address and cloud-init labels. If CgnatInfo is not
-        // yet assigned, GetAdvertiseIp() falls back to the public IP which is
-        // unreachable via the overlay — defer until relay assignment is complete.
-        if (obligation.Role is SystemVmRole.BlockStore or SystemVmRole.Dht)
-        {
-            var isCgnat = node.RelayInfo == null && node.HardwareInventory.Network.NatType != NatType.None;
-            var hasCgnatAssignment = node.CgnatInfo != null;
-
-            if (isCgnat && !hasCgnatAssignment)
-            {
-                _logger.LogInformation(
-                    "Deferring {Role} deployment on node {NodeId} — CgnatInfo not yet assigned, " +
-                    "waiting for relay assignment before deploying overlay-dependent system VMs",
-                    obligation.Role, node.Id);
-                return;
             }
         }
 
