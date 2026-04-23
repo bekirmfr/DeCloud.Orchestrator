@@ -310,6 +310,25 @@ public class SystemVmReconciliationService : BackgroundService
             }
         }
 
+        // For CGNAT nodes, BlockStore and DHT require the WireGuard tunnel IP
+        // for their advertise address and cloud-init labels. If CgnatInfo is not
+        // yet assigned, GetAdvertiseIp() falls back to the public IP which is
+        // unreachable via the overlay — defer until relay assignment is complete.
+        if (obligation.Role is SystemVmRole.BlockStore or SystemVmRole.Dht)
+        {
+            var isCgnat = node.RelayInfo == null && node.HardwareInventory.Network.NatType != NatType.None;
+            var hasCgnatAssignment = node.CgnatInfo != null;
+
+            if (isCgnat && !hasCgnatAssignment)
+            {
+                _logger.LogInformation(
+                    "Deferring {Role} deployment on node {NodeId} — CgnatInfo not yet assigned, " +
+                    "waiting for relay assignment before deploying overlay-dependent system VMs",
+                    obligation.Role, node.Id);
+                return;
+            }
+        }
+
         _logger.LogInformation(
             "Deploying {Role} system VM on node {NodeId} (dependencies met)",
             obligation.Role, node.Id);
@@ -656,9 +675,9 @@ public class SystemVmReconciliationService : BackgroundService
 
     /// <summary>
     /// Sync role-specific service info to reflect the current Active obligation.
-    /// Called both on Deploying→Active transition and on every healthy VerifyActive
-    /// cycle so that drifted fields (e.g. RelayVmId, Status) self-correct.
-    /// New roles: add a case here only.
+    /// Only sets VmId, Status, and LastHealthCheck — service-specific fields
+    /// (ListenAddress, PeerId, CapacityBytes) come from /join callbacks and
+    /// must not be overwritten here.
     /// </summary>
     private static void SyncRoleServiceInfo(Node node, SystemVmObligation obligation)
     {
@@ -676,6 +695,7 @@ public class SystemVmReconciliationService : BackgroundService
                 node.DhtInfo.DhtVmId = obligation.VmId ?? string.Empty;
                 node.DhtInfo.Status = DhtStatus.Active;
                 node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+                // Do NOT set ListenAddress or PeerId — set by /api/dht/join callback
                 break;
 
             case SystemVmRole.BlockStore:
@@ -683,6 +703,7 @@ public class SystemVmReconciliationService : BackgroundService
                 node.BlockStoreInfo.BlockStoreVmId = obligation.VmId ?? string.Empty;
                 node.BlockStoreInfo.Status = BlockStoreStatus.Active;
                 node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
+                // Do NOT set ListenAddress, PeerId, or CapacityBytes — set by /api/blockstore/join callback
                 break;
         }
     }
