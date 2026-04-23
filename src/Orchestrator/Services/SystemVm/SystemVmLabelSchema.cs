@@ -16,7 +16,6 @@ public static class SystemVmLabelSchema
             "role",
             "blockstore-listen-port",
             "blockstore-api-port",
-            "blockstore-storage-bytes",
             "blockstore-advertise-ip",
             "node-region",
             "node-id",
