@@ -517,38 +517,6 @@ public class SystemVmReconciliationService : BackgroundService
 
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
 
-        // Self-heal: BlockStoreInfo can be null if ResetObligation was called
-        // during a previous failed deploy cycle and the obligation was later
-        // re-adopted as Active. Reconstruct from VM labels.
-        if (obligation.Role == SystemVmRole.BlockStore
-            && node.BlockStoreInfo == null
-            && vm != null
-            && vm.Status == VmStatus.Running)
-        {
-            var advertiseIp = vm.Labels?.GetValueOrDefault("blockstore-advertise-ip")
-                           ?? DhtNodeService.GetAdvertiseIp(node);
-            node.BlockStoreInfo = new BlockStoreInfo
-            {
-                BlockStoreVmId = vm.Id,
-                ListenAddress = $"{advertiseIp}:{BlockStoreVmSpec.BitswapPort}",
-                ApiPort = BlockStoreVmSpec.ApiPort,
-                Status = BlockStoreStatus.Initializing, // /join will set Active
-                LastHealthCheck = DateTime.UtcNow,
-            };
-            if (long.TryParse(
-                vm.Labels?.GetValueOrDefault("blockstore-storage-bytes"), out var cap))
-                node.BlockStoreInfo.CapacityBytes = cap;
-
-            var authToken = vm.Labels?.GetValueOrDefault("blockstore-auth-token");
-            if (!string.IsNullOrEmpty(authToken))
-                obligation.AuthToken = authToken;
-
-            _logger.LogInformation(
-                "Reconstructed null BlockStoreInfo for node {NodeId} from " +
-                "running VM {VmId} (advertise: {Ip})",
-                node.Id, vm.Id, advertiseIp);
-        }
-
         if (vm == null)
         {
             _logger.LogWarning(
@@ -567,7 +535,7 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
-        // FIX 3: Stuck-in-Deleting timeout.
+        // Stuck-in-Deleting timeout.
         //
         // Normal path: RedeployDhtVmAsync transitions the VM to Deleting, obligation
         // stays Active, NodeAgent confirms deletion → Deleted → ResetObligation → redeploy.
