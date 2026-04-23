@@ -127,7 +127,8 @@ public class DhtNodeService : IDhtNodeService
                 { "dht-api-port", DhtInternalApiPort.ToString() },
                 { "dht-advertise-ip", advertiseIp },
                 { "dht-bootstrap-peers", string.Join(",", bootstrapPeers) },
-                { "dht-auth-token", authToken },
+                // dht-auth-token intentionally omitted — VM fetches auth token
+                // directly from NodeAgent /api/obligations/dht/state at runtime.
                 { "node-region", node.Region ?? "default" },
                 { "node-id", node.Id },
                 { "architecture", node.Architecture ?? "x86_64" }

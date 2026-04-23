@@ -17,7 +17,6 @@ public static class SystemVmLabelSchema
             "blockstore-listen-port",
             "blockstore-api-port",
             "blockstore-storage-bytes",
-            "blockstore-auth-token",
             "blockstore-advertise-ip",
             "node-region",
             "node-id",
@@ -37,7 +36,6 @@ public static class SystemVmLabelSchema
             "dht-listen-port",
             "dht-api-port",
             "dht-advertise-ip",
-            "dht-auth-token",
             "node-region",
             "node-id",
             // wg-relay-endpoint, wg-relay-pubkey, wg-tunnel-ip, wg-relay-api
