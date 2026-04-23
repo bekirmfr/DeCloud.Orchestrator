@@ -78,13 +78,19 @@ public class ObligationStateGenerator
     {
         var (wgPriv, wgPub) = GenerateWireGuardKeyPair();
 
+        // Use the actual allocated subnet from RelayInfo if already set by RelayNodeService.
+        // AllocateRelaySubnet is a deterministic stub that may not match the real allocation.
+        var relaySubnet = node.RelayInfo?.RelaySubnet > 0
+            ? $"10.20.{node.RelayInfo.RelaySubnet}.0/24"
+            : AllocateRelaySubnet(node);
+
         return new RelayObligationState
         {
             WireGuardPrivateKey = wgPriv,
-            WireGuardPublicKey  = wgPub,
-            TunnelIp            = AllocateRelayTunnelIp(node),
-            RelaySubnet         = AllocateRelaySubnet(node),
-            AuthToken           = GenerateAuthToken(),
+            WireGuardPublicKey = wgPub,
+            TunnelIp = $"10.20.{node.RelayInfo?.RelaySubnet ?? 0}.254",
+            RelaySubnet = relaySubnet,
+            AuthToken = GenerateAuthToken(),
             Version             = 1,
             UpdatedAt           = DateTime.UtcNow,
         };
