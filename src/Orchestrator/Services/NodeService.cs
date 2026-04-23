@@ -1815,6 +1815,36 @@ public class NodeService : INodeService
                 await RecoverOrphanedVmAsync(nodeId, reported);
             }
         }
+
+        // Reverse sync: find VMs that are Running/Provisioning in the orchestrator DB
+        // but not reported in this heartbeat. These are ghost records — either the VM
+        // was never actually created (e.g. node agent rejected a duplicate name) or it
+        // was destroyed without the orchestrator being notified.
+        // Exclude transitional states (Deleting, Stopping) — those are managed by
+        // command acknowledgment, not heartbeat.
+        var reportedVmIds = heartbeat.ActiveVms
+            .Select(v => v.VmId)
+            .ToHashSet();
+
+        var ghostVms = nodeVms
+            .Where(v =>
+                v.Status is VmStatus.Running or VmStatus.Provisioning &&
+                !reportedVmIds.Contains(v.Id))
+            .ToList();
+
+        foreach (var ghost in ghostVms)
+        {
+            _logger.LogWarning(
+                "VM {VmId} ({Name}) is {Status} in orchestrator DB but not reported " +
+                "in heartbeat from node {NodeId} — marking as Error",
+                ghost.Id, ghost.Name, ghost.Status, nodeId);
+
+            var ghostLifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+            await ghostLifecycleManager.TransitionAsync(
+                ghost.Id,
+                VmStatus.Error,
+                TransitionContext.Heartbeat(nodeId));
+        }
     }
 
     /// <summary>

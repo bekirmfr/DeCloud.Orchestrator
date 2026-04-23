@@ -209,10 +209,6 @@ public class SystemVmReconciliationService : BackgroundService
 
             if (existingVm != null)
             {
-                _logger.LogDebug(
-                    "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
-                    obligation.Role, node.Id, existingVm.Id, existingVm.Status);
-
                 if (existingVm.Status == VmStatus.Running)
                 {
                     if (existingVm.IsFullyReady)
@@ -225,9 +221,14 @@ public class SystemVmReconciliationService : BackgroundService
                             "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
                             obligation.Role, existingVm.Id, node.Id);
 
-                        return;  // ← only return when healthy, fall through otherwise
+                        return;
                     }
 
+                    // VM is Running but services are not ready — send a delete command
+                    // so the node agent destroys the libvirt domain before we deploy a
+                    // replacement. Without this, the node agent's duplicate-name guard
+                    // rejects the new CreateVm command because the old VM still exists
+                    // with the same name.
                     _logger.LogWarning(
                         "Existing {Role} VM {VmId} on node {NodeId} is Running but not fully ready " +
                         "— sending delete command before deploying replacement",
@@ -260,7 +261,7 @@ public class SystemVmReconciliationService : BackgroundService
                             obligation.Role, existingVm.Id, node.Id);
                     }
 
-                    // Return — let the delete propagate to the node agent before redeploying.
+                    // Return — let deletion propagate to the node agent before redeploying.
                     // Next cycle: VM will be Deleting or gone, falling through to DeploySystemVmAsync.
                     return;
                 }
