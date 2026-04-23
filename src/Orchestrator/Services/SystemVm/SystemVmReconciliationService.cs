@@ -372,6 +372,19 @@ public class SystemVmReconciliationService : BackgroundService
 
             if (!isReady)
             {
+                // Self-heal: stamp DeployedAt if null so the timeout clock starts correctly.
+                // Can happen when an obligation was adopted without a timestamp, or when
+                // VerifyActiveAsync reset to Deploying before this guard was in place.
+                if (obligation.DeployedAt == null)
+                {
+                    obligation.DeployedAt = DateTime.UtcNow;
+                    await _dataStore.SaveNodeAsync(node);
+                    _logger.LogInformation(
+                        "{Role} VM {VmId} on node {NodeId} had null DeployedAt — stamped now, " +
+                        "timeout clock starts from this cycle",
+                        obligation.Role, obligation.VmId, node.Id);
+                }
+
                 // Still waiting for cloud-init / callback — check timeout
                 var deployedAt = obligation.DeployedAt ?? DateTime.UtcNow;
                 var elapsed = DateTime.UtcNow - deployedAt;
