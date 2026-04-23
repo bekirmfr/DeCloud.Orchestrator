@@ -267,8 +267,16 @@ public class SystemVmReconciliationService : BackgroundService
                             "status restored to Running, ingress re-registered",
                             obligation.Role, existingVm.Id, node.Id);
                     }
+                    return;
                 }
-                return;
+                else
+                {
+                    // Provisioning or other transient state — wait for next cycle
+                    _logger.LogDebug(
+                        "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
+                        obligation.Role, node.Id, existingVm.Id, existingVm.Status);
+                    return;
+                }
             }
         }
 
