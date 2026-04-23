@@ -1,3 +1,4 @@
+using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services.SystemVm;
@@ -145,28 +146,37 @@ public class RelayNodeService : IRelayNodeService
                 "Generating WireGuard keypair for relay VM on node {NodeId}",
                 node.Id);
 
-            string relayPrivateKey;
-            string relayPublicKey;
+            string relayPrivateKey = string.Empty;
+            string relayPublicKey = string.Empty;
 
-            if (!string.IsNullOrEmpty(node.RelayInfo?.WireGuardPrivateKey))
+            // Prefer the obligation state key — this is what the VM will fetch
+            // from NodeAgent at boot. Using the same key here ensures the label
+            // placeholder and the obligation state are always in sync.
+            var relayObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.Relay);
+
+            if (!string.IsNullOrEmpty(relayObligation?.StateJson))
             {
-                // Reuse existing keypair — preserves mesh connectivity for DHT and
-                // BlockStore VMs that have this public key in their wg-mesh.conf.
+                var state = System.Text.Json.JsonSerializer.Deserialize<RelayObligationState>(
+                    relayObligation.StateJson,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                relayPrivateKey = state?.WireGuardPrivateKey ?? string.Empty;
+            }
+
+            if (string.IsNullOrEmpty(relayPrivateKey) &&
+                !string.IsNullOrEmpty(node.RelayInfo?.WireGuardPrivateKey))
+            {
+                // Fallback: reuse previous deployment's key (pre-obligation-state nodes)
                 relayPrivateKey = node.RelayInfo.WireGuardPrivateKey;
-                relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
-                _logger.LogInformation(
-                    "Reusing existing WireGuard keypair for relay on node {NodeId} (public key: {PubKey})",
-                    node.Id, relayPublicKey);
             }
-            else
+
+            if (string.IsNullOrEmpty(relayPrivateKey))
             {
-                // Fresh deployment — generate new keypair.
+                // Last resort: generate fresh (obligation state not yet populated)
                 relayPrivateKey = await GenerateWireGuardPrivateKeyAsync(ct);
-                relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
-                _logger.LogInformation(
-                    "Generated new WireGuard keypair for relay on node {NodeId} (public key: {PubKey})",
-                    node.Id, relayPublicKey);
             }
+
+            relayPublicKey = await _wireGuardManager.DerivePublicKeyAsync(relayPrivateKey, ct);
 
             // ========================================
             // STEP 2: Create relay VM specification
