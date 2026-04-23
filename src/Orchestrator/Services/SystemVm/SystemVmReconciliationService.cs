@@ -230,10 +230,39 @@ public class SystemVmReconciliationService : BackgroundService
 
                     _logger.LogWarning(
                         "Existing {Role} VM {VmId} on node {NodeId} is Running but not fully ready " +
-                        "— skipping re-adoption, will deploy replacement",
+                        "— sending delete command before deploying replacement",
                         obligation.Role, existingVm.Id, node.Id);
 
-                    // Fall through — do NOT return — allow fresh deployment below
+                    try
+                    {
+                        var vmService = _serviceProvider.GetRequiredService<IVmService>();
+                        var deleted = await vmService.DeleteVmAsync(existingVm.Id);
+
+                        if (!deleted)
+                        {
+                            _logger.LogWarning(
+                                "Failed to delete unhealthy {Role} VM {VmId} on node {NodeId} — " +
+                                "skipping deployment to avoid duplicate name conflict, will retry next cycle",
+                                obligation.Role, existingVm.Id, node.Id);
+                            return;
+                        }
+
+                        _logger.LogInformation(
+                            "Unhealthy {Role} VM {VmId} on node {NodeId} deletion initiated — " +
+                            "will deploy replacement once node confirms deletion",
+                            obligation.Role, existingVm.Id, node.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "Exception deleting unhealthy {Role} VM {VmId} on node {NodeId} — " +
+                            "skipping deployment, will retry next cycle",
+                            obligation.Role, existingVm.Id, node.Id);
+                    }
+
+                    // Return — let the delete propagate to the node agent before redeploying.
+                    // Next cycle: VM will be Deleting or gone, falling through to DeploySystemVmAsync.
+                    return;
                 }
                 else if (existingVm.Status == VmStatus.Deleting && existingVm.PowerState == VmPowerState.Running)
                 {
