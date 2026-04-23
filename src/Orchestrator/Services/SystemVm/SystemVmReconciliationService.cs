@@ -217,7 +217,7 @@ public class SystemVmReconciliationService : BackgroundService
                 {
                     // VM is running — adopt it directly
                     obligation.VmId = existingVm.Id;
-                    obligation.Status = SystemVmStatus.Active;
+                    obligation.Status = SystemVmStatus.Deploying;
                     obligation.ActiveAt = DateTime.UtcNow;
 
                     _logger.LogInformation(
@@ -352,13 +352,12 @@ public class SystemVmReconciliationService : BackgroundService
 
         if (vm.Status == VmStatus.Running)
         {
-            // Only advance to Active once the System service reports Ready.
+            // Only advance to Active once the all services reports Ready.
             // Running means the VM booted; Ready means cloud-init completed
             // and the role-specific callback fired (e.g. blockstore-notify-ready.sh).
             // Without this check, a VM that booted but whose cloud-init failed
             // is incorrectly marked Active, stopping redeployment attempts.
-            var systemService = vm.Services.FirstOrDefault(s => s.Name == "System");
-            var isReady = systemService?.Status == ServiceReadiness.Ready;
+            var isReady = vm.IsFullyReady;
 
             if (!isReady)
             {
@@ -593,6 +592,20 @@ public class SystemVmReconciliationService : BackgroundService
                     obligation.Role, obligation.VmId, node.Id,
                     deletingFor.TotalMinutes, StuckDeletingTimeout.TotalMinutes);
             }
+            return;
+        }
+
+        // Re-check service readiness on every cycle.
+        // A VM can lose its services after the initial Active transition
+        // (node agent restart, cloud-init timeout, WireGuard drop).
+        // Reset to Deploying so the callback path gets another chance.
+        if (!vm.IsFullyReady)
+        {
+            _logger.LogWarning(
+                "{Role} VM {VmId} on node {NodeId} services are no longer ready — " +
+                "resetting obligation to Deploying",
+                obligation.Role, obligation.VmId, node.Id);
+            obligation.Status = SystemVmStatus.Deploying;
             return;
         }
 
