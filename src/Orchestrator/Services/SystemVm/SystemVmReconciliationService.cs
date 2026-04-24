@@ -645,11 +645,34 @@ public class SystemVmReconciliationService : BackgroundService
 
             if (lastCheck < node.LastHeartbeat - TimeSpan.FromMinutes(2))
             {
+                // Stale guard: readiness data predates the last heartbeat, which
+                // normally means the node agent restarted and hasn't re-checked yet.
+                // However if the data has been stale longer than CloudInitReadyTimeout,
+                // the guest agent is not responding and never will — force a reset
+                // rather than blocking redeployment indefinitely.
+                // node.LastHeartbeat is DateTime? but is guaranteed non-null here —
+                // the enclosing condition (lastCheck < node.LastHeartbeat - 2min)
+                // evaluates to false when LastHeartbeat is null.
+                var stalenessAge = node.LastHeartbeat.Value - lastCheck;
+                if (stalenessAge > CloudInitReadyTimeout)
+                {
+                    _logger.LogWarning(
+                        "{Role} VM {VmId} on node {NodeId} services not ready and " +
+                        "LastCheckAt has been stale for {StaleMins:F0}m " +
+                        "(threshold: {Timeout:F0}m) — guest agent likely not responding, " +
+                        "resetting to Pending for redeployment",
+                        obligation.Role, obligation.VmId, node.Id,
+                        stalenessAge.TotalMinutes, CloudInitReadyTimeout.TotalMinutes);
+                    ResetObligation(node, obligation);
+                    return;
+                }
+
                 _logger.LogDebug(
                     "{Role} VM {VmId} on node {NodeId} services not ready but " +
                     "LastCheckAt ({LastCheck}) predates last heartbeat — " +
-                    "readiness data stale, skipping reset",
-                    obligation.Role, obligation.VmId, node.Id, lastCheck);
+                    "readiness data stale ({StaleMins:F0}m / {Timeout:F0}m threshold), skipping reset",
+                    obligation.Role, obligation.VmId, node.Id, lastCheck,
+                    stalenessAge.TotalMinutes, CloudInitReadyTimeout.TotalMinutes); ;
                 return;
             }
 
