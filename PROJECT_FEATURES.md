@@ -986,6 +986,13 @@ Also modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as b
 - MSI shutdown → orchestrator classifies VM as `Migrating` → overlay reconstructed on dedixlabvm (US East) from chunk map
 - Post-migration: user files preserved, browser terminal functional, ingress subdomain live, incremental replication resumes
 
+**Fix (2026-04-24) — GossipSub fetch retry queue (item 31b):**
+Freshly booted blockstores hit the 30s BitswapTimeout on all initial GossipSub-triggered
+fetches because DHT provider records for new blocks propagate ~15s after GossipSub publish,
+creating a race on cold routing tables. Failed CIDs were silently dropped with no recovery
+path. Fix: `retryQueue` + `startRetryLoop` in `main.go` — enqueues failed CIDs, retries
+sequentially every 60s with 60s timeout, max 3 attempts. Requires blockstore VM redeployment.
+
 #### Overview
 
 Every eligible node (≥100 GB storage, ≥2 GB RAM) runs a Block Store VM as a network duty obligation, contributing 5% of total storage to a distributed content-addressed storage network.

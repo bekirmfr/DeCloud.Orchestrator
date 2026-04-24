@@ -1,6 +1,6 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-04-24
 **Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress.
 
 ---
@@ -56,7 +56,7 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | General VMs | User workloads — AI, web apps, databases | ✅ Production |
 | Relay VMs | WireGuard tunnel + NAT for CGNAT nodes | ✅ Production |
 | DHT VMs | libp2p coordination over WireGuard mesh | ✅ Production-verified (2026-02-15) |
-| Block Store VMs | Distributed content-addressed storage (5% duty) | ✅ Phase A–C (2026-03-20) |
+| Block Store VMs | Distributed content-addressed storage (5% duty) | ✅ Phase A–E + item 31b (2026-04-24) |
 
 ### Networking
 
