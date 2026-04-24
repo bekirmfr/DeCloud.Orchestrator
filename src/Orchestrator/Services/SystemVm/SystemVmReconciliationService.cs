@@ -314,6 +314,34 @@ public class SystemVmReconciliationService : BackgroundService
                     }
                     return;
                 }
+                else if (existingVm.Status == VmStatus.Deleting
+                    && string.IsNullOrEmpty(existingVm.ActiveCommandId))
+                {
+                    // Orphaned Deleting VM: TryRetryAsync transitioned this VM to Deleting
+                    // but no DeleteVm command was ever sent to (or acknowledged by) the node
+                    // agent. The VM is permanently stuck — it will never reach Deleted and
+                    // the obligation will never redeploy. Treat it as gone and proceed.
+                    var stuckFor = DateTime.UtcNow - existingVm.UpdatedAt;
+                    _logger.LogWarning(
+                        "{Role} VM {VmId} on node {NodeId} has been Deleting for {Min:F0}m " +
+                        "with no active command — treating as orphan and proceeding with deployment",
+                        obligation.Role, existingVm.Id, node.Id, stuckFor.TotalMinutes);
+
+                    try
+                    {
+                        var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+                        await lifecycle.TransitionAsync(existingVm.Id, VmStatus.Deleted,
+                            TransitionContext.Manual(
+                                "Orphaned Deleting VM — no active command, presumed gone on node"));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Could not transition orphan {Role} VM {VmId} to Deleted — proceeding with deployment anyway",
+                            obligation.Role, existingVm.Id);
+                    }
+                    // Fall through to DeploySystemVmAsync below
+                }
                 else
                 {
                     // Provisioning or other transient state — wait for next cycle
