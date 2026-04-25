@@ -46,7 +46,16 @@ public class VirtualMachine
     public DateTime? StartedAt { get; set; }
     public DateTime? StoppedAt { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-    
+    /// <summary>
+    /// Last time this VM was reported in a node heartbeat.
+    /// Owned exclusively by SyncVmStateFromHeartbeatAsync — stamped on every
+    /// heartbeat cycle on the post-transition re-fetched object.
+    /// Nullable: null until the first heartbeat is received, which prevents
+    /// VMs that have never sent a heartbeat from appearing stale (DateTime.MinValue
+    /// would cause LastHeartbeatAt-based checks to fire immediately).
+    /// </summary>
+    public DateTime? LastHeartbeatAt { get; set; }
+
     // Networking
     public VmNetworkConfig NetworkConfig { get; set; } = new();
 

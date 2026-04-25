@@ -484,12 +484,14 @@ public class SystemVmReconciliationService : BackgroundService
         }
 
         // Ground truth: was this VM reported healthy in the last heartbeat?
-        // vm.UpdatedAt is set by SyncVmStateFromHeartbeatAsync on every heartbeat cycle.
-        // Running + IsFullyReady + fresh UpdatedAt = node confirmed cloud-init complete.
+        // vm.LastHeartbeatAt is stamped by SyncVmStateFromHeartbeatAsync on every heartbeat cycle.
+        // Running + IsFullyReady + fresh LastHeartbeatAt = node confirmed cloud-init complete.
+        // Null check: LastHeartbeatAt is null until the first heartbeat arrives after boot.
         var isHealthy = vm != null
             && vm.Status == VmStatus.Running
             && vm.IsFullyReady
-            && DateTime.UtcNow - vm.UpdatedAt < HeartbeatSnapshotTtl;
+            && vm.LastHeartbeatAt.HasValue
+            && DateTime.UtcNow - vm.LastHeartbeatAt.Value < HeartbeatSnapshotTtl;
 
         if (isHealthy)
         {
@@ -545,9 +547,9 @@ public class SystemVmReconciliationService : BackgroundService
 
     /// <summary>
     /// Verify that an Active obligation's VM is still being reported healthy
-    /// by the node agent via heartbeat. Uses vm.UpdatedAt as the freshness
-    /// signal — SyncVmStateFromHeartbeatAsync stamps it on every heartbeat.
-    /// A stale UpdatedAt means the node stopped reporting this VM.
+    /// by the node agent via heartbeat. Uses vm.LastHeartbeatAt as the freshness
+    /// signal — SyncVmStateFromHeartbeatAsync stamps it on every heartbeat cycle.
+    /// A stale LastHeartbeatAt means the node stopped reporting this VM.
     /// </summary>
     private async Task VerifyActiveAsync(
         Node node, SystemVmObligation obligation, CancellationToken ct)
@@ -576,12 +578,14 @@ public class SystemVmReconciliationService : BackgroundService
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
 
         // Ground truth: was this VM reported healthy in the last heartbeat?
-        // vm.UpdatedAt is set by SyncVmStateFromHeartbeatAsync every 15s.
-        // If the node is alive and the VM is running, UpdatedAt is always fresh.
+        // vm.LastHeartbeatAt is stamped by SyncVmStateFromHeartbeatAsync every 15s.
+        // If the node is alive and the VM is running, LastHeartbeatAt is always fresh.
+        // Null check: LastHeartbeatAt is null until the first heartbeat arrives after boot.
         var isHealthy = vm != null
             && vm.Status == VmStatus.Running
             && vm.IsFullyReady
-            && DateTime.UtcNow - vm.UpdatedAt < HeartbeatSnapshotTtl;
+            && vm.LastHeartbeatAt.HasValue
+            && DateTime.UtcNow - vm.LastHeartbeatAt.Value < HeartbeatSnapshotTtl;
 
         if (isHealthy)
         {
@@ -592,9 +596,9 @@ public class SystemVmReconciliationService : BackgroundService
         // VM not healthy — apply grace period before resetting.
         // Protects against transient absence: node agent restart (30-60s),
         // network blip, orchestrator processing lag.
-        // vm.UpdatedAt is the last heartbeat timestamp for this VM;
-        // fall back to obligation.ActiveAt if the VM record is missing.
-        var lastSeen = vm?.UpdatedAt ?? obligation.ActiveAt ?? DateTime.UtcNow;
+        // vm.LastHeartbeatAt is the last heartbeat timestamp for this VM (null until
+        // first heartbeat); fall back to obligation.ActiveAt if missing or not yet set.
+        var lastSeen = vm?.LastHeartbeatAt ?? obligation.ActiveAt ?? DateTime.UtcNow;
         var unhealthyFor = DateTime.UtcNow - lastSeen;
 
         // If the VM record was last updated more than HeartbeatSnapshotTtl ago and

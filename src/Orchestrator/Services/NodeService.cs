@@ -1697,36 +1697,41 @@ public class NodeService : INodeService
                         "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
                         vmId, newStatus, newPowerState);
                 }
-                if (!isTransitionalStatus && reported.IsIpAssigned)
+                // Re-fetch VM after potential state transition.
+                // TransitionAsync saves internally — any save against the pre-transition
+                // vm object overwrites the new status with the stale one.
+                // All metadata (LastHeartbeatAt, IP, services) goes on the fresh object.
+                vm = await _dataStore.GetVmAsync(vmId);
+                if (vm == null) continue;
+
+                // Stamp alive signal and IP on the fresh object, then save.
+                // LastHeartbeatAt is the sole heartbeat freshness signal for VerifyActiveAsync.
+                // UpdatedAt is now owned exclusively by TransitionAsync (state machine).
+                // Saved unconditionally so the alive signal persists even when no service
+                // update follows. The service block (if it runs) will save again with
+                // service readiness data — both saves are idempotent and correct.
+                if (!isTransitionalStatus)
                 {
-                    // Status unchanged but IP info arrived — update access info
-                    vm.NetworkConfig.PrivateIp = reported.IpAddress;
-                    vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
+                    vm.LastHeartbeatAt = DateTime.UtcNow;
 
-                    vm.AccessInfo ??= new VmAccessInfo();
-                    vm.AccessInfo.SshHost = reported.IpAddress;
-                    vm.AccessInfo.SshPort = 22;
-
-                    if (reported.VncPort != null)
+                    if (reported.IsIpAssigned)
                     {
-                        vm.AccessInfo.VncHost = node?.PublicIp;
-                        vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
+                        vm.NetworkConfig.PrivateIp = reported.IpAddress;
+                        vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
+
+                        vm.AccessInfo ??= new VmAccessInfo();
+                        vm.AccessInfo.SshHost = reported.IpAddress;
+                        vm.AccessInfo.SshPort = 22;
+
+                        if (reported.VncPort != null)
+                        {
+                            vm.AccessInfo.VncHost = node?.PublicIp;
+                            vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
+                        }
                     }
 
                     await _dataStore.SaveVmAsync(vm);
                 }
-                else if (!isTransitionalStatus)
-                {
-                    // Status and IP unchanged — save only to persist UpdatedAt stamp
-                    await _dataStore.SaveVmAsync(vm);
-                }
-
-                // Re-fetch VM after potential state transition to avoid stale object overwrite.
-                // TransitionAsync loads and saves a fresh VM internally. Without re-fetching,
-                // the subsequent SaveVmAsync would overwrite the transitioned status (e.g. Running)
-                // with the stale status (e.g. Error) from the vm object loaded before the transition.
-                vm = await _dataStore.GetVmAsync(vmId);
-                if (vm == null) continue;
 
                 // Update per-service readiness from node agent
                 if (reported.Services?.Count > 0 && vm.Services.Count > 0)
