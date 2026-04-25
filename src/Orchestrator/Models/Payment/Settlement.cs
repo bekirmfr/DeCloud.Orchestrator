@@ -1,4 +1,8 @@
-﻿namespace Orchestrator.Models.Payment
+﻿using Nethereum.ABI.FunctionEncoding.Attributes;
+using Nethereum.Contracts;
+using System.Numerics;
+
+namespace Orchestrator.Models.Payment
 {
     /// <summary>
     /// Single settlement transaction for batch processing
@@ -85,5 +89,57 @@
         public decimal PlatformFee { get; set; }
         public DateTime OldestUsage { get; set; }
         public DateTime LatestUsage { get; set; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // settleCycle() FUNCTION MESSAGE DTOs
+    // Strongly-typed Nethereum DTOs for correct ABI tuple encoding.
+    // Anonymous C# objects are NOT reliably encoded as ABI tuples by GetFunction().
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Function("settleCycle")]
+    public class SettleCycleFunctionMessage : FunctionMessage
+    {
+        [Parameter("tuple", "vmData", 1)]
+        public CycleVmDataDto VmData { get; set; } = new();
+
+        [Parameter("tuple", "storageData", 2)]
+        public CycleStorageDataDto StorageData { get; set; } = new();
+
+        [Parameter("string", "cycleId", 3)]
+        public string CycleId { get; set; } = string.Empty;
+    }
+
+    public class CycleVmDataDto
+    {
+        [Parameter("address[]", "users", 1)]
+        public List<string> Users { get; set; } = [];
+
+        [Parameter("address[]", "computeNodes", 2)]
+        public List<string> ComputeNodes { get; set; } = [];
+
+        [Parameter("uint256[]", "computeAmounts", 3)]
+        public List<BigInteger> ComputeAmounts { get; set; } = [];
+
+        [Parameter("uint256[]", "blockCounts", 4)]
+        public List<BigInteger> BlockCounts { get; set; } = [];
+
+        [Parameter("uint256[]", "blockSizeKbs", 5)]
+        public List<BigInteger> BlockSizeKbs { get; set; } = [];
+
+        [Parameter("uint256[]", "replicationFactors", 6)]
+        public List<BigInteger> ReplicationFactors { get; set; } = [];
+
+        [Parameter("string[]", "vmIds", 7)]
+        public List<string> VmIds { get; set; } = [];
+    }
+
+    public class CycleStorageDataDto
+    {
+        [Parameter("address[]", "storageNodes", 1)]
+        public List<string> StorageNodes { get; set; } = [];
+
+        [Parameter("uint256[]", "storageBytes", 2)]
+        public List<BigInteger> StorageBytes { get; set; } = [];
     }
 }

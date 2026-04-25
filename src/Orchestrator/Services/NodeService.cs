@@ -1632,15 +1632,24 @@ public class NodeService : INodeService
                 // 4. Node deletes VM and sends acknowledgment
                 // 5. Acknowledgment handler checks Status==Deleting → FAILS (now Running!)
                 // 6. VM stuck in Running state forever
-                var isTransitionalStatus = vm.Status == VmStatus.Provisioning ||
-                                           vm.Status == VmStatus.Deleting ||
-                                           vm.Status == VmStatus.Stopping;
+                // Skip heartbeat state updates for:
+                // - Transitional statuses (Provisioning, Deleting, Stopping) — managed by
+                //   command acknowledgment, not heartbeat.
+                // - Terminal status (Deleted) — no valid transitions exist; the node may
+                //   still report a VM in heartbeat after the orchestrator marked it Deleted
+                //   (e.g. orphan VMs transitioned by TryDeployAsync before the node agent
+                //   destroys the libvirt domain). Attempting the transition produces
+                //   "Invalid VM transition: Deleted → Error" warnings every 15s.
+                var isTransitionalStatus = vm.Status is VmStatus.Provisioning
+                                                     or VmStatus.Stopping
+                                                     or VmStatus.Deleting
+                                                     or VmStatus.Deleted;
 
                 if (isTransitionalStatus)
                 {
                     _logger.LogDebug(
-                        "Skipping heartbeat state update for VM {VmId} - in transitional status {Status}. " +
-                        "State is managed by command acknowledgment, not heartbeat.",
+                        "Skipping heartbeat state update for VM {VmId} - in {Status} status " +
+                        "(transitional or terminal — not managed by heartbeat)",
                         vmId, vm.Status);
                 }
                 else if (vm.Status != newStatus || vm.PowerState != newPowerState)

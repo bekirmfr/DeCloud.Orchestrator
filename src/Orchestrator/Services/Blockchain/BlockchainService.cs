@@ -296,7 +296,9 @@ public class BlockchainService : IBlockchainService
 
     /// <summary>
     /// Execute settleCycle() — atomic compute + storage settlement.
-    /// Calls the extended DeCloudEscrow contract in a single transaction.
+    /// Uses strongly-typed FunctionMessage DTOs to guarantee correct
+    /// ABI tuple encoding. Anonymous C# objects are not reliably encoded
+    /// as ABI tuples by Nethereum's GetFunction() path.
     /// </summary>
     public async Task<string> ExecuteSettleCycleAsync(SettleCycleRequest request)
     {
@@ -310,57 +312,37 @@ public class BlockchainService : IBlockchainService
             var account = new Account(_config.OrchestratorPrivateKey, chainId);
             var web3 = new Web3(account, _config.RpcUrl);
 
-            var contract = web3.Eth.GetContract(ESCROW_ABI, _config.EscrowContractAddress);
-            var cycleFunction = contract.GetFunction("settleCycle");
-            // settleCycle takes (CycleVmData tuple, CycleStorageData tuple, string cycleId)
-            // Nethereum encodes structs as value tuples matching ABI component order
-
             // Convert decimals → wei (6 decimals for USDC)
             var computeAmountsWei = request.ComputeAmounts
                 .Select(a => Web3.Convert.ToWei(a, 6))
-                .ToArray();
+                .ToList();
 
-            var storageBytesArr = request.StorageNodeUsedBytes
-                .Select(b => new BigInteger(b))
-                .ToArray();
-
-            var gas = await cycleFunction.EstimateGasAsync(
-                from: account.Address,
-                gas: null,
-                value: null,
-                new
+            var message = new SettleCycleFunctionMessage
+            {
+                VmData = new CycleVmDataDto
                 {
-                    users = request.UserWallets.ToArray(),
-                    computeNodes = request.ComputeNodeWallets.ToArray(),
-                    computeAmounts = computeAmountsWei,
-                    blockCounts = request.BlockCounts.Select(b => (BigInteger)b).ToArray(),
-                    blockSizeKbs = request.BlockSizeKbs.Select(b => (BigInteger)b).ToArray(),
-                    replicationFactors = request.ReplicationFactors.Select(r => (BigInteger)r).ToArray(),
-                    vmIds = request.VmIds.ToArray()
+                    Users = request.UserWallets,
+                    ComputeNodes = request.ComputeNodeWallets,
+                    ComputeAmounts = computeAmountsWei,
+                    BlockCounts = request.BlockCounts.Select(b => (BigInteger)b).ToList(),
+                    BlockSizeKbs = request.BlockSizeKbs.Select(b => (BigInteger)b).ToList(),
+                    ReplicationFactors = request.ReplicationFactors.Select(r => (BigInteger)r).ToList(),
+                    VmIds = request.VmIds
                 },
-                new
+                StorageData = new CycleStorageDataDto
                 {
-                    storageNodes = request.StorageNodeWallets.ToArray(),
-                    storageBytes = storageBytesArr
+                    StorageNodes = request.StorageNodeWallets,
+                    StorageBytes = request.StorageNodeUsedBytes.Select(b => new BigInteger(b)).ToList()
                 },
-                request.CycleId);
+                CycleId = request.CycleId
+            };
 
-            var receipt = await cycleFunction.SendTransactionAndWaitForReceiptAsync(
-                from: account.Address,
-                gas: gas,
-                gasPrice: null,
-                value: null,
-                receiptRequestCancellationToken: null,
-                request.UserWallets.ToArray(),
-                request.ComputeNodeWallets.ToArray(),
-                computeAmountsWei,
-                request.BlockCounts.Select(b => (BigInteger)b).ToArray(),
-                request.BlockSizeKbs.Select(b => (BigInteger)b).ToArray(),
-                request.ReplicationFactors.Select(r => (BigInteger)r).ToArray(),
-                request.VmIds.ToArray(),
-                request.StorageNodeWallets.ToArray(),
-                storageBytesArr,
-                request.CycleId);
+            var contractHandler = web3.Eth.GetContractHandler(_config.EscrowContractAddress);
+
+            var gas = await contractHandler.EstimateGasAsync(message);
+            message.Gas = gas;
+
+            var receipt = await contractHandler.SendRequestAndWaitForReceiptAsync(message);
 
             if (receipt.Status?.Value != 1)
                 throw new Exception($"settleCycle reverted: {receipt.TransactionHash}");
