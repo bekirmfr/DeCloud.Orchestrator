@@ -385,21 +385,9 @@ public class SystemVmReconciliationService : BackgroundService
                     }
                     // Fall through to DeploySystemVmAsync
                 }
-                else if (existingVm.Status == VmStatus.Error
-                    && DateTime.UtcNow - existingVm.UpdatedAt < HeartbeatSnapshotTtl)
-                {
-                    // VM just transitioned to Error via a fresh heartbeat — the node
-                    // may be recovering. Wait one cycle for the true state to stabilise.
-                    _logger.LogDebug(
-                        "Skipping {Role} deploy on node {NodeId} — VM {VmId} recently entered " +
-                        "Error state ({Min:F1}m ago), waiting for heartbeat to confirm",
-                        obligation.Role, node.Id, existingVm.Id,
-                        (DateTime.UtcNow - existingVm.UpdatedAt).TotalMinutes);
-                    return;
-                }
                 else
                 {
-                    // Provisioning, stale Error, or other transient state — wait for next cycle
+                    // Provisioning or other transient state — wait for next cycle
                     _logger.LogDebug(
                         "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
                         obligation.Role, node.Id, existingVm.Id, existingVm.Status);
