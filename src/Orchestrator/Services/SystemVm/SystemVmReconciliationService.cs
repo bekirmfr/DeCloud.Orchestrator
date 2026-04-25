@@ -489,6 +489,7 @@ public class SystemVmReconciliationService : BackgroundService
         // Null check: LastHeartbeatAt is null until the first heartbeat arrives after boot.
         var isHealthy = vm != null
             && vm.Status == VmStatus.Running
+            && vm.PowerState != VmPowerState.Off
             && vm.IsFullyReady
             && vm.LastHeartbeatAt.HasValue
             && DateTime.UtcNow - vm.LastHeartbeatAt.Value < HeartbeatSnapshotTtl;
@@ -583,6 +584,7 @@ public class SystemVmReconciliationService : BackgroundService
         // Null check: LastHeartbeatAt is null until the first heartbeat arrives after boot.
         var isHealthy = vm != null
             && vm.Status == VmStatus.Running
+            && vm.PowerState != VmPowerState.Off
             && vm.IsFullyReady
             && vm.LastHeartbeatAt.HasValue
             && DateTime.UtcNow - vm.LastHeartbeatAt.Value < HeartbeatSnapshotTtl;
