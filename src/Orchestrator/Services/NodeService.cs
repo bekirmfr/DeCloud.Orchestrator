@@ -1652,7 +1652,16 @@ public class NodeService : INodeService
                         "(transitional or terminal — not managed by heartbeat)",
                         vmId, vm.Status);
                 }
-                else if (vm.Status != newStatus || vm.PowerState != newPowerState)
+                else
+                {
+                    // Always stamp UpdatedAt for heartbeat-reported non-transitional VMs.
+                    // This is the freshness signal used by VerifyActiveAsync — without it,
+                    // stable Running VMs appear stale after HeartbeatSnapshotTtl (2m) and
+                    // get incorrectly reset to Pending even though they're healthy.
+                    vm.UpdatedAt = DateTime.UtcNow;
+                }
+
+                if (!isTransitionalStatus && (vm.Status != newStatus || vm.PowerState != newPowerState))
                 {
                     // ════════════════════════════════════════════════════════════
                     // IMPORTANT: Update access info BEFORE transitioning status.
@@ -1688,7 +1697,7 @@ public class NodeService : INodeService
                         "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
                         vmId, newStatus, newPowerState);
                 }
-                else if (reported.IsIpAssigned)
+                if (!isTransitionalStatus && reported.IsIpAssigned)
                 {
                     // Status unchanged but IP info arrived — update access info
                     vm.NetworkConfig.PrivateIp = reported.IpAddress;
@@ -1704,6 +1713,11 @@ public class NodeService : INodeService
                         vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
                     }
 
+                    await _dataStore.SaveVmAsync(vm);
+                }
+                else if (!isTransitionalStatus)
+                {
+                    // Status and IP unchanged — save only to persist UpdatedAt stamp
                     await _dataStore.SaveVmAsync(vm);
                 }
 

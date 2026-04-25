@@ -221,40 +221,51 @@ public class SystemVmReconciliationService : BackgroundService
             };
             var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
 
-            // Clean up all stale Error VMs for this type before checking for blockers.
-            // Error VMs accumulate from failed deployments. FirstOrDefault returning one
-            // of them causes the else branch to return and block deployment indefinitely.
-            // Use VmService.DeleteVmAsync (not TransitionAsync) so the node agent also
-            // receives a DeleteVm command and destroys the libvirt domain + SQLite entry.
+            // Clean up stale Provisioning VMs: CreateVm ACK was never received (node
+            // rebooted, timed out). SyncVmStateFromHeartbeat skips Provisioning VMs
+            // (transitional guard) so they never leave that state. After ProvisioningTimeout
+            // they must be cleaned up or they block TryDeployAsync via the else branch.
+            var staleProvisioningVms = nodeVms
+                .Where(v => v.Spec.VmType == vmType
+                         && v.Status == VmStatus.Provisioning
+                         && DateTime.UtcNow - v.UpdatedAt >= ProvisioningTimeout)
+                .ToList();
+
+            // Clean up stale Error VMs: accumulate from failed deployments.
+            // FirstOrDefault returning one causes the else branch to block indefinitely.
             var staleErrorVms = nodeVms
                 .Where(v => v.Spec.VmType == vmType
                          && v.Status == VmStatus.Error
                          && DateTime.UtcNow - v.UpdatedAt >= HeartbeatSnapshotTtl)
                 .ToList();
 
-            if (staleErrorVms.Any())
+            var staleVmsToClean = staleProvisioningVms.Concat(staleErrorVms).ToList();
+
+            if (staleVmsToClean.Any())
             {
                 var vmService = _serviceProvider.GetRequiredService<IVmService>();
-                foreach (var staleVm in staleErrorVms)
+                foreach (var staleVm in staleVmsToClean)
                 {
                     try
                     {
                         await vmService.DeleteVmAsync(staleVm.Id);
                         _logger.LogInformation(
-                            "Sent DeleteVm command for orphan Error {Role} VM {VmId} on node {NodeId}",
-                            obligation.Role, staleVm.Id, node.Id);
+                            "Sent DeleteVm command for stale {Status} {Role} VM {VmId} on node {NodeId} " +
+                            "(stuck for {Min:F0}m)",
+                            staleVm.Status, obligation.Role, staleVm.Id, node.Id,
+                            (DateTime.UtcNow - staleVm.UpdatedAt).TotalMinutes);
                     }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex,
-                            "Could not queue deletion for orphan Error VM {VmId}", staleVm.Id);
+                            "Could not queue deletion for stale {Status} VM {VmId}",
+                            staleVm.Status, staleVm.Id);
                     }
                 }
 
                 // Exclude now-Deleting VMs from the blocking check.
-                // They will be fully cleaned up once the node agent acknowledges deletion.
                 nodeVms = nodeVms
-                    .Where(v => !staleErrorVms.Any(e => e.Id == v.Id))
+                    .Where(v => !staleVmsToClean.Any(e => e.Id == v.Id))
                     .ToList();
             }
 
