@@ -35,9 +35,11 @@ public class SystemVmReconciliationService : BackgroundService
     private readonly ILogger<SystemVmReconciliationService> _logger;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan CloudInitReadyTimeout = TimeSpan.FromMinutes(20); // Deploying → reset if not ready
+    private static readonly TimeSpan ActiveVmGracePeriod = TimeSpan.FromMinutes(5);  // Active absence before reset
+    private static readonly TimeSpan HeartbeatSnapshotTtl = TimeSpan.FromMinutes(2);  // vm.UpdatedAt freshness window
     private static readonly TimeSpan ProvisioningTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan StuckDeletingTimeout = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan CloudInitReadyTimeout = TimeSpan.FromMinutes(20);
 
     public SystemVmReconciliationService(
         DataStore dataStore,
@@ -220,7 +222,8 @@ public class SystemVmReconciliationService : BackgroundService
             var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
             var existingVm = nodeVms.FirstOrDefault(v =>
                 v.Spec.VmType == vmType &&
-                v.Status is VmStatus.Running or VmStatus.Provisioning or VmStatus.Deleting);
+                v.Status is VmStatus.Running or VmStatus.Provisioning
+                    or VmStatus.Deleting or VmStatus.Error);
 
             if (existingVm != null)
             {
@@ -229,11 +232,16 @@ public class SystemVmReconciliationService : BackgroundService
                     if (existingVm.IsFullyReady)
                     {
                         obligation.VmId = existingVm.Id;
-                        obligation.Status = SystemVmStatus.Deploying;
-                        obligation.DeployedAt = DateTime.UtcNow;
+                        obligation.Status = SystemVmStatus.Active;
+                        obligation.ActiveAt = DateTime.UtcNow;
+                        obligation.FailureCount = 0;
+                        obligation.LastError = null;
+
+                        SyncRoleServiceInfo(node, obligation);
 
                         _logger.LogInformation(
-                            "Re-adopted existing {Role} VM {VmId} on node {NodeId} instead of deploying duplicate",
+                            "Re-adopted existing {Role} VM {VmId} on node {NodeId} as Active " +
+                            "(Running + IsFullyReady at adoption time)",
                             obligation.Role, existingVm.Id, node.Id);
 
                         return;
@@ -282,9 +290,7 @@ public class SystemVmReconciliationService : BackgroundService
                 }
                 else if (existingVm.Status == VmStatus.Deleting && existingVm.PowerState == VmPowerState.Running)
                 {
-                    // VM was incorrectly transitioned to Deleting (e.g., by a false-positive
-                    // self-healing check) but is still running on the node. Recover it by
-                    // transitioning back to Running, which re-registers ingress routes.
+                    // VM is Deleting but still running — false-positive, recover it.
                     _logger.LogWarning(
                         "Recovering {Role} VM {VmId} on node {NodeId} from false-positive Deleting " +
                         "(PowerState=Running) — transitioning back to Running",
@@ -317,14 +323,14 @@ public class SystemVmReconciliationService : BackgroundService
                 else if (existingVm.Status == VmStatus.Deleting
                     && string.IsNullOrEmpty(existingVm.ActiveCommandId))
                 {
-                    // Orphaned Deleting VM: TryRetryAsync transitioned this VM to Deleting
-                    // but no DeleteVm command was ever sent to (or acknowledged by) the node
-                    // agent. The VM is permanently stuck — it will never reach Deleted and
-                    // the obligation will never redeploy. Treat it as gone and proceed.
+                    // Deleting with no active command — VM is an orphan in MongoDB.
+                    // TryRetryAsync transitioned it to Deleting but no DeleteVm command
+                    // was ever sent or acknowledged. The node never deleted it; this record
+                    // will block redeployment forever. Treat it as gone and proceed.
                     var stuckFor = DateTime.UtcNow - existingVm.UpdatedAt;
                     _logger.LogWarning(
-                        "{Role} VM {VmId} on node {NodeId} has been Deleting for {Min:F0}m " +
-                        "with no active command — treating as orphan and proceeding with deployment",
+                        "{Role} VM {VmId} on node {NodeId} stuck Deleting for {Min:F0}m " +
+                        "with no active command — treating as orphan, proceeding with deployment",
                         obligation.Role, existingVm.Id, node.Id, stuckFor.TotalMinutes);
 
                     try
@@ -337,14 +343,26 @@ public class SystemVmReconciliationService : BackgroundService
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex,
-                            "Could not transition orphan {Role} VM {VmId} to Deleted — proceeding with deployment anyway",
+                            "Could not transition orphan {Role} VM {VmId} to Deleted — proceeding anyway",
                             obligation.Role, existingVm.Id);
                     }
-                    // Fall through to DeploySystemVmAsync below
+                    // Fall through to DeploySystemVmAsync
+                }
+                else if (existingVm.Status == VmStatus.Error
+                    && DateTime.UtcNow - existingVm.UpdatedAt < HeartbeatSnapshotTtl)
+                {
+                    // VM just transitioned to Error via a fresh heartbeat — the node
+                    // may be recovering. Wait one cycle for the true state to stabilise.
+                    _logger.LogDebug(
+                        "Skipping {Role} deploy on node {NodeId} — VM {VmId} recently entered " +
+                        "Error state ({Min:F1}m ago), waiting for heartbeat to confirm",
+                        obligation.Role, node.Id, existingVm.Id,
+                        (DateTime.UtcNow - existingVm.UpdatedAt).TotalMinutes);
+                    return;
                 }
                 else
                 {
-                    // Provisioning or other transient state — wait for next cycle
+                    // Provisioning, stale Error, or other transient state — wait for next cycle
                     _logger.LogDebug(
                         "Skipping {Role} deploy on node {NodeId} — existing VM {VmId} in state {Status}",
                         obligation.Role, node.Id, existingVm.Id, existingVm.Status);
@@ -411,17 +429,15 @@ public class SystemVmReconciliationService : BackgroundService
     {
         if (string.IsNullOrEmpty(obligation.VmId))
         {
-            // VM ID missing — reset to Pending
             obligation.Status = SystemVmStatus.Pending;
-            obligation.VmId = null;
             return;
         }
 
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
 
         // Self-heal: if VM exists but NodeId is empty, patch it now.
-        // NodeId is required for the heartbeat path to find and update
-        // the VM's service status — without it the Ready gate never fires.
+        // NodeId is required for SyncVmStateFromHeartbeatAsync to find
+        // and update the VM's service status via heartbeat.
         if (vm != null && string.IsNullOrEmpty(vm.NodeId))
         {
             vm.NodeId = node.Id;
@@ -431,74 +447,21 @@ public class SystemVmReconciliationService : BackgroundService
                 obligation.Role, vm.Id, node.Id);
         }
 
-        if (vm == null)
+        // Ground truth: was this VM reported healthy in the last heartbeat?
+        // vm.UpdatedAt is set by SyncVmStateFromHeartbeatAsync on every heartbeat cycle.
+        // Running + IsFullyReady + fresh UpdatedAt = node confirmed cloud-init complete.
+        var isHealthy = vm != null
+            && vm.Status == VmStatus.Running
+            && vm.IsFullyReady
+            && DateTime.UtcNow - vm.UpdatedAt < HeartbeatSnapshotTtl;
+
+        if (isHealthy)
         {
-            // VM disappeared — reset to Pending for redeployment
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} disappeared — resetting to Pending",
-                obligation.Role, obligation.VmId, node.Id);
-            obligation.Status = SystemVmStatus.Pending;
-            obligation.VmId = null;
-            return;
-        }
-
-        if (vm.Status == VmStatus.Running)
-        {
-            // Only advance to Active once the all services reports Ready.
-            // Running means the VM booted; Ready means cloud-init completed
-            // and the role-specific callback fired (e.g. blockstore-notify-ready.sh).
-            // Without this check, a VM that booted but whose cloud-init failed
-            // is incorrectly marked Active, stopping redeployment attempts.
-            var isReady = vm.IsFullyReady;
-
-            if (!isReady)
-            {
-                // Self-heal: stamp DeployedAt if null so the timeout clock starts correctly.
-                // Can happen when an obligation was adopted without a timestamp, or when
-                // VerifyActiveAsync reset to Deploying before this guard was in place.
-                if (obligation.DeployedAt == null)
-                {
-                    obligation.DeployedAt = DateTime.UtcNow;
-                    await _dataStore.SaveNodeAsync(node);
-                    _logger.LogInformation(
-                        "{Role} VM {VmId} on node {NodeId} had null DeployedAt — stamped now, " +
-                        "timeout clock starts from this cycle",
-                        obligation.Role, obligation.VmId, node.Id);
-                }
-
-                // Still waiting for cloud-init / callback — check timeout
-                var deployedAt = obligation.DeployedAt ?? DateTime.UtcNow;
-                var elapsed = DateTime.UtcNow - deployedAt;
-
-                if (elapsed > CloudInitReadyTimeout)
-                {
-                    _logger.LogWarning(
-                        "{Role} VM {VmId} on node {NodeId} has been Running for {Minutes:F0}m " +
-                        "but System service never became Ready — resetting to Pending for redeployment",
-                        obligation.Role, obligation.VmId, node.Id, elapsed.TotalMinutes);
-                    ResetObligation(node, obligation);
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "{Role} VM {VmId} on node {NodeId} is Running but System service not Ready yet " +
-                        "({Elapsed:F0}m / {Timeout:F0}m timeout)",
-                        obligation.Role, obligation.VmId, node.Id,
-                        elapsed.TotalMinutes, CloudInitReadyTimeout.TotalMinutes);
-                }
-                return;
-            }
-
-            // FIX 4: Reset FailureCount and LastError on successful Active transition.
-            // Previously the count was preserved, causing future failures to start backoff
-            // at an inflated level and making monitoring misleading for healthy obligations.
             obligation.Status = SystemVmStatus.Active;
             obligation.ActiveAt = DateTime.UtcNow;
             obligation.FailureCount = 0;
             obligation.LastError = null;
 
-            // Stamp the binary version running inside this VM so future heartbeats
-            // can detect when the node upgrades past it.
             if (obligation.CurrentBinaryVersion is not null)
                 obligation.RunningBinaryVersion = obligation.CurrentBinaryVersion;
 
@@ -506,74 +469,55 @@ public class SystemVmReconciliationService : BackgroundService
                 "{Role} VM {VmId} on node {NodeId} is Active (System service Ready)",
                 obligation.Role, obligation.VmId, node.Id);
 
-            // Sync role-specific info to Active now that VM is Running + Ready
             SyncRoleServiceInfo(node, obligation);
-
             return;
         }
 
-        if (vm.Status == VmStatus.Error)
+        // Not yet healthy — apply CloudInitReadyTimeout clock from DeployedAt.
+        // This handles all failure modes uniformly: binary extraction failed,
+        // guest agent never started, domain never created, node offline mid-boot.
+        if (obligation.DeployedAt == null)
         {
-            obligation.Status = SystemVmStatus.Failed;
-            obligation.FailureCount++;
-            obligation.LastError = vm.StatusMessage;
+            obligation.DeployedAt = DateTime.UtcNow;
+            await _dataStore.SaveNodeAsync(node);
+        }
 
+        var elapsed = DateTime.UtcNow - obligation.DeployedAt.Value;
+        if (elapsed > CloudInitReadyTimeout)
+        {
             _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} entered Error state: {Error}",
-                obligation.Role, obligation.VmId, node.Id, vm.StatusMessage);
+                "{Role} VM {VmId} on node {NodeId} not healthy after {Min:F0}m " +
+                "(vm: {VmStatus}, ready: {Ready}) — resetting to Pending for redeployment",
+                obligation.Role, obligation.VmId, node.Id, elapsed.TotalMinutes,
+                vm?.Status.ToString() ?? "null",
+                vm?.IsFullyReady.ToString() ?? "null");
+            ResetObligation(node, obligation);
             return;
         }
 
-        // FIX 2: Provisioning timeout.
-        // Previously the Provisioning case fell through indefinitely with no action.
-        // If the NodeAgent crashes mid-provision (OOM kill, service restart, etc.),
-        // the VM stays Provisioning forever and the obligation stays Deploying forever.
-        // vm.UpdatedAt is set by VmLifecycleManager.TransitionAsync on every status
-        // change, so it accurately reflects when the VM entered Provisioning.
-        if (vm.Status == VmStatus.Provisioning)
-        {
-            var provisioningFor = DateTime.UtcNow - vm.UpdatedAt;
-
-            if (provisioningFor > ProvisioningTimeout)
-            {
-                _logger.LogWarning(
-                    "{Role} VM {VmId} on node {NodeId} has been Provisioning for {Minutes:F0}m " +
-                    "(timeout: {Timeout:F0}m) — NodeAgent may have crashed mid-provision. " +
-                    "Resetting to Pending for redeployment.",
-                    obligation.Role, obligation.VmId, node.Id,
-                    provisioningFor.TotalMinutes, ProvisioningTimeout.TotalMinutes);
-
-                ResetObligation(node, obligation);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "{Role} VM {VmId} on node {NodeId} still Provisioning " +
-                    "({Elapsed:F0}m / {Timeout:F0}m timeout)",
-                    obligation.Role, obligation.VmId, node.Id,
-                    provisioningFor.TotalMinutes, ProvisioningTimeout.TotalMinutes);
-            }
-            return;
-        }
-
-        // Scheduling, Stopped, or other transient state — wait for next cycle
+        _logger.LogDebug(
+            "{Role} VM {VmId} on node {NodeId} deploying " +
+            "({Elapsed:F0}m / {Timeout:F0}m timeout, vm: {VmStatus})",
+            obligation.Role, obligation.VmId, node.Id,
+            elapsed.TotalMinutes, CloudInitReadyTimeout.TotalMinutes,
+            vm?.Status.ToString() ?? "null");
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Active → verify VM still exists (self-heal if gone)
+    // Active → verify VM still healthy via heartbeat
     // ════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Verify that an Active obligation still has a running VM.
-    /// Handles node restarts, agent updates, or orphaned obligation state
-    /// where the database says Active but the VM no longer exists.
+    /// Verify that an Active obligation's VM is still being reported healthy
+    /// by the node agent via heartbeat. Uses vm.UpdatedAt as the freshness
+    /// signal — SyncVmStateFromHeartbeatAsync stamps it on every heartbeat.
+    /// A stale UpdatedAt means the node stopped reporting this VM.
     /// </summary>
     private async Task VerifyActiveAsync(
         Node node, SystemVmObligation obligation, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(obligation.VmId))
         {
-            // Active with no VM ID — impossible state, reset
             _logger.LogWarning(
                 "{Role} obligation on node {NodeId} is Active with no VM ID — resetting to Pending",
                 obligation.Role, node.Id);
@@ -581,11 +525,8 @@ public class SystemVmReconciliationService : BackgroundService
             return;
         }
 
-        // Stale binary check: compare what the VM reports it is running against
-        // what the node currently has. Both values come from the node via heartbeat
-        // so no external calls are needed here.
-        // Skip if either is null — VM unreachable or node hasn't reported yet.
-        // Relay is excluded: its runtime hash is incompatible with the node-side hash.
+        // Binary update check — unchanged.
+        // Relay excluded: its runtime hash is incompatible with the node-side hash.
         if (obligation.Role != SystemVmRole.Relay
             && obligation.RunningBinaryVersion is not null
             && obligation.CurrentBinaryVersion is not null
@@ -598,126 +539,66 @@ public class SystemVmReconciliationService : BackgroundService
 
         var vm = await _dataStore.GetVmAsync(obligation.VmId);
 
-        if (vm == null)
+        // Ground truth: was this VM reported healthy in the last heartbeat?
+        // vm.UpdatedAt is set by SyncVmStateFromHeartbeatAsync every 15s.
+        // If the node is alive and the VM is running, UpdatedAt is always fresh.
+        var isHealthy = vm != null
+            && vm.Status == VmStatus.Running
+            && vm.IsFullyReady
+            && DateTime.UtcNow - vm.UpdatedAt < HeartbeatSnapshotTtl;
+
+        if (isHealthy)
         {
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} no longer exists — resetting to Pending for redeployment",
-                obligation.Role, obligation.VmId, node.Id);
-            ResetObligation(node, obligation);
+            SyncRoleServiceInfo(node, obligation);
             return;
         }
 
-        if (vm.Status is VmStatus.Error or VmStatus.Deleted)
+        // VM not healthy — apply grace period before resetting.
+        // Protects against transient absence: node agent restart (30-60s),
+        // network blip, orchestrator processing lag.
+        // vm.UpdatedAt is the last heartbeat timestamp for this VM;
+        // fall back to obligation.ActiveAt if the VM record is missing.
+        var lastSeen = vm?.UpdatedAt ?? obligation.ActiveAt ?? DateTime.UtcNow;
+        var unhealthyFor = DateTime.UtcNow - lastSeen;
+
+        // If the VM record was last updated more than HeartbeatSnapshotTtl ago and
+        // the node just came back online (LastSeenAt is stale), this is an
+        // offline-detection Error — the VMs may still be running on the node.
+        // Wait for the first heartbeat to restore true VM state before resetting.
+        var nodeJustReconnected = node.LastHeartbeat.HasValue
+            && DateTime.UtcNow - node.LastHeartbeat.Value > HeartbeatSnapshotTtl
+            && unhealthyFor > ActiveVmGracePeriod;
+
+        if (nodeJustReconnected)
         {
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} is in {Status} state — resetting to Pending",
-                obligation.Role, obligation.VmId, node.Id, vm.Status);
-            ResetObligation(node, obligation);
+            _logger.LogInformation(
+                "{Role} VM {VmId} on node {NodeId} appears unhealthy but node just reconnected " +
+                "(last heartbeat: {Min:F1}m ago) — waiting for first heartbeat to restore state",
+                obligation.Role, obligation.VmId, node.Id,
+                (DateTime.UtcNow - node.LastHeartbeat.Value).TotalMinutes);
             return;
         }
 
-        // Stuck-in-Deleting timeout.
-        //
-        // Normal path: RedeployDhtVmAsync transitions the VM to Deleting, obligation
-        // stays Active, NodeAgent confirms deletion → Deleted → ResetObligation → redeploy.
-        //
-        // Stuck path: node goes offline while VM is Deleting. NodeAgent never confirms.
-        // VM stays Deleting forever. Previously this fell through to "still converged",
-        // leaving the obligation permanently Active and blocking all future redeployments.
-        //
-        // Fix: if stuck Deleting beyond the timeout, reset and let the loop redeploy.
-        // vm.UpdatedAt is set by VmLifecycleManager.TransitionAsync, so it accurately
-        // reflects when the VM entered the Deleting state.
-        if (vm.Status == VmStatus.Deleting)
+        if (unhealthyFor < ActiveVmGracePeriod)
         {
-            var deletingFor = DateTime.UtcNow - vm.UpdatedAt;
-
-            if (deletingFor > StuckDeletingTimeout)
-            {
-                _logger.LogWarning(
-                    "{Role} VM {VmId} on node {NodeId} has been stuck Deleting for {Minutes:F0}m " +
-                    "(timeout: {Timeout:F0}m) — node likely went offline mid-delete. " +
-                    "Resetting obligation to Pending for redeployment.",
-                    obligation.Role, obligation.VmId, node.Id,
-                    deletingFor.TotalMinutes, StuckDeletingTimeout.TotalMinutes);
-
-                ResetObligation(node, obligation);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "{Role} VM {VmId} on node {NodeId} is Deleting — " +
-                    "waiting for node confirmation ({Elapsed:F0}m / {Timeout:F0}m stuck timeout)",
-                    obligation.Role, obligation.VmId, node.Id,
-                    deletingFor.TotalMinutes, StuckDeletingTimeout.TotalMinutes);
-            }
+            _logger.LogDebug(
+                "{Role} VM {VmId} on node {NodeId} not healthy " +
+                "(vm: {VmStatus}, ready: {Ready}, age: {Age:F1}m) — within grace period",
+                obligation.Role, obligation.VmId, node.Id,
+                vm?.Status.ToString() ?? "null",
+                vm?.IsFullyReady.ToString() ?? "null",
+                unhealthyFor.TotalMinutes);
             return;
         }
 
-        // Re-check service readiness on every cycle.
-        // A VM can lose its services after the initial Active transition
-        // (node agent restart, cloud-init timeout, WireGuard drop).
-        // Reset to Deploying so the callback path gets another chance.
-        if (!vm.IsFullyReady)
-        {
-            // Only act if the service status is actually fresh.
-            // After a node agent restart, VmReadinessMonitor re-checks services
-            // on its own cycle — LastCheckAt will be stale until that completes.
-            // Resetting on stale data incorrectly degrades healthy obligations.
-            var lastCheck = vm.Services
-                .Select(s => s.LastCheckAt)
-                .Where(t => t.HasValue)
-                .Select(t => t!.Value)
-                .DefaultIfEmpty(DateTime.MinValue)
-                .Max();
+        _logger.LogWarning(
+            "{Role} VM {VmId} on node {NodeId} not healthy for {Min:F0}m " +
+            "(vm: {VmStatus}, ready: {Ready}) — resetting to Pending for redeployment",
+            obligation.Role, obligation.VmId, node.Id, unhealthyFor.TotalMinutes,
+            vm?.Status.ToString() ?? "null",
+            vm?.IsFullyReady.ToString() ?? "null");
 
-            if (lastCheck < node.LastHeartbeat - TimeSpan.FromMinutes(2))
-            {
-                // Stale guard: readiness data predates the last heartbeat, which
-                // normally means the node agent restarted and hasn't re-checked yet.
-                // However if the data has been stale longer than CloudInitReadyTimeout,
-                // the guest agent is not responding and never will — force a reset
-                // rather than blocking redeployment indefinitely.
-                // node.LastHeartbeat is DateTime? but is guaranteed non-null here —
-                // the enclosing condition (lastCheck < node.LastHeartbeat - 2min)
-                // evaluates to false when LastHeartbeat is null.
-                var stalenessAge = node.LastHeartbeat.Value - lastCheck;
-                if (stalenessAge > CloudInitReadyTimeout)
-                {
-                    _logger.LogWarning(
-                        "{Role} VM {VmId} on node {NodeId} services not ready and " +
-                        "LastCheckAt has been stale for {StaleMins:F0}m " +
-                        "(threshold: {Timeout:F0}m) — guest agent likely not responding, " +
-                        "resetting to Pending for redeployment",
-                        obligation.Role, obligation.VmId, node.Id,
-                        stalenessAge.TotalMinutes, CloudInitReadyTimeout.TotalMinutes);
-                    ResetObligation(node, obligation);
-                    return;
-                }
-
-                _logger.LogDebug(
-                    "{Role} VM {VmId} on node {NodeId} services not ready but " +
-                    "LastCheckAt ({LastCheck}) predates last heartbeat — " +
-                    "readiness data stale ({StaleMins:F0}m / {Timeout:F0}m threshold), skipping reset",
-                    obligation.Role, obligation.VmId, node.Id, lastCheck,
-                    stalenessAge.TotalMinutes, CloudInitReadyTimeout.TotalMinutes); ;
-                return;
-            }
-
-            _logger.LogWarning(
-                "{Role} VM {VmId} on node {NodeId} services confirmed not ready " +
-                "(LastCheckAt: {LastCheck}) — resetting to Deploying",
-                obligation.Role, obligation.VmId, node.Id, lastCheck);
-            obligation.Status = SystemVmStatus.Deploying;
-            obligation.DeployedAt = DateTime.UtcNow;
-            return;
-        }
-
-        // Self-heal: sync role-specific service info on every healthy verification.
-        // Covers drift from prior bugs (e.g. empty RelayVmId) without redeployment.
-        SyncRoleServiceInfo(node, obligation);
-
-        // VM exists and is not in a terminal or transitional error state — still converged
+        ResetObligation(node, obligation);
     }
 
     /// <summary>
