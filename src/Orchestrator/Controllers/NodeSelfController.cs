@@ -487,7 +487,10 @@ public class NodeSelfController : ControllerBase
     ///       "failureCount": 0,
     ///       "lastError":    null,
     ///       "deployedAt":   "2026-...",
-    ///       "activeAt":     "2026-..."
+    ///       "activeAt":     "2026-...",
+    ///       "runningBinaryVersion": "abc12345...", // null until first heartbeat
+    ///       "currentBinaryVersion": "abc12345...", // null until binary staged
+    ///       "stateVersion": 0                       // monotonic, incremented on key rotation
     ///     }
     ///   ]
     /// }
@@ -536,7 +539,10 @@ public class NodeSelfController : ControllerBase
                 failureCount = o.FailureCount,
                 lastError = o.LastError,
                 deployedAt = o.DeployedAt?.ToString("O"),
-                activeAt = o.ActiveAt?.ToString("O")
+                activeAt = o.ActiveAt?.ToString("O"),
+                runningBinaryVersion = o.RunningBinaryVersion,
+                currentBinaryVersion = o.CurrentBinaryVersion,
+                stateVersion = o.StateVersion,
             })
             .ToList();
 
