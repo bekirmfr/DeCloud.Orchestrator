@@ -220,10 +220,47 @@ public class SystemVmReconciliationService : BackgroundService
                 _ => VmType.Dht
             };
             var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+
+            // Clean up all stale Error VMs for this type before checking for blockers.
+            // Error VMs accumulate from failed deployments. FirstOrDefault returning one
+            // of them causes the else branch to return and block deployment indefinitely.
+            // Use VmService.DeleteVmAsync (not TransitionAsync) so the node agent also
+            // receives a DeleteVm command and destroys the libvirt domain + SQLite entry.
+            var staleErrorVms = nodeVms
+                .Where(v => v.Spec.VmType == vmType
+                         && v.Status == VmStatus.Error
+                         && DateTime.UtcNow - v.UpdatedAt >= HeartbeatSnapshotTtl)
+                .ToList();
+
+            if (staleErrorVms.Any())
+            {
+                var vmService = _serviceProvider.GetRequiredService<IVmService>();
+                foreach (var staleVm in staleErrorVms)
+                {
+                    try
+                    {
+                        await vmService.DeleteVmAsync(staleVm.Id);
+                        _logger.LogInformation(
+                            "Sent DeleteVm command for orphan Error {Role} VM {VmId} on node {NodeId}",
+                            obligation.Role, staleVm.Id, node.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "Could not queue deletion for orphan Error VM {VmId}", staleVm.Id);
+                    }
+                }
+
+                // Exclude now-Deleting VMs from the blocking check.
+                // They will be fully cleaned up once the node agent acknowledges deletion.
+                nodeVms = nodeVms
+                    .Where(v => !staleErrorVms.Any(e => e.Id == v.Id))
+                    .ToList();
+            }
+
             var existingVm = nodeVms.FirstOrDefault(v =>
                 v.Spec.VmType == vmType &&
-                v.Status is VmStatus.Running or VmStatus.Provisioning
-                    or VmStatus.Deleting or VmStatus.Error);
+                v.Status is VmStatus.Running or VmStatus.Provisioning or VmStatus.Deleting);
 
             if (existingVm != null)
             {
