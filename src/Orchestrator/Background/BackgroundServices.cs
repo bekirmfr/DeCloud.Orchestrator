@@ -133,8 +133,9 @@ public class VmSchedulerService : BackgroundService
         var candidates = allVms
             .Where(v =>
                 v.Status == VmStatus.Error &&
-                (v.LazysyncStatus == LazysyncStatus.Migrating ||
-                 v.LazysyncStatus == LazysyncStatus.Recovering) &&
+                v.Spec.ReplicationFactor > 0 &&
+                v.LazysyncStatus != LazysyncStatus.Lost &&
+                v.LazysyncStatus != LazysyncStatus.Unrecoverable &&
                 string.IsNullOrEmpty(v.ActiveCommandId))
             .ToList();
 
@@ -170,10 +171,11 @@ public class VmSchedulerService : BackgroundService
         var manifest = await blockStoreService.GetMigrationManifestAsync(vm.Id, ct);
         if (manifest == null)
         {
-            _logger.LogWarning("VM {VmId}: no confirmed replica — unrecoverable", vm.Id);
+            _logger.LogWarning("VM {VmId}: no confirmed replica — marking Unrecoverable", vm.Id);
             var unrecoverable = await dataStore.GetVmAsync(vm.Id);
             if (unrecoverable != null)
             {
+                unrecoverable.LazysyncStatus = LazysyncStatus.Unrecoverable; // ← exits the filter permanently
                 unrecoverable.PushMessage(
                     "No confirmed replica exists — VM cannot be migrated automatically. " +
                     "Redeployment from scratch required.",

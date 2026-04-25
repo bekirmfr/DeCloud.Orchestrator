@@ -376,13 +376,15 @@ public class BlockStoreController : ControllerBase
         }
         else if (manifest.Version >= 1)
         {
-            // First complete manifest registered (or re-registered after migration) —
-            // advance to Replicating. LazysyncManager advances to Protected once DHT confirms.
-            // Migrating is included: after migration the daemon restarts its cycle and
-            // may push version 1 again — without this the status stays Migrating forever.
             var vm = await _dataStore.GetVmAsync(request.VmId);
-            if (vm != null && vm.LazysyncStatus is
-                LazysyncStatus.Pending or LazysyncStatus.Seeding or LazysyncStatus.Migrating)
+            // Do not overwrite Migrating status on Error VMs.
+            // A VM in Status=Error with LazysyncStatus=Migrating is awaiting
+            // scheduler-driven migration. A late manifest push from a dying
+            // node's lazysync daemon must not reset it to Replicating, as that
+            // removes it from the scheduler's migration candidate filter.
+            if (vm != null &&
+                vm.Status != VmStatus.Error &&
+                vm.LazysyncStatus is LazysyncStatus.Pending or LazysyncStatus.Seeding or LazysyncStatus.Migrating)
             {
                 vm.LazysyncStatus = LazysyncStatus.Replicating;
                 await _dataStore.SaveVmAsync(vm);
