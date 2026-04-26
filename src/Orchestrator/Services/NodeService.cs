@@ -1844,19 +1844,22 @@ public class NodeService : INodeService
             }
         }
 
-        // Reverse sync: find VMs that are Running/Provisioning in the orchestrator DB
-        // but not reported in this heartbeat. These are ghost records — either the VM
-        // was never actually created (e.g. node agent rejected a duplicate name) or it
-        // was destroyed without the orchestrator being notified.
-        // Exclude transitional states (Deleting, Stopping) — those are managed by
-        // command acknowledgment, not heartbeat.
+        // Reverse sync: find VMs that are Running in the orchestrator DB but not reported
+        // in this heartbeat. These are ghost records — the VM was destroyed without the
+        // orchestrator being notified.
+        //
+        // Exclude ALL transitional states (Provisioning, Deleting, Stopping, Deleted):
+        // - Provisioning: node may not have started the VM yet (command just arrived).
+        //   Stale Provisioning VMs are caught by ProvisioningTimeout in SystemVmReconciliationService
+        //   and by a dedicated user-VM watchdog, not by heartbeat ghost detection.
+        // - Deleting / Stopping / Deleted: managed by command acknowledgment.
         var reportedVmIds = heartbeat.ActiveVms
             .Select(v => v.VmId)
             .ToHashSet();
 
         var ghostVms = nodeVms
             .Where(v =>
-                v.Status is VmStatus.Running or VmStatus.Provisioning &&
+                v.Status == VmStatus.Running &&
                 !reportedVmIds.Contains(v.Id))
             .ToList();
 
