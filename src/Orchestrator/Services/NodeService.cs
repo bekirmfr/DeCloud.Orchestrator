@@ -1710,7 +1710,11 @@ public class NodeService : INodeService
                 // Saved unconditionally so the alive signal persists even when no service
                 // update follows. The service block (if it runs) will save again with
                 // service readiness data — both saves are idempotent and correct.
-                if (!isTransitionalStatus)
+                // Only stamp LastHeartbeatAt when the VM is actually running.
+                // This is the liveness signal for VerifyActiveAsync — stamping it
+                // for Error/Failed state means unhealthyFor never accumulates and
+                // the grace period is never exceeded, hiding genuine failures.
+                if (!isTransitionalStatus && newStatus == VmStatus.Running)
                 {
                     vm.LastHeartbeatAt = DateTime.UtcNow;
 
