@@ -130,17 +130,23 @@ public class VmSchedulerService : BackgroundService
         // LazysyncStatus updates written by MarkNodeVmsAsErrorAsync, which fetches
         // and saves VMs via MongoDB bypassing the in-memory write path.
         var allVms = await dataStore.GetAllVMsAsync();
-        // Only migrate VMs explicitly classified by MarkNodeVmsAsErrorAsync (node-offline path).
-        // Migrating and Recovering are the only two values that method ever writes — aligning
-        // here prevents false migrations triggered by transient health-check failures, ghost-VM
-        // detection, or command timeouts, all of which land on VmStatus.Error without setting
-        // either of these two statuses.
+
+        // Gate migration on node-offline status rather than LazysyncStatus.
+        // LazysyncStatus is informational and prone to billing-race overwrites.
+        // The correct semantic: migrate Error VMs whose host node is confirmed offline.
+        // MigrateVmAsync checks manifest state downstream and marks Unrecoverable if
+        // no confirmed replica exists.
+        var offlineNodeIds = (await dataStore.GetAllNodesAsync())
+            .Where(n => n.Status == NodeStatus.Offline)
+            .Select(n => n.Id)
+            .ToHashSet();
+
         var candidates = allVms
             .Where(v =>
                 v.Status == VmStatus.Error &&
                 v.Spec.ReplicationFactor > 0 &&
-                (v.LazysyncStatus == LazysyncStatus.Migrating ||
-                 v.LazysyncStatus == LazysyncStatus.Recovering) &&
+                !string.IsNullOrEmpty(v.NodeId) &&
+                offlineNodeIds.Contains(v.NodeId) &&
                 string.IsNullOrEmpty(v.ActiveCommandId))
             .ToList();
 

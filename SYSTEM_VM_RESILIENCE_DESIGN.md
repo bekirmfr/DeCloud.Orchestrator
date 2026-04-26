@@ -2,8 +2,14 @@
 
 **Status:** Approved for Implementation  
 **Phase:** 1 — Foundation  
-**Last Updated:** 2026-04-21  
+**Last Updated:** 2026-04-26  
 **Author:** BMA / DeCloud Architecture
+
+> **Change note (2026-04-26):** Artifact delivery simplified to **external-only**.
+> The platform no longer hosts artifact bytes; authors provide an HTTPS URL plus
+> SHA256, and the node agent cache fetches from the author's origin. This removes
+> the upload path and `IsExternalReference` flag, reduces attack surface, and
+> shifts the platform's legal posture from *host* to *directory*. See §3.4 and §5.3.
 
 ---
 
@@ -90,14 +96,14 @@ Together these establish:
 ```csharp
 /// <summary>
 /// A file artifact attached to a VmTemplate.
-/// Artifacts are delivered to VMs at boot via the node agent's local artifact cache.
-/// 
-/// Two delivery tiers:
-///   Platform-hosted (IsExternalReference = false): stored on orchestrator filesystem,
-///   served via node agent cache at ~1Gbps over virbr0. Max 250MB per artifact.
-///   
-///   External reference (IsExternalReference = true): URL-only, VM downloads directly
-///   from author's infrastructure. No size limit. SHA256 required for verification.
+///
+/// Single delivery model: SourceUrl is author-controlled (e.g., GitHub
+/// Releases, S3, CDN). The orchestrator stores only metadata (URL, SHA256,
+/// size) — never the bytes.
+///
+/// Delivery to VMs is through the node agent's local artifact cache, which
+/// fetches once from SourceUrl, verifies SHA256, and serves over virbr0 at
+/// ~1Gbps. VMs never see the upstream URL — only the local cache URL.
 /// </summary>
 public class TemplateArtifact
 {
@@ -106,7 +112,7 @@ public class TemplateArtifact
 
     /// <summary>
     /// Artifact name — used in cloud-init variable substitution.
-    /// Cloud-init references: ${ARTIFACT_URL:name} or ${EXTERNAL_URL:name}
+    /// Cloud-init references: ${ARTIFACT_URL:name}
     /// Example: "dht-node", "dashboard-assets", "shared-scripts"
     /// </summary>
     public string Name { get; set; } = string.Empty;
@@ -122,11 +128,20 @@ public class TemplateArtifact
     public long SizeBytes { get; set; }
 
     /// <summary>
-    /// Source URL for download (external reference URL, or internal fallback).
-    /// For platform-hosted artifacts: populated automatically on upload.
-    /// For external references: author-provided URL.
+    /// Author-controlled URL where the artifact bytes can be fetched.
+    /// Mandatory. HTTPS required.
+    ///
+    /// Verified once at publish time: orchestrator GETs the URL, computes
+    /// SHA256, and rejects the publish if it does not match the declared
+    /// hash. Bytes are not retained — only the (URL, SHA256) tuple is stored.
+    ///
+    /// Immutable for a given template Version. Author rotation requires
+    /// bumping VmTemplate.Version (which triggers system VM redeployment
+    /// for system templates, and a re-publish review for community ones).
+    ///
+    /// Examples: GitHub Releases, S3 public objects, author's CDN.
     /// </summary>
-    public string? SourceUrl { get; set; }
+    public string SourceUrl { get; set; } = string.Empty;
 
     /// <summary>
     /// Block Store CID once artifact is replicated (future — Phase 2).
@@ -142,14 +157,8 @@ public class TemplateArtifact
 
     public ArtifactType Type { get; set; }
 
-    /// <summary>
-    /// true = SourceUrl is the delivery mechanism; platform stores only metadata.
-    /// false = artifact bytes stored on orchestrator filesystem.
-    /// </summary>
-    public bool IsExternalReference { get; set; }
-
-    public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
-    public string UploadedBy { get; set; } = string.Empty; // userId
+    public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
+    public string RegisteredBy { get; set; } = string.Empty; // userId
 }
 
 public enum ArtifactType
@@ -174,17 +183,12 @@ Add to existing `VmTemplate` class:
 // ============================================
 
 /// <summary>
-/// Files attached to this template, delivered to VMs via node agent artifact cache.
-/// Platform-hosted artifacts (≤250MB) are served locally at ~1Gbps.
-/// External references are downloaded by the VM directly at boot.
+/// Files attached to this template, referenced by author-controlled URL.
+/// The node agent cache fetches each artifact once from its SourceUrl,
+/// verifies SHA256, and serves it to local VMs over virbr0 at ~1Gbps.
+/// The platform stores only metadata — never the bytes.
 /// </summary>
 public List<TemplateArtifact> Artifacts { get; set; } = new();
-
-/// <summary>
-/// Denormalized total size of platform-hosted artifacts (not external references).
-/// Enforced at upload: max 500MB per template across all platform-hosted artifacts.
-/// </summary>
-public long TotalArtifactSizeBytes { get; set; }
 
 /// <summary>
 /// Template version — bumped when cloud-init or artifacts change.
@@ -199,16 +203,33 @@ public int Version { get; set; } = 1;
 public string? Slug { get; set; }
 ```
 
-### 3.4 Artifact Storage
+### 3.4 Artifact Storage Model
 
-**Phase 1 storage:** Orchestrator filesystem at `/var/lib/decloud/artifacts/{sha256}`.
+**The platform never stores artifact bytes.** Authors host their own bytes
+(GitHub Releases, S3, CDN) and provide the URL plus SHA256. Only metadata
+(`Name`, `SourceUrl`, `Sha256`, `SizeBytes`, `Architecture`, `Type`) is
+stored in MongoDB on the `VmTemplate.Artifacts[]` embedded array.
 
-Metadata (name, sha256, size, URLs) stored in MongoDB `vmTemplates` collection as embedded `Artifacts[]` array on `VmTemplate`.
+**Why external-only:**
 
-**Size limits (enforced server-side):**
-- Per artifact: 250MB
-- Per template total: 500MB (sum of platform-hosted artifacts)
-- External references: unlimited (no bytes stored on platform)
+| Concern | Outcome |
+|---|---|
+| Legal posture | Platform is a *directory*, not a *host* (DMCA / EU DSA / criminal-content regimes). On takedown, de-listing replaces removing-from-disk. |
+| Attack surface | No upload endpoint → no zip bombs, MIME spoofing, path-traversal in filenames, "served as trusted platform content" attacks. |
+| Operational | No disk pressure, no backup of artifact files, no orphan GC, no quota enforcement. |
+| Decentralization | Aligns with platform ethos. Block Store Phase 2 is the durability layer (replicate by CID). |
+| Performance | Unchanged — node agent cache (§3.6) serves at ~1Gbps regardless of origin. |
+
+**Size limits:** None enforced by the platform. The node agent cache may
+prune the largest least-recently-used artifacts when disk pressure rises
+(see `IArtifactCacheService.PruneAsync`).
+
+**Availability:** If an author takes down their URL, any node that has
+already cached the artifact continues serving it. New nodes fail prefetch
+with a clear error and the system VM stays in `Pending` until resolved.
+Block Store Phase 2 (replicate by CID) closes this gap permanently — when
+`BlockStoreCid` is populated, the node agent prefers Block Store over
+`SourceUrl`.
 
 ### 3.5 New Orchestrator Endpoints
 
@@ -216,20 +237,29 @@ Metadata (name, sha256, size, URLs) stored in MongoDB `vmTemplates` collection a
 
 ```
 POST /api/marketplace/templates/{id}/artifacts
-    Upload artifact file. Requires auth. Validates size, type, SHA256.
-    Returns: TemplateArtifact (with Id, Sha256, SizeBytes)
-
-GET  /api/marketplace/templates/{id}/artifacts/{name}
-    Download artifact by name. Used by node agents for prefetch.
-    Streams from /var/lib/decloud/artifacts/{sha256}.
-
-GET  /api/marketplace/templates/{id}/artifacts/{name}/sha256
-    Returns SHA256 checksum only (for verification without download).
+    Register an artifact reference on a template.
+    Body: { name, sourceUrl, sha256, sizeBytes, type, architecture? }
+    Validation:
+      - URL must be HTTPS
+      - Orchestrator issues HEAD to confirm reachability
+      - Artifact name must be unique within the template
+    Allowed only while template is in Draft status.
+    Returns: TemplateArtifact
 
 DELETE /api/marketplace/templates/{id}/artifacts/{name}
-    Remove artifact from template. Requires template ownership. 
-    Only allowed before publish (Draft status).
+    Remove an artifact reference. Draft status only.
+
+POST /api/marketplace/artifacts/probe          (UX helper, optional)
+    Body: { sourceUrl }
+    Server fetches once, returns { sizeBytes, sha256, contentType }.
+    Lets the authoring UI offer "paste URL → auto-fill hash" so authors
+    don't have to compute SHA256 by hand. The author confirms before save.
+    Rate-limited per user.
 ```
+
+There is no `GET /artifacts/{name}` from the orchestrator. The orchestrator
+never serves artifact bytes — node agents prefetch directly from `SourceUrl`,
+and VMs read only from the local node agent cache.
 
 ### 3.6 Node Agent Artifact Cache
 
@@ -240,6 +270,11 @@ DELETE /api/marketplace/templates/{id}/artifacts/{name}
 /// Serves cached artifacts to local VMs over virbr0 (192.168.122.1:5100).
 /// VMs use ${ARTIFACT_URL:name} which resolves to:
 ///   http://192.168.122.1:5100/api/artifacts/{sha256}
+///
+/// On first request after a template assignment, the cache prefetches the
+/// artifact from its author-controlled SourceUrl (e.g., GitHub Releases),
+/// streams the bytes through a SHA256 hasher, and stores them locally
+/// keyed by hash. Subsequent VMs on this node hit the cache directly.
 ///
 /// Security: virbr0 is accessible only from VMs on this node.
 /// No authentication required — isolation is network-level.
@@ -294,9 +329,8 @@ Add `ResolveArtifactVariables()` to expand artifact references in cloud-init bef
 /// Called from BuildVmRequestFromTemplateAsync() before sending CreateVm command.
 ///
 /// Variable prefixes:
-///   ${ARTIFACT_URL:name}    → platform-hosted artifact served from node agent cache
-///   ${EXTERNAL_URL:name}    → external reference URL (author's infrastructure)
-///   ${ARTIFACT_SHA256:name} → SHA256 checksum (available for both tiers)
+///   ${ARTIFACT_URL:name}    → node agent cache URL (always local — VMs never see upstream URL)
+///   ${ARTIFACT_SHA256:name} → SHA256 checksum for in-VM verification
 ///
 /// Architecture selection: selects the artifact matching the target node's architecture.
 /// Falls back to architecture=null (universal) if no arch-specific artifact exists.
@@ -314,15 +348,11 @@ private Dictionary<string, string> ResolveArtifactVariables(
             artifact.Architecture != targetArchitecture)
             continue;
 
-        var prefix = artifact.IsExternalReference
-            ? $"EXTERNAL_URL:{artifact.Name}"
-            : $"ARTIFACT_URL:{artifact.Name}";
+        // All artifacts resolve to the local node agent cache.
+        // The cache fetches from artifact.SourceUrl on first miss.
+        variables[$"ARTIFACT_URL:{artifact.Name}"] =
+            $"http://192.168.122.1:5100/api/artifacts/{artifact.Sha256}";
 
-        var url = artifact.IsExternalReference
-            ? artifact.SourceUrl ?? string.Empty
-            : $"http://192.168.122.1:5100/api/artifacts/{artifact.Sha256}";
-
-        variables[prefix] = url;
         variables[$"ARTIFACT_SHA256:{artifact.Name}"] = artifact.Sha256;
     }
 
@@ -731,25 +761,34 @@ The Go binaries don't change. `loadOrCreateIdentity()` reads from disk first —
 ### 5.1 Artifact Integrity Chain
 
 ```
-Upload time:
-  Uploader computes SHA256 locally → submits with file
-  Orchestrator re-computes SHA256 server-side → stores in MongoDB
-  (client-provided hash is not trusted — always re-verified)
+Publish time (in orchestrator):
+  Author submits { name, sourceUrl, sha256 }
+  Orchestrator GETs sourceUrl once, computes SHA256 server-side
+  If mismatch → reject publish (no metadata stored)
+  If match    → store (sourceUrl, sha256) on template, discard bytes
+  The hash is now immutable for this template Version.
 
-Node agent prefetch:
-  Downloads artifact from orchestrator API
-  Verifies SHA256 before caching → rejects if mismatch
+Node agent prefetch (first miss on a node):
+  Fetches from artifact.SourceUrl (author-controlled)
+  Streams bytes through SHA256 hasher → rejects on mismatch
+  Caches under /var/lib/decloud/artifact-cache/{sha256}
 
 VM boot:
-  Downloads from node agent cache (http://192.168.122.1:5100)
-  Verifies ${ARTIFACT_SHA256:name} inside cloud-init
+  Reads from node agent cache (http://192.168.122.1:5100)
+  Re-verifies ${ARTIFACT_SHA256:name} inside cloud-init
   Refuses to execute if mismatch
 
 Trust root:
-  MongoDB (orchestrator) holds authoritative SHA256 values
-  A compromised node agent cannot serve a poisoned artifact —
-  the VM verifies the hash provided by the orchestrator
-  (embedded in cloud-init via ${ARTIFACT_SHA256:name})
+  MongoDB (orchestrator) holds the authoritative SHA256 captured at publish.
+
+  Compromised node agent cannot serve a poisoned artifact — the VM verifies
+  the hash provided by the orchestrator (via ${ARTIFACT_SHA256:name}).
+
+  Compromised author origin (post-publish swap) cannot poison either —
+  node agent prefetch streams through a hasher and fails closed on mismatch.
+  Any VM that boots from a compromised cache would also fail the in-VM
+  re-check. The pre-publish hash capture binds SourceUrl bytes to that
+  specific hash for the lifetime of the template Version.
 ```
 
 ### 5.2 ObligationStateService Security
@@ -761,13 +800,17 @@ Trust root:
 - SQLite file permissions: `600` (root-owned, no world read)
 - State JSON never logged in full (only role + version logged)
 
-### 5.3 Artifact Upload Security
+### 5.3 Artifact Publish Security
 
-- Max 250MB per artifact (enforced at multipart boundary, before full upload)
-- Binary artifacts: require `IsCommunity = false` OR platform admin approval
-- Script/WebAsset/Config/Archive: automated scan (same pattern as current `TemplateService.ValidateTemplateAsync`)
-- SHA256 mismatch on upload → immediate rejection, no file stored
-- External references: HEAD request to verify URL is reachable at publish time
+- `SourceUrl` must be HTTPS (rejected at registration if not)
+- Orchestrator HEAD-checks reachability at registration time
+- Orchestrator GETs once at publish time to verify SHA256 — bytes are not retained
+- SHA256 is captured server-side at publish; the client-provided hash is treated as a hint and always re-verified
+- After publish, the artifact's `(SourceUrl, Sha256)` tuple is immutable for that template `Version` — author rotation requires bumping the version
+- AI review (Template Review Gate, see `COMPLIANCE.md` §6) inspects artifact bytes during the same one-time fetch — covers Binary, Script, WebAsset, Config, Archive types uniformly
+- Defense in depth: even if an author swaps bytes at the URL after publish, every prefetch fails closed on hash mismatch (no silent compromise)
+- No upload path: zip bombs, MIME spoofing, path-traversal in filenames, and "served as trusted platform content" attacks are eliminated by construction
+- Legal posture: platform is a *directory* not a *host*; takedowns de-list rather than remove-from-disk
 
 ### 5.4 Relay Revenue-Share Security
 
@@ -849,11 +892,11 @@ else
 ### Phase A — Enriched Template Foundation
 
 1. **`TemplateArtifact` model** + `VmTemplate.Artifacts[]` field
-2. **Artifact storage** — `/var/lib/decloud/artifacts/{sha256}` on orchestrator filesystem
-3. **Upload/download endpoints** — `MarketplaceController` extensions
+2. **Artifact registration endpoints** — `MarketplaceController` extensions (`POST/DELETE /artifacts`, optional `POST /artifacts/probe`)
+3. **Publish-time verification** — `TemplateService.PublishTemplateAsync` fetches each `SourceUrl` once, verifies SHA256, locks the hash for that template Version
 4. **`ResolveArtifactVariables()`** in `TemplateService`
-5. **`ArtifactCacheService`** + `ArtifactCacheController` on node agent
-6. **Integration test**: upload artifact → seed template → deploy VM → verify artifact downloaded and SHA256 verified inside VM
+5. **`ArtifactCacheService`** + `ArtifactCacheController` on node agent (prefetch from author URLs, hash-streamed, fail-closed on mismatch)
+6. **Integration test**: register external artifact → publish template → deploy VM → verify node agent prefetched from author URL, cached, and VM hash-verified inside cloud-init
 
 ### Phase B — System Templates + Obligation State
 
@@ -897,22 +940,20 @@ else
 ```
 src/Orchestrator/Models/TemplateArtifact.cs
 src/Orchestrator/Services/SystemVm/ObligationStateGenerator.cs
-src/Orchestrator/Services/ArtifactStorageService.cs
 ```
 
 ### Orchestrator — Modified Files
 
 ```
-src/Orchestrator/Models/VmTemplate.cs              (add Artifacts[], TotalArtifactSizeBytes, Version, Slug)
+src/Orchestrator/Models/VmTemplate.cs              (add Artifacts[], Version, Slug)
 src/Orchestrator/Models/Payment/PaymentConfig.cs   (add RelayRevenueShareRatio)
 src/Orchestrator/Models/SystemVmObligation.cs      (add StateJson, StateVersion)
-src/Orchestrator/Controllers/MarketplaceController.cs (artifact upload/download endpoints)
-src/Orchestrator/Services/TemplateService.cs       (ResolveArtifactVariables())
+src/Orchestrator/Controllers/MarketplaceController.cs (artifact registration + probe endpoints)
+src/Orchestrator/Services/TemplateService.cs       (ResolveArtifactVariables(), publish-time SHA256 verify)
 src/Orchestrator/Services/TemplateSeederService.cs (seed system templates with artifacts)
 src/Orchestrator/Services/NodeService.cs           (deliver obligation state at registration)
 src/Orchestrator/Services/SystemVm/SystemVmReconciliationService.cs (unified DeploySystemVmAsync)
 src/Orchestrator/Services/Balance/BillingService.cs (relay revenue share)
-src/Orchestrator/Persistence/DataStore.cs          (artifact storage methods)
 ```
 
 ### Node Agent — New Files
@@ -959,7 +1000,8 @@ BlockStoreService.DeployBlockStoreVmAsync()   → replaced by unified template p
 | System VM identity survives redeployment | Redeploy DHT VM → verify same peer ID in DHT network |
 | Relay redeployment does not cascade | Redeploy relay → DHT/BlockStore VMs reconnect without reconfiguration |
 | Artifacts served at ~1Gbps locally | `iperf3` or `curl` timing from VM to node agent over virbr0 |
-| SHA256 verified end-to-end | Tamper artifact file → verify VM boot fails checksum |
+| SHA256 verified end-to-end | Modify hash on template doc → node agent prefetch fails closed; in-VM re-check fails closed |
+| Author URL takedown resilience | Already-cached node continues serving; new node prefetch fails with clear error (system VM stays Pending) |
 | System VMs deployable from marketplace UI | User deploys "DHT Peer Node" from marketplace — succeeds |
 | Relay revenue share calculated correctly | BillingService unit test: CGNAT node $100 → relay gets $2, CGNAT gets $98 |
 | Unified deployment path | Remove `RelayNodeService.DeployRelayVmAsync()` → relay deployment still works |
