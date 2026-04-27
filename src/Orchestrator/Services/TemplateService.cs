@@ -298,6 +298,15 @@ public class TemplateService : ITemplateService
         if (template.Status == TemplateStatus.Published)
             throw new InvalidOperationException("Template is already published");
 
+        // Verify each artifact's SHA256 by fetching the source URL.
+        // This is done once at publish time; subsequent downloads by node agents
+        // trust the stored hash. Rejects the publish if any artifact's bytes
+        // do not match the declared hash.
+        if (template.Artifacts.Count > 0)
+        {
+            await VerifyArtifactsAsync(template, ct: CancellationToken.None);
+        }
+
         // Full validation before publishing
         var validation = await ValidateTemplateAsync(template);
         if (!validation.IsValid)
@@ -553,6 +562,16 @@ public class TemplateService : ITemplateService
             }
         }
 
+        // Inject artifact URL variables if the template has artifacts.
+        // Architecture is resolved from the template spec (amd64 is the default
+        // for x86-64 nodes; arm64 is set explicitly for ARM deployments).
+        if (template.Artifacts.Count > 0)
+        {
+            var artifactVars = ResolveArtifactVariables(template, targetArchitecture: "amd64");
+            foreach (var (key, value) in artifactVars)
+                mergedEnvVars.TryAdd(key, value);  // template-declared vars take precedence
+        }
+
         _logger.LogInformation(
             "Building VM request from template {TemplateName} for VM {VmName}",
             template.Name, vmName);
@@ -566,6 +585,62 @@ public class TemplateService : ITemplateService
             TemplateId: templateId,
             EnvironmentVariables: mergedEnvVars
         );
+    }
+
+    /// <summary>
+    /// Fetch each artifact's SourceUrl, compute SHA256, and verify it matches
+    /// the declared hash. Throws ArgumentException if any artifact fails.
+    ///
+    /// Called once at publish time — NOT on every deployment. Node agents
+    /// re-verify on download; this verification catches authoring mistakes
+    /// (wrong URL, stale hash) before the template is published.
+    /// </summary>
+    private async Task VerifyArtifactsAsync(VmTemplate template, CancellationToken ct)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+
+        foreach (var artifact in template.Artifacts)
+        {
+            if (string.IsNullOrWhiteSpace(artifact.SourceUrl) ||
+                string.IsNullOrWhiteSpace(artifact.Sha256))
+            {
+                throw new ArgumentException(
+                    $"Artifact '{artifact.Name}' is missing SourceUrl or Sha256.");
+            }
+
+            if (!Uri.TryCreate(artifact.SourceUrl, UriKind.Absolute, out var uri)
+                || uri.Scheme != "https")
+            {
+                throw new ArgumentException(
+                    $"Artifact '{artifact.Name}' SourceUrl must be HTTPS: {artifact.SourceUrl}");
+            }
+
+            _logger.LogInformation(
+                "Verifying artifact '{Name}' at {Url}",
+                artifact.Name, artifact.SourceUrl);
+
+            using var response = await client.GetAsync(
+                artifact.SourceUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            response.EnsureSuccessStatusCode();
+
+            using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var hash = await sha.ComputeHashAsync(stream, ct);
+            var actual = Convert.ToHexString(hash).ToLowerInvariant();
+
+            if (!string.Equals(actual, artifact.Sha256.ToLowerInvariant(),
+                    StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Artifact '{artifact.Name}' SHA256 mismatch. " +
+                    $"Declared: {artifact.Sha256[..12]}, Actual: {actual[..12]}. " +
+                    "Update the Sha256 field to match the current bytes at SourceUrl.");
+            }
+
+            _logger.LogInformation(
+                "✓ Artifact '{Name}' verified ({Sha256})",
+                artifact.Name, artifact.Sha256[..12]);
+        }
     }
 
     public string SubstituteCloudInitVariables(
@@ -634,6 +709,42 @@ public class TemplateService : ITemplateService
         else if (node != null && !string.IsNullOrEmpty(node.PublicIp))
         {
             variables["DECLOUD_PUBLIC_IP"] = node.PublicIp;
+        }
+
+        return variables;
+    }
+
+    /// <summary>
+    /// Build the ${ARTIFACT_URL:name} and ${ARTIFACT_SHA256:name} variable
+    /// substitutions for artifacts in a template, filtered to the target
+    /// architecture. Called from BuildVmRequestFromTemplateAsync when the
+    /// template has artifacts.
+    ///
+    /// All artifact URLs resolve to the node agent's local cache endpoint
+    /// (http://192.168.122.1:5100/api/artifacts/{sha256}) rather than the
+    /// upstream SourceUrl. The VM never sees the upstream URL — it always
+    /// fetches from the local cache, which the node agent has pre-verified.
+    /// </summary>
+    private static Dictionary<string, string> ResolveArtifactVariables(
+        VmTemplate template,
+        string targetArchitecture) // "amd64" or "arm64"
+    {
+        var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var artifact in template.Artifacts)
+        {
+            // Skip arch-specific artifacts that don't match the target.
+            // null Architecture means universal (scripts, configs, web assets).
+            if (artifact.Architecture is not null &&
+                !string.Equals(artifact.Architecture, targetArchitecture,
+                    StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Always resolve to local cache — VMs never see upstream URLs.
+            variables[$"ARTIFACT_URL:{artifact.Name}"] =
+                $"http://192.168.122.1:5100/api/artifacts/{artifact.Sha256}";
+
+            variables[$"ARTIFACT_SHA256:{artifact.Name}"] = artifact.Sha256;
         }
 
         return variables;

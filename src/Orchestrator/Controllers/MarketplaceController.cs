@@ -1,3 +1,4 @@
+using DeCloud.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
@@ -462,6 +463,91 @@ public class MarketplaceController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Register an artifact reference on a template.
+    /// The orchestrator fetches SourceUrl, verifies SHA256, and stores metadata.
+    /// No bytes are stored on the orchestrator.
+    /// </summary>
+    [HttpPost("templates/{id}/artifacts")]
+    [Authorize]
+    [ProducesResponseType(typeof(TemplateArtifact), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<TemplateArtifact>> AddArtifact(
+        string id,
+        [FromBody] AddArtifactRequest request)
+    {
+        var userId = User.FindFirst("wallet")?.Value ?? User.FindFirst("sub")?.Value;
+        var template = await _templateService.GetTemplateByIdAsync(id);
+
+        if (template is null) return NotFound();
+        if (template.AuthorId != userId) return Forbid();
+
+        var artifact = new TemplateArtifact
+        {
+            Name = request.Name,
+            Description = request.Description ?? string.Empty,
+            Sha256 = request.Sha256.ToLowerInvariant(),
+            SizeBytes = request.SizeBytes,
+            SourceUrl = request.SourceUrl,
+            Architecture = request.Architecture,
+            Type = request.Type,
+            RegisteredAt = DateTime.UtcNow,
+            RegisteredBy = userId,
+        };
+
+        // Verify SHA256 against SourceUrl before saving.
+        // TemplateService.VerifyArtifactsAsync will run again at publish;
+        // this is an early check to surface authoring mistakes immediately.
+        try
+        {
+            // Re-use the service's verification logic (extract to a shared helper
+            // if VerifyArtifactsAsync is made internal/public).
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using var response = await client.GetAsync(
+                request.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var hash = await sha.ComputeHashAsync(stream);
+            var actual = Convert.ToHexString(hash).ToLowerInvariant();
+            if (actual != artifact.Sha256)
+                return BadRequest($"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
+                                  $"actual {actual[..12]}");
+        }
+        catch (HttpRequestException ex)
+        {
+            return BadRequest($"Could not fetch artifact from {request.SourceUrl}: {ex.Message}");
+        }
+
+        template.Artifacts.Add(artifact);
+        await _templateService.UpdateTemplateAsync(template);
+
+        return Ok(artifact);
+    }
+
+    /// <summary>Remove an artifact reference from a template.</summary>
+    [HttpDelete("templates/{id}/artifacts/{artifactId}")]
+    [Authorize]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> RemoveArtifact(string id, string artifactId)
+    {
+        var userId = User.FindFirst("wallet")?.Value ?? User.FindFirst("sub")?.Value;
+        var template = await _templateService.GetTemplateByIdAsync(id);
+
+        if (template is null) return NotFound();
+        if (template.AuthorId != userId) return Forbid();
+
+        var removed = template.Artifacts.RemoveAll(a => a.Id == artifactId);
+        if (removed == 0) return NotFound();
+
+        await _templateService.UpdateTemplateAsync(template);
+        return NoContent();
+    }
+
 
     // ════════════════════════════════════════════════════════════════════════
     // Reviews
@@ -836,4 +922,15 @@ public class SubmitReviewRequest
     /// Reference ID for the proof (VM ID)
     /// </summary>
     public string ProofReferenceId { get; set; } = string.Empty;
+}
+
+public class AddArtifactRequest
+{
+    public required string Name { get; init; }
+    public required string Sha256 { get; init; }
+    public required string SourceUrl { get; init; }
+    public required long SizeBytes { get; init; }
+    public required ArtifactType Type { get; init; }
+    public string? Description { get; init; }
+    public string? Architecture { get; init; }
 }

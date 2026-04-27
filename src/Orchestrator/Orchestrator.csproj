@@ -8,10 +8,6 @@
 		<UserSecretsId>orchestrator-dev-secrets</UserSecretsId>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<ProjectReference Include="../DeCloud.Shared/DeCloud.Shared.csproj" />
-	</ItemGroup>
-
 	<!-- ABI files for blockchain contract interactions -->
 	<!-- Embedded in assembly — works regardless of build/publish/run mode -->
 	<ItemGroup>
@@ -73,8 +69,7 @@
 		<Message Importance="high" Text="Building frontend..." />
 		<Exec Command="npm install" WorkingDirectory="$(FrontendDir)" />
 		<Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
-		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')"
-		       Text="❌ Frontend build failed: dist/index.html not found. Check Vite build errors above." />
+		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')" Text="❌ Frontend build failed: dist/index.html not found. Check Vite build errors above." />
 		<Message Importance="high" Text="✓ Frontend built successfully: wwwroot/dist/" />
 	</Target>
 
@@ -95,6 +90,9 @@
 		<Content Remove="$(FrontendDir)/src/**" />
 		<Content Remove="$(FrontendDir)/*.json" />
 		<Content Remove="$(FrontendDir)/*.md" />
+	</ItemGroup>
+	<ItemGroup>
+	  <ProjectReference Include="..\..\..\Decloud.Shared\DeCloud.Shared.csproj" />
 	</ItemGroup>
 
 </Project>

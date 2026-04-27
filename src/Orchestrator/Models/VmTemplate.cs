@@ -1,4 +1,5 @@
 using MongoDB.Bson.Serialization.Attributes;
+using DeCloud.Shared.Models;
 
 namespace Orchestrator.Models;
 
@@ -159,6 +160,36 @@ public class VmTemplate
     /// Variables: ${DECLOUD_VM_ID}, ${DECLOUD_VM_NAME}, ${DECLOUD_PASSWORD}, etc.
     /// </summary>
     public string CloudInitTemplate { get; set; } = string.Empty;
+
+    // ============================================
+    // ARTIFACTS
+    // ============================================
+
+    /// <summary>
+    /// Files attached to this template, referenced by author-controlled URLs.
+    /// The node agent fetches each artifact once from its SourceUrl, verifies
+    /// SHA256, and serves it to VMs over virbr0. The platform stores only
+    /// metadata (URL, SHA256, size) — never the bytes.
+    ///
+    /// Empty list = no artifacts (most tenant templates).
+    /// System VM templates (system-relay, system-dht, system-blockstore) carry
+    /// binary and script artifacts populated by TemplateSeederService.
+    /// </summary>
+    public List<TemplateArtifact> Artifacts { get; set; } = new();
+
+    /// <summary>
+    /// Monotonic revision counter. Starts at 1. Bumped whenever
+    /// CloudInitTemplate or Artifacts[] changes in a way that should trigger
+    /// re-deployment of running VMs using this template.
+    ///
+    /// Distinct from the display Version string (e.g., "2.0.0") — Revision is
+    /// what the node-side reconciler compares against the running VM's tracked
+    /// revision to detect drift.
+    ///
+    /// System templates: bumped by TemplateSeederService on each code change.
+    /// Community templates: bumped manually by the author on publish.
+    /// </summary>
+    public int Revision { get; set; } = 1;
 
     /// <summary>
     /// Default environment variables for the template
