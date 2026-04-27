@@ -4,13 +4,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy csproj and restore
+# Copy project files first so restore is cached independently of source changes.
 COPY src/Orchestrator/Orchestrator.csproj ./Orchestrator/
-COPY src/Shared/ ./Shared/
+COPY src/DeCloud.Shared/DeCloud.Shared.csproj ./DeCloud.Shared/
 RUN dotnet restore Orchestrator/Orchestrator.csproj
 
-# Copy everything else and build
+# Copy source and build.
 COPY src/Orchestrator/ ./Orchestrator/
+COPY src/DeCloud.Shared/ ./DeCloud.Shared/
 WORKDIR /src/Orchestrator
 RUN dotnet build -c Release -o /app/build
 RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
