@@ -487,7 +487,24 @@ public record NodeHeartbeat(
     /// Allows the orchestrator to detect stale state and signal a pull.
     /// Absent or zero values mean the node has no state for that role.
     /// </summary>
-    Dictionary<string, int>? ObligationStateVersions = null
+    Dictionary<string, int>? ObligationStateVersions = null,
+    /// <summary>
+    /// Coarse health snapshot for each system VM role this node holds an
+    /// obligation for, keyed by canonical role name ("relay" | "dht" |
+    /// "blockstore"). Values are <see cref="DeCloud.NodeAgent.Core.Models.Reality"/>
+    /// names: "None", "Healthy", or "Unhealthy".
+    ///
+    /// Computed on the node by the matrix's reality projection
+    /// (SYSTEM_VM_DESIGN.md §5.5). Wire-format only in P4 — the
+    /// orchestrator deserialises but does not consume this field. P6
+    /// applies it to <see cref="SystemVmObligation.Status"/> as part of
+    /// the cutover from orchestrator-driven to node-authoritative
+    /// reconciliation. Until then, the existing Status maintained by
+    /// SystemVmReconciliationService remains the source of truth.
+    ///
+    /// Null on agents that pre-date P4. Field is ignored when null.
+    /// </summary>
+    Dictionary<string, string>? ObligationHealth = null
 );
 
 /// <summary>
