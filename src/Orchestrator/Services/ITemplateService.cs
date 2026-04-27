@@ -42,7 +42,8 @@ public interface ITemplateService
         string templateId,
         string vmName,
         VmSpec? customSpec = null,
-        Dictionary<string, string>? environmentVariables = null);
+        Dictionary<string, string>? environmentVariables = null,
+        string? nodeArchitecture = null);
 
     string SubstituteCloudInitVariables(
         string cloudInitTemplate,

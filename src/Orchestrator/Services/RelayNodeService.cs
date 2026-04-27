@@ -199,7 +199,7 @@ public class RelayNodeService : IRelayNodeService
                     NodeId: node.Id,
                     Labels: new Dictionary<string, string>
                     {
-                        { "role", "relay" },
+                        { "role", ObligationRole.Relay },
                         { "wireguard-private-key", relayPrivateKey },
                         { "relay-region", node.Region ?? "default" },
                         { "node-public-ip", node.PublicIp },

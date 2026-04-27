@@ -1,4 +1,5 @@
 using DeCloud.Shared;
+using DeCloud.Shared.Models;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -298,6 +299,7 @@ public class NodeService : INodeService
         await registrationLock.WaitAsync(ct);
 
         var obligationStates = new Dictionary<string, ObligationStatePayload>();
+        var systemTemplates = new Dictionary<string, SystemVmTemplatePayload>();
 
         try
         {
@@ -409,6 +411,11 @@ public class NodeService : INodeService
             obligationStates = GenerateAndAttachObligationStates(
                 node, request.ObligationStateVersions);
 
+            // Generate system template payloads for any role where the orchestrator's
+            // revision exceeds what the node reported. Parallel to identity states.
+            systemTemplates = GenerateSystemTemplatePayloads(
+                node, request.SystemTemplateVersions);
+
             // Deploy obligations with no dependencies immediately (e.g., DHT).
             // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
             // the background SystemVmReconciliationService picks up Pending obligations
@@ -453,7 +460,8 @@ public class NodeService : INodeService
             orchestratorPublicKey,
             TimeSpan.FromSeconds(15),
             dhtBootstrapPeers,
-            obligationStates);
+            obligationStates,
+            systemTemplates);
     }
     /// <summary>
     /// For each obligation on <paramref name="node"/>, generate fresh identity
@@ -476,13 +484,7 @@ public class NodeService : INodeService
         foreach (var obligation in node.SystemVmObligations)
         {
             // Derive the canonical role name used as dictionary key and SQLite PK.
-            var roleName = obligation.Role switch
-            {
-                SystemVmRole.Relay => "relay",
-                SystemVmRole.Dht => "dht",
-                SystemVmRole.BlockStore => "blockstore",
-                _ => null
-            };
+            var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
 
             if (roleName is null)
                 continue;   // Ingress and other future roles handled later
@@ -535,7 +537,100 @@ public class NodeService : INodeService
         return result;
     }
 
+    /// <summary>
+    /// Build system template payloads for the registration response.
+    /// Only includes roles where the orchestrator has a higher revision than
+    /// what the node reported. Parallel to GenerateAndAttachObligationStates.
+    /// </summary>
+    private Dictionary<string, SystemVmTemplatePayload> GenerateSystemTemplatePayloads(
+        Node node,
+        Dictionary<string, int> nodeReportedRevisions)
+    {
+        var result = new Dictionary<string, SystemVmTemplatePayload>(StringComparer.OrdinalIgnoreCase);
 
+        var roleToSlug = new Dictionary<SystemVmRole, string>
+        {
+            [SystemVmRole.Relay] = "system-relay",
+            [SystemVmRole.Dht] = "system-dht",
+            [SystemVmRole.BlockStore] = "system-blockstore",
+        };
+
+        foreach (var obligation in node.SystemVmObligations)
+        {
+            if (!roleToSlug.TryGetValue(obligation.Role, out var slug))
+                continue;
+
+            var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
+            if (roleName is null) continue;
+
+            // Fetch the system VmTemplate from the data store by slug.
+            // Null = not yet seeded (P10 does the seeding) — skip silently.
+            var template = _dataStore.GetTemplateBySlugAsync(slug).GetAwaiter().GetResult();
+            if (template is null) continue;
+
+            nodeReportedRevisions.TryGetValue(roleName, out var nodeRevision);
+            if (template.Revision <= nodeRevision) continue;  // node already current
+
+            // Build the lightweight SystemVmTemplate from the full VmTemplate.
+            var systemTemplate = BuildSystemVmTemplate(roleName, template);
+            var templateJson = System.Text.Json.JsonSerializer.Serialize(
+                systemTemplate,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+
+            result[roleName] = new SystemVmTemplatePayload
+            {
+                TemplateJson = templateJson,
+                Revision = template.Revision,
+            };
+
+            _logger.LogInformation(
+                "Including system template for {Role} r{Revision} in registration response " +
+                "(node has r{NodeRevision})",
+                roleName, template.Revision, nodeRevision);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extract the deployment-relevant subset of a full VmTemplate into a
+    /// SystemVmTemplate for delivery to the node agent.
+    /// </summary>
+    internal static SystemVmTemplate BuildSystemVmTemplate(string role, VmTemplate template)
+    {
+        var canonical = ObligationRole.Canonicalise(role);
+
+        return new SystemVmTemplate
+        {
+            Role = role,
+            Revision = template.Revision,
+            CloudInitContent = template.CloudInitTemplate,
+            Artifacts = template.Artifacts,
+            VirtualCpuCores = template.RecommendedSpec?.VirtualCpuCores ?? 1,
+            MemoryBytes = template.RecommendedSpec?.MemoryBytes ?? (512L * 1024 * 1024),
+            DiskBytes = template.RecommendedSpec?.DiskBytes ?? (2L * 1024 * 1024 * 1024),
+            BaseImageUrl = SystemVmRoleMap.ToBaseImageId(SystemVmRoleMap.FromCanonicalName(canonical).Value),
+            BaseImageHash = string.Empty,
+            Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
+            {
+                Name = p.Description ?? p.Port.ToString(),
+                Port = p.Port,
+                Protocol = p.Protocol,
+                CheckType = p.ReadinessCheck?.Strategy.ToString() ?? "CloudInitDone",
+                HttpPath = p.ReadinessCheck?.HttpPath,
+                TimeoutSeconds = p.ReadinessCheck?.TimeoutSeconds ?? 300,
+            }).Prepend(new SystemVmServiceDeclaration
+            {
+                Name = "System",
+                CheckType = "CloudInitDone",
+                TimeoutSeconds = 300,
+            }).ToList(),
+            UpdatedAt = template.UpdatedAt,
+        };
+    }
 
     private bool VerifyWalletSignature(string walletAddress, string message, string signature)
     {
@@ -722,6 +817,8 @@ public class NodeService : INodeService
 
         var obligationStatesPending = DetectStaleObligationStates(node, heartbeat.ObligationStateVersions);
 
+        var systemTemplatesPending = DetectStaleSystemTemplates(node, heartbeat.SystemTemplateVersions);
+
         // Heartbeat-driven Deploying → Active transition.
         // If the orchestrator was offline when the VM's direct callback fired,
         // this path recovers the obligation state from heartbeat data so the
@@ -756,7 +853,8 @@ public class NodeService : INodeService
         commands.Count > 0 ? commands : null,
         agentSchedulingConfig,
         node.CgnatInfo, invalidVmIds,
-        obligationStatesPending.Count > 0 ? obligationStatesPending : null);
+        obligationStatesPending.Count > 0 ? obligationStatesPending : null,
+        systemTemplatesPending);
     }
 
     /// <summary>
@@ -779,13 +877,7 @@ public class NodeService : INodeService
             if (obligation.StateVersion == 0)
                 continue; // No state generated yet — registration handles this
 
-            var roleName = obligation.Role switch
-            {
-                SystemVmRole.Relay => "relay",
-                SystemVmRole.Dht => "dht",
-                SystemVmRole.BlockStore => "blockstore",
-                _ => null
-            };
+            var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
             if (roleName is null) continue;
 
             nodeReportedVersions.TryGetValue(roleName, out var nodeVersion);
@@ -794,6 +886,34 @@ public class NodeService : INodeService
         }
 
         return pending;
+    }
+
+    /// <summary>
+    /// Compare orchestrator-stored template revisions against what the node
+    /// reported. Returns roles where the orchestrator has a newer revision.
+    /// Parallel to DetectStaleObligationStates.
+    /// </summary>
+    private List<string> DetectStaleSystemTemplates(
+    Node node,
+    Dictionary<string, int>? nodeReportedRevisions)
+    {
+        if (nodeReportedRevisions is null)
+            return new List<string>();
+
+        var stale = new List<string>();
+
+        foreach (var roleName in ObligationRole.All)
+        {
+            var slug = ObligationRole.ToTemplateSlug(roleName);
+            var template = _dataStore.GetTemplateBySlugAsync(slug).GetAwaiter().GetResult();
+            if (template is null) continue;
+
+            nodeReportedRevisions.TryGetValue(roleName, out var nodeRevision);
+            if (template.Revision > nodeRevision)
+                stale.Add(roleName);
+        }
+
+        return stale;
     }
 
     /// <summary>

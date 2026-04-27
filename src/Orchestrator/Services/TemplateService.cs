@@ -529,7 +529,8 @@ public class TemplateService : ITemplateService
         string templateId,
         string vmName,
         VmSpec? customSpec = null,
-        Dictionary<string, string>? environmentVariables = null)
+        Dictionary<string, string>? environmentVariables = null,
+        string? targetArchitecture = null)
     {
         var template = await GetTemplateByIdAsync(templateId);
         if (template == null)
@@ -565,11 +566,11 @@ public class TemplateService : ITemplateService
         // Inject artifact URL variables if the template has artifacts.
         // Architecture is resolved from the template spec (amd64 is the default
         // for x86-64 nodes; arm64 is set explicitly for ARM deployments).
-        if (template.Artifacts.Count > 0)
+        if (template.Artifacts.Count > 0 && targetArchitecture is not null)
         {
-            var artifactVars = ResolveArtifactVariables(template, targetArchitecture: "amd64");
+            var artifactVars = ResolveArtifactVariables(template, targetArchitecture);
             foreach (var (key, value) in artifactVars)
-                mergedEnvVars.TryAdd(key, value);  // template-declared vars take precedence
+                mergedEnvVars.TryAdd(key, value);
         }
 
         _logger.LogInformation(
@@ -586,6 +587,14 @@ public class TemplateService : ITemplateService
             EnvironmentVariables: mergedEnvVars
         );
     }
+
+    private static string NormaliseArchitecture(string? rawArch) =>
+    rawArch?.ToLowerInvariant() switch
+    {
+        "arm64" or "aarch64" or "arm" => "arm64",
+        "x86_64" or "amd64" or "x64" => "amd64",
+        _ => "amd64"   // safe default, x86_64 is dominant
+    };
 
     /// <summary>
     /// Fetch each artifact's SourceUrl, compute SHA256, and verify it matches

@@ -128,7 +128,7 @@ public class NodeSelfController : ControllerBase
 
         var obligation = node.SystemVmObligations
             .FirstOrDefault(o => o.Role.ToString().Equals(canonical, StringComparison.OrdinalIgnoreCase)
-                              || RoleToCanonical(o.Role) == canonical);
+                              || SystemVmRoleMap.ToCanonicalName(o.Role) == canonical);
 
         if (obligation is null || string.IsNullOrEmpty(obligation.StateJson))
         {
@@ -184,7 +184,7 @@ public class NodeSelfController : ControllerBase
             return NotFound("Node not registered");
 
         var obligation = node.SystemVmObligations
-            .FirstOrDefault(o => RoleToCanonical(o.Role) == canonical);
+            .FirstOrDefault(o => SystemVmRoleMap.ToCanonicalName(o.Role) == canonical);
 
         if (obligation is null)
             return NotFound($"No obligation of role '{canonical}' assigned to this node.");
@@ -213,14 +213,6 @@ public class NodeSelfController : ControllerBase
 
         return Ok(new { role = canonical, version = request.Version });
     }
-
-    private static string? RoleToCanonical(SystemVmRole role) => role switch
-    {
-        SystemVmRole.Relay => "relay",
-        SystemVmRole.Dht => "dht",
-        SystemVmRole.BlockStore => "blockstore",
-        _ => null
-    };
 
     public class UpdateObligationStateRequest
     {
@@ -509,33 +501,14 @@ public class NodeSelfController : ControllerBase
         if (node == null)
             return NotFound("Node not registered");
 
-        // Map the obligation role int to a readable name
-        static string RoleName(int role) => role switch
-        {
-            0 => "Dht",
-            1 => "Relay",
-            2 => "BlockStore",
-            _ => $"Role{role}"
-        };
-
-        // Map the obligation status int to a readable name
-        static string StatusName(int status) => status switch
-        {
-            0 => "Pending",
-            1 => "Deploying",
-            2 => "Active",
-            3 => "Failed",
-            _ => $"Status{status}"
-        };
-
         var obligations = (node.SystemVmObligations ?? [])
             .Select(o => new
             {
                 role = (int)o.Role,
-                roleName = RoleName((int)o.Role),
+                roleName = o.Role.ToString(),
                 vmId = o.VmId,
                 status = (int)o.Status,
-                statusName = StatusName((int)o.Status),
+                statusName = o.Status.ToString(),
                 failureCount = o.FailureCount,
                 lastError = o.LastError,
                 deployedAt = o.DeployedAt?.ToString("O"),
@@ -547,6 +520,45 @@ public class NodeSelfController : ControllerBase
             .ToList();
 
         return Ok(new { obligations });
+    }
+
+    /// <summary>
+    /// Returns the current system template payload for a role.
+    /// Called by the node agent when the heartbeat response signals
+    /// SystemTemplatesPending for this role.
+    /// </summary>
+    [HttpGet("system-templates/{role}")]
+    [ProducesResponseType(typeof(SystemVmTemplatePayload), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<SystemVmTemplatePayload>> GetSystemTemplate(string role)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId)) return Unauthorized("Invalid node token");
+
+        var canonical = ObligationRole.Canonicalise(role);
+        if (canonical is null) return BadRequest($"Unknown role '{role}'.");
+
+        var slug = SystemVmRoleMap.ToTemplateSlug(SystemVmRoleMap.FromCanonicalName(canonical).Value);
+        if (slug is null) return BadRequest($"No system template slug for role '{role}'.");
+
+        var template = await _dataStore.GetTemplateBySlugAsync(slug);
+        if (template is null) return NotFound($"No system template found for role '{canonical}'.");
+
+        var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template);
+        var templateJson = System.Text.Json.JsonSerializer.Serialize(
+            systemTemplate,
+            new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            });
+
+        return Ok(new SystemVmTemplatePayload
+        {
+            TemplateJson = templateJson,
+            Revision = template.Revision,
+        });
     }
 
     /// <summary>

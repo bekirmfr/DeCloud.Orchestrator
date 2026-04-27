@@ -880,10 +880,40 @@ public class VmService : IVmService
                         _logger.LogWarning(ex, "Failed to parse cloud-init environment variables for VM {VmId}", vm.Id);
                     }
                 }
-                
+
+                // Inject architecture-specific artifact URL variables.
+                // selectedNode is known here; derive archTag from its CPU architecture.
+                if (!string.IsNullOrEmpty(vm.TemplateId))
+                {
+                    var artifactTemplate = await _templateService.GetTemplateByIdAsync(vm.TemplateId);
+                    if (artifactTemplate is { Artifacts.Count: > 0 })
+                    {
+                        var rawArch = selectedNode.HardwareInventory?.Cpu?.Architecture;
+                        var archTag = rawArch?.ToLowerInvariant() switch
+                        {
+                            "arm64" or "aarch64" => "arm64",
+                            "x86_64" or "amd64" => "amd64",
+                            _ => "amd64"
+                        };
+                        foreach (var artifact in artifactTemplate.Artifacts)
+                        {
+                            if (artifact.Architecture is not null &&
+                                !string.Equals(artifact.Architecture, archTag,
+                                    StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            variables.TryAdd(
+                                $"ARTIFACT_URL:{artifact.Name}",
+                                $"http://192.168.122.1:5100/api/artifacts/{artifact.Sha256}");
+                            variables.TryAdd(
+                                $"ARTIFACT_SHA256:{artifact.Name}",
+                                artifact.Sha256);
+                        }
+                    }
+                }
+
                 // Substitute variables in cloud-init
                 processedUserData = _templateService.SubstituteCloudInitVariables(vm.Spec.UserData, variables);
-                
+
                 var source = !string.IsNullOrEmpty(vm.TemplateId) ? $"template {vm.TemplateName}" : "custom cloud-init";
                 _logger.LogInformation(
                     "Processed cloud-init for VM {VmId} from {Source}",

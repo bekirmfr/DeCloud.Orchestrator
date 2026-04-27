@@ -1,3 +1,4 @@
+using DeCloud.Shared.Models;
 using Nethereum.Merkle.Patricia;
 using Orchestrator.Models.Payment;
 using Orchestrator.Services;
@@ -232,6 +233,13 @@ public class CpuInfo
     public double FrequencyMhz { get; set; }
     public List<string> Flags { get; set; } = new(); // e.g., "vmx", "svm" for virtualization
     public bool SupportsVirtualization { get; set; }
+    /// <summary>
+    /// CPU architecture string as reported by the node agent
+    /// (e.g., "x86_64", "aarch64"). Used by the scheduler to resolve
+    /// architecture-specific template artifacts. Null on nodes that
+    /// pre-date this field — callers default to "amd64".
+    /// </summary>
+    public string? Architecture { get; set; }
 
     // Current utilization (0-100)
     public double UsagePercent { get; set; }
@@ -430,7 +438,14 @@ public class NodeRegistrationRequest
     /// Absent or zero-valued entries mean the node has no state for that role.
     /// </summary>
     public Dictionary<string, int> ObligationStateVersions { get; set; } = new();
-
+    /// <summary>
+    /// Revisions of system templates currently stored in the node agent's
+    /// SQLite database, keyed by canonical role name.
+    /// The orchestrator sends templates only for roles where its revision
+    /// exceeds the node-reported value, avoiding retransmission.
+    /// Absent or zero-valued entries mean no template stored for that role.
+    /// </summary>
+    public Dictionary<string, int> SystemTemplateVersions { get; set; } = new();
 }
 
 public record NodeRegistrationResponse(
@@ -446,7 +461,13 @@ public record NodeRegistrationResponse(
     /// Contains only roles where orchestrator version > node-reported version.
     /// Empty if all states are already current on the node.
     /// </summary>
-    Dictionary<string, ObligationStatePayload> ObligationStates
+    Dictionary<string, ObligationStatePayload> ObligationStates,
+    /// <summary>
+    /// System template payloads keyed by canonical role name.
+    /// Contains only roles where orchestrator revision > node-reported revision.
+    /// Null or empty = all templates current on the node (or none seeded yet).
+    /// </summary>
+    Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null
 );
 
 
@@ -504,7 +525,14 @@ public record NodeHeartbeat(
     ///
     /// Null on agents that pre-date P4. Field is ignored when null.
     /// </summary>
-    Dictionary<string, string>? ObligationHealth = null
+    Dictionary<string, string>? ObligationHealth = null,
+    /// <summary>
+    /// Revisions of system templates currently stored in the node agent's
+    /// SQLite system_template table, keyed by canonical role name.
+    /// Parallel to ObligationStateVersions for templates.
+    /// Null on agents that pre-date P9.
+    /// </summary>
+    Dictionary<string, int>? SystemTemplateVersions = null
 );
 
 /// <summary>
@@ -589,7 +617,15 @@ public record NodeHeartbeatResponse(
     /// each listed role and persist the result via SaveStateAsync.
     /// Null or empty = all states current.
     /// </summary>
-    List<string>? ObligationStatesPending = null
+    List<string>? ObligationStatesPending = null,
+    /// <summary>
+    /// Role names ("relay" | "dht" | "blockstore") where the orchestrator has
+    /// a higher template revision than the node reported in the heartbeat.
+    /// Node agent must call GET /api/nodes/me/system-templates/{role} for each
+    /// listed role and persist the result via SaveSystemTemplateAsync.
+    /// Null or empty = all templates current.
+    /// </summary>
+    List<string>? SystemTemplatesPending = null
 
 );
 
