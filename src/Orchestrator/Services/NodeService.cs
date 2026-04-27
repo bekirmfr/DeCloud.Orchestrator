@@ -548,16 +548,10 @@ public class NodeService : INodeService
     {
         var result = new Dictionary<string, SystemVmTemplatePayload>(StringComparer.OrdinalIgnoreCase);
 
-        var roleToSlug = new Dictionary<SystemVmRole, string>
-        {
-            [SystemVmRole.Relay] = "system-relay",
-            [SystemVmRole.Dht] = "system-dht",
-            [SystemVmRole.BlockStore] = "system-blockstore",
-        };
-
         foreach (var obligation in node.SystemVmObligations)
         {
-            if (!roleToSlug.TryGetValue(obligation.Role, out var slug))
+            var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
+            if (slug == null)
                 continue;
 
             var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
