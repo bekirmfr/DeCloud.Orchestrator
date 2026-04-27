@@ -1359,63 +1359,123 @@ can ship in parallel with Stages I and II.
 
 ### Stage I — Substrate (node-side)
 
-#### P1 — `OutstandingCommands` map
+#### P1 — `OutstandingCommands` map ✅
 
-**What:** in-memory map on the node agent keyed by `SystemVmRole`,
+**What:** in-memory map on the node agent keyed by canonical role string,
 holding `{ commandId, kind, vmId?, issuedAt }`. Sweeper helper for expiry.
 
 **Why first:** every later phase reads from this. New code, no deletions,
 no behaviour change.
 
-**Touches:** new `Services/SystemVm/OutstandingCommands.cs`.
+**Files delivered:**
+- `Core/Models/OutstandingCommand.cs` — `OutstandingCommand` record + `CommandKind` enum
+- `Core/Interfaces/SystemVm/IOutstandingCommands.cs` — interface
+- `Infrastructure/Services/SystemVm/OutstandingCommands.cs` — `ConcurrentDictionary` implementation; `TimeProvider` injection; compare-and-remove sweep protects sweep-vs-Set race
 
-**Verification:** unit tests covering insert / lookup / clear / sweep.
+**Decisions:** keyed by canonical role string (not enum) for consistency with all other
+matrix inputs. `TryRemoveIfMatch(commandId)` compare-and-remove prevents a sweep racing
+with a new `Set`. In-memory by design — outstanding commands from a previous process are
+inherently stale; the matrix re-evaluates from scratch on restart.
 
-#### P2 — Reality projection (node)
+**Verification:** unit tests deferred to P11 (user decision: avoid rewriting against
+intermediate shapes during rollout).
+
+#### P2 — Reality projection (node) ✅
 
 **What:** function `ProjectReality(role) → None | Healthy | Unhealthy`.
 Reads from `IVmManager.GetAllVms()` and per-VM `Services[]`.
 
 **Why now:** the matrix's `reality` axis. Pure read, unit-testable.
 
-**Touches:** new `Services/SystemVm/RealityProjection.cs`.
+**Files delivered:**
+- `Core/Models/Reality.cs` — `Reality` enum + `RealitySnapshot` record (State, VmId, VmState for diagnostics); static `RealitySnapshot.None` instance
+- `Core/Interfaces/SystemVm/IRealityProjection.cs` — interface
+- `Infrastructure/Services/SystemVm/RealityProjection.cs` — synchronous implementation
 
-**Verification:** unit tests over fabricated `(VmInstance[], Services[])` inputs.
+**Decisions:** synchronous (GetAllVms is in-memory, no wait implied). Three-state only — no
+`Degraded`; mesh-health threshold lives inside the system VM's `/health/mesh` endpoint.
+`NotFound`/`Deleted` VMs filtered out (tombstones, not present reality). Multi-VM-per-role
+defended: prefer Healthy if any, else surface most-recently-created Unhealthy; log Warning
+on invariant violation. `VmState` carried on snapshot for diagnostics only — matrix branches
+on `Reality.State`.
 
-#### P3 — Intent computation (node)
+**Verification:** unit tests deferred to P11.
+
+#### P3 — Intent computation (node) ✅
 
 **What:** function `ComputeIntent(obligation) → (wantDeployed, depsMet)`.
 Reads from local obligation SQLite. `IObligationStateService` extended
-with `GetObligationsAsync()`.
+with `SaveObligationsAsync()` + `GetObligationsAsync()`.
 
 **Why now:** the matrix's `intent` axis.
 
-**Touches:** new `Services/SystemVm/IntentComputation.cs`,
-`IObligationStateService` extension.
+**Files delivered (new):**
+- `Core/Models/Intent.cs` — `Intent` record (`WantDeployed`, `DepsMet`); static `Intent.None`
+- `Core/Models/ObligationDescriptor.cs` — `(Role, Deps[], UpdatedAt)`; deps pushed by orchestrator, not hardcoded
+- `Core/Interfaces/SystemVm/IIntentComputation.cs` — interface; `Compute(role, allObligations)` synchronous
+- `Infrastructure/Services/SystemVm/IntentComputation.cs` — applicable deps (those also in local obligation list); `DepsMet` ⇔ all applicable deps project to `Healthy` via `IRealityProjection`
 
-**Verification:** unit tests against fabricated obligation lists; parity
-check against orchestrator-side `EnsureObligationsAsync` results.
+**Files delivered (modified — drop-in replacements):**
+- `Core/Interfaces/State/IObligationStateService.cs` — added `SaveObligationsAsync` + `GetObligationsAsync`; identity methods unchanged
+- `Infrastructure/Services/State/ObligationStateService.cs` — implements new methods; role/dep canonicalisation + Warning logs before SQL
+- `Infrastructure/Persistence/ObligationStateRepository.cs` — `obligation` table added to `InitialiseSchema` (idempotent `CREATE TABLE IF NOT EXISTS`); `ReplaceObligationsAsync` (transactional wipe-and-insert); `GetObligationsAsync`; `JsonSerializerOptions` field for deps serialisation
 
-#### P4 — Heartbeat carries `obligationHealth`
+**Schema addition:**
+```sql
+CREATE TABLE IF NOT EXISTS obligation (
+    role        TEXT PRIMARY KEY,   -- "relay" | "dht" | "blockstore"
+    deps_json   TEXT NOT NULL,      -- JSON array of dep role names
+    updated_at  TEXT NOT NULL
+);
+```
+
+**Decisions:** one `IObligationStateService`, three concerns (identity now; obligations now;
+system templates in P9). Whole-set obligation replacement — avoids drift from missed deletes.
+Dependencies pushed with obligations rather than hardcoded on node. `Intent` split into
+`(WantDeployed, DepsMet)` for diagnostic clarity; matrix's `Decide` treats them together.
+`IntentComputation` is sync, takes obligation list as parameter (matrix fetches once per
+cycle, passes it — no per-call SQLite hit in the compute path).
+
+**Verification:** unit tests deferred to P11.
+
+#### P4 — Heartbeat carries `obligationHealth` ✅
 
 **What:** `HeartbeatService` adds `ObligationHealth: Dictionary<string, string>`
-computed from `ProjectReality(role)` per role. `NodeService.SyncVmStateFromHeartbeatAsync`
-reads it and stores on `Node`.
+computed from `IRealityProjection` per obligation in the local SQLite table.
+Field is included in the heartbeat wire payload. **Wire-format only in P4** —
+the orchestrator deserialises but does not consume the field until P6.
 
-**Why now:** the orchestrator's scheduling fast-path will depend on this
-post-cutover (P6). Adding it ahead of the cutover means the field is
-populated by the time anything reads it.
+**Why now:** the field is populated and flowing before anything depends on it.
+P6's consumption logic has a fully-populated signal waiting.
 
-**Touches:** `HeartbeatService` (build), `NodeService` (consume),
-`Node` model (store), heartbeat DTO.
+**Files delivered (integration guide — surgical edits to large existing files):**
+- `Orchestrator/Models/Node.cs` — `NodeHeartbeat` record: `Dictionary<string, string>? ObligationHealth = null` parameter added. **No new property on `Node` class** — `Node.SystemVmObligations` remains the single source of truth for per-role health on the orchestrator side
+- `NodeAgent.Core/Models/NodeModels.cs` — `Heartbeat` domain class: `Dictionary<string, string>? ObligationHealth` field added
+- `NodeAgent/Services/HeartbeatService.cs` — `IRealityProjection` + `IObligationStateService` injected; `BuildObligationHealthAsync` helper iterates obligations + projects each; wired into `Heartbeat` initialiser
+- `NodeAgent/Services/OrchestratorClient.cs` — `obligationHealth = heartbeat.ObligationHealth` appended to anonymous-object payload in `BuildHeartbeatPayload` (pure serialisation, no new dependency)
+- `NodeAgent/Program.cs` — `IRealityProjection → RealityProjection` registered as singleton (P2 shipped the implementation without DI registration)
 
-**Behaviour change:** field is informational. Scheduler does not yet rely
-on it for system-VM decisions.
+**Key architectural decision:** a parallel `Node.ObligationHealth` property was
+considered and rejected. The orchestrator already maintains `SystemVmObligations[role].Status`
+as the per-role health signal. Adding a second field would create two writers
+(`SystemVmReconciliationService` and the heartbeat handler) that fight while both
+are active. P6 applies `obligationHealth` to `SystemVmObligation.Status` updates
+*as part of* disabling the orchestrator-side reconciler — one authoritative writer
+at a time.
 
-**Verification:** smoke test — a healthy three-role node reports
-`{ relay: Healthy, dht: Healthy, blockstore: Healthy }` on every heartbeat.
-Killing one system VM flips the corresponding entry to `Unhealthy` within
-one cycle.
+**Behaviour change:** informational only. Scheduler does not yet filter on this
+signal. `SystemVmReconciliationService` continues to drive deployment unaffected.
+
+**Verification:** smoke test — insert a test row into local `obligation` SQLite,
+observe `obligationHealth` in heartbeat payload. Orchestrator deserialises without
+error; `Node` record and `SystemVmObligations` unchanged.
+
+---
+
+> **Stage I complete.** P1–P4 are shipped. All three matrix input axes
+> (outstanding commands, reality, intent) are built and independently
+> exercisable. The heartbeat carries the rolled-up health signal.
+> Nothing acts yet — Stage II wires them into decisions.
 
 ### Stage II — Lifecycle (node-side)
 
