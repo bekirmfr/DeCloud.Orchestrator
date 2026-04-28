@@ -168,8 +168,8 @@ builder.Services.AddSingleton<ObligationStateGenerator>();
 // =====================================================
 // System VM Reconciliation (declarative, dependency-aware deployment)
 // =====================================================
-builder.Services.AddSingleton<Orchestrator.Services.SystemVm.SystemVmReconciliationService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<Orchestrator.Services.SystemVm.SystemVmReconciliationService>());
+builder.Services.AddSingleton<SystemVmObligationService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemVmObligationService>());
 
 // =====================================================
 // Background Services

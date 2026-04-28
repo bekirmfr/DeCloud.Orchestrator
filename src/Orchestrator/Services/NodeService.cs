@@ -367,7 +367,6 @@ public class NodeService : INodeService
 
             var requiredRoles = _eligibility.ComputeObligations(node);
 
-            var reconciler = _serviceProvider.GetService<SystemVmReconciliationService>();
             if (node.SystemVmObligations.Count == 0)
             {
                 // Fresh registration — seed all required obligations as Pending
@@ -416,13 +415,13 @@ public class NodeService : INodeService
             systemTemplates = GenerateSystemTemplatePayloads(
                 node, request.SystemTemplateVersions);
 
-            // Deploy obligations with no dependencies immediately (e.g., DHT).
-            // IMPORTANT: We reconcile BEFORE saving to avoid a race condition where
-            // the background SystemVmReconciliationService picks up Pending obligations
-            // from the datastore and deploys duplicates while we're about to deploy here.
-            if (reconciler != null)
+            // Ensure obligations are seeded for this node (obligation management —
+            // orchestrator authority). VM deployment is handled by the node's
+            // SystemVmReconciler (P6) which reads obligations from its local SQLite.
+            var obligationService = _serviceProvider.GetService<SystemVmObligationService>();
+            if (obligationService != null)
             {
-                await reconciler.ReconcileNodeAsync(node);
+                await obligationService.EnsureObligationsForNodeAsync(node, ct);
             }
 
             await _dataStore.SaveNodeAsync(node);

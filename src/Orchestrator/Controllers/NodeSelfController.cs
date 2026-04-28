@@ -20,7 +20,7 @@ public class NodeSelfController : ControllerBase
     private readonly NodePerformanceEvaluator _evaluator;
     private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly INodeMarketplaceService _marketplaceService;
-    private readonly SystemVmReconciliationService _reconciler;
+    private readonly SystemVmObligationService _reconciler;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeSelfController> _logger;
 
@@ -30,7 +30,7 @@ public class NodeSelfController : ControllerBase
         NodePerformanceEvaluator evaluator,
         NodeCapacityCalculator capacityCalculator,
         INodeMarketplaceService marketplaceService,
-        SystemVmReconciliationService reconciler,
+        SystemVmObligationService reconciler,
         ICentralIngressService ingressService,
         ILogger<NodeSelfController> logger)
     {
@@ -352,7 +352,7 @@ public class NodeSelfController : ControllerBase
         // Re-evaluate obligations against updated capabilities and deploy
         // any newly eligible roles (e.g., node gained enough storage for
         // BlockStore, or benchmark now meets a higher tier threshold).
-        await _reconciler.EnsureAndReconcileAsync(node, ct);
+        await _reconciler.EnsureObligationsForNodeAsync(node, ct);
 
         _logger.LogInformation(
             "Node {NodeId} re-evaluation complete — obligations reconciled",
