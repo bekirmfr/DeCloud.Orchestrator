@@ -1,6 +1,7 @@
-using System.Text.RegularExpressions;
+using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Text.RegularExpressions;
 
 namespace Orchestrator.Services;
 
@@ -597,59 +598,157 @@ public class TemplateService : ITemplateService
     };
 
     /// <summary>
-    /// Fetch each artifact's SourceUrl, compute SHA256, and verify it matches
-    /// the declared hash. Throws ArgumentException if any artifact fails.
+    /// Verify all artifacts on a template at publish time.
     ///
-    /// Called once at publish time — NOT on every deployment. Node agents
-    /// re-verify on download; this verification catches authoring mistakes
-    /// (wrong URL, stale hash) before the template is published.
+    /// For HTTPS artifacts: fetches the URL and verifies SHA256.
+    /// For data: artifacts: decodes the base64 payload and verifies SHA256.
+    ///
+    /// Enforces:
+    ///   - Binary artifacts must use HTTPS (never data: URIs).
+    ///   - Per-artifact inline size limit (TemplateArtifact.MaxInlineArtifactBytes).
+    ///   - Total inline size limit per template (TemplateArtifact.MaxTotalInlineBytes).
+    ///   - Artifact names must be unique within the template.
     /// </summary>
     private async Task VerifyArtifactsAsync(VmTemplate template, CancellationToken ct)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        // ── Name uniqueness ─────────────────────────────────────────────────
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var artifact in template.Artifacts)
+        {
+            if (!names.Add(artifact.Name))
+                throw new ArgumentException(
+                    $"Duplicate artifact name '{artifact.Name}' in template '{template.Slug}'. " +
+                    "Artifact names must be unique within a template.");
+        }
+
+        // ── Per-artifact verification ────────────────────────────────────────
+        long totalInlineBytes = 0;
 
         foreach (var artifact in template.Artifacts)
         {
-            if (string.IsNullOrWhiteSpace(artifact.SourceUrl) ||
-                string.IsNullOrWhiteSpace(artifact.Sha256))
-            {
+            if (string.IsNullOrWhiteSpace(artifact.Sha256))
                 throw new ArgumentException(
-                    $"Artifact '{artifact.Name}' is missing SourceUrl or Sha256.");
-            }
+                    $"Artifact '{artifact.Name}' is missing Sha256.");
 
-            if (!Uri.TryCreate(artifact.SourceUrl, UriKind.Absolute, out var uri)
-                || uri.Scheme != "https")
+            if (artifact.IsInline)
             {
-                throw new ArgumentException(
-                    $"Artifact '{artifact.Name}' SourceUrl must be HTTPS: {artifact.SourceUrl}");
+                await VerifyInlineArtifactAsync(artifact, ref totalInlineBytes);
             }
-
-            _logger.LogInformation(
-                "Verifying artifact '{Name}' at {Url}",
-                artifact.Name, artifact.SourceUrl);
-
-            using var response = await client.GetAsync(
-                artifact.SourceUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-            response.EnsureSuccessStatusCode();
-
-            using var stream = await response.Content.ReadAsStreamAsync(ct);
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var hash = await sha.ComputeHashAsync(stream, ct);
-            var actual = Convert.ToHexString(hash).ToLowerInvariant();
-
-            if (!string.Equals(actual, artifact.Sha256.ToLowerInvariant(),
-                    StringComparison.Ordinal))
+            else
             {
-                throw new ArgumentException(
-                    $"Artifact '{artifact.Name}' SHA256 mismatch. " +
-                    $"Declared: {artifact.Sha256[..12]}, Actual: {actual[..12]}. " +
-                    "Update the Sha256 field to match the current bytes at SourceUrl.");
+                await VerifyExternalArtifactAsync(artifact, ct);
             }
-
-            _logger.LogInformation(
-                "✓ Artifact '{Name}' verified ({Sha256})",
-                artifact.Name, artifact.Sha256[..12]);
         }
+
+        // ── Total inline budget ──────────────────────────────────────────────
+        if (totalInlineBytes > TemplateArtifact.MaxTotalInlineBytes)
+            throw new ArgumentException(
+                $"Total inline attachment size {totalInlineBytes / 1024 / 1024.0:F1} MB " +
+                $"exceeds the per-template limit of " +
+                $"{TemplateArtifact.MaxTotalInlineBytes / 1024 / 1024} MB. " +
+                "Move larger assets to an external HTTPS URL.");
+    }
+
+    private static Task VerifyInlineArtifactAsync(
+        TemplateArtifact artifact,
+        ref long totalInlineBytes)
+    {
+        // Compiled binaries must always use external HTTPS hosting.
+        if (artifact.Type == ArtifactType.Binary)
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' is type Binary and cannot use a data: URI. " +
+                "Compiled binaries must be hosted externally (GitHub Releases, S3, CDN) " +
+                "and registered with an HTTPS SourceUrl.");
+
+        // Parse and decode the data: URI.
+        var commaIndex = artifact.SourceUrl.IndexOf(',');
+        if (commaIndex < 0)
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' has a malformed data: URI — no comma separator.");
+
+        var header = artifact.SourceUrl[..commaIndex];
+        if (!header.Contains(";base64", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' data: URI must use base64 encoding " +
+                "(e.g., data:text/x-sh;base64,...).");
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(artifact.SourceUrl[(commaIndex + 1)..].Trim());
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' data: URI contains invalid base64.");
+        }
+
+        // Per-artifact size limit.
+        if (bytes.Length > TemplateArtifact.MaxInlineArtifactBytes)
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' decoded size {bytes.Length / 1024 / 1024.0:F1} MB " +
+                $"exceeds the per-artifact inline limit of " +
+                $"{TemplateArtifact.MaxInlineArtifactBytes / 1024 / 1024} MB. " +
+                "Host larger files externally and register with an HTTPS SourceUrl.");
+
+        // Verify SHA256 of decoded bytes.
+        var actualHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
+        if (!string.Equals(actualHash, artifact.Sha256.ToLowerInvariant(), StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' SHA256 mismatch. " +
+                $"Declared: {artifact.Sha256[..12]}, " +
+                $"Actual (decoded bytes): {actualHash[..12]}. " +
+                "Recompute SHA256 of the decoded file content and update the Sha256 field.");
+
+        // Update SizeBytes to the decoded size (author may have provided 0 or base64 size).
+        artifact.SizeBytes = bytes.Length;
+
+        totalInlineBytes += bytes.Length;
+        return Task.CompletedTask;
+    }
+
+    private async Task VerifyExternalArtifactAsync(
+        TemplateArtifact artifact,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(artifact.SourceUrl))
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' is missing SourceUrl.");
+
+        if (!Uri.TryCreate(artifact.SourceUrl, UriKind.Absolute, out var uri)
+            || uri.Scheme != "https")
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' SourceUrl must be HTTPS: {artifact.SourceUrl}");
+
+        _logger.LogInformation(
+            "Verifying external artifact '{Name}' at {Url}",
+            artifact.Name, artifact.SourceUrl);
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        using var response = await client.GetAsync(
+            artifact.SourceUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+
+        using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = await sha.ComputeHashAsync(stream, ct);
+        var actual = Convert.ToHexString(hash).ToLowerInvariant();
+
+        if (!string.Equals(actual, artifact.Sha256.ToLowerInvariant(), StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Artifact '{artifact.Name}' SHA256 mismatch. " +
+                $"Declared: {artifact.Sha256[..12]}, Actual: {actual[..12]}. " +
+                "Update the Sha256 field to match the current bytes at SourceUrl.");
+
+        // Stamp the verified size.
+        if (response.Content.Headers.ContentLength.HasValue)
+            artifact.SizeBytes = response.Content.Headers.ContentLength.Value;
+
+        _logger.LogInformation(
+            "✓ External artifact '{Name}' verified ({Sha256})",
+            artifact.Name, artifact.Sha256[..12]);
     }
 
     public string SubstituteCloudInitVariables(

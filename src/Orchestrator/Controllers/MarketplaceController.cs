@@ -465,8 +465,13 @@ public class MarketplaceController : ControllerBase
 
     /// <summary>
     /// Register an artifact reference on a template.
-    /// The orchestrator fetches SourceUrl, verifies SHA256, and stores metadata.
-    /// No bytes are stored on the orchestrator.
+    ///
+    /// Supports two SourceUrl schemes:
+    ///   HTTPS: orchestrator fetches URL and verifies SHA256 immediately.
+    ///   data:  orchestrator decodes base64 and verifies SHA256 inline.
+    ///          No network call. Bytes are stored in the template document.
+    ///          Binary type rejected for data: URIs.
+    ///          Size limits: 5 MB per artifact, 10 MB total per template.
     /// </summary>
     [HttpPost("templates/{id}/artifacts")]
     [Authorize]
@@ -484,6 +489,15 @@ public class MarketplaceController : ControllerBase
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
 
+        // Validate artifact name uniqueness.
+        if (template.Artifacts.Any(a =>
+            string.Equals(a.Name, request.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return BadRequest(
+                $"An artifact named '{request.Name}' already exists on this template. " +
+                "Names must be unique within a template.");
+        }
+
         var artifact = new TemplateArtifact
         {
             Name = request.Name,
@@ -497,28 +511,93 @@ public class MarketplaceController : ControllerBase
             RegisteredBy = userId,
         };
 
-        // Verify SHA256 against SourceUrl before saving.
-        // TemplateService.VerifyArtifactsAsync will run again at publish;
-        // this is an early check to surface authoring mistakes immediately.
-        try
+        if (artifact.IsInline)
         {
-            // Re-use the service's verification logic (extract to a shared helper
-            // if VerifyArtifactsAsync is made internal/public).
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            using var response = await client.GetAsync(
-                request.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var hash = await sha.ComputeHashAsync(stream);
-            var actual = Convert.ToHexString(hash).ToLowerInvariant();
-            if (actual != artifact.Sha256)
-                return BadRequest($"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
-                                  $"actual {actual[..12]}");
+            // ── Inline (data: URI) validation ───────────────────────────────
+            if (artifact.Type == ArtifactType.Binary)
+                return BadRequest(
+                    "Binary artifacts must use an HTTPS SourceUrl. " +
+                    "Compile the binary, host it externally (e.g., GitHub Releases), " +
+                    "and register with the download URL.");
+
+            // Decode and verify SHA256 inline.
+            try
+            {
+                var commaIndex = request.SourceUrl.IndexOf(',');
+                if (commaIndex < 0 ||
+                    !request.SourceUrl[..commaIndex]
+                        .Contains(";base64", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(
+                        "data: URI must be in the form: data:{mediaType};base64,{base64bytes}");
+
+                var bytes = Convert.FromBase64String(
+                    request.SourceUrl[(commaIndex + 1)..].Trim());
+
+                if (bytes.Length > TemplateArtifact.MaxInlineArtifactBytes)
+                    return BadRequest(
+                        $"Inline attachment decoded size {bytes.Length / 1024 / 1024.0:F1} MB " +
+                        $"exceeds the {TemplateArtifact.MaxInlineArtifactBytes / 1024 / 1024} MB limit. " +
+                        "Host larger files externally.");
+
+                var totalCurrentInline = template.Artifacts
+                    .Where(a => a.IsInline)
+                    .Sum(a => a.SizeBytes);
+
+                if (totalCurrentInline + bytes.Length > TemplateArtifact.MaxTotalInlineBytes)
+                    return BadRequest(
+                        $"Adding this attachment would bring the template's total inline size " +
+                        $"to {(totalCurrentInline + bytes.Length) / 1024 / 1024.0:F1} MB, " +
+                        $"exceeding the {TemplateArtifact.MaxTotalInlineBytes / 1024 / 1024} MB limit.");
+
+                var actualHash = Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
+                if (actualHash != artifact.Sha256)
+                    return BadRequest(
+                        $"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
+                        $"actual {actualHash[..12]}. " +
+                        "Recompute SHA256 of the decoded file and update the field.");
+
+                // Stamp the verified decoded size.
+                artifact.SizeBytes = bytes.Length;
+            }
+            catch (FormatException)
+            {
+                return BadRequest("data: URI contains invalid base64.");
+            }
         }
-        catch (HttpRequestException ex)
+        else
         {
-            return BadRequest($"Could not fetch artifact from {request.SourceUrl}: {ex.Message}");
+            // ── External (HTTPS) verification ────────────────────────────────
+            if (!Uri.TryCreate(request.SourceUrl, UriKind.Absolute, out var uri)
+                || uri.Scheme != "https")
+                return BadRequest(
+                    "SourceUrl must be an HTTPS URL or a data: URI.");
+
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                using var response = await client.GetAsync(
+                    request.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                var hash = await sha.ComputeHashAsync(stream);
+                var actual = Convert.ToHexString(hash).ToLowerInvariant();
+
+                if (actual != artifact.Sha256)
+                    return BadRequest(
+                        $"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
+                        $"actual {actual[..12]}.");
+
+                if (response.Content.Headers.ContentLength.HasValue)
+                    artifact.SizeBytes = response.Content.Headers.ContentLength.Value;
+            }
+            catch (HttpRequestException ex)
+            {
+                return BadRequest(
+                    $"Could not fetch artifact from {request.SourceUrl}: {ex.Message}");
+            }
         }
 
         template.Artifacts.Add(artifact);
