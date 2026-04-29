@@ -540,7 +540,10 @@ public class NodeSelfController : ControllerBase
         var canonical = ObligationRole.Canonicalise(role);
         if (canonical is null) return BadRequest($"Unknown role '{role}'.");
 
-        var slug = SystemVmRoleMap.ToTemplateSlug(SystemVmRoleMap.FromCanonicalName(canonical).Value);
+        var roleEnum = SystemVmRoleMap.FromCanonicalName(canonical);
+        if (roleEnum is null)
+            return BadRequest($"Role '{role}' has no system VM mapping.");
+        var slug = SystemVmRoleMap.ToTemplateSlug(roleEnum.Value);
         if (slug is null) return BadRequest($"No system template slug for role '{role}'.");
 
         var template = await _dataStore.GetTemplateBySlugAsync(slug);

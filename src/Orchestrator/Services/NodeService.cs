@@ -424,6 +424,13 @@ public class NodeService : INodeService
             // Ensure obligations are seeded for this node (obligation management —
             // orchestrator authority). VM deployment is handled by the node's
             // SystemVmReconciler (P6) which reads obligations from its local SQLite.
+            //
+            // NOTE: This runs after GenerateSystemTemplatePayloads. Any new obligations
+            // added here (nodes > 60s old) will not appear in the systemTemplates payload
+            // for this registration response — the node receives their templates on the
+            // next heartbeat cycle via the systemTemplatesPending pull mechanism.
+            // Nodes < 60s old are skipped by EnsureObligationsAsync (60s guard) and
+            // have their obligations backfilled inline above before GenerateSystemTemplatePayloads runs.
             var obligationService = _serviceProvider.GetService<SystemVmObligationService>();
             if (obligationService != null)
             {
@@ -586,11 +593,11 @@ public class NodeService : INodeService
 
             // Build the lightweight SystemVmTemplate from the full VmTemplate.
             var systemTemplate = BuildSystemVmTemplate(roleName, template);
-            var templateJson = System.Text.Json.JsonSerializer.Serialize(
+            var templateJson = JsonSerializer.Serialize(
                 systemTemplate,
-                new System.Text.Json.JsonSerializerOptions
+                new JsonSerializerOptions
                 {
-                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
                 });
 
             result[roleName] = new SystemVmTemplatePayload
@@ -616,6 +623,9 @@ public class NodeService : INodeService
     internal static SystemVmTemplate BuildSystemVmTemplate(string role, VmTemplate template)
     {
         var canonical = ObligationRole.Canonicalise(role);
+        var systemRole = canonical is not null
+            ? SystemVmRoleMap.FromCanonicalName(canonical)
+            : null;
 
         return new SystemVmTemplate
         {
@@ -627,7 +637,9 @@ public class NodeService : INodeService
             VirtualCpuCores = template.RecommendedSpec?.VirtualCpuCores ?? 1,
             MemoryBytes = template.RecommendedSpec?.MemoryBytes ?? (512L * 1024 * 1024),
             DiskBytes = template.RecommendedSpec?.DiskBytes ?? (2L * 1024 * 1024 * 1024),
-            BaseImageUrl = SystemVmRoleMap.ToBaseImageId(SystemVmRoleMap.FromCanonicalName(canonical).Value),
+            BaseImageUrl = systemRole.HasValue
+                ? SystemVmRoleMap.ToBaseImageId(systemRole.Value)
+                : string.Empty,
             BaseImageHash = string.Empty,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
             {
