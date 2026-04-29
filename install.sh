@@ -1209,6 +1209,28 @@ download_orchestrator() {
     fi
 }
 
+download_shared_library() {
+    log_step "Downloading DeCloud.Shared..."
+
+    local shared_dir="$INSTALL_DIR/Decloud.Shared"
+    local shared_url="https://github.com/bekirmfr/DeCloud.Shared.git"
+
+    if [ -d "$shared_dir/.git" ]; then
+        log_info "Updating DeCloud.Shared..."
+        git -C "$shared_dir" pull --quiet origin main 2>/dev/null \
+            || git -C "$shared_dir" pull --quiet origin master 2>/dev/null \
+            || log_warn "DeCloud.Shared pull failed — using existing checkout"
+    else
+        rm -rf "$shared_dir"
+        cd "$INSTALL_DIR"
+        git clone --depth 1 "$shared_url" Decloud.Shared --quiet
+    fi
+
+    local commit
+    commit=$(git -C "$shared_dir" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    log_success "DeCloud.Shared ready (commit: $commit)"
+}
+
 build_orchestrator() {
     log_step "Building Orchestrator..."
     
@@ -1822,6 +1844,7 @@ main() {
     # Orchestrator
     create_directories
     download_orchestrator
+    download_shared_library
     build_orchestrator
     
     # NEW: Create secure environment file BEFORE configuration (v3.0)
