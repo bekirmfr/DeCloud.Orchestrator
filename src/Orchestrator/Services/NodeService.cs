@@ -475,6 +475,24 @@ public class NodeService : INodeService
         // Collect bootstrap peers for the DHT VM that will deploy on this node
         var dhtBootstrapPeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
 
+        // Build obligation descriptors for the node agent's local obligation table.
+        // The node's SystemVmReconciler reads this to determine intent (P6/P10).
+        var obligationDescriptors = node.SystemVmObligations
+            .Select(o =>
+            {
+                var roleName = SystemVmRoleMap.ToCanonicalName(o.Role);
+                if (roleName is null) return null;
+                var deps = SystemVmDependencies.GetDependencies(o.Role)
+                                    .Select(d => SystemVmRoleMap.ToCanonicalName(d))
+                                    .Where(d => d is not null)
+                                    .Cast<string>()
+                                    .ToList();
+                return new ObligationDescriptorPayload { Role = roleName, Deps = deps };
+            })
+            .Where(o => o is not null)
+            .Cast<ObligationDescriptorPayload>()
+            .ToList();
+
         return new NodeRegistrationResponse(
             node.Id,
             node.PerformanceEvaluation,
@@ -484,7 +502,8 @@ public class NodeService : INodeService
             TimeSpan.FromSeconds(15),
             dhtBootstrapPeers,
             obligationStates,
-            systemTemplates);
+            systemTemplates,
+            obligationDescriptors);
     }
     /// <summary>
     /// For each obligation on <paramref name="node"/>, generate fresh identity

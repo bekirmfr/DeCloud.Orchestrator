@@ -448,6 +448,18 @@ public class NodeRegistrationRequest
     public Dictionary<string, int>? SystemTemplateVersions { get; set; }
 }
 
+/// <summary>
+/// Wire DTO for a single obligation pushed to the node agent at registration.
+/// Carries the canonical role name and its dependency list so the node can
+/// populate its local <c>obligation</c> SQLite table without contacting the
+/// orchestrator again.
+/// </summary>
+public class ObligationDescriptorPayload
+{
+    public string Role { get; init; } = string.Empty;
+    public List<string> Deps { get; init; } = [];
+}
+
 public record NodeRegistrationResponse(
     string NodeId,
     NodePerformanceEvaluation performanceEvaluation,
@@ -467,7 +479,14 @@ public record NodeRegistrationResponse(
     /// Contains only roles where orchestrator revision > node-reported revision.
     /// Null or empty = all templates current on the node (or none seeded yet).
     /// </summary>
-    Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null
+    Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null,
+    /// <summary>
+    /// Full obligation list for this node: roles + dependency graph.
+    /// Node agent saves this to its local SQLite <c>obligation</c> table so
+    /// <c>SystemVmReconciler</c> can compute intent without calling home.
+    /// Always included — empty list means the node has no current obligations.
+    /// </summary>
+    List<ObligationDescriptorPayload>? Obligations = null
 );
 
 
