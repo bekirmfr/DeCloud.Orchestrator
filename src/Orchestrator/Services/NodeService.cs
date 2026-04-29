@@ -387,10 +387,16 @@ public class NodeService : INodeService
 
                 foreach (var role in requiredRoles.Where(r => !existingRoles.Contains(r)))
                 {
+                    var slug = SystemVmRoleMap.ToTemplateSlug(role);
+                    var tpl = slug is not null
+                        ? await _dataStore.GetTemplateBySlugAsync(slug)
+                        : null;
+
                     node.SystemVmObligations.Add(new SystemVmObligation
                     {
                         Role = role,
-                        Status = SystemVmStatus.Pending
+                        Status = SystemVmStatus.Pending,
+                        TemplateId = tpl?.Id,
                     });
 
                     _logger.LogInformation(

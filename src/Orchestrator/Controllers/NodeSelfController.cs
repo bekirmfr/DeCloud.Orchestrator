@@ -556,6 +556,7 @@ public class NodeSelfController : ControllerBase
 
         return Ok(new SystemVmTemplatePayload
         {
+            TemplateId = template.Id,
             TemplateJson = templateJson,
             Revision = template.Revision,
         });
