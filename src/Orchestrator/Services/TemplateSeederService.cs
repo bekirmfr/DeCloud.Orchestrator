@@ -1,5 +1,6 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.SystemVm;
 
 namespace Orchestrator.Services;
 
@@ -9,15 +10,18 @@ namespace Orchestrator.Services;
 public class TemplateSeederService
 {
     private readonly ITemplateService _templateService;
+    private readonly SystemVmTemplateSeeder _systemVmTemplateSeeder;
     private readonly DataStore _dataStore;
     private readonly ILogger<TemplateSeederService> _logger;
 
     public TemplateSeederService(
         ITemplateService templateService,
+        SystemVmTemplateSeeder systemVmTemplateSeeder,
         DataStore dataStore,
         ILogger<TemplateSeederService> logger)
     {
         _templateService = templateService;
+        _systemVmTemplateSeeder = systemVmTemplateSeeder;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -34,8 +38,11 @@ public class TemplateSeederService
             // Seed categories first
             await SeedCategoriesAsync(force);
 
-            // Seed templates
+            // Seed public templates
             await SeedTemplatesAsync(force);
+
+            // Seed system VM templates (not public, used for internal purposes)
+            await _systemVmTemplateSeeder.SeedAsync();
 
             _logger.LogInformation("Template seeding completed successfully");
         }

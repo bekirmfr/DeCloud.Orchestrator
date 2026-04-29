@@ -5,10 +5,6 @@ using Orchestrator.Persistence;
 
 namespace Orchestrator.Services.SystemVm;
 
-// ============================================================
-// Placement: src/Orchestrator/Services/SystemVm/SystemVmTemplateSeeder.cs
-// ============================================================
-
 /// <summary>
 /// Seeds system VM templates (relay, dht, blockstore) into MongoDB at startup.
 ///
