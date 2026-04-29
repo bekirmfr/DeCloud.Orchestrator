@@ -445,7 +445,7 @@ public class NodeRegistrationRequest
     /// exceeds the node-reported value, avoiding retransmission.
     /// Absent or zero-valued entries mean no template stored for that role.
     /// </summary>
-    public Dictionary<string, int> SystemTemplateVersions { get; set; } = new();
+    public Dictionary<string, int>? SystemTemplateVersions { get; set; }
 }
 
 public record NodeRegistrationResponse(

@@ -426,13 +426,11 @@ public class NodeService : INodeService
             // or any obligation where the orchestrator's version exceeds what the
             // node reported.  State generation must be first so HydrateNodeFromObligationState
             // finds a populated StateJson when it runs inside TryDeployAsync
-            obligationStates = GenerateAndAttachObligationStates(
-                node, request.ObligationStateVersions);
+            obligationStates = GenerateAndAttachObligationStates(node, request.ObligationStateVersions);
 
             // Generate system template payloads for any role where the orchestrator's
             // revision exceeds what the node reported. Parallel to identity states.
-            systemTemplates = await GenerateSystemTemplatePayloads(
-                node, request.SystemTemplateVersions);
+            systemTemplates = await GenerateSystemTemplatePayloads(node, request.SystemTemplateVersions ?? new());
 
             // Ensure obligations are seeded for this node (obligation management —
             // orchestrator authority). VM deployment is handled by the node's
