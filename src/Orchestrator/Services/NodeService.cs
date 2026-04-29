@@ -412,7 +412,7 @@ public class NodeService : INodeService
 
             // Generate system template payloads for any role where the orchestrator's
             // revision exceeds what the node reported. Parallel to identity states.
-            systemTemplates = GenerateSystemTemplatePayloads(
+            systemTemplates = await GenerateSystemTemplatePayloads(
                 node, request.SystemTemplateVersions);
 
             // Ensure obligations are seeded for this node (obligation management —
@@ -541,7 +541,7 @@ public class NodeService : INodeService
     /// Only includes roles where the orchestrator has a higher revision than
     /// what the node reported. Parallel to GenerateAndAttachObligationStates.
     /// </summary>
-    private Dictionary<string, SystemVmTemplatePayload> GenerateSystemTemplatePayloads(
+    private async Task<Dictionary<string, SystemVmTemplatePayload>> GenerateSystemTemplatePayloads(
         Node node,
         Dictionary<string, int> nodeReportedRevisions)
     {
@@ -549,16 +549,30 @@ public class NodeService : INodeService
 
         foreach (var obligation in node.SystemVmObligations)
         {
-            var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
-            if (slug == null)
-                continue;
-
             var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
             if (roleName is null) continue;
 
-            // Fetch the system VmTemplate from the data store by slug.
-            // Null = not yet seeded (P10 does the seeding) — skip silently.
-            var template = _dataStore.GetTemplateBySlugAsync(slug).GetAwaiter().GetResult();
+            // Prefer stable _id lookup; fall back to slug for obligations created
+            // before TemplateId was introduced (null TemplateId = legacy path).
+            VmTemplate? template = null;
+            if (!string.IsNullOrEmpty(obligation.TemplateId))
+            {
+                template = await _dataStore.GetTemplateByIdAsync(obligation.TemplateId);
+            }
+
+            if (template is null)
+            {
+                // Legacy fallback: look up by slug and stamp TemplateId for next time.
+                var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
+                if (slug is null) continue;
+                template = await _dataStore.GetTemplateBySlugAsync(slug);
+                if (template is not null && string.IsNullOrEmpty(obligation.TemplateId))
+                {
+                    obligation.TemplateId = template.Id;
+                    // Node will be saved by the caller after this method returns.
+                }
+            }
+
             if (template is null) continue;
 
             nodeReportedRevisions.TryGetValue(roleName, out var nodeRevision);
@@ -575,6 +589,7 @@ public class NodeService : INodeService
 
             result[roleName] = new SystemVmTemplatePayload
             {
+                TemplateId = template.Id,
                 TemplateJson = templateJson,
                 Revision = template.Revision,
             };
@@ -599,6 +614,7 @@ public class NodeService : INodeService
         return new SystemVmTemplate
         {
             Role = role,
+            TemplateId = template.Id,
             Revision = template.Revision,
             CloudInitContent = template.CloudInitTemplate,
             Artifacts = template.Artifacts,

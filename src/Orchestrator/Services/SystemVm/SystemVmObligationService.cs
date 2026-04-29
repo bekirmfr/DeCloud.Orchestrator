@@ -178,6 +178,16 @@ public class SystemVmObligationService : BackgroundService
         foreach (var role in missingRoles)
         {
             var adopted = await TryAdoptExistingVmAsync(node, role, ct);
+
+            // Stamp TemplateId — stable _id of the assigned template.
+            // Looked up once here so TryAdoptExistingVmAsync stays simple.
+            var slug = SystemVmRoleMap.ToTemplateSlug(role);
+            if (slug is not null)
+            {
+                var tpl = await _dataStore.GetTemplateBySlugAsync(slug);
+                adopted.TemplateId = tpl?.Id;
+            }
+
             node.SystemVmObligations.Add(adopted);
 
             if (adopted.Status == SystemVmStatus.Active)
@@ -390,86 +400,6 @@ public class SystemVmObligationService : BackgroundService
         };
 
         return candidate.Id;
-    }
-
-    /// <summary>
-    /// Begin redeployment of a DHT VM by transitioning it to Deleting.
-    /// The obligation is NOT reset here — it stays Active so VerifyActiveAsync
-    /// can track the delete flow: Deleting → node confirms → Deleted → reset → redeploy.
-    /// This prevents deploying a new VM while the old one still exists on the node.
-    /// </summary>
-    private Task RedeployDhtVmAsync(Node node, SystemVmObligation obligation, string reason)
-        => RedeploySystemVmAsync(node, obligation, reason);
-
-    private async Task RedeploySystemVmAsync(Node node, SystemVmObligation obligation, string reason)
-    {
-        var vm = await _dataStore.GetVmAsync(obligation.VmId);
-        if (vm == null || vm.Status != VmStatus.Running)
-        {
-            _logger.LogDebug(
-                "Skipping redeploy of {Role} VM {VmId} on node {NodeId} — VM is not Running (status: {Status})",
-                obligation.Role, obligation.VmId, node.Id, vm?.Status);
-            return;
-        }
-
-        _logger.LogInformation(
-            "{Role} VM {VmId} on node {NodeId} transitioning to Deleting — {Reason}",
-            obligation.Role, obligation.VmId, node.Id, reason);
-
-        try
-        {
-            var lifecycle = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
-            await lifecycle.TransitionAsync(obligation.VmId, VmStatus.Deleting,
-                TransitionContext.Manual(reason));
-
-            _logger.LogInformation(
-                "{Role} VM {VmId} on node {NodeId} transitioning to Deleting — " +
-                "obligation stays Active until node confirms deletion",
-                obligation.Role, obligation.VmId, node.Id);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Failed to transition {Role} VM {VmId} on node {NodeId} to Deleting — will retry next cycle",
-                obligation.Role, obligation.VmId, node.Id);
-        }
-        // Obligation stays Active — VerifyActiveAsync handles the rest
-    }
-
-    /// <summary>
-    /// Reset an obligation back to Pending so the reconciliation loop
-    /// will redeploy it. Clears role-specific info that is stale.
-    /// </summary>
-    private void ResetObligation(Node node, SystemVmObligation obligation)
-    {
-        obligation.Status = SystemVmStatus.Pending;
-        obligation.VmId = null;
-        obligation.ActiveAt = null;
-        obligation.DeployedAt = null;
-
-        // Clear stale role-specific info so deployment creates fresh state
-        switch (obligation.Role)
-        {
-            case SystemVmRole.Dht:
-                node.DhtInfo = null;
-                break;
-            case SystemVmRole.Relay:
-                // Preserve WireGuard keypair — DHT and BlockStore VMs have the relay's
-                // public key baked into their wg-mesh.conf at cloud-init time.
-                // Reusing the same keypair on redeploy means all mesh-enrolled VMs
-                // remain connected without cascading redeployment.
-                if (node.RelayInfo != null)
-                {
-                    node.RelayInfo.RelayVmId = string.Empty;
-                    node.RelayInfo.Status = RelayStatus.Initializing;
-                    // Preserved: WireGuardPrivateKey, WireGuardPublicKey, TunnelIp,
-                    //            RelaySubnet, WireGuardEndpoint, Region
-                }
-                break;
-            case SystemVmRole.BlockStore:
-                node.BlockStoreInfo = null;
-                break;
-        }
     }
 
     // ════════════════════════════════════════════════════════════════════════

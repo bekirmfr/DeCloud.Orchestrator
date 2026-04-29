@@ -65,6 +65,15 @@ public class SystemVmObligation
     /// </summary>
     public int StateVersion { get; set; }
 
+    /// <summary>
+    /// MongoDB _id of the VmTemplate assigned to this obligation.
+    /// Set by EnsureObligationsAsync when the obligation is created and
+    /// used by GenerateSystemTemplatePayloads to look up the template.
+    ///
+    /// Null on obligations created before this field was introduced —
+    /// NodeService falls back to slug lookup for those.
+    /// </summary>
+    public string? TemplateId { get; set; }
 }
 
 public enum SystemVmRole
