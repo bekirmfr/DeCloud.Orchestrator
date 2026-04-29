@@ -370,11 +370,24 @@ public class NodeService : INodeService
             if (node.SystemVmObligations.Count == 0)
             {
                 // Fresh registration — seed all required obligations as Pending
-                node.SystemVmObligations = requiredRoles.Select(role => new SystemVmObligation
+                // Fresh registration — seed all required obligations as Pending.
+                // Stamp TemplateId immediately (slug lookup) so GenerateSystemTemplatePayloads
+                // uses the primary _id path rather than the fallback for every obligation.
+                node.SystemVmObligations = new List<SystemVmObligation>();
+                foreach (var role in requiredRoles)
                 {
-                    Role = role,
-                    Status = SystemVmStatus.Pending
-                }).ToList();
+                    var slug = SystemVmRoleMap.ToTemplateSlug(role);
+                    var tpl = slug is not null
+                        ? await _dataStore.GetTemplateBySlugAsync(slug)
+                        : null;
+
+                    node.SystemVmObligations.Add(new SystemVmObligation
+                    {
+                        Role = role,
+                        Status = SystemVmStatus.Pending,
+                        TemplateId = tpl?.Id,
+                    });
+                }
             }
             else
             {

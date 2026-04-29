@@ -516,6 +516,7 @@ public class NodeSelfController : ControllerBase
                 runningBinaryVersion = o.RunningBinaryVersion,
                 currentBinaryVersion = o.CurrentBinaryVersion,
                 stateVersion = o.StateVersion,
+                templateId = o.TemplateId
             })
             .ToList();
 
@@ -543,11 +544,14 @@ public class NodeSelfController : ControllerBase
         var roleEnum = SystemVmRoleMap.FromCanonicalName(canonical);
         if (roleEnum is null)
             return BadRequest($"Role '{role}' has no system VM mapping.");
-        var slug = SystemVmRoleMap.ToTemplateSlug(roleEnum.Value);
-        if (slug is null) return BadRequest($"No system template slug for role '{role}'.");
 
-        var template = await _dataStore.GetTemplateBySlugAsync(slug);
-        if (template is null) return NotFound($"No system template found for role '{canonical}'.");
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        var obligation = node?.SystemVmObligations
+            .FirstOrDefault(o => SystemVmRoleMap.ToCanonicalName(o.Role) == canonical);
+
+        VmTemplate? template = null;
+        if (!string.IsNullOrEmpty(obligation?.TemplateId))
+            template = await _dataStore.GetTemplateByIdAsync(obligation.TemplateId);
 
         var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template);
         var templateJson = System.Text.Json.JsonSerializer.Serialize(
