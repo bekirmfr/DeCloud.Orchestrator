@@ -180,7 +180,6 @@ public class SystemVmObligationService : BackgroundService
             var adopted = await TryAdoptExistingVmAsync(node, role, ct);
 
             // Stamp TemplateId — stable _id of the assigned template.
-            // Looked up once here so TryAdoptExistingVmAsync stays simple.
             var slug = SystemVmRoleMap.ToTemplateSlug(role);
             if (slug is not null)
             {
@@ -201,6 +200,21 @@ public class SystemVmObligationService : BackgroundService
                 _logger.LogInformation(
                     "Adopted existing {Role} VM {VmId} on node {NodeId} as Deploying (VM status: not yet Running)",
                     role, adopted.VmId, node.Id);
+            }
+        }
+
+        // Back-fill TemplateId on existing obligations that predate this field.
+        foreach (var obligation in node.SystemVmObligations.Where(o => o.TemplateId is null))
+        {
+            var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
+            if (slug is null) continue;
+            var tpl = await _dataStore.GetTemplateBySlugAsync(slug);
+            if (tpl is not null)
+            {
+                obligation.TemplateId = tpl.Id;
+                _logger.LogInformation(
+                    "Back-filled TemplateId {Id} on {Role} obligation for node {NodeId}",
+                    tpl.Id, obligation.Role, node.Id);
             }
         }
 

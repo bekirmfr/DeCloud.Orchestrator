@@ -844,7 +844,7 @@ public class NodeService : INodeService
 
         var obligationStatesPending = DetectStaleObligationStates(node, heartbeat.ObligationStateVersions);
 
-        var systemTemplatesPending = DetectStaleSystemTemplates(node, heartbeat.SystemTemplateVersions);
+        var systemTemplatesPending = await DetectStaleSystemTemplates(node, heartbeat.SystemTemplateVersions);
 
         // Heartbeat-driven Deploying → Active transition.
         // If the orchestrator was offline when the VM's direct callback fired,
@@ -920,19 +920,24 @@ public class NodeService : INodeService
     /// reported. Returns roles where the orchestrator has a newer revision.
     /// Parallel to DetectStaleObligationStates.
     /// </summary>
-    private List<string> DetectStaleSystemTemplates(
-    Node node,
-    Dictionary<string, int>? nodeReportedRevisions)
+    private async Task<List<string>> DetectStaleSystemTemplates(
+        Node node,
+        Dictionary<string, int>? nodeReportedRevisions)
     {
-        if (nodeReportedRevisions is null)
-            return new List<string>();
+        if (nodeReportedRevisions is null || node.SystemVmObligations is not { Count: > 0 })
+            return [];
 
         var stale = new List<string>();
 
-        foreach (var roleName in ObligationRole.All)
+        foreach (var obligation in node.SystemVmObligations)
         {
-            var slug = ObligationRole.ToTemplateSlug(roleName);
-            var template = _dataStore.GetTemplateBySlugAsync(slug).GetAwaiter().GetResult();
+            var roleName = SystemVmRoleMap.ToCanonicalName(obligation.Role);
+            if (roleName is null) continue;
+
+            VmTemplate? template = null;
+            if (!string.IsNullOrEmpty(obligation.TemplateId))
+                template = await _dataStore.GetTemplateByIdAsync(obligation.TemplateId);
+
             if (template is null) continue;
 
             nodeReportedRevisions.TryGetValue(roleName, out var nodeRevision);
