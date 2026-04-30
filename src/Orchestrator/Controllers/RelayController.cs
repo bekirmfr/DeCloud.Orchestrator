@@ -39,16 +39,23 @@ public class RelayController : ControllerBase
             notification.NodeId, notification.RelayVmId);
 
         // =====================================================
-        // STEP 1: Verify relay VM exists
+        // STEP 1: Verify node has a relay obligation
         // =====================================================
-        var node = await _dataStore.GetNodeAsync(notification.NodeId);
-
         // Under the node-agent-managed model the orchestrator assigns a relay
-        // obligation (with WireGuard keys) but never pre-assigns a VM ID —
-        // the node agent creates the VM and reports it here for the first time.
-        // The HMAC token (computed with the stored WireGuard private key) is the
-        // sole authentication mechanism. A missing RelayInfo means no obligation.
-        if (node?.RelayInfo == null)
+        // obligation (with WireGuard keys in StateJson) but never pre-assigns
+        // a VM ID. The node agent creates the VM and reports it here. We
+        // authenticate via HMAC — not by matching a pre-known VM ID.
+        var node = await _dataStore.GetNodeAsync(notification.NodeId);
+        if (node == null)
+        {
+            _logger.LogWarning("Relay callback: node {NodeId} not found", notification.NodeId);
+            return BadRequest("Invalid relay VM");
+        }
+
+        var relayObligation = node.SystemVmObligations
+            .FirstOrDefault(o => o.Role == SystemVmRole.Relay);
+
+        if (relayObligation == null)
         {
             _logger.LogWarning(
                 "Invalid relay callback: Node {NodeId} has no relay obligation",
@@ -59,7 +66,30 @@ public class RelayController : ControllerBase
         // =====================================================
         // STEP 2: Verify callback token using WireGuard private key
         // =====================================================
-        if (string.IsNullOrEmpty(node.RelayInfo.WireGuardPrivateKey))
+        // The private key lives in the obligation StateJson, not in RelayInfo.
+        string? wireGuardPrivateKey = null;
+
+        if (!string.IsNullOrEmpty(relayObligation.StateJson))
+        {
+            try
+            {
+                var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
+                    relayObligation.StateJson,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                wireGuardPrivateKey = state?.WireGuardPrivateKey;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Failed to deserialize relay obligation state for node {NodeId}", notification.NodeId);
+            }
+        }
+
+        // Fallback: legacy nodes that still have key in RelayInfo
+        if (string.IsNullOrEmpty(wireGuardPrivateKey))
+            wireGuardPrivateKey = node.RelayInfo?.WireGuardPrivateKey;
+
+        if (string.IsNullOrEmpty(wireGuardPrivateKey))
         {
             _logger.LogError(
                 "Cannot verify relay callback: WireGuard private key not found for {NodeId}",
@@ -70,7 +100,7 @@ public class RelayController : ControllerBase
         var expectedToken = ComputeCallbackToken(
             notification.NodeId,
             notification.RelayVmId,
-            node.RelayInfo.WireGuardPrivateKey);
+            wireGuardPrivateKey);
 
         if (string.IsNullOrEmpty(token))
         {
