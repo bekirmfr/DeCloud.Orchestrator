@@ -553,7 +553,11 @@ public class NodeSelfController : ControllerBase
         if (!string.IsNullOrEmpty(obligation?.TemplateId))
             template = await _dataStore.GetTemplateByIdAsync(obligation.TemplateId);
 
-        var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template);
+        if (template is null) return BadRequest(
+            $"No template assigned for role '{canonical}' yet. Ensure obligation is fulfilled and template deployed.");
+
+        var arch = node.HardwareInventory?.Cpu?.Architecture;
+        var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template, arch);
         var templateJson = System.Text.Json.JsonSerializer.Serialize(
             systemTemplate,
             new System.Text.Json.JsonSerializerOptions
