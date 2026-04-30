@@ -52,7 +52,7 @@ public class SystemVmObligationService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        _logger.LogInformation("SystemVmReconciliationService started (interval: {Interval}s)", Interval.TotalSeconds);
+        _logger.LogInformation("SystemVmObligationService started (interval: {Interval}s)", Interval.TotalSeconds);
 
         // Wait for startup to complete
         await Task.Delay(TimeSpan.FromSeconds(10), ct);
@@ -87,45 +87,10 @@ public class SystemVmObligationService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in SystemVmReconciliationService outer loop");
+                _logger.LogError(ex, "Error in SystemVmObligationService outer loop");
             }
 
             await Task.Delay(Interval, ct);
-        }
-    }
-
-    /// <summary>
-    /// Sync role-specific service info to reflect the current Active obligation.
-    /// Only sets VmId, Status, and LastHealthCheck — service-specific fields
-    /// (ListenAddress, PeerId, CapacityBytes) come from /join callbacks and
-    /// must not be overwritten here.
-    /// </summary>
-    private static void SyncRoleServiceInfo(Node node, SystemVmObligation obligation)
-    {
-        switch (obligation.Role)
-        {
-            case SystemVmRole.Relay:
-                node.RelayInfo ??= new RelayNodeInfo();
-                node.RelayInfo.RelayVmId = obligation.VmId ?? string.Empty;
-                node.RelayInfo.Status = RelayStatus.Active;
-                node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
-                break;
-
-            case SystemVmRole.Dht:
-                node.DhtInfo ??= new DhtNodeInfo();
-                node.DhtInfo.DhtVmId = obligation.VmId ?? string.Empty;
-                node.DhtInfo.Status = DhtStatus.Active;
-                node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
-                // Do NOT set ListenAddress or PeerId — set by /api/dht/join callback
-                break;
-
-            case SystemVmRole.BlockStore:
-                node.BlockStoreInfo ??= new BlockStoreInfo();
-                node.BlockStoreInfo.BlockStoreVmId = obligation.VmId ?? string.Empty;
-                node.BlockStoreInfo.Status = BlockStoreStatus.Active;
-                node.BlockStoreInfo.LastHealthCheck = DateTime.UtcNow;
-                // Do NOT set ListenAddress, PeerId, or CapacityBytes — set by /api/blockstore/join callback
-                break;
         }
     }
 
@@ -414,131 +379,6 @@ public class SystemVmObligationService : BackgroundService
         };
 
         return candidate.Id;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // Obligation state hydration — pre-populate node fields from stored state
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Reads identity from <paramref name="obligation"/>.StateJson and writes it
-    /// onto the node model so deployment services pick it up without changing
-    /// their own signatures.
-    ///
-    /// Relay  → node.RelayInfo.WireGuardPrivateKey / PublicKey / TunnelIp / RelaySubnet
-    ///           The existing reuse guard in RelayNodeService.DeployRelayVmAsync
-    ///           already checks node.RelayInfo?.WireGuardPrivateKey, so hydrating
-    ///           it here is all that is required.
-    ///
-    /// Dht    → obligation.AuthToken
-    ///           DhtNodeService reads node.SystemVmObligations to find this value.
-    ///
-    /// BlockStore → obligation.AuthToken
-    ///           BlockStoreService reads node.SystemVmObligations to find this value.
-    ///
-    /// Safe to call on first deploy (StateJson null/empty → method returns immediately,
-    /// deployment services generate fresh credentials as before).
-    /// </summary>
-    private void HydrateNodeFromObligationState(Node node, SystemVmObligation obligation)
-    {
-        if (string.IsNullOrEmpty(obligation.StateJson))
-            return;
-
-        var jsonOptions = new System.Text.Json.JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        };
-
-        try
-        {
-            switch (obligation.Role)
-            {
-                // ── Relay ────────────────────────────────────────────────
-                case SystemVmRole.Relay:
-                    {
-                        var state = System.Text.Json.JsonSerializer
-                            .Deserialize<RelayObligationState>(obligation.StateJson, jsonOptions);
-
-                        if (state is null) return;
-
-                        node.RelayInfo ??= new RelayNodeInfo();
-
-                        // These are the exact three fields the existing
-                        // RelayNodeService reuse guard reads.
-                        node.RelayInfo.WireGuardPrivateKey = state.WireGuardPrivateKey;
-                        node.RelayInfo.WireGuardPublicKey = state.WireGuardPublicKey;
-                        node.RelayInfo.TunnelIp = state.TunnelIp;
-
-                        // Subnet slot: "10.20.5.0/24" → 5
-                        var slot = ParseRelaySubnetSlot(state.RelaySubnet);
-                        if (slot > 0)
-                            node.RelayInfo.RelaySubnet = slot;
-
-                        _logger.LogDebug(
-                            "Hydrated Relay state v{Version} onto node {NodeId} " +
-                            "(pubKey: {PubKey}, subnet: {Subnet})",
-                            state.Version, node.Id,
-                            state.WireGuardPublicKey.Length > 12
-                                ? state.WireGuardPublicKey[..12] + "..."
-                                : state.WireGuardPublicKey,
-                            state.RelaySubnet);
-                        break;
-                    }
-
-                // ── DHT ──────────────────────────────────────────────────
-                case SystemVmRole.Dht:
-                    {
-                        var state = System.Text.Json.JsonSerializer
-                            .Deserialize<DhtObligationState>(obligation.StateJson, jsonOptions);
-
-                        if (state is null) return;
-
-                        // AuthToken lives on the obligation itself — DhtNodeService
-                        // reads node.SystemVmObligations to get it.
-                        if (!string.IsNullOrEmpty(state.AuthToken))
-                            obligation.AuthToken = state.AuthToken;
-
-                        _logger.LogDebug(
-                            "Hydrated DHT state v{Version} onto obligation for node {NodeId} " +
-                            "(peerId: {PeerId})",
-                            state.Version, node.Id,
-                            state.PeerId.Length > 12
-                                ? state.PeerId[..12] + "..."
-                                : state.PeerId);
-                        break;
-                    }
-
-                // ── BlockStore ───────────────────────────────────────────
-                case SystemVmRole.BlockStore:
-                    {
-                        var state = System.Text.Json.JsonSerializer
-                            .Deserialize<BlockStoreObligationState>(obligation.StateJson, jsonOptions);
-
-                        if (state is null) return;
-
-                        if (!string.IsNullOrEmpty(state.AuthToken))
-                            obligation.AuthToken = state.AuthToken;
-
-                        _logger.LogDebug(
-                            "Hydrated BlockStore state v{Version} onto obligation for node {NodeId} " +
-                            "(peerId: {PeerId})",
-                            state.Version, node.Id,
-                            state.PeerId.Length > 12
-                                ? state.PeerId[..12] + "..."
-                                : state.PeerId);
-                        break;
-                    }
-            }
-        }
-        catch (Exception ex)
-        {
-            // Non-fatal — deployment proceeds with freshly generated credentials.
-            // Logs at Warning so operators can investigate if identity drift occurs.
-            _logger.LogWarning(ex,
-                "Could not deserialise obligation state for {Role} on node {NodeId} " +
-                "(StateVersion: {Version}) — deploying with freshly generated identity",
-                obligation.Role, node.Id, obligation.StateVersion);
-        }
     }
 
     /// <summary>

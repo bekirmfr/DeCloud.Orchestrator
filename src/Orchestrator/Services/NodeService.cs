@@ -8,6 +8,7 @@ using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
+using System.Reflection.Metadata;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -865,7 +866,15 @@ public class NodeService : INodeService
             foreach (var reported in heartbeat.ActiveVms)
             {
                 var vm = await _dataStore.GetVmAsync(reported.VmId);
-                // Invalid if: VM doesn't exist in orchestrator DB, OR
+
+                // System VMs (Relay, DHT, BlockStore) are autonomously managed by the
+                // node's SystemVmReconciler. The orchestrator is not their control plane
+                // and must never flag them as invalid — doing so creates an infinite
+                // create → destroy loop. Health is reported separately via ObligationHealth.
+                var reportedType = Enum.TryParse<VmType>(reported.VmType, out var t) ? t : (VmType?)null;
+                if (reportedType is VmType.Relay or VmType.Dht or VmType.BlockStore)
+                    continue;
+
                 // VM exists but belongs to a different node
                 if (vm == null || vm.NodeId != nodeId)
                 {
@@ -1889,6 +1898,7 @@ public class NodeService : INodeService
                         "VM {VmId} state updated from heartbeat: {Status}/{PowerState}",
                         vmId, newStatus, newPowerState);
                 }
+
                 // Re-fetch VM after potential state transition.
                 // TransitionAsync saves internally — any save against the pre-transition
                 // vm object overwrites the new status with the stale one.

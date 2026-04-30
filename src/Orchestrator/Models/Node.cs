@@ -562,6 +562,8 @@ public class HeartbeatVmInfo
     public string VmId { get; set; } = string.Empty;
     public string? Name { get; set; }
     public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
+    /// <summary>VM type — used by the orchestrator to adopt autonomously-created system VMs.</summary>
+    public string? VmType { get; set; }
     public string OwnerId { get; set; } = string.Empty;  // Owner ID
     /// <summary>
     /// Binary version reported by the VM's /diagnostics endpoint.
