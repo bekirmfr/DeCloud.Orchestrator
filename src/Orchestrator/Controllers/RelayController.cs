@@ -126,7 +126,46 @@ public class RelayController : ControllerBase
             notification.NodeId);
 
         // =====================================================
-        // STEP 3: Add relay as WireGuard peer on orchestrator
+        // STEP 3: Populate RelayInfo from notification + obligation state
+        //         BEFORE calling AddRelayPeerAsync — it reads these fields.
+        // =====================================================
+        if (node.RelayInfo == null)
+        {
+            // First registration under node-agent-managed model — bootstrap RelayInfo
+            // from the obligation state that the orchestrator already assigned.
+            int relaySubnet = 0;
+            string? region = null;
+            try
+            {
+                var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
+                    relayObligation.StateJson!,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (!string.IsNullOrEmpty(state?.RelaySubnet))
+                {
+                    // "10.20.X.0/24" → extract X
+                    var parts = state.RelaySubnet.Split('/')[0].Split('.');
+                    if (parts.Length >= 3) int.TryParse(parts[2], out relaySubnet);
+                }
+                region = node.Region;
+            }
+            catch { /* use defaults */ }
+
+            node.RelayInfo = new RelayNodeInfo
+            {
+                RelaySubnet = relaySubnet,
+                Region = region ?? "default",
+            };
+        }
+
+        node.RelayInfo.RelayVmId = notification.RelayVmId;
+        node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
+        node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
+        node.RelayInfo.Status = RelayStatus.Active;
+        node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
+
+        // =====================================================
+        // STEP 4: Add relay as WireGuard peer on orchestrator
         // =====================================================
         var success = await _wireGuardManager.AddRelayPeerAsync(node);
 
@@ -137,14 +176,6 @@ public class RelayController : ControllerBase
                 "CGNAT nodes can now connect",
                 node.Id);
 
-            // Update relay info with WireGuard details.
-            // RelayVmId is set here on first registration — the node agent
-            // created the VM and is reporting its ID for the first time.
-            node.RelayInfo.RelayVmId = notification.RelayVmId;
-            node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
-            node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
-            node.RelayInfo.Status = RelayStatus.Active;
-            node.RelayInfo.LastHealthCheck = DateTime.UtcNow;
             await _dataStore.SaveNodeAsync(node);
 
             // Cross-peer with all other active relays (fire-and-forget)
