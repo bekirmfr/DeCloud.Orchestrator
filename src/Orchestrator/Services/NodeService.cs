@@ -622,7 +622,8 @@ public class NodeService : INodeService
             if (template.Revision <= nodeRevision) continue;  // node already current
 
             // Build the lightweight SystemVmTemplate from the full VmTemplate.
-            var systemTemplate = BuildSystemVmTemplate(roleName, template);
+            var arch = node.HardwareInventory?.Cpu?.Architecture;
+            var systemTemplate = BuildSystemVmTemplate(roleName, template, arch);
             var templateJson = JsonSerializer.Serialize(
                 systemTemplate,
                 new JsonSerializerOptions
@@ -650,12 +651,23 @@ public class NodeService : INodeService
     /// Extract the deployment-relevant subset of a full VmTemplate into a
     /// SystemVmTemplate for delivery to the node agent.
     /// </summary>
-    internal static SystemVmTemplate BuildSystemVmTemplate(string role, VmTemplate template)
+    internal static SystemVmTemplate BuildSystemVmTemplate(
+        string role,
+        VmTemplate template,
+        string? nodeArchitecture)
     {
         var canonical = ObligationRole.Canonicalise(role);
         var systemRole = canonical is not null
             ? SystemVmRoleMap.FromCanonicalName(canonical)
             : null;
+
+        var imageId = systemRole.HasValue
+            ? SystemVmRoleMap.ToBaseImageId(systemRole.Value)
+            : string.Empty;
+        
+        var baseImageUrl = !string.IsNullOrEmpty(imageId)
+            ? BaseImageUrlResolver.Resolve(imageId, nodeArchitecture) ?? string.Empty
+            : string.Empty;
 
         return new SystemVmTemplate
         {
@@ -667,9 +679,7 @@ public class NodeService : INodeService
             VirtualCpuCores = template.RecommendedSpec?.VirtualCpuCores ?? 1,
             MemoryBytes = template.RecommendedSpec?.MemoryBytes ?? (512L * 1024 * 1024),
             DiskBytes = template.RecommendedSpec?.DiskBytes ?? (2L * 1024 * 1024 * 1024),
-            BaseImageUrl = systemRole.HasValue
-                ? SystemVmRoleMap.ToBaseImageId(systemRole.Value)
-                : string.Empty,
+            BaseImageUrl = baseImageUrl,
             BaseImageHash = string.Empty,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
             {
