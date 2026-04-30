@@ -43,11 +43,16 @@ public class RelayController : ControllerBase
         // =====================================================
         var node = await _dataStore.GetNodeAsync(notification.NodeId);
 
-        if (node?.RelayInfo?.RelayVmId != notification.RelayVmId)
+        // Under the node-agent-managed model the orchestrator assigns a relay
+        // obligation (with WireGuard keys) but never pre-assigns a VM ID —
+        // the node agent creates the VM and reports it here for the first time.
+        // The HMAC token (computed with the stored WireGuard private key) is the
+        // sole authentication mechanism. A missing RelayInfo means no obligation.
+        if (node?.RelayInfo == null)
         {
             _logger.LogWarning(
-                "Invalid relay callback: Node {NodeId} has no relay VM {RelayVmId}",
-                notification.NodeId, notification.RelayVmId);
+                "Invalid relay callback: Node {NodeId} has no relay obligation",
+                notification.NodeId);
             return BadRequest("Invalid relay VM");
         }
 
@@ -102,7 +107,10 @@ public class RelayController : ControllerBase
                 "CGNAT nodes can now connect",
                 node.Id);
 
-            // Update relay info with WireGuard details
+            // Update relay info with WireGuard details.
+            // RelayVmId is set here on first registration — the node agent
+            // created the VM and is reporting its ID for the first time.
+            node.RelayInfo.RelayVmId = notification.RelayVmId;
             node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
             node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
             node.RelayInfo.Status = RelayStatus.Active;
