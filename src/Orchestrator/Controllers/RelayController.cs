@@ -159,6 +159,34 @@ public class RelayController : ControllerBase
             };
         }
 
+        // Always ensure TunnelIp is set. The if (node.RelayInfo == null) block
+        // above only runs when RelayInfo was never bootstrapped. When RelayInfo
+        // already exists (seeded at registration), TunnelIp may be empty.
+        // Derive it from the obligation state — authoritative source.
+        if (string.IsNullOrEmpty(node.RelayInfo.TunnelIp))
+        {
+            try
+            {
+                var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
+                    relayObligation.StateJson!,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (!string.IsNullOrEmpty(state?.TunnelIp))
+                {
+                    node.RelayInfo.TunnelIp = state.TunnelIp;
+                    _logger.LogInformation(
+                        "Set RelayInfo.TunnelIp={TunnelIp} from obligation state for node {NodeId}",
+                        state.TunnelIp, notification.NodeId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to parse relay obligation state for TunnelIp on node {NodeId}",
+                    notification.NodeId);
+            }
+        }
+
         node.RelayInfo.RelayVmId = notification.RelayVmId;
         node.RelayInfo.WireGuardPublicKey = notification.WireGuardPublicKey;
         node.RelayInfo.WireGuardEndpoint = notification.WireGuardEndpoint;
@@ -176,6 +204,17 @@ public class RelayController : ControllerBase
                 "✓ Relay {NodeId} registered successfully via callback - " +
                 "CGNAT nodes can now connect",
                 node.Id);
+
+            // Stamp the relay obligation — the VM has booted and is confirmed live.
+            // This was previously done inside DeployRelayVmAsync (now deleted).
+            // The callback is the authoritative moment: WireGuard key confirmed,
+            // relay API reachable, orchestrator WireGuard peer added.
+            relayObligation.VmId = notification.RelayVmId;
+            relayObligation.Status = SystemVmStatus.Active;
+            relayObligation.ActiveAt ??= DateTime.UtcNow;
+            _logger.LogInformation(
+                "Stamped relay obligation VmId={VmId} Status=Active on node {NodeId}",
+                notification.RelayVmId, notification.NodeId);
 
             await _dataStore.SaveNodeAsync(node);
 

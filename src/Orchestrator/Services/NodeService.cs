@@ -860,6 +860,7 @@ public class NodeService : INodeService
         // orchestrator doesn't recognize as belonging to this node.
         // NodeAgent will destroy these on the next heartbeat cycle.
         List<string>? invalidVmIds = null;
+        var obligationAdopted = false;
         if (heartbeat.ActiveVms != null && heartbeat.ActiveVms.Any())
         {
             var invalid = new List<string>();
@@ -873,7 +874,46 @@ public class NodeService : INodeService
                 // create → destroy loop. Health is reported separately via ObligationHealth.
                 var reportedType = Enum.TryParse<VmType>(reported.VmType, out var t) ? t : (VmType?)null;
                 if (reportedType is VmType.Relay or VmType.Dht or VmType.BlockStore)
+                {
+                    // Adopt VmId into the obligation if not yet stamped.
+                    // Relay is stamped via its callback; DHT and BlockStore
+                    // have no callback so the heartbeat is the adoption path.
+                    // Only promote to Active when ObligationHealth confirms Healthy —
+                    // avoids stamping Active on a VM that is still starting up.
+                    var role = reportedType switch
+                    {
+                        VmType.Relay => SystemVmRole.Relay,
+                        VmType.Dht => SystemVmRole.Dht,
+                        VmType.BlockStore => SystemVmRole.BlockStore,
+                        _ => (SystemVmRole?)null
+                    };
+
+                    if (role is not null && !string.IsNullOrEmpty(reported.VmId))
+                    {
+                        var obligation = node.SystemVmObligations
+                            .FirstOrDefault(o => o.Role == role && string.IsNullOrEmpty(o.VmId));
+
+                        if (obligation is not null)
+                        {
+                            obligation.VmId = reported.VmId;
+
+                            var roleName = role.ToString()!.ToLowerInvariant();
+                            if (heartbeat.ObligationHealth?.TryGetValue(roleName, out var health) == true
+                                && health == "Healthy")
+                            {
+                                obligation.Status = SystemVmStatus.Active;
+                                obligation.ActiveAt ??= DateTime.UtcNow;
+                            }
+
+                            obligationAdopted = true;
+                            _logger.LogInformation(
+                                "Adopted {Role} VM {VmId} into obligation via heartbeat on node {NodeId}",
+                                role, reported.VmId, nodeId);
+                        }
+                    }
+
                     continue;
+                }
 
                 // VM exists but belongs to a different node
                 if (vm == null || vm.NodeId != nodeId)
@@ -890,6 +930,9 @@ public class NodeService : INodeService
             if (invalid.Count > 0)
                 invalidVmIds = invalid;
         }
+
+        if (obligationAdopted)
+            await _dataStore.SaveNodeAsync(node);
 
         var obligationStatesPending = DetectStaleObligationStates(node, heartbeat.ObligationStateVersions);
 
