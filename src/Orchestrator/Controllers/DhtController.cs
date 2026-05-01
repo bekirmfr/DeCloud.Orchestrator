@@ -132,8 +132,16 @@ public class DhtController : ControllerBase
         // =====================================================
         // STEP 6: Register peerId on the node
         // =====================================================
+        var advertiseIp = !string.IsNullOrEmpty(request.AdvertiseIp)
+            ? request.AdvertiseIp
+            : DhtNodeService.GetAdvertiseIp(node);
         node.DhtInfo ??= new DhtNodeInfo();
+        node.DhtInfo.DhtVmId = request.VmId;
         node.DhtInfo.PeerId = request.PeerId;
+        node.DhtInfo.ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}";
+        node.DhtInfo.ApiPort = DhtNodeService.DhtApiPort;
+        node.DhtInfo.Status = DhtStatus.Active;
+        node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
@@ -157,7 +165,8 @@ public class DhtController : ControllerBase
 public record DhtJoinRequest(
     string NodeId,
     string VmId,
-    string PeerId
+    string PeerId,
+    string? AdvertiseIp = null
 );
 
 public record DhtJoinResponse(
