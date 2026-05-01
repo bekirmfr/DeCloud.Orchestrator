@@ -895,35 +895,6 @@ public class NodeService : INodeService
 
         var systemTemplatesPending = await DetectStaleSystemTemplates(node, heartbeat.SystemTemplateVersions);
 
-        // Heartbeat-driven Deploying → Active transition.
-        // If the orchestrator was offline when the VM's direct callback fired,
-        // this path recovers the obligation state from heartbeat data so the
-        // reconciliation loop does not redeploy a VM that is already running.
-        foreach (var vmInfo in heartbeat.ActiveVms ?? [])
-        {
-            var obligation = node.SystemVmObligations
-                .FirstOrDefault(o => o.VmId == vmInfo.VmId
-                                  && o.Status == SystemVmStatus.Deploying);
-
-            if (obligation is null) continue;
-
-            var systemService = vmInfo.Services?
-                .FirstOrDefault(s => s.Name == "System");
-
-            if (systemService?.Status == "Ready")
-            {
-                obligation.Status = SystemVmStatus.Active;
-                obligation.ActiveAt = DateTime.UtcNow;
-                obligation.FailureCount = 0;
-                obligation.LastError = null;
-
-                _logger.LogInformation(
-                    "{Role} obligation on node {NodeId} promoted to Active via heartbeat " +
-                    "(VM {VmId} System service Ready — direct callback may have been missed)",
-                    obligation.Role, nodeId, obligation.VmId);
-            }
-        }
-
         return new NodeHeartbeatResponse(
         true,
         commands.Count > 0 ? commands : null,

@@ -1,18 +1,16 @@
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Org.BouncyCastle.Pqc.Crypto.Lms;
 
 namespace Orchestrator.Services.SystemVm;
 
 /// <summary>
 /// Background service that converges each online node toward its desired system VM state.
 ///
-/// Per-cycle steps (every 30 seconds):
-///   1. Ensure obligations exist (backfill legacy nodes, detect new eligible roles)
-///   2. Pending obligations with met dependencies → deploy
-///   3. Deploying obligations → check if VM is Running + healthy → mark Active
-///   4. Active obligations → verify VM still exists (self-heal if gone)
-///   5. Failed obligations → retry with exponential backoff
+/// Per-cycle: Ensure obligations exist for all required roles (backfill on capability drift).
+///   VM deployment and lifecycle are handled exclusively by the node's SystemVmReconciler (P6).
+///   This service does not deploy or monitor VMs.
 ///
 /// This is the Kubernetes controller pattern: declare desired state, let a loop
 /// converge toward it. Registration is fast (compute + store obligations, deploy
@@ -32,11 +30,6 @@ public class SystemVmObligationService : BackgroundService
     private readonly ILogger<SystemVmObligationService> _logger;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan CloudInitReadyTimeout = TimeSpan.FromMinutes(20); // Deploying → reset if not ready
-    private static readonly TimeSpan ActiveVmGracePeriod = TimeSpan.FromMinutes(5);  // Active absence before reset
-    private static readonly TimeSpan HeartbeatSnapshotTtl = TimeSpan.FromMinutes(2);  // vm.UpdatedAt freshness window
-    private static readonly TimeSpan ProvisioningTimeout = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan StuckDeletingTimeout = TimeSpan.FromMinutes(15);
 
     public SystemVmObligationService(
         DataStore dataStore,
