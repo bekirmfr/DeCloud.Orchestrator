@@ -61,7 +61,7 @@ public sealed class SystemVmTemplateSeeder
     // ── Template revisions ───────────────────────────────────────────────
     // Bump when cloud-init content or artifacts change in a deploy-breaking way.
 
-    private const int DhtTemplateRevision = 1;
+    private const int DhtTemplateRevision = 2;
     private const int BlockstoreTemplateRevision = 1;
     private const int RelayTemplateRevision = 1;
 
@@ -74,7 +74,21 @@ public sealed class SystemVmTemplateSeeder
     //   bash compute-artifact-constants.sh
     //   Copy the updated constants here, bump TemplateRevision.
 
-    // Generated: 2026-04-30T22:08:12Z
+    // ============================================================
+    // artifact-constants.cs  —  AUTO-GENERATED
+    // Run: bash system-vms/compute-artifact-constants.sh
+    // DO NOT EDIT MANUALLY — regenerate from source files.
+    //
+    // Usage:
+    //   1. Copy the constants for changed artifacts into SystemVmTemplateSeeder.cs
+    //   2. Bump the affected TemplateRevision constant (DhtTemplateRevision, etc.)
+    //   3. Commit to the Orchestrator repo
+    // ============================================================
+
+    // Paste this block inside the SystemVmTemplateSeeder class body.
+    // Replace the COMPUTE_FROM_FILE placeholders with the generated values.
+
+    // Generated: 2026-05-01T11:09:31Z
 
     // ── Shared ────────────────────────────────────────────────────────────────
     // shared/assets/wg-config-fetch.sh  (4633 bytes)
@@ -170,7 +184,7 @@ public sealed class SystemVmTemplateSeeder
 
 
     // ── Summary ─────────────────────────────────────────────────────────────────
-    // Generated: 2026-04-30T22:08:14Z
+    // Generated: 2026-05-01T11:09:33Z
     // Roles discovered:
     //   shared/assets/ [prefix='<none>']: 2 files
     //   blockstore/assets/ [prefix='Blockstore']: 7 files
