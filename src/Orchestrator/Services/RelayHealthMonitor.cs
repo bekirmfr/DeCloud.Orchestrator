@@ -103,12 +103,15 @@ public class RelayHealthMonitor : BackgroundService
 
         try
         {
-            // Use relay VM's WireGuard tunnel IP
-            var tunnelIp = relay.RelayInfo.TunnelIp
-                ?? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
-                ?? "10.20.0.254";
+            // Use relay VM's WireGuard tunnel IP — guard against empty string,
+            // which ?? does not catch (only catches null).
+            var tunnelIp = !string.IsNullOrEmpty(relay.RelayInfo.TunnelIp)
+                ? relay.RelayInfo.TunnelIp
+                : relay.RelayInfo.RelaySubnet > 0
+                    ? $"10.20.{relay.RelayInfo.RelaySubnet}.254"
+                    : "10.20.0.254";
 
-            var healthUrl = $"http://{tunnelIp}/health";
+            var healthUrl = $"http://{tunnelIp}:8080/health";
 
             _logger.LogDebug(
                 "Checking relay {RelayId} health at {HealthUrl} (subnet {Subnet}, age: {Age:mm\\:ss})",
@@ -129,7 +132,6 @@ public class RelayHealthMonitor : BackgroundService
                 relay.RelayInfo.Status = RelayStatus.Active;
                 relay.RelayInfo.LastHealthCheck = DateTime.UtcNow;
 
-                // ✅ FIXED: Pass relay ID to reconciliation for grace period tracking
                 await ReconcileRelayStateAsync(relay, ct);
                 await _dataStore.SaveNodeAsync(relay);
 

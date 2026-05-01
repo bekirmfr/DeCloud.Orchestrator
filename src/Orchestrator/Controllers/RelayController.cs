@@ -155,6 +155,7 @@ public class RelayController : ControllerBase
             {
                 RelaySubnet = relaySubnet,
                 Region = region ?? "default",
+                TunnelIp = relaySubnet > 0 ? $"10.20.{relaySubnet}.254" : string.Empty,
             };
         }
 
