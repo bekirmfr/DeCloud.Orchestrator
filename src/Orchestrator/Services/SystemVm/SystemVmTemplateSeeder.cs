@@ -61,7 +61,7 @@ public sealed class SystemVmTemplateSeeder
     // ── Template revisions ───────────────────────────────────────────────
     // Bump when cloud-init content or artifacts change in a deploy-breaking way.
 
-    private const int DhtTemplateRevision = 2;
+    private const int DhtTemplateRevision = 1;
     private const int BlockstoreTemplateRevision = 1;
     private const int RelayTemplateRevision = 1;
 
