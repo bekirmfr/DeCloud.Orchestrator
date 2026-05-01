@@ -547,8 +547,25 @@ public class NodeService : INodeService
                         PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
                     });
 
+            FIND:
                 obligation.StateJson = stateJson;
                 obligation.StateVersion = state.Version; // always 1 on first generation
+
+            REPLACE:
+                obligation.StateJson = stateJson;
+                obligation.StateVersion = state.Version; // always 1 on first generation
+
+                // Stamp AuthToken on the obligation for fast lookup by callback
+                // controllers (DhtController.DhtJoin, BlockStoreController.Join).
+                // StateJson contains the token but requires deserialization — the
+                // top-level field avoids that cost on every inbound callback.
+                obligation.AuthToken = state switch
+                {
+                    DhtObligationState dht => dht.AuthToken,
+                    BlockStoreObligationState bs => bs.AuthToken,
+                    RelayObligationState relay => relay.AuthToken,
+                    _ => null
+                };
 
                 _logger.LogInformation(
                     "Generated initial obligation state for role {Role} on node {NodeId} (v{Version})",
