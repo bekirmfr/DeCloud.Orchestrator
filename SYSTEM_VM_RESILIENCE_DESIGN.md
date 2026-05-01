@@ -292,9 +292,15 @@ public class TemplateArtifact
     /// </summary>
     public string SourceUrl { get; set; } = string.Empty;
 
-    /// <summary>
+/// <summary>
     /// Block Store CID once artifact is replicated (future — Phase 2).
     /// When set, node agents download from Block Store instead of SourceUrl.
+    ///
+    /// Phase 1 assertion: field exists in schema, value is ALWAYS NULL on
+    /// write in this phase. No resolution logic references this field.
+    /// ArtifactCacheService always uses SourceUrl in Phase 1.
+    /// Phase 2 will populate this field once BlockStore CID replication
+    /// is operational — no schema migration required.
     /// </summary>
     public string? BlockStoreCid { get; set; }
 
@@ -740,8 +746,9 @@ assets/                                       (in repo root)
   artifact cache.
 - Orchestrator remains the source of truth for both; node agent stores the
   authoritative local copy.
-- Version-based conflict resolution: higher version always wins (orchestrator
-  is authoritative).
+- Version-based conflict resolution: **higher version always wins**. The
+  orchestrator is the only writer of authoritative state; under normal
+  operation it always holds the highest version. See §4.7.
 - No orchestrator contact required at VM recovery time.
 
 ### 4.2 SQLite schema
@@ -911,8 +918,14 @@ public class ObligationStateGenerator
 ```
 Orchestrator version > node version  → node accepts update
 Orchestrator version == node version → no update (preserved)
-Orchestrator version <  node version → log warning, orchestrator wins
-                                       (should not happen — orchestrator authoritative)
+Orchestrator version <  node version → log warning, no update
+                                       (node holds a higher version than orchestrator;
+                                       this indicates node SQLite corruption yielding a
+                                       phantom-high version, or a rollback. The node keeps
+                                       its higher version — "higher version wins" is the
+                                       single rule. Operator recovery: clear node SQLite
+                                       obligation_state for the affected role; next heartbeat
+                                       will re-push from orchestrator at current version.)
 ```
 
 The node reports its current versions in each heartbeat; the orchestrator
@@ -1070,6 +1083,22 @@ threshold semantics:
 | Relay       | 200 if at least one assigned CGNAT peer has handshake age < 5 min, OR if no peers are assigned (an idle relay is healthy), else 503. |
 | BlockStore  | 200 if `connectedPeers >= 1` past cold-start, else 503.                                                       |
 
+The threshold values (`MIN_PEERS`, `STALENESS`) are owned by the system VM
+binary, not the node agent. They are exposed as env vars in the cloud-init
+env file so operators can tune without a binary rebuild:
+
+| Role       | Env var                  | Default | Injected by                          |
+|------------|--------------------------|---------|--------------------------------------|
+| DHT        | `DHT_MESH_MIN_PEERS`     | `1`     | `dht.env` in cloud-init `write_files` |
+| DHT        | `DHT_MESH_STALENESS_SEC` | `300`   | `dht.env` in cloud-init `write_files` |
+| BlockStore | `BS_MESH_MIN_PEERS`      | `1`     | `blockstore.env` in cloud-init        |
+| Relay      | `RELAY_HANDSHAKE_MAX_AGE`| `300`   | `relay.env` in cloud-init             |
+
+These env vars are present in the cloud-init YAML constants in
+`SystemVmTemplateSeeder.cs`. To change a threshold: update the env file
+line in the relevant `*_CLOUD_INIT` constant, bump `TemplateRevision`,
+and commit. The reconciler redeploys on next version drift detection.                                                     |
+
 Cold-start grace is the service's `TimeoutSeconds` (e.g. 600 s for
 `dht-mesh`). The system VM's endpoint implementation decides what to
 return during the warm-up window — typically 200 unconditionally, then
@@ -1124,8 +1153,15 @@ public class NodeHeartbeat
 }
 ```
 
-The orchestrator stores this on the `Node` record (replacing the previous
-`obligation.Status` field's role) and uses it in the scheduler hard-filter:
+The orchestrator reads this field from each heartbeat and uses it in the
+scheduler hard-filter. It does **not** write `ObligationHealth` to a
+parallel `Node.ObligationHealth` property — `SystemVmObligation.Status`
+(on the `Node` record) remains the single orchestrator-side writer for
+per-role health. Adding a parallel field would create two writers
+(`SystemVmObligationService` and the heartbeat handler) fighting while
+both are active — the rejected double-writer pattern (see P4 decision log).
+The rolled-up signal from heartbeat is consumed in-flight for scheduling;
+it is not persisted as a separate field.
 
 > Node N is ineligible to receive new tenant VMs if any of its required
 > system VM obligations report not-Healthy for longer than
@@ -1354,7 +1390,35 @@ What changes:
   notice when this node's DHT/relay/blockstore peer disappears, so the
   problem doesn't stay invisible to the cluster.
 
-### 6.5 Relay revenue-share security
+### 6.5 Secrets-at-rest trust model
+
+Node operators are trusted with their own node's secrets. The Ed25519
+private keys, WireGuard private keys, and auth tokens stored in node SQLite
+(`obligation_state` table, mode 0600, root-owned) are accessible to anyone
+with root on the node host. This is consistent with the platform's overall
+trust model — node operators are permissioned participants, and the risk of
+a malicious operator exfiltrating their own node's system VM identity is
+accepted.
+
+**What this does not protect against:** node disposal (disk not wiped),
+backup theft, or forensic recovery of a decommissioned node.
+
+**Defences that do apply:**
+- Cluster-level mesh health cross-validation: peers notice misbehaviour
+  (phantom peer IDs, forged routes) and the scheduler filters out the node.
+- Identity rotation: the orchestrator can issue a new version with fresh
+  keys, which `ObligationStateService` accepts on next heartbeat
+  (higher version wins). The old keys are invalidated from the
+  network's perspective on first rotation.
+- SQLite 0600 permissions prevent non-root processes on the host from
+  reading secrets directly.
+
+**Out of scope for Phase 1:** hardware-rooted operator trust (TPM, sealed
+storage). If this becomes a requirement, `ObligationStateRepository` is the
+single write point — a TPM-sealed keystore can be substituted without
+changing the interface.
+
+### 6.6 Relay revenue-share security
 
 - `relayNodeId` sourced from `node.CgnatInfo.AssignedRelayNodeId`
   (orchestrator-assigned, not user-provided).
@@ -1703,6 +1767,15 @@ versioning, push, and SQLite plumbing.
 heartbeat-response handler on the node side (process template updates),
 `ObligationStateGenerator` on orchestrator (pick current templates per
 role and include them in the payload).
+
+**Interface stability contract (P3 → P9):** Between P3 and P9,
+`IObligationStateService` is extended by **additions only** — no method
+renames, no signature changes to existing methods. P3 shipped
+`SaveObligationsAsync` and `GetObligationsAsync`. P9 adds
+`SaveSystemTemplateAsync`, `GetSystemTemplateJsonAsync`,
+`GetSystemTemplateRevisionAsync`. Any code consuming the interface at P3
+remains valid at P9 without recompilation. This contract is closed at P9
+— the interface is now stable.
 
 **Behaviour change:** node SQLite holds obligations and current system
 templates. Nothing reads the templates yet — `SystemVmReconciler` from P6
