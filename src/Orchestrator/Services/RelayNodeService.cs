@@ -355,9 +355,15 @@ public class RelayNodeService : IRelayNodeService
             }
 
             // ========================================
-            // STEP 2: Generate private key for CGNAT node
+            // STEP 2: Reuse or generate private key for CGNAT node
             // ========================================
-            var privateKey = await GenerateWireGuardPrivateKeyAsync(ct);
+            // The private key is a node's permanent WireGuard identity.
+            // Re-generating it on every re-assignment (relay failover, mismatch)
+            // causes the relay to see a new peer each time: old key evicted →
+            // new key added → handshake gap → Grace Period churn.
+            // Only generate a fresh key on first-ever assignment (no existing config).
+            var existingPrivateKey = ExtractPrivateKeyFromExistingConfig(cgnatNode.CgnatInfo?.WireGuardConfig);
+            var privateKey = existingPrivateKey ?? await GenerateWireGuardPrivateKeyAsync(ct);
 
             // ========================================
             // STEP 3: Build configuration with real keys
@@ -408,6 +414,28 @@ PersistentKeepalive = 25";
         }
     }
 
+    /// <summary>
+    /// Extract the PrivateKey field from an existing WireGuard config string.
+    /// Returns null if the config is absent or does not contain a PrivateKey line.
+    /// </summary>
+    private static string? ExtractPrivateKeyFromExistingConfig(string? wgConfig)
+    {
+        if (string.IsNullOrEmpty(wgConfig))
+            return null;
+
+        foreach (var line in wgConfig.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("PrivateKey", StringComparison.OrdinalIgnoreCase))
+            {
+                var idx = trimmed.IndexOf('=');
+                if (idx >= 0)
+                    return trimmed[(idx + 1)..].Trim();
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Generate a WireGuard private key using the wg command

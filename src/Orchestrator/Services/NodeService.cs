@@ -1785,15 +1785,12 @@ public class NodeService : INodeService
             return false;
         }
 
-        if (string.IsNullOrEmpty(relayNode.RelayInfo.RelayVmId))
-            return false;
-
-        var relayVm = await _dataStore.GetVmAsync(relayNode.RelayInfo.RelayVmId);
-        if (relayVm == null)
-            return false;
-
-        if (relayVm.Status != VmStatus.Running)
-            return false;
+        // Relay VMs are created and tracked by the node agent (SQLite), not by
+        // the orchestrator (MongoDB). GetVmAsync always returns null for them —
+        // do not check the VM store. RelayInfo.Status (set by the relay callback
+        // and maintained by RelayHealthMonitor) is the authoritative signal.
+        if (string.IsNullOrEmpty(relayNode.RelayInfo.WireGuardPublicKey))
+            return false; // relay VM never called back — not confirmed live
 
         return true;
     }
