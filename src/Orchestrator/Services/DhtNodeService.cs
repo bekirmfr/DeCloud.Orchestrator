@@ -29,11 +29,11 @@ public class DhtNodeService : IDhtNodeService
     public const int DhtListenPort = 4001;
 
     /// <summary>
-    /// HTTP API port exposed externally by the DHT VM via nginx proxy.
-    /// The DHT binary binds to 127.0.0.1:5080 internally; nginx forwards port 80.
-    /// Used by the orchestrator for health checks.
+    /// HTTP API port the DHT binary binds on (proxied externally by nginx on port 80).
+    /// DhtInfo.ApiPort stores this value — kept at 5080 to match the VM's actual
+    /// binary port and avoid confusion with the nginx frontend port.
     /// </summary>
-    public const int DhtApiPort = 80;
+    public const int DhtApiPort = 5080;
 
     /// <summary>
     /// Internal HTTP API port the DHT binary binds to (localhost only).

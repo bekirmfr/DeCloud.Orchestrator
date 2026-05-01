@@ -162,6 +162,13 @@ public class DhtController : ControllerBase
         node.DhtInfo.ApiPort = DhtNodeService.DhtApiPort;
         node.DhtInfo.Status = DhtStatus.Active;
         node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
+
+        // Stamp obligation Active — mirrors RelayController.RegisterCallback pattern.
+        // Without this, GetBootstrapPeersAsync() filters by Status == Active and
+        // this node's DHT never appears in peer lists for other nodes.
+        dhtObligation.Status = SystemVmStatus.Active;
+        dhtObligation.ActiveAt ??= DateTime.UtcNow;
+
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
