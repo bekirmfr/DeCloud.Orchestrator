@@ -94,11 +94,31 @@ public class DhtController : ControllerBase
             }
         }
 
+        // Extended self-heal: obligation has a stale VmId from a replaced VM.
+        // The old VM was deleted and a new one created — the orchestrator
+        // learns the new VmId here via the join callback, not from the reconciler.
+        // Token validation in step 5 confirms the new VM holds the same auth secret.
+        if (dhtObligation == null)
+        {
+            dhtObligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.Dht
+                                  && !string.IsNullOrEmpty(o.AuthToken));
+
+            if (dhtObligation != null)
+            {
+                _logger.LogInformation(
+                    "DHT join self-heal: replacing stale VmId {OldVmId} with {NewVmId} on node {NodeId}",
+                    dhtObligation.VmId, request.VmId, request.NodeId);
+                dhtObligation.VmId = request.VmId;
+                dhtObligation.Status = SystemVmStatus.Deploying;
+            }
+        }
+
         if (dhtObligation == null)
         {
             _logger.LogWarning(
-                "DHT join rejected: No DHT obligation with VmId {VmId} found on node {NodeId}",
-                request.VmId, request.NodeId);
+                "DHT join rejected: No DHT obligation found on node {NodeId}",
+                request.NodeId);
             return NotFound("DHT VM not found on this node");
         }
 
