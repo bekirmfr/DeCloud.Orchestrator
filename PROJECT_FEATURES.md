@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-05-01
 **Purpose:** Technical reference for all implemented and planned platform features.
 
 ---
@@ -88,9 +88,9 @@ User → Orchestrator (Central Brain) → Node Agents (Distributed Workers)
 | Type | Purpose |
 |---|---|
 | **General VMs** | User workloads — AI, web apps, databases |
-| **Relay VMs** | Auto-deployed on public nodes to serve CGNAT nodes |
-| **DHT VMs** | Decentralized coordination via libp2p over WireGuard mesh |
-| **Block Store VMs** | Distributed content-addressed storage (5% storage duty) |
+| **Relay VMs** | Node-authoritative: deployed by SystemVmReconciler on public nodes; WireGuard mesh for CGNAT traversal; identity (keypair, subnet) persisted in node SQLite |
+| **DHT VMs** | Node-authoritative: libp2p Kademlia peer discovery, key-value storage, GossipSub; Ed25519 peer ID persisted across redeploys |
+| **Block Store VMs** | Node-authoritative: libp2p BitSwap content-addressed storage (5% storage duty); peer ID persisted across redeploys |
 
 ### Quality Tiers
 
@@ -886,14 +886,19 @@ A libp2p-based DHT layer provides decentralized peer coordination. DHT nodes run
 - **Node 1** (us-east-1): peerId `12D3KooWD8zw...B8n1`, tunnelIP `10.20.1.199`, connectedPeers: 1
 - **Node 2** (tr-south): peerId `12D3KooWHNLM...j8Yx`, tunnelIP `10.20.1.202`, connectedPeers: 1
 
-#### End-to-End Flow
+#### End-to-End Flow (updated 2026-05-01 — node-authoritative lifecycle)
 
-1. Orchestrator deploys DHT VM with WG mesh labels (`wg-relay-endpoint`, `wg-relay-pubkey`, `wg-tunnel-ip`, `wg-relay-api`)
-2. Cloud-init writes labels to `/etc/decloud/wg-mesh.env` and runs `wg-mesh-enroll.sh`
-3. Enrollment script generates WG keypair, registers with relay, starts `wg-mesh` interface
-4. `dht-bootstrap-poll.sh` calls `POST /api/dht/join` → receives known peer list
-5. DHT binary connects to peers over WireGuard mesh (e.g., `10.20.1.199:4001`)
-6. DHT VM calls `POST /api/dht/ready` to report its libp2p peer ID
+1. Orchestrator stamps DHT obligation on node registration; pushes identity state
+   (Ed25519 key, peer ID) and system template to node SQLite via obligation channel
+2. Node's `SystemVmReconciler` detects obligation intent → fetches template from SQLite
+   → downloads `dht-node` binary from local artifact cache (pre-fetched from GitHub Releases,
+   served over virbr0) → calls `IVmManager.CreateVmAsync` directly
+3. Cloud-init writes WG mesh labels to `/etc/decloud/wg-mesh.env`, fetches identity
+   from `http://192.168.122.1:5100/api/obligations/dht/state`, runs `wg-mesh-enroll.sh`
+4. Enrollment script generates WG keypair, registers with relay, starts `wg-mesh` interface
+5. `dht-bootstrap-poll.sh` calls `POST /api/dht/join` → receives known peer list
+6. DHT binary connects to peers over WireGuard mesh (e.g., `10.20.1.199:4001`)
+7. DHT VM calls `POST /api/dht/ready` to report its libp2p peer ID
 
 #### WireGuard Mesh Enrollment
 
@@ -955,7 +960,7 @@ Also modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as b
 
 | File | Purpose |
 |---|---|
-| `DhtNodeService.cs` | DHT VM deployment (Orchestrator) |
+| `DhtNodeService.cs` | DHT peer discovery and bootstrap — `DeployDhtVmAsync` deleted (P7); deployment now handled by node's `SystemVmReconciler` |
 | `DhtController.cs` | `/api/dht/join` bootstrap endpoint |
 | `DhtCallbackController.cs` | `/api/dht/ready` ready callback (NodeAgent) |
 | `WgMeshEnrollController.cs` | WireGuard enrollment proxy (NodeAgent) |
@@ -1365,16 +1370,25 @@ Uses the existing `DeCloudEscrow.sol` authorized caller mechanism. The ToS escro
 
 ### Prebuilt Binary Distribution
 
-**Status:** 🔲 Planned | **Tracked:** `# TODO(future)` in `install.sh` above `download_node_agent()`
-**Effort:** Low (~1 week, primarily GitHub Actions + install.sh changes)
+**Status:** ✅ Done (2026-05-01) — DHT and BlockStore binaries
 
-**Current flow:** `git clone` → `dotnet publish` → ~5 min build, requires .NET SDK on every node
-**Target flow:** `curl` GitHub Release asset → extract → ~30 seconds, no SDK needed
+**DHT and BlockStore binaries** are now built by CI in `DeCloud.Builds` and
+published to GitHub Releases on `binaries/vX.Y.Z` tag push. The node agent
+fetches them at VM deploy time via `ArtifactCacheService` (served locally over
+virbr0 — nodes never hit GitHub Releases during VM boot). The `install.sh`
+`build_dht_binary()` and `build_blockstore_binary()` functions are deleted.
+No Go toolchain required on nodes.
 
-**What is needed:**
-1. GitHub Actions release workflow — publishes `linux-amd64` and `linux-arm64` tarballs on every `git tag` push, bundling the DHT, BlockStore, and GPU proxy binaries
-2. Download URL in `install.sh` replacing the current `git clone` + build steps
-3. Removal of `install_dotnet` (SDK) from `main()` — only the .NET runtime is needed to run the agent
+**Remaining:** The NodeAgent binary itself (`DeCloud.NodeAgent.dll`) is still
+built from source on each node via `dotnet publish`. The original vision of
+downloading a pre-built tarball from GitHub Releases for the NodeAgent runtime
+is not yet implemented — this would eliminate the .NET SDK requirement on nodes
+and reduce install time from ~5 min to ~30 seconds. See original plan below.
+
+**Original plan (NodeAgent binary — not yet done):**
+1. GitHub Actions release workflow — publishes `linux-amd64` and `linux-arm64` tarballs on every `git tag` push
+2. Download URL in `install.sh` replacing the current `git clone` + `dotnet publish` steps
+3. Removal of `install_dotnet` (SDK) from `main()` — only the .NET runtime needed to run the agent
 4. `releases/` folder in git hosts distributable scripts only; compiled binaries go to GitHub Release assets
 
 ---

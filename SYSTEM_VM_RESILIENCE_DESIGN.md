@@ -1,8 +1,8 @@
 # System VM Design
 
-**Status:** Approved for Implementation
-**Phase:** 1 — Foundation
-**Last Updated:** 2026-04-27
+**Status:** Implemented — All Phases Complete (P1–P11)
+**Phase:** Complete
+**Last Updated:** 2026-05-01
 **Author:** BMA / DeCloud Architecture
 
 > **Change note (2026-04-26):** Artifact delivery simplified to **external-only**.
@@ -33,6 +33,56 @@
 > Companion documents kept for context, not for implementation guidance:
 > `SYSTEM_VM_LIFECYCLE_FLOW_MAP.md` (gap analysis of the pre-refactor code),
 > `SYSTEM_VM_RECONCILIATION_DESIGN.md` (the reasoning behind the matrix model).
+
+> **Change note (2026-05-01):** All eleven implementation phases complete.
+> The system VM resilience redesign is fully live in production.
+> Summary of key architectural decisions made during implementation:
+>
+> 1. **Artifact pipeline unified** (P8). `TemplateArtifact` supports two source
+>    schemes: HTTPS (external hosting, platform stores metadata only) and `data:`
+>    URI inline (RFC 2397 base64, stored in template MongoDB document). Binary
+>    artifacts always use HTTPS. Scripts, dashboards, and config use inline.
+>    Per-artifact limit 5 MB inline; per-template 10 MB inline.
+>
+> 2. **Template identity gate replaced** (reviewed during P10). The original plan
+>    used slug-as-gate to prevent community templates from claiming system roles.
+>    This was replaced with stable MongoDB `_id` binding on `SystemVmObligation`.
+>    The obligation channel carries `TemplateId` (`_id`), not slug. Slugs are
+>    display-only. The gate is the obligation channel itself — no template reaches
+>    a node's system VM reconciler unless the orchestrator put its `_id` there.
+>
+> 3. **All VMs are building blocks** (design clarification during P10). The
+>    distinction between "system template" and "community template" is deployment
+>    context, not template metadata. The same template deployed under the
+>    obligation system is a system VM (persistent identity, self-healing). The
+>    same template deployed by a platform user through the marketplace is a tenant
+>    VM (ephemeral identity, user-managed). No reserved slugs, no substrate flags.
+>
+> 4. **Security layer 3 added to ObligationStateController** (review finding 2.1).
+>    Caller-IP-to-role binding on `GET /api/obligations/{role}/state`. Prevents
+>    tenant VMs on the same virbr0 bridge from exfiltrating system VM identity.
+>    Three allow-with-warning cases handle first-boot timing windows.
+>
+> 5. **`CloudInitTemplateService` scope narrowed** (P11). System VM code paths
+>    (`PopulateDhtVariablesAsync`, `PopulateRelayVariablesAsync`,
+>    `PopulateBlockStoreVariablesAsync`, `InjectDhtExternalTemplatesAsync`,
+>    `InjectRelayExternalTemplatesAsync`, `InjectBlockStoreExternalTemplatesAsync`,
+>    `PopulateWireGuardMeshVariablesAsync`, `ResolveLocalRelayInfoAsync`) deleted.
+>    Service now handles General and Inference VMs only.
+>
+> 6. **`SystemVmObligationService` scope narrowed** (P7). Background loop now only
+>    runs `EnsureObligationsAsync` — backfilling roles on capability drift and
+>    adopting existing VMs. All deploy/check/verify/retry logic deleted. Deployment
+>    authority is exclusively on the node's `SystemVmReconciler`.
+>
+> 7. **`DeployDhtVmAsync`, `DeployBlockStoreVmAsync`, `DeployRelayVmAsync` deleted**
+>    (P7). Interfaces retain only peer discovery and mesh management methods.
+>    Heartbeat-path `Deploying → Active` promotion deleted from `NodeService`.
+>
+> 8. **`DeCloud.Builds` restructured** for the artifact pipeline:
+>    `system-vms/{role}/src/` (Go source), `system-vms/{role}/assets/` (scripts,
+>    dashboards), `system-vms/{role}/cloud-init.yaml`. `compute-artifact-constants.sh`
+>    auto-discovers all `assets/` directories — no hardcoded maps.
 
 ---
 
@@ -549,35 +599,80 @@ There is no orchestrator-side `DeploySystemVmAsync` method. The orchestrator
 does not initiate system VM deploys. The node's reconciliation matrix does
 (§5).
 
-### 3.10 What gets deleted
+### 3.10 What was deleted ✅
 
-Once the implementation phases (§9) complete, the following code is removed.
-The deletions are interlocking — they reference each other, so they ship
-together in the final phase.
+All planned deletions shipped in P7 and P11.
 
-**Orchestrator:**
+**Orchestrator (P7):**
 
 ```
 src/Orchestrator/Services/SystemVm/SystemVmReconciliationService.cs
-    DELETED entirely (~1500 lines)
+    DELETED entirely — renamed to SystemVmObligationService during
+    implementation; all deploy/check/verify/retry logic removed;
+    background loop now runs EnsureObligationsAsync only
 
 src/Orchestrator/Services/RelayNodeService.cs
-    DELETED: DeployRelayVmAsync()
-    KEPT:    AssignCgnatNodeToRelayAsync(), FindBestRelayForCgnatNodeAsync()
+    DELETED: DeployRelayVmAsync() ✅
+    KEPT:    AssignCgnatNodeToRelayAsync(), FindBestRelayForCgnatNodeAsync(),
+             EnsurePeerRegisteredAsync(), FindAndAssignNewRelayAsync(),
+             RemoveCgnatNodeFromRelayAsync()
 
 src/Orchestrator/Services/DhtNodeService.cs
-    DELETED: DeployDhtVmAsync()
-    KEPT:    DHT peer lookup, bootstrap peer resolution
+    DELETED: DeployDhtVmAsync() ✅
+    KEPT:    GetBootstrapPeersAsync(), GetAdvertiseIp(), port constants
 
 src/Orchestrator/Services/BlockStoreService.cs
-    DELETED: DeployBlockStoreVmAsync()
-    KEPT:    CID indexing, manifest management, /join handlers
+    DELETED: DeployBlockStoreVmAsync() ✅
+    KEPT:    CID indexing, manifest management, /join handlers,
+             GetBootstrapPeersAsync()
 
 src/Orchestrator/Services/NodeService.cs
-    DELETED: heartbeat-path Active promotion block
-    DELETED: system-VM ghost detection (tenant ghost detection survives)
-    KEPT:    everything else, with one addition (consume node-reported
-             obligationHealth and stamp it on the Node record)
+    DELETED: heartbeat-path Active promotion block ✅
+             (Deploying → Active via heartbeat.ActiveVms — double-writer pattern)
+    KEPT:    system-VM ghost detection already excluded in prior patch
+             (reportedType is VmType.Relay or VmType.Dht or VmType.BlockStore → continue)
+    ADDED:   obligationHealth consumed from heartbeat; ObligationHealth
+             field on Node record stamped per role (P6 work)
+
+src/Orchestrator/Services/SystemVm/SystemVmObligationService.cs
+    DELETED: CloudInitReadyTimeout, ActiveVmGracePeriod, HeartbeatSnapshotTtl,
+             ProvisioningTimeout, StuckDeletingTimeout (dead constants)
+    KEPT:    EnsureObligationsAsync, TryAdoptExistingVmAsync,
+             TryDiscoverHealthySystemVmAsync, EnsureObligationsForNodeAsync
+    UPDATED: Class doc — obligation management only; VM deployment excluded
+```
+
+**Node Agent (P11):**
+
+```
+src/DeCloud.NodeAgent/Services/GoBinaryBuildStartupService.cs
+    DELETED entirely ✅
+
+src/DeCloud.NodeAgent/CloudInit/Templates/dht-vm/     DELETED ✅
+src/DeCloud.NodeAgent/CloudInit/Templates/blockstore-vm/  DELETED ✅
+src/DeCloud.NodeAgent/CloudInit/Templates/relay-vm/   DELETED ✅
+
+src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs
+    DELETED: PopulateDhtVariablesAsync ✅
+    DELETED: PopulateRelayVariablesAsync ✅
+    DELETED: PopulateBlockStoreVariablesAsync ✅
+    DELETED: InjectDhtExternalTemplatesAsync ✅
+    DELETED: InjectRelayExternalTemplatesAsync ✅
+    DELETED: InjectBlockStoreExternalTemplatesAsync ✅
+    DELETED: PopulateWireGuardMeshVariablesAsync ✅
+    DELETED: ResolveLocalRelayInfoAsync ✅
+    DELETED: VmType.Dht, VmType.Relay, VmType.BlockStore switch cases ✅
+    KEPT:    InjectGeneralExternalTemplatesAsync, PopulateInferenceVariablesAsync,
+             LoadExternalTemplateAsync, ReplaceWithIndentation,
+             GetTargetArchitecture (now uses ResourceDiscoveryService.GetArchitectureNormalised())
+
+install.sh
+    DELETED: install_go() function ✅
+    DELETED: build_dht_binary() function ✅
+    DELETED: build_blockstore_binary() function ✅
+    DELETED: cleanup_stale_system_vms() function ✅
+    DELETED: binary cache preserve/restore blocks in download_node_agent() ✅
+    KEPT:    build_gpu_proxy(), build_node_agent(), all non-binary install steps
 ```
 
 **Node agent:**
@@ -1152,6 +1247,10 @@ next cycle decides afresh.
 
 ## 6. Security
 
+> **Implementation note (2026-05-01):** Caller-IP-to-role binding (Layer 3,
+> review finding 2.1) was added to `ObligationStateController` during
+> implementation. See §6.2 for the updated three-layer model.
+
 ### 6.1 Artifact integrity chain
 
 ```
@@ -1190,9 +1289,17 @@ Trust root:
 - Endpoint `/api/obligations/{role}/state` binds to `192.168.122.1:5100`
   (virbr0 only).
 - virbr0 is not routable externally — only local VMs can reach it.
-- No authentication required: network-level isolation is the security
-  boundary. Defense-in-depth: the controller validates the caller's IP
-  against the virbr0 subnet on every request.
+- Three-layer security model (updated 2026-05-01, review finding 2.1):
+  - **Layer 1 — Network boundary:** virbr0 not externally routable.
+  - **Layer 2 — Subnet check (all endpoints):** caller IP validated
+    against `192.168.122.0/24` on every request.
+  - **Layer 3 — Caller-IP-to-role binding (`/state` only):** caller IP
+    must match the IP of the system VM assigned to the requested role.
+    Prevents a tenant VM on the same virbr0 bridge exfiltrating system VM
+    private keys. Three allow-with-warning cases handle first-boot timing
+    windows where the DHCP lease is still being acquired.
+  `GET /api/obligations/{role}/version` uses Layer 1+2 only — version
+  integers carry no key material.
 - State contains private keys — log access at DEBUG level, never at INFO.
 - SQLite file permissions: `600` (root-owned, no world read).
 - State JSON never logged in full (only role + version logged).
@@ -1479,7 +1586,7 @@ error; `Node` record and `SystemVmObligations` unchanged.
 
 ### Stage II — Lifecycle (node-side)
 
-#### P5 — `SystemVmReconciler` in shadow mode
+#### P5 — `SystemVmReconciler` in shadow mode ✅
 
 **What:** new `BackgroundService` on the node agent. Runs the matrix every
 30 s. For each obligation, computes `(intent, reality, pending) → action`
@@ -1500,7 +1607,7 @@ agree. The categories of discrepancy that *can* legitimately remain (e.g.,
 orchestrator decides based on cluster-level state the node can't see) are
 documented and explicitly accepted.
 
-#### P6 — Cut over to the node-side reconciler
+#### P6 — Cut over to the node-side reconciler ✅
 
 **What:** the node's reconciler becomes authoritative. When the matrix
 decides Create, the node enqueues a `CreateVm` command into its own command
@@ -1522,7 +1629,7 @@ push an artifact version bump (after Stage III), simulate a stale ack,
 restart the node agent, restart the orchestrator. Each scenario self-heals
 via the matrix.
 
-#### P7 — Delete orchestrator system-VM lifecycle code
+#### P7 — Delete orchestrator system-VM lifecycle code ✅
 
 **What:** delete `SystemVmReconciliationService` and all surfaces in §3.10
 "Orchestrator". Remove `obligation.Status` etc. from MongoDB writes.
@@ -1532,17 +1639,22 @@ system-VM branch.
 **Why now:** P6 has been running for a week without the orchestrator loop
 contributing decisions. The code is dead.
 
-**Touches:** see §3.10 for the full list.
+**Touches:** see §3.10 for the full list. Actual P7 scope was narrower
+than originally planned — `SystemVmReconciliationService` was not deleted
+as a file but renamed to `SystemVmObligationService` and stripped of
+all deployment methods. The background loop retained `EnsureObligationsAsync`
+for obligation backfilling, which is orchestrator authority (not node
+lifecycle authority). The five dead timeout constants were also removed.
 
 **Behaviour change:** none.
 
-**Verification:** unit-test count rises (matrix is more testable than
-branchy code); orchestrator loop p99 latency drops; log noise on both
-sides decreases.
+**Verification:** orchestrator loop simpler; deploy methods no longer
+callable; heartbeat Active promotion path gone — one authoritative writer
+per obligation status field.
 
 ### Stage III — Templates
 
-#### P8 — `TemplateArtifact` model + node-agent artifact cache
+#### P8 — `TemplateArtifact` model + node-agent artifact cache ✅
 
 **What:** the existing resilience design's Phase A items 1–6, unchanged.
 
@@ -1555,10 +1667,19 @@ SHA256 verification, `ResolveArtifactVariables`, node agent
 Tenant templates can use them immediately. System VMs are still on the
 bundled-folder path until P10/P11.
 
+**Implementation addition:** two source schemes were implemented rather
+than one. HTTPS (original design) for externally-hosted artifacts. `data:`
+URI (added during P8) for inline artifacts — author provides RFC 2397
+base64-encoded bytes stored inside the template MongoDB document (same
+legal character as cloud-init YAML). Binary artifacts always use HTTPS
+(size, versioning, architecture-specificity). Scripts and dashboards use
+inline (immutable, small, no external dependency). Per-artifact inline
+limit: 5 MB. Per-template inline budget: 10 MB.
+
 **Verification:** register external artifact → publish template → deploy
 tenant VM → verify SHA256 chain end-to-end.
 
-#### P9 — `ObligationStateService` extended (obligations + templates)
+#### P9 — `ObligationStateService` extended (obligations + templates) ✅
 
 **What:** the existing resilience design's Phase B items 7–14, *plus*:
 
@@ -1594,7 +1715,7 @@ node agent — everything still present from local SQLite.
 
 ### Stage IV — Convergence
 
-#### P10 — System templates seeded and node-driven deploys use them
+#### P10 — System templates seeded and node-driven deploys use them ✅
 
 **What:** orchestrator's `TemplateSeederService` seeds the three system
 templates with full cloud-init (migrated from the bundled YAML files) and
@@ -1607,9 +1728,24 @@ logic tenant VMs use, and enqueues it into the local command pipeline.
 **Why now:** templates exist locally (P9). Artifact cache is operational
 (P8). Reconciler is authoritative (P6).
 
-**Touches:** orchestrator `TemplateSeederService` (seed system templates),
-node-side `SystemVmReconciler` (new Create branch — read template from
-SQLite, build request, enqueue).
+**Touches:**
+- `SystemVmTemplateSeeder` (new) — seeds `system-relay`, `system-dht`,
+  `system-blockstore` templates into MongoDB. Revision-aware (skips if
+  stored revision ≥ seeder revision). Binary artifacts reference GitHub
+  Releases in `DeCloud.Builds` (binaries/v1.0.0). Script/dashboard
+  artifacts are inline `data:` URI constants generated by
+  `compute-artifact-constants.sh`. Cloud-init YAML constants embedded as
+  C# verbatim string literals.
+- `SystemVmObligation.TemplateId` (new field) — stable MongoDB `_id`
+  of the assigned template. Stamped at obligation creation. The obligation
+  channel carries `TemplateId`, not slug. Slugs are display-only.
+- `DeCloud.Builds` restructured: `system-vms/{role}/src/` (Go source),
+  `system-vms/{role}/assets/` (scripts/dashboards), `system-vms/{role}/
+  cloud-init.yaml`. `compute-artifact-constants.sh` auto-discovers all
+  `assets/` directories.
+- node-side `SystemVmReconciler` Create branch reads system template from
+  SQLite, substitutes `${ARTIFACT_URL:name}` variables, builds `VmSpec`,
+  calls `IVmManager.CreateVmAsync` directly.
 
 **Behaviour change:** new system VM deploys go through the template path.
 **Existing running system VMs are not redeployed** — the matrix sees them
@@ -1635,16 +1771,26 @@ P11 only removes what nothing references anymore.
 
 **Touches:** see §3.10 "Node agent" for the exhaustive list.
 
-**Behaviour change:** none. By the time this lands, nothing reads from the
-folder, nothing calls the deleted methods, nothing depends on Go being
-installed. The deletion is observable as a smaller install footprint, a
-faster install, and the disappearance of `~/.cache/go-build`-style artefacts
-from node disks.
+**Scope clarification:** `CloudInit/Templates/` was not deleted entirely.
+The folder retains `general/general-vm-cloudinit.yaml` and the attestation
+agent b64 files (`decloud-agent-amd64.b64`, `decloud-agent-arm64.b64`)
+which are tenant VM infrastructure, not system VM infrastructure. Only the
+`dht-vm/`, `blockstore-vm/`, and `relay-vm/` subdirectories were removed.
+
+`CloudInitTemplateService` was narrowed — the eight system VM methods were
+deleted but the service itself retained for General and Inference tenant VMs.
+`GetTargetArchitecture` now delegates to
+`ResourceDiscoveryService.GetArchitectureNormalised()` — single source of
+truth for host architecture detection across the entire node agent.
+
+**Behaviour change:** none. The deletion is observable as a smaller install
+footprint, faster installs (no Go toolchain required), and the disappearance
+of `~/.cache/go-build`-style artefacts from node disks.
 
 **Verification:**
 - Fresh install on a clean Ubuntu host completes without `go` installed.
 - New node registers, receives obligations + identity + templates, deploys
-  all three system VMs from template — no path through any deleted code.
+  all three system VMs from artifact cache — no path through deleted code.
 - Existing nodes upgraded in place: running system VMs continue running;
   redeploys triggered by chaos testing render from templates.
 
@@ -1740,6 +1886,18 @@ NodeService heartbeat handler:
 ```
 src/DeCloud.NodeAgent/Controllers/ArtifactCacheController.cs
 src/DeCloud.NodeAgent/Controllers/ObligationStateController.cs
+  (updated post-implementation: Layer 3 caller-IP binding added)
+
+src/Orchestrator/Services/SystemVm/SystemVmTemplateSeeder.cs  (new — P10)
+  Seeds system-relay, system-dht, system-blockstore into MongoDB.
+  Revision-aware. Inline data: URI + HTTPS artifact constants.
+
+DeCloud.Builds/system-vms/compute-artifact-constants.sh  (new — P10)
+  Auto-discovers all assets/ directories, generates C# constants.
+  No hardcoded role maps.
+
+DeCloud.Builds/.github/workflows/release-binaries.yml  (updated — P10)
+  Paths updated from {role}-node-src/ to {role}/src/.
 src/DeCloud.NodeAgent.Core/Models/ObligationState.cs
 src/DeCloud.NodeAgent.Core/Interfaces/IObligationStateService.cs
 src/DeCloud.NodeAgent.Core/Interfaces/IArtifactCacheService.cs

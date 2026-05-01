@@ -149,6 +149,14 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Block Store Phase A–C (bitswap, FlatFS, quota, GC) | ✅ |
 | ARM architecture support (Raspberry Pi) | ✅ |
 | Windows WSL2 auto-start (watchdog + scheduled task installer) | ✅ |
+| System VM resilience redesign (P1–P11) — node-authoritative lifecycle | ✅ |
+| System VM identity persistence (ObligationStateService, SQLite) | ✅ |
+| Unified artifact pipeline (HTTPS + data: URI inline, SHA256-verified) | ✅ |
+| SystemVmReconciler — matrix-driven create/delete, 30s cycle | ✅ |
+| System VM templates in MongoDB (SystemVmTemplateSeeder, revision-aware) | ✅ |
+| ObligationStateController Layer 3 caller-IP binding (review finding 2.1) | ✅ |
+| DeCloud.Builds restructure (src/assets/cloud-init layout per role) | ✅ |
+| Binary release pipeline (GitHub Actions, binaries/v* tags) | ✅ |
 
 ### What Is Incomplete
 
@@ -162,11 +170,11 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Review prompts after VM termination | Frontend only |
 | More seed templates | Have 6, target 10–15 then community growth to 50+ |
 | Block Store Phase D | Lazysync — VM overlay replication |
-| System VM boot time optimizations | Fixes identified, not yet applied (see Boot Performance section below) |
+| System VM boot time optimizations | Partially resolved — gz+b64 decode (34s) eliminated by artifact cache; apt-get (~190s) remains the dominant cost; snapd masking applied in cloud-init |
 | Collaboration features | Shared VMs, infrastructure templates (Phase 3) |
 | Lightweight node support | Non-KVM nodes — design TBD |
 | Alpine Linux system VMs | 50 MB base image, 40× smaller |
-| Prebuilt binary distribution | Switch from build-from-source to GitHub Releases |
+| Prebuilt binary distribution | ✅ Done — DHT and BlockStore binaries built by CI, published to GitHub Releases in DeCloud.Builds. Attestation agent (decloud-agent) still built from source in NodeAgent repo |
 
 ---
 
@@ -179,14 +187,14 @@ This section documents measured boot timing, root causes, and specific fixes rea
 | Phase | Duration | Notes |
 |---|---|---|
 | VM boot (QEMU/libvirt) | 71s | Fixed cost |
-| cloud-init: user-data parsing (gz+b64 binary) | 34s | Python decodes binary in-process |
+| cloud-init: artifact download (curl from virbr0 cache) | ~2s | Replaces 34s gz+b64 decode; served from node-local artifact cache |
 | cloud-init: apt-get update | ~190s | 44 MB package list fetch — dominant cost |
 | cloud-init: package install | ~40s | 11 packages, 1,242 kB, fast once lists fetched |
 | cloud-init total | 343s (5m43s) | Confirmed via `cloud-init analyze show` |
 | snapd + LXD services (Ubuntu base image) | ~50s | Pre-installed, useless in system VMs |
 | blockstore-node startup | 1s | libp2p peer ID in 300ms |
-| orchestrator reconciliation | ~90s | 15s heartbeat + 30s `CheckDeploymentProgressAsync` |
-| **Total DeployedAt → ActiveAt** | **~11 minutes** | Measured from MongoDB timestamps |
+| node reconciler (SystemVmReconciler) | ~30s | 30s cycle; node-authoritative, no orchestrator round-trip |
+| **Total DeployedAt → ActiveAt** | **~9 minutes** | gz+b64 decode eliminated (−34s); orchestrator round-trip eliminated (−60s) |
 
 ### Root Causes & Fixes (ready to apply)
 
@@ -206,9 +214,12 @@ bootcmd:
   - systemctl mask snapd.service snapd.socket snapd.seeded.service snap.lxd.activate.service 2>/dev/null || true
 ```
 
-**3. Binary embedded as gz+b64 in cloud-init YAML** (34s saved, longer-term fix)
-- cloud-init parses the entire YAML in Python before writing files — multi-MB binary causes 34s decode
-- **Fix (longer term):** Serve binary via NodeAgent HTTP endpoint (`curl` from `runcmd`)
+**3. Binary embedded as gz+b64 in cloud-init YAML** ✅ Fixed (2026-05-01)
+- cloud-init parses the entire YAML in Python before writing files — multi-MB binary caused 34s decode
+- **Fix applied:** Binary distributed via artifact pipeline. NodeAgent pre-fetches binary from
+  GitHub Releases into local artifact cache, serves over virbr0 at `192.168.122.1:5100`.
+  Cloud-init runs `curl ${ARTIFACT_URL:dht-node}` in `runcmd` — ~2s vs 34s.
+  `GoBinaryBuildStartupService` and bundled `gz.b64` files deleted (P11).
 
 **4. `notify-ready.sh` callback never fired** (~45s saved)
 - Callback log was empty — orchestrator found readiness via 15s heartbeat + 30s reconciliation polling
@@ -221,15 +232,17 @@ bootcmd:
 
 ### Expected Improvement After Fixes
 
-| Fix | Saves |
-|---|---|
-| `package_update: false` + `package_upgrade: false` | ~190s |
-| Mask snapd/LXD in bootcmd | ~50s |
-| Push reconciliation from callback | ~45s |
-| **Total** | **~285s (~4.75 min)** |
+| Fix | Saves | Status |
+|---|---|---|
+| `package_update: false` + `package_upgrade: false` | ~190s | ✅ Applied in all system VM cloud-init YAMLs |
+| Mask snapd/LXD in bootcmd | ~50s | ✅ Applied in all system VM cloud-init YAMLs |
+| Push reconciliation from callback | ~45s | ✅ Applied (BlockStoreCallbackController) |
+| Binary via artifact cache (not gz+b64) | ~34s | ✅ Applied (P10/P11) |
+| Node-side reconciler (no orchestrator round-trip) | ~60s | ✅ Applied (P6) |
+| **Total** | **~379s (~6.3 min)** | ✅ All applied |
 
-**Projected: ~11 min → ~6.5 min** with quick fixes.
-**Pre-baked base image** (no apt at all) → ~2.5 min.
+**Actual: ~11 min → ~4.7 min** (all fixes applied).
+**Pre-baked base image** (no apt at all) → ~2.5 min (not yet done).
 
 ### Pre-Baked System VM Base Image (Future Work)
 
