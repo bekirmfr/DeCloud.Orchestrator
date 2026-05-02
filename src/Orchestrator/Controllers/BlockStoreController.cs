@@ -133,7 +133,9 @@ public class BlockStoreController : ControllerBase
                 request.NodeId, request.VmId);
         }
 
-        if (!string.IsNullOrEmpty(request.AdvertiseIp))
+        // Only store a WireGuard mesh IP (10.20.x.x) as the blockstore listen address.
+        // Same guard as DhtController — GetAdvertiseIp fallbacks are unreachable as multiaddrs.
+        if (request.AdvertiseIp?.StartsWith("10.20.") == true)
             node.BlockStoreInfo.ListenAddress = $"{request.AdvertiseIp}:{BlockStoreVmSpec.BitswapPort}";
 
         await _dataStore.SaveNodeAsync(node);
