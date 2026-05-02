@@ -152,13 +152,17 @@ public class DhtController : ControllerBase
         // =====================================================
         // STEP 6: Register peerId on the node
         // =====================================================
-        var advertiseIp = !string.IsNullOrEmpty(request.AdvertiseIp)
-            ? request.AdvertiseIp
-            : DhtNodeService.GetAdvertiseIp(node);
         node.DhtInfo ??= new DhtNodeInfo();
         node.DhtInfo.DhtVmId = request.VmId;
         node.DhtInfo.PeerId = request.PeerId;
-        node.DhtInfo.ListenAddress = $"{advertiseIp}:{DhtNodeService.DhtListenPort}";
+        // Only store a WireGuard mesh IP (10.20.x.x) as the DHT listen address.
+        // GetAdvertiseIp(node) returns the public IP for public nodes and the CGNAT
+        // host tunnel IP for CGNAT nodes — both are unreachable as DHT multiaddrs.
+        // NodeService heartbeat processing applies the same guard. If the VM sends
+        // no valid advertiseIp, preserve the existing address rather than overwriting
+        // it with an unreachable fallback that poisons bootstrap peer lists.
+        if (request.AdvertiseIp?.StartsWith("10.20.") == true)
+            node.DhtInfo.ListenAddress = $"{request.AdvertiseIp}:{DhtNodeService.DhtListenPort}";
         node.DhtInfo.ApiPort = DhtNodeService.DhtApiPort;
         node.DhtInfo.Status = DhtStatus.Active;
         node.DhtInfo.LastHealthCheck = DateTime.UtcNow;
