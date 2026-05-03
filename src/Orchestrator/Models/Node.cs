@@ -21,6 +21,26 @@ public class Node
     public string WalletAddress { get; set; } = string.Empty;
 
     /// <summary>
+    /// SSH certificate authority public key for this node, captured at
+    /// registration from <c>/etc/ssh/decloud_ca.pub</c> on the node side.
+    ///
+    /// <para>
+    /// Used by <c>CaPublicKeyResolver</c> to substitute <c>__CA_PUBLIC_KEY__</c>
+    /// in cloud-init at render time, so the orchestrator (not the node)
+    /// is the source of truth for this value at deploy time. The CA key
+    /// itself still lives on the node — the orchestrator only stores a
+    /// copy for use during VM rendering.
+    /// </para>
+    ///
+    /// <para>
+    /// Null on nodes registered before P1.9; their VMs will hit
+    /// <c>CaPublicKeyResolver</c>'s null-guard exception until the node
+    /// re-registers with the new agent version.
+    /// </para>
+    /// </summary>
+    public string? SshCaPublicKey { get; set; }
+
+    /// <summary>
     /// Pending payout to this node operator (in USDC)
     /// </summary>
     public decimal PendingPayout { get; set; }

@@ -17,6 +17,14 @@ public class SystemVmObligation
     /// </summary>
     public string? VmId { get; set; }
 
+    /// <summary>
+    /// The VM's human-readable name (design §11 last row).
+    /// Assigned at obligation creation by the orchestrator (P1.11);
+    /// null on legacy obligations created before this field was introduced.
+    /// Format: <c>{role}-{node-id-prefix}</c>, e.g., <c>dht-a1b2c3d4</c>.
+    /// </summary>
+    public string? VmName { get; set; }
+
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public SystemVmStatus Status { get; set; } = SystemVmStatus.Pending;
 

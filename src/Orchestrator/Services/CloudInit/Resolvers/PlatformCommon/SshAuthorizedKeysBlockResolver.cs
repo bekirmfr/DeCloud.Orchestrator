@@ -11,7 +11,8 @@ namespace DeCloud.Orchestrator.Services.CloudInit.Resolvers.PlatformCommon;
 /// Source priority:
 /// </para>
 /// <list type="number">
-///   <item><c>ctx.Vm.SshPublicKey</c> — tenant flow (newline-separated).</item>
+///   <item><c>ctx.Vm.Spec.SshPublicKey</c> — tenant flow (newline-separated
+///     string on the VmSpec, not directly on VirtualMachine).</item>
 ///   <item><c>ctx.UserSuppliedStatics["SSH_PUBLIC_KEYS"]</c> — operator override
 ///     (e.g., emergency access on system VMs).</item>
 ///   <item>Empty — produces <c># No SSH keys provided</c>.</item>
@@ -30,7 +31,7 @@ public sealed class SshAuthorizedKeysBlockResolver : IVariableResolver
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {
-        var keys = ctx.Vm?.SshPublicKey
+        var keys = ctx.Vm?.Spec?.SshPublicKey
                    ?? ctx.UserSuppliedStatics.GetValueOrDefault("SSH_PUBLIC_KEYS");
         return Task.FromResult(CloudInitFormatting.BuildSshKeysBlock(keys));
     }
