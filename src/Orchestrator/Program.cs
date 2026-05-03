@@ -118,26 +118,35 @@ builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();
 builder.Services.AddSingleton<ISshCertificateService, SshCertificateService>();
+
 // Node Marketplace Service (for node discovery and search)
 builder.Services.AddSingleton<INodeMarketplaceService, NodeMarketplaceService>();
+
 // Node Reputation Service (for uptime tracking and VM metrics)
 builder.Services.AddSingleton<INodeReputationService, NodeReputationService>();
+
 // Template Service (for marketplace VM templates)
 builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
-builder.Services.AddVariableResolverRegistry();
-builder.Services.AddPlatformCommonResolvers();
-builder.Services.AddCloudInitRenderer();
 builder.Services.AddSingleton<SystemVmTemplateSeeder>();
 builder.Services.AddHttpClient<SystemVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+
+// Cloud-init rendering pipeline
+builder.Services.AddVariableResolverRegistry();
+builder.Services.AddPlatformCommonResolvers();
+builder.Services.AddCloudInitRenderer();
+builder.Services.AddCloudInitValidator();
+
 // Review Service (universal marketplace reviews for templates, nodes, etc.)
 builder.Services.AddSingleton<IReviewService, ReviewService>();
+
 // Central Ingress Gateway (optional - for *.vms.decloud.io routing)
 builder.Services.Configure<CentralIngressOptions>(builder.Configuration.GetSection("CentralIngress"));
 builder.Services.Configure<PricingConfig>(builder.Configuration.GetSection("Pricing"));
 builder.Services.AddHttpClient<ICentralCaddyManager, CentralCaddyManager>();
 builder.Services.AddSingleton<ICentralIngressService, CentralIngressService>();
+
 // Smart Port Allocation Services
 builder.Services.AddSingleton<DirectAccessDnsService>();
 builder.Services.AddSingleton<DirectAccessService>();
@@ -153,6 +162,7 @@ builder.Services.AddHttpClient("SubdomainProxy")
         UseCookies = false
     });
 builder.Services.AddSingleton<INetworkLatencyTracker, NetworkLatencyTracker>();
+
 // Configure HTTP client for latency tracker
 builder.Services.AddHttpClient("latency-tracker")
     .ConfigureHttpClient(client =>
@@ -162,6 +172,7 @@ builder.Services.AddHttpClient("latency-tracker")
 // Add attestation services
 builder.Services.AddAttestationServices(builder.Configuration);
 builder.Services.AddPaymentServices(builder.Configuration);
+
 // Configure JSON serialization for all HttpClient JSON extension methods
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

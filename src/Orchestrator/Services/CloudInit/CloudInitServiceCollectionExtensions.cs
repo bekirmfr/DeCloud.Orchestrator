@@ -38,4 +38,17 @@ public static class CloudInitServiceCollectionExtensions
         services.AddSingleton<ICloudInitRenderer, CloudInitRenderer>();
         return services;
     }
+
+    /// <summary>
+    /// Registers the <see cref="ICloudInitValidator"/> singleton. Once
+    /// registered, <see cref="CloudInitRenderer"/> automatically picks it up
+    /// (the renderer's optional validator dependency switches from null to
+    /// this instance) and validates every rendered output. Until registered,
+    /// the renderer skips validation silently.
+    /// </summary>
+    public static IServiceCollection AddCloudInitValidator(this IServiceCollection services)
+    {
+        services.AddSingleton<ICloudInitValidator, CloudInitValidator>();
+        return services;
+    }
 }
