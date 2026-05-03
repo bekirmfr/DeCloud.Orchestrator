@@ -20,6 +20,7 @@ public static class SystemVmResolvers
     public static IServiceCollection AddSystemVmResolvers(this IServiceCollection services)
     {
         services.AddSingleton<IVariableResolver, WgDescriptionResolver>();
+        services.AddSingleton<IVariableResolver, WgPublicKeyResolver>();
         return services;
     }
 }

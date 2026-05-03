@@ -1,7 +1,8 @@
-using System.Security.Cryptography;
+using DeCloud.Orchestrator.Services;
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Security.Cryptography;
 
 namespace Orchestrator.Services.SystemVm;
 
@@ -46,6 +47,26 @@ public sealed class SystemVmTemplateSeeder
     private const string CloudInitRef = "main";
 
     private const string CloudInitRawBase = $"https://raw.githubusercontent.com/bekirmfr/DeCloud.Builds/{CloudInitRef}/system-vms";
+
+    /// <summary>
+    /// Repo root URL — used for base-template fetches. Distinct from
+    /// <see cref="CloudInitRawBase"/> which points at <c>system-vms/</c>.
+    /// </summary>
+    private const string CloudInitRepoBase =
+        $"https://raw.githubusercontent.com/bekirmfr/DeCloud.Builds/{CloudInitRef}";
+
+    /// <summary>
+    /// Base layer for relay (NOT a mesh participant — relay is the mesh hub).
+    /// </summary>
+    private const string BaseSystemUrl =
+        $"{CloudInitRepoBase}/base-templates/base-system.yaml";
+
+    /// <summary>
+    /// Base layer for mesh-participant system VMs (DHT, BlockStore).
+    /// Includes wg-mesh-watchdog units and wg-quick@wg-mesh override.
+    /// </summary>
+    private const string BaseSystemMeshUrl =
+        $"{CloudInitRepoBase}/base-templates/base-system-mesh.yaml";
 
     // SHA256 values from the binaries/v1.0.0 release notes.
     private const string DhtNodeAmd64Sha256 = "4a7c213bef29b53bc5a3e253e5796628330ffdb743105d468aaab4ad228efdac";
@@ -429,7 +450,25 @@ public sealed class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("relay", ct),
-
+        // Declared statics resolved at render time. Relay does not compose against
+        // base-system-mesh.yaml so it does NOT use BuildMeshSystemVmVariables.
+        // WIREGUARD_PUBLIC_KEY is the only render-time placeholder declared here;
+        // every other __VARNAME__ in the composed cloud-init is substituted by the
+        // legacy node-side path (LibvirtVmManager STEP 5.5 Relay branch) until full
+        // Phase 3 cutover. The renderer is called with strictValidation: false so
+        // those undeclared placeholders don't cause render-time validation failures.
+        Variables = new List<TemplateVariable>
+    {
+        new()
+        {
+            Name = "WIREGUARD_PUBLIC_KEY",
+            Kind = VariableKind.Static,
+            Required = true,
+            Description = "Relay's WireGuard public key (base64). " +
+                          "Resolved by WgPublicKeyResolver from the relay obligation state.",
+            // ResolverKey omitted — defaults to Name, matching WgPublicKeyResolver.ResolverKey
+        },
+    },
         Artifacts = new List<TemplateArtifact>
         {
             // Relay has no compiled binary — WireGuard is a kernel module.
@@ -525,15 +564,58 @@ public sealed class SystemVmTemplateSeeder
     }
 
     /// <summary>
-    /// Fetch a cloud-init YAML template from DeCloud.Builds at the pinned git ref.
-    /// Throws on network failure — seed will log and abort cleanly so the
-    /// orchestrator starts with the previously-stored template in MongoDB.
+    /// Maps a system VM role to its base layer URL.
+    /// Relay composes against base-system.yaml because it is the mesh hub for its
+    /// subnet, not a peer in the inter-system-VM mesh — it runs
+    /// wg-quick@wg-relay-server, not wg-quick@wg-mesh, and does not need the
+    /// mesh watchdog units in base-system-mesh.yaml.
+    /// DHT and BlockStore are mesh participants and compose against base-system-mesh.yaml.
+    /// </summary>
+    private static string BaseUrlFor(string role) => role switch
+    {
+        "relay" => BaseSystemUrl,
+        "dht" => BaseSystemMeshUrl,
+        "blockstore" => BaseSystemMeshUrl,
+        _ => throw new InvalidOperationException(
+            $"SystemVmTemplateSeeder: unknown system VM role '{role}' — " +
+            "no base-layer mapping. Add to BaseUrlFor() if a new role is introduced."),
+    };
+
+    /// <summary>
+    /// Fetch a URL as text, with debug logging. Mirrors GeneralVmTemplateSeeder.FetchAsync.
+    /// </summary>
+    private async Task<string> FetchAsync(string url, CancellationToken ct)
+    {
+        _logger.LogDebug("Fetching {Url}", url);
+        return await _httpClient.GetStringAsync(url, ct);
+    }
+
+    /// <summary>
+    /// Fetch the role layer AND its base layer from DeCloud.Builds, then compose them
+    /// into a single cloud-init document via TemplateComposer.
+    ///
+    /// <para>
+    /// This is the system-VM equivalent of GeneralVmTemplateSeeder.BuildGeneralTemplateAsync's
+    /// fetch+compose step. P0.3a–c stripped base content from the role YAMLs on the assumption
+    /// composition would happen at seed time; this method is what makes that assumption true.
+    /// </para>
     /// </summary>
     private async Task<string> FetchCloudInitAsync(string role, CancellationToken ct)
     {
-        var url = $"{CloudInitRawBase}/{role}/cloud-init.yaml";
-        _logger.LogDebug("Fetching cloudinit for '{Role}' from {Url}", role, url);
-        return await _httpClient.GetStringAsync(url, ct);
+        var baseUrl = BaseUrlFor(role);
+        var roleUrl = $"{CloudInitRawBase}/{role}/cloud-init.yaml";
+
+        var baseLayer = await FetchAsync(baseUrl, ct);
+        var roleLayer = await FetchAsync(roleUrl, ct);
+
+        // Display names for the composer's generated header — useful when debugging
+        // composed output ("which base did this come from?").
+        var baseName = baseUrl.EndsWith("base-system-mesh.yaml")
+            ? "base-system-mesh.yaml"
+            : "base-system.yaml";
+        var roleName = $"{role}/cloud-init.yaml";
+
+        return TemplateComposer.Compose(baseLayer, roleLayer, baseName, roleName);
     }
 
     /// <summary>

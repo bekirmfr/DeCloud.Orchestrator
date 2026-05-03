@@ -116,7 +116,21 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   - **Logging convention:** `${ROLE}-identity` log tag, `/var/log/decloud-${ROLE}-bootstrap.log` path.
   - **Sequencing:** standardization is **not** done in P0.3a/b/c (those remain pure structural strips, preserving current behavior). It lands as a new task **P0.9** (standardize identity-fetch across role YAMLs) executed after Phase 0 strips complete, before Phase 1. This isolates the behavior change from the layout change. New task added to Phase 0 task list.
   - **Design doc impact:** §2 (decisions table) gains a new row for the identity-fetch standard. §5 Phase 0 gains P0.9. §8 (out of scope) loses any implicit assumption that current identity-fetch paths persist. To be applied at next doc-cleanup pass.
-
+- **2026-05-03 / DEPLOY-FIX (post-Audit#2 first-deploy hotfix)** — First live relay deploy on node e9277b2c failed at cloud-final due to missing jq + qemu-guest-agent packages. Root cause: SystemVmTemplateSeeder was never updated to call TemplateComposer.Compose when fetching role layers — P0.3a-c stripped base content from the role YAMLs on the assumption composition would happen at seed time, but the seeder change to actually USE the composer was never tracked as a separate task. Both prior audits (IMPLEMENTATION_AUDIT, PIPELINE_AUDIT) checked that strips were done and that TemplateComposer existed, but neither traced whether the seeder USED the composer.
+  - Coordinated patch (DEPLOY-FIX_relay_first_deploy.md) covering three files across three repos:
+    - Orchestrator/Services/SystemVm/SystemVmTemplateSeeder.cs: added BaseUrlFor() role→base mapping,
+      FetchAsync helper, FetchComposedCloudInitAsync helper; switched all three Build*TemplateAsync
+      methods to compose; bumped all three TemplateRevision constants 1→2.
+    - NodeAgent Libvirt/LibvirtVmManager.cs: dropped F2's ${VARNAME} regex half (high false-positive
+      rate on legitimate bash references); kept __VARNAME__ half (caught real leak this deploy).
+    - DeCloud.Builds system-vms/relay/cloud-init.yaml: deleted documentary
+      "wireguard_public_key": "__WIREGUARD_PUBLIC_KEY__" line from /etc/decloud/relay-metadata.json
+      per "documentary metadata, not source of truth" v6.0 design comment; bumped role version 6.1→6.2.
+  - Operational: tore down broken relay VM, restarted orchestrator (re-seeded composed r2),
+  restarted node-agent (re-pulled r2), redeployed.
+  Lesson for future audits: a P-task being marked done means the file edits described in that
+  task are done — it doesn't mean every consumer of those edits has been updated. Add an
+  explicit "consumers updated" check to the audit checklist.
 ---
 
 ## §3. Pre-flight — must complete before Phase 0
