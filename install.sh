@@ -138,6 +138,7 @@ JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
 INSTALL_CADDY=false
 INGRESS_DOMAIN=""
 ORCHESTRATOR_DOMAIN="decloud.stackfi.tech" # e.g. decloud.stackfi.tech
+ORCHESTRATOR_URL_OVERRIDE=""               # optional: explicit URL override; defaults to https://$ORCHESTRATOR_DOMAIN
 ENABLE_INGRESS="false"
 CADDY_EMAIL=""
 CADDY_STAGING=false
@@ -236,6 +237,10 @@ parse_args() {
                 ;;
             --orchestrator-domain)
                 ORCHESTRATOR_DOMAIN="$2"
+                shift 2
+                ;;
+            --orchestrator-url)
+                ORCHESTRATOR_URL_OVERRIDE="$2"
                 shift 2
                 ;;
             --caddy-email)
@@ -1311,6 +1316,18 @@ ConnectionStrings__MongoDB=$MONGODB_URI
 Jwt__Key=$JWT_SECRET_KEY
 
 # =====================================================
+# ORCHESTRATOR PUBLIC URL
+# Used by the cloud-init renderer (P2.4) to bake the
+# orchestrator's public URL into tenant VM cloud-init.
+# VMs use this URL to call back for attestation /
+# heartbeats / dynamic variable polling.
+# Same value as appsettings.Production.json's OrchestratorClient.BaseUrl
+# — env var wins per ASP.NET Core config layering, kept in sync at
+# install time. Edit this file post-install to override.
+# =====================================================
+OrchestratorClient__BaseUrl=${ORCHESTRATOR_URL_EFFECTIVE}
+
+# =====================================================
 # CLOUDFLARE (For DNS Management)
 # =====================================================
 Cloudflare__ApiToken=$CLOUDFLARE_TOKEN
@@ -1372,6 +1389,10 @@ create_configuration() {
   },
   "AllowedHosts": "*",
   "Urls": "http://0.0.0.0:${API_PORT}",
+
+  "OrchestratorClient": {
+    "BaseUrl": "${ORCHESTRATOR_URL_EFFECTIVE}"
+  },
   
   "ConnectionStrings": {
     "MongoDB": ""
@@ -1806,6 +1827,13 @@ main() {
     echo ""
     
     parse_args "$@"
+
+    # Resolve the effective orchestrator URL after flag parsing.
+    # Used by both create_env_file (env-file write) and
+    # create_configuration (heredoc that generates appsettings.Production.json).
+    # Must run AFTER parse_args so --orchestrator-domain / --orchestrator-url
+    # flags take effect.
+    ORCHESTRATOR_URL_EFFECTIVE="${ORCHESTRATOR_URL_OVERRIDE:-https://${ORCHESTRATOR_DOMAIN}}"
     
     # Initialize logging
     init_logging
