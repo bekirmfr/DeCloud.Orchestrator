@@ -73,14 +73,42 @@ public class BlockStoreController : ControllerBase
             return NotFound("Node not found");
         }
 
+        // Look up the BlockStore obligation. The orchestrator pre-assigns a VmId at
+        // obligation creation (NodeService.ReconcileNodeAsync) but the node-agent
+        // generates the actual deployed VmId. Mirrors the adoption pattern in
+        // DhtController.DhtJoin and RelayController.RegisterCallback.
+        //
+        // First attempt: strict VmId match (fast path for already-stamped obligations,
+        // e.g., heartbeat retries after a successful join).
         var obligation = node.SystemVmObligations
             .FirstOrDefault(o => o.Role == SystemVmRole.BlockStore && o.VmId == request.VmId);
+
+        // Self-heal: obligation has a stale VmId from pre-assignment or from a
+        // replaced VM. The orchestrator learns the new VmId here via the join
+        // callback. HMAC validation in the next step confirms the VM holds the
+        // correct AuthToken — without that match, this self-heal does nothing
+        // dangerous (the token check rejects unauthorized adoption attempts).
+        if (obligation == null)
+        {
+            obligation = node.SystemVmObligations
+                .FirstOrDefault(o => o.Role == SystemVmRole.BlockStore
+                                  && !string.IsNullOrEmpty(o.AuthToken));
+
+            if (obligation != null)
+            {
+                _logger.LogInformation(
+                    "BlockStore join self-heal: replacing stale VmId {OldVmId} with {NewVmId} on node {NodeId}",
+                    obligation.VmId, request.VmId, request.NodeId);
+                obligation.VmId = request.VmId;
+                obligation.Status = SystemVmStatus.Deploying;
+            }
+        }
 
         if (obligation == null)
         {
             _logger.LogWarning(
-                "Block store join rejected: no BlockStore obligation with VmId {VmId} on node {NodeId}",
-                request.VmId, request.NodeId);
+                "BlockStore join rejected: no BlockStore obligation found on node {NodeId}",
+                request.NodeId);
             return NotFound("Block store VM not found on this node");
         }
 
@@ -117,6 +145,12 @@ public class BlockStoreController : ControllerBase
             ApiPort = BlockStoreVmSpec.ApiPort,
             CapacityBytes = request.CapacityBytes,
         };
+
+        // Stamp obligation Active — mirrors DhtController.DhtJoin / RelayController.RegisterCallback.
+        // Without this, the scheduler's hard-filter rejects the node for tenant VM placement
+        // because it sees an unmet BlockStore obligation.
+        obligation.Status = SystemVmStatus.Active;
+        obligation.ActiveAt ??= DateTime.UtcNow;
 
         node.BlockStoreInfo.BlockStoreVmId = request.VmId; // always overwrite
         node.BlockStoreInfo.PeerId = request.PeerId;
