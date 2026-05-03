@@ -15,6 +15,7 @@ using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
 using Orchestrator.Services.SystemVm;
+using Orchestrator.Services.Tenant;
 using Orchestrator.Services.VmScheduling;
 using Serilog;
 using System.Text;
@@ -130,6 +131,13 @@ builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
 builder.Services.AddSingleton<SystemVmTemplateSeeder>();
 builder.Services.AddHttpClient<SystemVmTemplateSeeder>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+
+
+// Tenant VM template seeder — composes base-tenant.yaml + tenant-vms/general/
+// cloud-init.yaml from DeCloud.Builds, declares Variables, upserts platform-general.
+builder.Services.AddSingleton<GeneralVmTemplateSeeder>();      // ← new
+builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()      // ← new
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 // Cloud-init rendering pipeline
