@@ -1,4 +1,5 @@
 using DeCloud.Orchestrator.Services.CloudInit;
+using DeCloud.Orchestrator.Services.CloudInit.Resolvers.PlatformCommon;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
@@ -125,7 +126,7 @@ builder.Services.AddSingleton<INodeReputationService, NodeReputationService>();
 builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
 builder.Services.AddVariableResolverRegistry();
-//builder.Services.AddPlatformCommonResolvers();
+builder.Services.AddPlatformCommonResolvers();
 builder.Services.AddSingleton<SystemVmTemplateSeeder>();
 builder.Services.AddHttpClient<SystemVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
