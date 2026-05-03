@@ -127,6 +127,7 @@ builder.Services.AddSingleton<ITemplateService, TemplateService>();
 builder.Services.AddSingleton<TemplateSeederService>();
 builder.Services.AddVariableResolverRegistry();
 builder.Services.AddPlatformCommonResolvers();
+builder.Services.AddCloudInitRenderer();
 builder.Services.AddSingleton<SystemVmTemplateSeeder>();
 builder.Services.AddHttpClient<SystemVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));

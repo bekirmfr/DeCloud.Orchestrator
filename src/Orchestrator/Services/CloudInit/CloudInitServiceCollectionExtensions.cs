@@ -25,4 +25,17 @@ public static class CloudInitServiceCollectionExtensions
         services.AddSingleton<IVariableResolverRegistry, VariableResolverRegistry>();
         return services;
     }
+
+    /// <summary>
+    /// Registers the <see cref="ICloudInitRenderer"/> singleton.
+    /// Depends on <see cref="IVariableResolverRegistry"/> (call
+    /// <see cref="AddVariableResolverRegistry"/> first or alongside) and
+    /// optionally <see cref="ICloudInitValidator"/> (P1.8 — when registered,
+    /// the renderer validates; when not, it skips).
+    /// </summary>
+    public static IServiceCollection AddCloudInitRenderer(this IServiceCollection services)
+    {
+        services.AddSingleton<ICloudInitRenderer, CloudInitRenderer>();
+        return services;
+    }
 }
