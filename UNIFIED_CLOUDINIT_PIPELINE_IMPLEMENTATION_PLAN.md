@@ -31,29 +31,11 @@
 
 ## §1. Current state
 
-**Active phase:** Phase 1 → COMPLETE. Phase 2 begins next.
+**Active phase:** Phase 2 (4 of 6 tasks remaining).
 
-**Last session:** 2026-05-03 — P1.11 complete. All five obligation-creation sites stamp `VmId` and `VmName` via the new `SystemVmRoleMap.ToVmName(role, nodeId)` helper. Scope discovery during drafting: plan listed 2 methods, code has 5 sites across 2 files. Forward-compatible with P3.1.5 — values written but not consumed by node-agent yet (zero behavioral change in Phase 1).
+**Last session:** 2026-05-03 — P2.2 drafted as patch. The default-block at `VmService.CreateVmAsync`'s entry resolves `platform-general` via slug→`_id` lookup (since `request.TemplateId` flows into a strict-`_id` `GetTemplateByIdAsync` downstream) and rebinds the local `request` parameter via the `with` expression. Triggers only when all four conditions hold: `!isSystemVm`, `request.VmType == VmType.General`, `string.IsNullOrEmpty(request.TemplateId)`, `string.IsNullOrEmpty(request.CustomCloudInit)`. Marketplace, custom-cloud-init, Inference, and system-VM flows all skip the default. **First P2.x with live behavior change** — General tenant VMs now have `TemplateId/Name/Version` and `vm.Spec.UserData` populated; ingress and GPU-mode propagation kick in. Final substitution still runs node-side via the legacy path; orchestrator-side `CloudInitRenderer.RenderAsync` cutover is **P2.4**, not P2.2 (the design doc and implementation plan number these tasks differently — implementation plan is canonical here).
 
-**Phase 1 status:** All eleven P1.x tasks complete. Orchestrator-side rendering pipeline is functionally and defensively complete:
-
-```
-TemplateComposer → CloudInitRenderer
-                    ├── Pass 1: __VARNAME__ via IVariableResolverRegistry → 15 platform-common resolvers
-                    ├── Pass 2: ${ARTIFACT_URL/SHA256:name} via template.Artifacts
-                    └── Pass 3: CloudInitValidator (3 failure modes, comprehensive errors)
-
-Model:           TemplateVariable, Variables list on VmTemplate + SystemVmTemplate
-                 Node.SshCaPublicKey + registration plumbing
-                 SystemVmObligation.VmName + assignment at creation
-                 SystemVmRoleMap.ToVmName helper
-
-Helpers:         CloudInitFormatting (lift from LibvirtVmManager with fix)
-```
-
-**Live behavior change so far:** zero. Phase 1 is purely additive — new pipeline exists, sits idle, doesn't touch deploys. Phase 2 begins the cutover.
-
-**Next task:** P2.1 — `GeneralVmTemplateSeeder`. Composes `base-tenant.yaml + tenant-vms/general/cloud-init.yaml` via `TemplateComposer`, declares the tenant-VM `Variables` list, upserts the `platform-general` template into MongoDB. After P2.1, the `platform-general` template carries declared variables and is ready for the renderer to consume.
+**Next task:** P2.3 — tenant-flow resolvers at `src/Orchestrator/Services/CloudInit/Resolvers/Tenant/*.cs` for variables not covered by the 15 platform-common resolvers. **Audit:** the `platform-general` template's 9 declared variables all have platform-common coverage (`VmIdResolver`, `VmNameResolver`, `HostnameResolver`, `OrchestratorUrlResolver`, `CaPublicKeyResolver`, `SshAuthorizedKeysBlockResolver`, `PasswordConfigBlockResolver`, `AdminPasswordResolver`, `SshPasswordAuthResolver`). So **P2.3 may be a no-op for `platform-general`** — likely needed only when the marketplace smoke test (P2.6) surfaces a tenant-specific variable a real marketplace template requires. May be sensible to defer P2.3 until P2.4's cutover surfaces concrete needs. Recommend evaluating P2.3 scope after applying P2.2.
 
 **Pre-Phase-1 user action items (still open):**
 - **Verify BlockStore binary builds:** `cd system-vms/blockstore/src && go mod tidy && go build ./...`. If anything fails, the binary edits need a touch-up before commit.
@@ -334,16 +316,18 @@ All new code; no behavioural change to live VMs. Legacy paths remain. This is th
 
 Tenant VMs (general + marketplace) move to the new pipeline. System VMs stay on legacy paths.
 
-- [ ] **P2.1** — `GeneralVmTemplateSeeder`.
+- [x] **P2.1** — `GeneralVmTemplateSeeder`.
   - File: `src/Orchestrator/Services/Tenant/GeneralVmTemplateSeeder.cs`.
   - Composes `base-tenant.yaml + tenant-vms/general/cloud-init.yaml` via `TemplateComposer`.
   - Declares `Variables` list for the tenant set: VM_ID, HOSTNAME, NODE_ID, CA_PUBLIC_KEY, ORCHESTRATOR_URL, SSH_AUTHORIZED_KEYS_BLOCK, PASSWORD_CONFIG_BLOCK, ADMIN_PASSWORD, ARTIFACT_URL:* / ARTIFACT_SHA256:* for `decloud-agent`/`general-api-py`/`general-index-html`, TIMESTAMP, VARIABLE_SCOPES_BLOCK.
   - Revision-aware upsert (same pattern as `SystemVmTemplateSeeder`).
   - Acceptance: `platform-general` visible in MongoDB after orchestrator startup. `Variables` populated.
+  - **Done 2026-05-03.** Three patches: `GeneralVmTemplateSeeder.cs` (new file), `P2.1-A_template_seeder_service_wire.md` (constructor + SeedAsync call), `P2.1-B_program_cs_di_registration.md` (typed `HttpClient` registration). Plus a manual-procedure document `P2.1-C_compute_artifact_constants.md` covering the `compute-artifact-constants.sh` step in `DeCloud.Builds/tenant-vms/`. **Variables actually declared = 9 (not 12 as the plan listed).** Audit of the placeholders in the actual composed cloud-init found: VM_ID, VM_NAME, HOSTNAME, ORCHESTRATOR_URL, CA_PUBLIC_KEY, SSH_AUTHORIZED_KEYS_BLOCK, PASSWORD_CONFIG_BLOCK, ADMIN_PASSWORD, SSH_PASSWORD_AUTH. The plan-listed extras (NODE_ID, TIMESTAMP, VARIABLE_SCOPES_BLOCK) aren't currently used in `base-tenant.yaml` or `tenant-vms/general/cloud-init.yaml`. ARTIFACT_URL/SHA256 references aren't declared in `Variables` — they're substituted via the renderer's Pass 2 from `template.Artifacts` (matching the design's two-pass split, P1.6 decision log). **Composition done at startup, not pre-composed offline.** The seeder fetches both layers from DeCloud.Builds and runs `TemplateComposer.Compose` at startup — exercises the composer in production and avoids storing a duplicated composed file in the repo. **Failure modes are non-fatal at startup.** Network failure, compose-throw, SHA256 mismatch, and validator-detected variable drift all surface clearly without preventing orchestrator boot. **Live behavior change so far: zero.** Tenant deploys still go through legacy `LibvirtVmManager.PrepareCloudInitVariables`. The new template sits in MongoDB with declared `Variables`, ready for P2.2 (`VmService.AssignVmToNodeAsync` cutover) to call `CloudInitRenderer.RenderAsync` against it.
 
-- [ ] **P2.2** — `VmService.CreateVmAsync` assigns `TemplateId = platform-general` for general VMs.
+- [x] **P2.2** — `VmService.CreateVmAsync` assigns `TemplateId = platform-general` for general VMs.
   - Per design §5 Phase 2.2.
   - Acceptance: a VM created with no `TemplateId` and `VmType == General` lands in MongoDB with `TemplateId = platform-general`.
+  - **Done 2026-05-03 (drafted as patch).** Patch at `patches/P2.2_template_id_default.md`. **Slug-vs-id discovery during drafting:** `request.TemplateId` flows directly into `_templateService.GetTemplateByIdAsync(...)` which is a strict Mongo `_id` lookup. Setting `request.TemplateId = "platform-general"` (the slug) would make the downstream `else if (!string.IsNullOrEmpty(request.TemplateId))` branch's lookup fail. **Resolution:** the default block resolves the slug via `GetTemplateBySlugAsync("platform-general")` first, then sets `request.TemplateId = general.Id` (the actual `_id`). **Record-mutation idiom:** `CreateVmRequest` is a positional record with init-only props; `request = request with { TemplateId = general.Id };` rebinds the local parameter. **Seeder-failure fallback:** if `platform-general` isn't in MongoDB (P2.1 seeder failed at startup or didn't run yet), log a warning and fall through to the legacy node-side cloud-init path rather than throwing — Phase-2 conservatism, removed in Phase 4 cleanup. **Trigger conditions (all four):** `!isSystemVm` (defensive), `request.VmType == VmType.General`, `string.IsNullOrEmpty(request.TemplateId)`, `string.IsNullOrEmpty(request.CustomCloudInit)`. Marketplace deploys (always set `TemplateId`), custom-cloud-init deploys, Inference VMs, and system VMs are all unaffected. **First P2.x with live behavior change** — General tenant VMs that previously had `TemplateId = null` now have it set, and `vm.Spec.UserData` is populated from `platform-general.CloudInitTemplate` (with `__VARNAME__` placeholders intact); legacy node-side substitution still produces the final cloud-init until P2.4 cuts over to `CloudInitRenderer.RenderAsync`. Ingress, GPU mode, and other template-flow side effects (handled by the existing `else if` branch) now apply to previously-defaulted General VMs.
 
 - [ ] **P2.3** — Tenant resolvers.
   - Files: `src/Orchestrator/Services/CloudInit/Resolvers/Tenant/*.cs`.

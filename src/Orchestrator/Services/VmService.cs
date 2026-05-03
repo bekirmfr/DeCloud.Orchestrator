@@ -122,6 +122,46 @@ public class VmService : IVmService
             };
         request.Spec.ReplicationFactor = replicationFactor;
 
+        // ════════════════════════════════════════════════════════════════════════
+        // P2.2 — Default TemplateId to platform-general for tenant General VMs
+        // ════════════════════════════════════════════════════════════════════════
+        // Per UNIFIED_CLOUDINIT_PIPELINE.md §5 Phase 2.2: every General tenant VM
+        // goes through the platform-general template (seeded by P2.1). The cloud-
+        // init processing block below detects request.TemplateId and routes to the
+        // "Phase 1: Template-based" branch — this default fills in TemplateId for
+        // requests that arrived without one.
+        //
+        // Custom cloud-init still takes priority — users explicitly bringing their
+        // own cloud-init bypass the template. System VMs are unaffected (handled
+        // by the obligation pipeline, not by VmService.CreateVmAsync).
+        //
+        // On seeder failure (platform-general not in MongoDB), log a warning and
+        // fall through to the legacy "no template" path on the node-agent. This is
+        // deliberate conservatism for Phase 2 — a transient seed failure shouldn't
+        // break tenant deploys. Phase 4 cleanup removes the legacy path entirely.
+        if (!isSystemVm
+            && request.VmType == VmType.General
+            && string.IsNullOrEmpty(request.TemplateId)
+            && string.IsNullOrEmpty(request.CustomCloudInit))
+        {
+            var general = await _templateService.GetTemplateBySlugAsync("platform-general");
+            if (general is not null)
+            {
+                request = request with { TemplateId = general.Id };
+                _logger.LogDebug(
+                    "VM {Name}: defaulted to platform-general template (id={TemplateId})",
+                    canonicalName, general.Id);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "VM {Name}: no TemplateId or CustomCloudInit provided and platform-general " +
+                    "not found in MongoDB (seeder may have failed or not run yet) — falling " +
+                    "through to legacy node-side cloud-init path.",
+                    canonicalName);
+            }
+        }
+
         var vm = new VirtualMachine
         {
             Id = Guid.NewGuid().ToString(),
