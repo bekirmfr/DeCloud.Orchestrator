@@ -37,25 +37,32 @@ public class TemplateSeederService
     {
         _logger.LogInformation("Starting template seeding (force: {Force})", force);
 
+        // Each seeder runs in its own failure domain. One seeder's failure
+        // does not block another — they manage logically independent data.
+        // Outer catch in Program.cs handles the (rare) case where startup
+        // itself should be considered failed.
+
+        await TrySeed("categories", () => SeedCategoriesAsync(force));
+        await TrySeed("marketplace", () => SeedTemplatesAsync(force));
+        await TrySeed("system VM", () => _systemVmTemplateSeeder.SeedAsync());
+        await TrySeed("tenant general", () => _generalVmTemplateSeeder.SeedAsync());
+
+        _logger.LogInformation("Template seeding completed");
+    }
+
+    private async Task TrySeed(string label, Func<Task> seeder)
+    {
         try
         {
-            // Seed categories first
-            await SeedCategoriesAsync(force);
-
-            // Seed public templates
-            await SeedTemplatesAsync(force);
-
-            // Seed system VM templates (not public, used for internal purposes)
-            await _systemVmTemplateSeeder.SeedAsync();
-
-            await _generalVmTemplateSeeder.SeedAsync();
-
-            _logger.LogInformation("Template seeding completed successfully");
+            await seeder();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to seed templates");
-            throw;
+            _logger.LogError(ex,
+                "Seeder failed: {Label}. Other seeders will continue. " +
+                "Templates from this seeder will not be available until " +
+                "the underlying issue is fixed and the orchestrator is restarted.",
+                label);
         }
     }
 

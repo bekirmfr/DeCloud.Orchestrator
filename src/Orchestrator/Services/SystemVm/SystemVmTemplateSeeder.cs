@@ -531,7 +531,7 @@ public sealed class SystemVmTemplateSeeder
     /// </summary>
     private async Task<string> FetchCloudInitAsync(string role, CancellationToken ct)
     {
-        var url = $"{CloudInitRawBase}/{role}/cloudinit.yaml";
+        var url = $"{CloudInitRawBase}/{role}/cloud-init.yaml";
         _logger.LogDebug("Fetching cloudinit for '{Role}' from {Url}", role, url);
         return await _httpClient.GetStringAsync(url, ct);
     }
