@@ -31,18 +31,20 @@
 
 ## §1. Current state
 
-**Active phase:** Phase 0 (active work complete) → Phase 1 begins next.
+**Active phase:** Phase 1.
 
-**Last session:** 2026-05-03 — P0.9 complete. All three system-VM role YAMLs now use the standardized identity-fetch pattern (10-min bounded retry, hard-fail, no fallbacks). BlockStore binary updated to file-reader — `loadOrCreateIdentity` removed, `loadIdentity` reads raw 32-byte seed and expands via `stded25519.NewKeyFromSeed`. Format-mismatch issue (libp2p protobuf vs raw seed) discovered and resolved during the binary edit; documented in §2 for future reference.
+**Last session:** 2026-05-03 — P1.1 through P1.5 complete. Resolver registry foundation in place (interface + context + singleton, with duplicate-detection at construction, DI extension method). `CloudInitFormatting` helper lifted from `LibvirtVmManager` with one deliberate fix to `IndentForYaml` for multi-line content.
 
-**Phase 0 status:** All active P0.x tasks complete (P0.1 through P0.9). Only P0.10 remains, marked deferred-post-Phase-4 (recover or reconstruct decloud-agent source). Phase 0 active work closes here.
+**Next task:** P1.6 — Platform-common resolvers. ~12 small classes implementing `IVariableResolver`, each pulling its value from `ResolutionContext`. The first batch where the abstractions get exercised. After this, the renderer (P1.7) is the consumer that ties everything together.
 
-**Next task:** P1.1 — implement `TemplateComposer` service in the orchestrator (`src/Orchestrator/Services/TemplateComposer.cs`). This is the first piece of the orchestrator-side migration; merges base layer + role layer into the composed cloud-init that gets seeded into MongoDB.
-
-**Pre-Phase-1 user action items:**
+**Pre-Phase-1 user action items (still open):**
 - **Verify BlockStore binary builds:** `cd system-vms/blockstore/src && go mod tidy && go build ./...`. If anything fails, the binary edits need a touch-up before commit.
 - **Commit P0.9 atomically:** all three YAML changes + binary change in one commit (the BlockStore binary change must land with its cloud-init counterpart).
 - **Cut a `binaries/v1.1.0` release** (or similar) to publish the new BlockStore binary. Update the recorded SHA256 in §1 below for Phase 3 seeder consumption.
+
+**P1.x action items (this session):**
+- Apply the `patches/P1.2_template_variables_field.md` to `VmTemplate.cs` and `SystemVmTemplate.cs`.
+- Build the orchestrator solution; confirm `TemplateComposer.cs` and `TemplateVariable.cs` compile cleanly.
 
 **Artifact declarations recorded for Phase 2 + Phase 3 seeders** (canonical URLs and SHA256, all on release `binaries/v1.0.0` of `bekirmfr/DeCloud.Builds`):
 
@@ -100,6 +102,10 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   - **Relay** (cloud-init.yaml v6.0 → v6.1): Removed 4 label-baked write_files (`wg-relay-server.conf` with `__WIREGUARD_PRIVATE_KEY__` placeholder, `private.key`, `public.key`, `relay-subnet`). Removed sed-rewrite-from-obligation-state runcmd. Added new identity-fetch + heredoc-render runcmd that writes `/etc/wireguard/private.key`, `/etc/wireguard/public.key`, `/etc/decloud/relay-subnet`, then renders `wg-relay-server.conf` from those values. `relay-metadata.json` retains `__WIREGUARD_PUBLIC_KEY__` placeholder (option 1 — documentary metadata, render-time substitution) per user direction.
 - **2026-05-03 / P0.9 (file-format discovery)** — While editing BlockStore's `main.go`, found that the existing on-disk identity-cache format (libp2p protobuf via `crypto.MarshalPrivateKey`) did **not** match the format cloud-init writes (raw 32-byte seed from `base64 -d` of `ed25519PrivateKeyBase64`). The existing fallback path (cache-to-disk after HTTP fetch) was internally consistent but incompatible with cloud-init-written files. Resolution: binary now reads raw seed, expands via `stded25519.NewKeyFromSeed`, passes to `crypto.UnmarshalEd25519PrivateKey`. Cloud-init writes 32 bytes; binary reads 32 bytes; no protobuf wrapper. **Note for DHT**: the existing DHT cloud-init has been writing the same raw-seed format with no apparent issues, suggesting DHT's binary already uses the read-raw-seed pattern (DHT source not in our repo's scope; no change needed for DHT in P0.9).
 - **2026-05-03 / P0.9 (Phase 1 implication)** — `RelayWireGuardPrivateKeyResolver` (planned for Phase 1) is no longer needed for cloud-init substitution since `__WIREGUARD_PRIVATE_KEY__` no longer appears in any cloud-init template. The relay's WG private key now lives only in `obligation.StateJson.WireGuardPrivateKey` and is served via `/api/obligations/relay/state`. The Phase 1 resolver inventory shrinks accordingly.
+- **2026-05-03 / P1.x (out-of-order implementation)** — P1.3 (`TemplateComposer`) implemented before P1.1 (`TemplateVariable` model) and P1.2 (add `Variables` to template models). The composer operates on raw YAML strings and has no dependency on the model layer; doing it first while context was fresh from Phase 0 was efficient. P1.1 and P1.2 followed in the same session as small bookkeeping work. No future tasks affected; resolver registry (P1.4) and renderer (P1.7) consume both `TemplateComposer` output and `TemplateVariable` declarations, so both prerequisites are now in place before P1.4 starts.
+- **2026-05-03 / P1.3 (path)** — `TemplateComposer.cs` placed at `src/Orchestrator/Services/TemplateComposer.cs` rather than `src/Orchestrator/Services/CloudInit/TemplateComposer.cs` (the path the plan suggested). Reasoning: the `CloudInit/` folder is intended for the resolver/renderer cluster (P1.4–1.8 will create ~12 files there); `TemplateComposer` is a single self-contained pure function that pre-dates the resolver pipeline conceptually. Keeping it at the `Services/` root keeps the `CloudInit/` folder cohesive (resolvers, renderer, validator) without a one-off composer file in the middle. **Revisit at P1.7** — if the composer ends up tightly coupled to the renderer in practice, move it under `CloudInit/` then.
+- **2026-05-03 / P1.3 (Python reference implementation)** — Maintained `template_composer_reference.py` alongside the C# implementation. Used during this session to validate the algorithm against actual P0 files (DHT, BlockStore, relay compositions all matched expected structural counts). Kept as a test asset at `test/Orchestrator.Tests/Services/template_composer_reference.py`. If the C# implementation is ever modified, run the Python equivalent as a cross-check — they should produce structurally-identical outputs (modulo cosmetic whitespace/header differences).
+- **2026-05-03 / P1.5 (deliberate bug fix during lift)** — `IndentForYaml` was lifted from `LibvirtVmManager.CreateCloudInitIsoAsync` step 5 with a corrected indent semantic. The original code prefixed **every** line with the indent (including line 1). For a placeholder at column 6 with multi-line content, this produces post-substitution output where line 1 sits at column 12 and lines 2+ sit at column 6 — asymmetric. YAML's literal block scalar (`|`) auto-detects indent from the first content line; with line 1 at column 12 and line 2 at column 6, line 2 sits below the detected baseline and YAML treats it as a sibling key, terminating the block scalar early. The bug was masked in production because SSH CA public keys are typically single-line (auto-detection of 12 vs 6 produces equivalent stripped output). The new helper indents only lines 2+, leaving line 1 bare so the placeholder column provides its indent. Same single-line behavior; correct multi-line behavior. Plan §10 risk register has a "lift carefully" caveat against reimplementation drift; this fix is in spirit of that caveat — a tested algorithm that happened to have a latent bug is fixed at lift time, with the change documented and the new code carrying a comment pointing to this entry. **Verification at use site:** when `CaPublicKeyResolver` is wired up in P1.6, ensure the placeholder remains at 6-space indent in `base-tenant.yaml` (currently `      __CA_PUBLIC_KEY__`); changing the template indent without updating the resolver's `IndentForYaml` argument would re-introduce a similar bug.
 - **2026-05-03 / P0.3a (post-strip discussion)** — **Identity-fetch standardization across all three system VM roles.** Current state has three different patterns: DHT (cloud-init runcmd fetches → file → binary reads, hard-fail at 2 min), BlockStore (binary self-fetches at startup via `loadOrCreateIdentity()`, self-creates if missing), Relay (cloud-init fetches → sed-rewrites baked-in `wg-relay-server.conf`, falls back to label-baked WG key). Three code paths, three failure modes, three debug surfaces. **New standard:** cloud-init runcmd fetches obligation state at first boot with bounded retry (10 minutes, 60 × 10s), writes role-specific identity file, hard-fails the boot on timeout. Binary reads file at startup; no HTTP client in binary. No fallbacks. No self-creation. No label-baked WG key. The shared retry-loop pattern is duplicated across the three role YAMLs (acceptable — the *destination file* differs per role; the loop itself is ~15 lines). **Implications:**
   - **DHT:** extend retry ceiling 2 min → 10 min. Smallest change.
   - **BlockStore:** binary loses `loadOrCreateIdentity()` self-create path; becomes a file-reader. Real binary change — needs coordination with binary owner (solo dev). Cloud-init gains an identity-fetch runcmd block.
@@ -222,35 +228,40 @@ All new code; no behavioural change to live VMs. Legacy paths remain. This is th
 
 ### 5.1 Models and core types
 
-- [ ] **P1.1** — `TemplateVariable` model in Shared (design §2.2).
+- [x] **P1.1** — `TemplateVariable` model in Shared (design §2.2).
   - File: `src/Shared/Models/TemplateVariable.cs`.
   - Acceptance: compiles, JSON round-trip preserves all fields, BSON serialization works (test against MongoDB doc).
+  - **Done 2026-05-03.** Sealed class with `init`-only properties; `Name` and `Kind` required, `Scope` defaults to `Restart` (conservative), `DefaultValue`/`Required` for statics, `ResolverKey` optional override. Two enums: `VariableKind { Static, Dynamic }` and `WatcherScope { Noop, Reload, Restart }`, both decorated with `[JsonStringEnumConverter]` so JSON round-trip uses string names (not ints) — keeps API output and MongoDB documents human-readable.
 
-- [ ] **P1.2** — Add `Variables: List<TemplateVariable>` to both template models.
+- [x] **P1.2** — Add `Variables: List<TemplateVariable>` to both template models.
   - Files: `src/Orchestrator/Models/VmTemplate.cs`, `src/Shared/Models/SystemVmTemplate.cs`.
   - Default empty list. Existing MongoDB documents must deserialize without error.
   - Acceptance: load existing template documents from MongoDB; verify no exception. Persist a template with `Variables` populated; reload; fields present.
+  - **Done 2026-05-03 (drafted as patch).** Patch documented at `patches/P1.2_template_variables_field.md` — single field added to each of the two model classes, with usings, default value, and XML docs. User applies the patch directly to the source files (one-line additions in two existing classes). Migration safety: `= new()` default ensures pre-migration documents deserialize without error.
 
 ### 5.2 TemplateComposer
 
-- [ ] **P1.3** — Implement `TemplateComposer` (design §5 Phase 1.2).
+- [x] **P1.3** — Implement `TemplateComposer` (design §5 Phase 1.2).
   - File: `src/Orchestrator/Services/CloudInit/TemplateComposer.cs`.
   - String-based section detection (no YAML parser dependency).
   - Merge rules: `packages` union/dedup; `write_files`/`bootcmd`/`runcmd` base-first then role; scalar keys role-wins; `#cloud-config` header emitted once.
   - Unit tests: base-only, role-only, both packages, both runcmd, role-hostname-wins, both-have-hostname, neither-has-section.
   - Acceptance: all unit tests pass. `Compose(base-system.yaml, dht/cloud-init.yaml)` produces structurally-valid cloud-init (manual inspection acceptable for this milestone; full integration test in Phase 3).
+  - **Done 2026-05-03** (out-of-order — P1.3 implemented before P1.1 and P1.2 because TemplateComposer has no dependency on the model layer; works on raw YAML strings). Implementation in `src/Orchestrator/Services/TemplateComposer.cs` (C#) plus a Python reference implementation in `test/Orchestrator.Tests/Services/template_composer_reference.py` for cross-validation. Validated against all three system-VM compositions: DHT/BlockStore (5 base + 6 role write_files = 11; 2 base + 13 role runcmd = 15; 8 packages), Relay (0 base + 9 role write_files = 9; 2 base + 38 role runcmd = 40; 9 packages with dedup of base 8 + role 1). All compose to valid YAML. Two characteristics worth knowing: (1) inter-section comments travel with the preceding section (string-based parser limitation, acceptable); (2) packages list-union assumes scalar items only — compound items (e.g., `- {name: foo, version: bar}`) would fall through to `EmitListConcat` semantics. Path note: implemented under `src/Orchestrator/Services/TemplateComposer.cs` rather than `src/Orchestrator/Services/CloudInit/TemplateComposer.cs` per plan — folder structure decision deferred to P1.4 when we know how many CloudInit-related classes will live alongside.
 
 ### 5.3 Resolver registry and renderer
 
-- [ ] **P1.4** — `IVariableResolver`, `IVariableResolverRegistry`, `ResolutionContext`, `VariableResolverRegistry` (design §3.1).
+- [x] **P1.4** — `IVariableResolver`, `IVariableResolverRegistry`, `ResolutionContext`, `VariableResolverRegistry` (design §3.1).
   - Files in `src/Orchestrator/Services/CloudInit/`.
   - Registry is DI singleton. Lookup by `(ResolverKey, Kind)`.
   - Acceptance: register a synthetic resolver, look it up, dispatch a `ResolveAsync` call. Missing resolver returns null (not throws — caller decides).
+  - **Done 2026-05-03.** Four files in `src/Orchestrator/Services/CloudInit/`: `IVariableResolver.cs` (interface + `ResolutionContext` record co-located — they're tightly coupled), `IVariableResolverRegistry.cs` (interface), `VariableResolverRegistry.cs` (singleton impl), `CloudInitServiceCollectionExtensions.cs` (DI helper). Registry is built from `IEnumerable<IVariableResolver>` via constructor; duplicates detected at construction with a clear `InvalidOperationException` (better than the cryptic ArgumentException that ToDictionary throws). Lookup returns `IVariableResolver?` — null on miss; the caller (renderer) decides between user input, default, or throw. Diagnostic accessor `RegisteredKeys` exposes registered (Key, Kind) pairs for startup logging. **Program.cs wire-up patch** at `patches/P1.4_program_cs_registration.md` — a single `builder.Services.AddVariableResolverRegistry()` call. User applies the patch directly.
 
-- [ ] **P1.5** — Implement `CloudInitFormatting` helper.
+- [x] **P1.5** — Implement `CloudInitFormatting` helper.
   - File: `src/Orchestrator/Services/CloudInit/CloudInitFormatting.cs`.
   - Methods: `BuildSshKeysBlock`, `BuildPasswordBlock`, `IndentForYaml`. Lift logic from `LibvirtVmManager` and current `VmService` — do not reimplement.
   - Acceptance: per-method unit tests covering empty inputs, populated inputs, multi-line inputs.
+  - **Done 2026-05-03.** Three pure-function methods, no I/O, no DI. `BuildSshKeysBlock` has two overloads — `IEnumerable<string>` (canonical) and `string?` (newline-separated, matches existing call sites). Empty inputs return YAML comment strings (`# No SSH keys provided`, `# No password authentication`) so the placeholder substitution always yields valid YAML. **Behavior change vs. lifted source:** `IndentForYaml` indents only lines 2+ (line 1 is bare since the placeholder column provides line 1's indent). The original `LibvirtVmManager` code prefixed every line with the indent, producing asymmetric output (line 1 at column 12, line 2+ at column 6) — masked for single-line CA keys by YAML auto-detection but breaks block scalars for multi-line inputs. Documented as a deliberate fix in §2 below. Validated against six test cases (single/multi/empty SSH keys, password present/absent, single/multi-line CA key).
 
 - [ ] **P1.6** — Platform-common resolvers (design §4.2 layout).
   - Files: `src/Orchestrator/Services/CloudInit/Resolvers/PlatformCommon/*.cs`. One per resolver:
