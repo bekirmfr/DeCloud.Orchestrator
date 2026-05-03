@@ -1,5 +1,5 @@
 using DeCloud.Orchestrator.Services.CloudInit;
-using DeCloud.Orchestrator.Services.CloudInit.Resolvers.PlatformCommon;
+using DeCloud.Orchestrator.Services.CloudInit.Resolvers;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
@@ -143,6 +143,7 @@ builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()      // ← new
 // Cloud-init rendering pipeline
 builder.Services.AddVariableResolverRegistry();
 builder.Services.AddPlatformCommonResolvers();
+builder.Services.AddSystemVmResolvers();
 builder.Services.AddCloudInitRenderer();
 builder.Services.AddCloudInitValidator();
 

@@ -307,6 +307,10 @@ public class VmSchedulerService : BackgroundService
             sshPublicKey = string.Join("\n", owner.SshKeys.Select(k => k.PublicKey));
         }
 
+        // See VmService.TryScheduleVmAsync for rationale.
+        // Two scheduler entry points; both stamp.
+        fresh.Spec.SshPublicKey = sshPublicKey;
+
         // ── CreateVm command ─────────────────────────────────────────────────
         var command = new NodeCommand(
             CommandId: commandId,

@@ -61,9 +61,10 @@ public sealed class CloudInitRenderer : ICloudInitRenderer
     }
 
     public async Task<string> RenderAsync(
-        VmTemplate template,
-        ResolutionContext ctx,
-        CancellationToken ct)
+    VmTemplate template,
+    ResolutionContext ctx,
+    CancellationToken ct,
+    bool strictValidation = true)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
         if (ctx is null) throw new ArgumentNullException(nameof(ctx));
@@ -85,8 +86,13 @@ public sealed class CloudInitRenderer : ICloudInitRenderer
         rendered = SubstituteArtifacts(rendered, template.Artifacts, ctx.TargetArchitecture);
 
         // ── Pass 3: validation ────────────────────────────────────────────
-        // No-op when P1.8 hasn't landed yet (validator is null).
-        _validator?.Validate(rendered, template.Variables);
+        // F4: skipped when strictValidation == false (transitional system VM
+        // flows that declare only a subset of placeholders). F2's node-side
+        // leak detection still catches anything that survives all layers.
+        if (strictValidation)
+        {
+            _validator?.Validate(rendered, template.Variables);
+        }
 
         return rendered;
     }

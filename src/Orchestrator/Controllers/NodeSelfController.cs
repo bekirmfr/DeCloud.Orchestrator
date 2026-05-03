@@ -1,4 +1,6 @@
-﻿using DeCloud.Shared.Models;
+﻿using DeCloud.Orchestrator.Interfaces.CloudInit;
+using DeCloud.Shared.Models;
+using DeCloud.Shared.Utils;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
@@ -22,6 +24,8 @@ public class NodeSelfController : ControllerBase
     private readonly INodeMarketplaceService _marketplaceService;
     private readonly SystemVmObligationService _reconciler;
     private readonly ICentralIngressService _ingressService;
+    private readonly ICloudInitRenderer _cloudInitRenderer;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<NodeSelfController> _logger;
 
     public NodeSelfController(
@@ -32,6 +36,8 @@ public class NodeSelfController : ControllerBase
         INodeMarketplaceService marketplaceService,
         SystemVmObligationService reconciler,
         ICentralIngressService ingressService,
+        ICloudInitRenderer cloudInitRenderer,
+        IConfiguration configuration,
         ILogger<NodeSelfController> logger)
     {
         _dataStore = dataStore;
@@ -41,6 +47,8 @@ public class NodeSelfController : ControllerBase
         _marketplaceService = marketplaceService;
         _reconciler = reconciler;
         _ingressService = ingressService;
+        _cloudInitRenderer = cloudInitRenderer;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -546,7 +554,9 @@ public class NodeSelfController : ControllerBase
             return BadRequest($"Role '{role}' has no system VM mapping.");
 
         var node = await _dataStore.GetNodeAsync(nodeId);
-        var obligation = node?.SystemVmObligations
+        if (node is null) return NotFound("Node not registered");
+
+        var obligation = node.SystemVmObligations
             .FirstOrDefault(o => SystemVmRoleMap.ToCanonicalName(o.Role) == canonical);
 
         VmTemplate? template = null;
@@ -558,6 +568,52 @@ public class NodeSelfController : ControllerBase
 
         var arch = node.HardwareInventory?.Cpu?.Architecture;
         var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template, arch);
+
+        // F4: render declared statics if the template has any. Skip strict
+        // validation — system templates only declare WG_DESCRIPTION and
+        // DECLOUD_ROLE for now; the other __VARNAME__ placeholders are still
+        // handled by the legacy node-side LibvirtVmManager path until full
+        // Phase 3 cutover.
+        if (template.Variables is { Count: > 0 } && obligation is not null)
+        {
+            try
+            {
+                var orchestratorUrl = _configuration["OrchestratorClient:BaseUrl"]
+                    ?? _configuration["OrchestratorUrl"]
+                    ?? string.Empty;
+
+                var ctx = new ResolutionContext(
+                    Node: node,
+                    Obligation: obligation,
+                    Vm: null,                           // system-VM flow
+                    Template: template,
+                    OrchestratorUrl: orchestratorUrl,
+                    TargetArchitecture: ArchitectureHelper.NormaliseArchitecture(arch),
+                    UserSuppliedStatics: System.Collections.Immutable.ImmutableDictionary<string, string>.Empty);
+
+                var rendered = await _cloudInitRenderer.RenderAsync(
+                    template, ctx, HttpContext.RequestAborted, strictValidation: false);
+
+                systemTemplate.CloudInitContent = rendered;
+
+                _logger.LogDebug(
+                    "Rendered system template '{Role}' r{Revision} for node {NodeId}: " +
+                    "{VarCount} declared static(s) substituted",
+                    canonical, template.Revision, nodeId, template.Variables.Count);
+            }
+            catch (Exception ex)
+            {
+                // Render failure is fatal — shipping a partially-rendered template
+                // would silently break the VM at boot. Better to fail the pull
+                // and let the node retry next cycle (when the orchestrator might
+                // have been fixed).
+                _logger.LogError(ex,
+                    "Failed to render system template '{Role}' for node {NodeId}: {Message}",
+                    canonical, nodeId, ex.Message);
+                return StatusCode(500, $"Template render failed: {ex.Message}");
+            }
+        }
+
         var templateJson = System.Text.Json.JsonSerializer.Serialize(
             systemTemplate,
             new System.Text.Json.JsonSerializerOptions

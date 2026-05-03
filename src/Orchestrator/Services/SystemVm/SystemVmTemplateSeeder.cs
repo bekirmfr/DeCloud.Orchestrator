@@ -218,13 +218,13 @@ public sealed class SystemVmTemplateSeeder
     public async Task SeedAsync(CancellationToken ct = default)
     {
         await SeedTemplateAsync(await BuildRelayTemplateAsync(ct), ct);
-        await SeedTemplateAsync(await BuildDhtTemplate(ct), ct);
-        await SeedTemplateAsync(await BuildBlockstoreTemplate(ct), ct);
+        await SeedTemplateAsync(await BuildDhtTemplateAsync(ct), ct);
+        await SeedTemplateAsync(await BuildBlockstoreTemplateAsync(ct), ct);
     }
 
     // ── Template builders ─────────────────────────────────────────────────
 
-    private async Task<VmTemplate> BuildDhtTemplate(CancellationToken ct = default) => new()
+    private async Task<VmTemplate> BuildDhtTemplateAsync(CancellationToken ct = default) => new()
     {
         Slug = "system-dht",
         Name = "DHT Peer Node",
@@ -239,7 +239,7 @@ public sealed class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("dht", ct),
-
+        Variables = BuildMeshSystemVmVariables(),
         Artifacts = new List<TemplateArtifact>
         {
             // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
@@ -314,7 +314,7 @@ public sealed class SystemVmTemplateSeeder
         UpdatedAt = DateTime.UtcNow,
     };
 
-    private async Task<VmTemplate> BuildBlockstoreTemplate(CancellationToken ct = default) => new()
+    private async Task<VmTemplate> BuildBlockstoreTemplateAsync(CancellationToken ct = default) => new()
     {
         Slug = "system-blockstore",
         Name = "Block Store Node",
@@ -329,7 +329,7 @@ public sealed class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("blockstore", ct),
-
+        Variables = BuildMeshSystemVmVariables(),
         Artifacts = new List<TemplateArtifact>
         {
             Artifact("blockstore-node", "BlockStore node binary",
@@ -535,6 +535,44 @@ public sealed class SystemVmTemplateSeeder
         _logger.LogDebug("Fetching cloudinit for '{Role}' from {Url}", role, url);
         return await _httpClient.GetStringAsync(url, ct);
     }
+
+    /// <summary>
+    /// F4: declared statics for mesh-participant system VMs (DHT, BlockStore).
+    /// These are the placeholders in <c>base-system-mesh.yaml</c>'s
+    /// <c>/etc/decloud/wg-mesh.env</c> that <see cref="LibvirtVmManager"/>'s
+    /// per-VmType branches do NOT substitute on the node side. The renderer
+    /// fills them at orchestrator render time (<see cref="WgDescriptionResolver"/>,
+    /// <see cref="DeCloudRoleResolver"/>).
+    ///
+    /// <para>
+    /// Other placeholders in the composed template (<c>__VM_ID__</c>,
+    /// <c>__NODE_ID__</c>, <c>__WG_RELAY_*__</c>, etc.) remain undeclared
+    /// here — they're substituted by the legacy node-side path until full
+    /// Phase 3 cutover. The renderer is called with
+    /// <c>strictValidation: false</c> so the validator doesn't reject these
+    /// undeclared placeholders.
+    /// </para>
+    ///
+    /// <para>
+    /// Relay is not mesh-participant (composes against base-system.yaml, not
+    /// base-system-mesh.yaml) — does not use this list.
+    /// </para>
+    /// </summary>
+    private static List<TemplateVariable> BuildMeshSystemVmVariables() => new()
+{
+    new TemplateVariable
+    {
+        Name = "WG_DESCRIPTION",
+        Kind = VariableKind.Static,
+        // ResolverKey omitted — defaults to Name, matching WgDescriptionResolver.ResolverKey
+    },
+    new TemplateVariable
+    {
+        Name = "DECLOUD_ROLE",
+        Kind = VariableKind.Static,
+        // ResolverKey omitted — defaults to Name, matching DeCloudRoleResolver.ResolverKey
+    },
+};
 
     // ── Artifact factory ──────────────────────────────────────────────────
 

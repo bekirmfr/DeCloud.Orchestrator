@@ -48,5 +48,31 @@ public interface ICloudInitRenderer
     /// variable name is declared, or when validation (if enabled) fails.
     /// Exception message names the offending variable / placeholder.
     /// </exception>
-    Task<string> RenderAsync(VmTemplate template, ResolutionContext ctx, CancellationToken ct);
+    /// <param name="strictValidation">
+    /// When <c>true</c> (default), runs <see cref="ICloudInitValidator"/>
+    /// against the rendered output and throws on any undeclared placeholder,
+    /// unresolved declared static, or dynamic in wrong form. Used by tenant
+    /// flows where the template declares all of its variables and the
+    /// rendered output should be placeholder-free.
+    ///
+    /// <para>
+    /// When <c>false</c>, skips validation. Used by transitional system-VM
+    /// flows (F4) where the template declares only the subset of variables
+    /// the orchestrator needs to substitute now (<c>WG_DESCRIPTION</c>,
+    /// <c>DECLOUD_ROLE</c>); the remaining placeholders are substituted
+    /// downstream by <c>LibvirtVmManager</c>. F2's node-side leak detection
+    /// catches anything that survives all layers.
+    /// </para>
+    ///
+    /// <para>
+    /// Removed in Phase 3 cutover: once system templates declare all
+    /// variables, both call sites pass <c>true</c> and the parameter
+    /// becomes the only behavior.
+    /// </para>
+    /// </param>
+    Task<string> RenderAsync(
+        VmTemplate template,
+        ResolutionContext ctx,
+        CancellationToken ct,
+        bool strictValidation = true);
 }

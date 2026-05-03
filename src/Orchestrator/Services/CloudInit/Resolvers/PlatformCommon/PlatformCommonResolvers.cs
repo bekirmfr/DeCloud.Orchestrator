@@ -1,6 +1,7 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
+using DeCloud.Orchestrator.Services.CloudInit.Resolvers.PlatformCommon;
 
-namespace DeCloud.Orchestrator.Services.CloudInit.Resolvers.PlatformCommon;
+namespace DeCloud.Orchestrator.Services.CloudInit.Resolvers;
 
 /// <summary>
 /// Registers all platform-common <see cref="IVariableResolver"/> implementations

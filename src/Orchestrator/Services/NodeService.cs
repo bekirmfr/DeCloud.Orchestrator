@@ -1,5 +1,7 @@
+using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Shared;
 using DeCloud.Shared.Models;
+using DeCloud.Shared.Utils;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -78,8 +80,9 @@ public class NodeService : INodeService
     private readonly IDhtNodeService _dhtNodeService;
     private readonly IServiceProvider _serviceProvider;
     private readonly IWireGuardManager _wireGuardManager;
-    private readonly IConfiguration _configuration;
     private readonly ObligationStateGenerator _stateGenerator;
+    private readonly IConfiguration _configuration;
+    private readonly ICloudInitRenderer _cloudInitRenderer;
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _registrationLocks = new();
@@ -98,6 +101,7 @@ public class NodeService : INodeService
         IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
         IWireGuardManager wireGuardManager,
+        ICloudInitRenderer cloudInitRenderer,
         IConfiguration configuration,
         ObligationStateGenerator stateGenerator)
     {
@@ -114,6 +118,7 @@ public class NodeService : INodeService
         _dhtNodeService = dhtNodeService;
         _serviceProvider = serviceProvider;
         _wireGuardManager = wireGuardManager;
+        _cloudInitRenderer = cloudInitRenderer;
         _configuration = configuration;
         _stateGenerator = stateGenerator;
     }
@@ -651,12 +656,46 @@ public class NodeService : INodeService
             // Build the lightweight SystemVmTemplate from the full VmTemplate.
             var arch = node.HardwareInventory?.Cpu?.Architecture;
             var systemTemplate = BuildSystemVmTemplate(roleName, template, arch);
+
+            // F4: render declared statics if the template has any. Same logic as
+            // NodeSelfController.GetSystemTemplate; both call sites need to render
+            // because both ship templates to the node.
+            if (template.Variables is { Count: > 0 })
+            {
+                try
+                {
+                    var orchestratorUrl = _configuration["OrchestratorClient:BaseUrl"]
+                        ?? _configuration["OrchestratorUrl"]
+                        ?? string.Empty;
+
+                    var ctx = new ResolutionContext(
+                        Node: node,
+                        Obligation: obligation,
+                        Vm: null,
+                        Template: template,
+                        OrchestratorUrl: orchestratorUrl,
+                        TargetArchitecture: ArchitectureHelper.NormaliseArchitecture(arch),
+                        UserSuppliedStatics: System.Collections.Immutable.ImmutableDictionary<string, string>.Empty);
+
+                    systemTemplate.CloudInitContent = await _cloudInitRenderer.RenderAsync(
+                        template, ctx, ct: default, strictValidation: false);
+                }
+                catch (Exception ex)
+                {
+                    // Render failure: skip this role's template in the registration
+                    // response. The node won't store an outdated/broken template and
+                    // will retry via heartbeat on the next cycle.
+                    _logger.LogError(ex,
+                        "Failed to render system template '{Role}' for node {NodeId}: {Message} — " +
+                        "skipping template in registration response, node will retry via heartbeat.",
+                        roleName, node.Id, ex.Message);
+                    continue;
+                }
+            }
+
             var templateJson = JsonSerializer.Serialize(
                 systemTemplate,
-                new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
             result[roleName] = new SystemVmTemplatePayload
             {

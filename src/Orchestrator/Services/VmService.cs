@@ -865,7 +865,7 @@ public class VmService : IVmService
         // STEP 5: Get SSH public key
         // ========================================
         string? sshPublicKey = vm.Spec.SshPublicKey;
-        if (string.IsNullOrEmpty(sshPublicKey) 
+        if (string.IsNullOrEmpty(sshPublicKey)
             && !string.IsNullOrEmpty(vm.OwnerId)
             && _dataStore.Users.TryGetValue(vm.OwnerId, out var owner))
         {
@@ -874,6 +874,12 @@ public class VmService : IVmService
                 sshPublicKey = string.Join("\n", owner.SshKeys.Select(k => k.PublicKey));
             }
         }
+
+        // Stamp resolved keys back to the spec so downstream
+        // consumers (renderer's SshAuthorizedKeysBlockResolver, audit logs,
+        // billing, diagnostic dumps) see the same value the VM actually got.
+        // Idempotent — no-op when spec already had keys.
+        vm.Spec.SshPublicKey = sshPublicKey;
 
         // ========================================
         // STEP 6: Get image URL
