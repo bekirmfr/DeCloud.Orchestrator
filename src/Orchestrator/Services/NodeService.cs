@@ -225,7 +225,6 @@ public class NodeService : INodeService
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             HardwareInventory = request.HardwareInventory,
-            // TotalResources will be set after performance evaluation
             TotalResources = new ResourceSnapshot(),
             ReservedResources = existingNode?.ReservedResources ?? new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
@@ -234,6 +233,14 @@ public class NodeService : INodeService
             Zone = request.Zone ?? "default",
             RegisteredAt = existingNode?.RegisteredAt ?? request.RegisteredAt,
             LastSeenAt = DateTime.UtcNow,
+
+            // P1.9: forward the CA public key from the registration request into
+            // the persisted Node. CaPublicKeyResolver reads this at cloud-init
+            // render time. Preserve existing value on re-registration if request
+            // didn't include one (pre-P1.9 agents) — never silently null out a
+            // previously-stamped value.
+            SshCaPublicKey = request.SshCaPublicKey ?? existingNode?.SshCaPublicKey,
+
             Pricing = request.Pricing ?? new NodePricing(),
             // Preserve system VM state from existing node
             SystemVmObligations = existingNode?.SystemVmObligations ?? new List<SystemVmObligation>(),

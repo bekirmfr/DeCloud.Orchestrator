@@ -425,6 +425,26 @@ public class NodeRegistrationRequest
     public required HardwareInventory HardwareInventory { get; set; }
     public required string AgentVersion { get; set; }
     public List<string> SupportedImages { get; set; } = new();
+    /// <summary>
+    /// SSH certificate authority public key, captured by the node agent
+    /// at registration time from <c>/etc/ssh/decloud_ca.pub</c>.
+    ///
+    /// <para>
+    /// Stamped into <see cref="Node.SshCaPublicKey"/> by
+    /// <c>NodeService.RegisterNodeAsync</c> and consumed by
+    /// <c>CaPublicKeyResolver</c> at cloud-init render time to substitute
+    /// <c>__CA_PUBLIC_KEY__</c> in tenant templates.
+    /// </para>
+    ///
+    /// <para>
+    /// Optional for backward compatibility — nodes running pre-P1.9 agents
+    /// won't send this field. Their <c>Node.SshCaPublicKey</c> stays null;
+    /// any tenant deploy that uses <c>__CA_PUBLIC_KEY__</c> will fail at
+    /// render time with a clear message pointing at this gap.
+    /// </para>
+    /// </summary>
+    public string? SshCaPublicKey { get; set; }
+
     // Staking info
     public string StakingTxHash { get; set; } = string.Empty;
     public string? Region { get; set; }

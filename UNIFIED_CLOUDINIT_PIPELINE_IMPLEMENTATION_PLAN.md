@@ -31,11 +31,11 @@
 
 ## §1. Current state
 
-**Active phase:** Phase 1.
+**Active phase:** Phase 1 (one task remaining — P1.11).
 
-**Last session:** 2026-05-03 — P1.1 through P1.8 complete (P1.9/P1.10 model-field halves landed inline as build-error fixes). The orchestrator-side rendering pipeline is now functionally complete with validation safety net: `TemplateComposer` merges base+role layers, `CloudInitRenderer` substitutes statics via the resolver registry then artifacts via `template.Artifacts`, `CloudInitValidator` catches unresolved/undeclared/wrong-form placeholders with comprehensive error messages.
+**Last session:** 2026-05-03 — P1.9 plumbing complete via four coordinated patches (A: orchestrator DTO field, B: node-agent DTO mirror, C: agent reads `/etc/ssh/decloud_ca.pub`, D: orchestrator stamps with mixed-version-safe preservation). P1.10 confirmed done (model field landed earlier as build-error fix).
 
-**Next task:** P1.9 (plumbing half) — extend `NodeRegistrationRequest` with `SshCaPublicKey`, populate it in `OrchestratorClient.RegisterAsync` from `/etc/ssh/decloud_ca.pub`, stamp it in `NodeService.RegisterNodeAsync`. Smaller cousin: P1.10 (assignment half) and P1.11 (`VmId`/`VmName` at obligation creation) finish the model plumbing. After this batch, Phase 1 closes and Phase 2 (tenant cutover) begins.
+**Next task:** P1.11 — assign `VmId` and `VmName` at obligation creation. Single-file change in `SystemVmObligationService.EnsureObligationsAsync` and `TryAdoptExistingVmAsync` — when creating a new `Pending` obligation, set both `VmId = Guid.NewGuid().ToString()` and `VmName = $"{canonicalRole}-{node.Id[..8]}"`. After P1.11, Phase 1 closes and Phase 2 (tenant cutover) begins.
 
 **Pre-Phase-1 user action items (still open):**
 - **Verify BlockStore binary builds:** `cd system-vms/blockstore/src && go mod tidy && go build ./...`. If anything fails, the binary edits need a touch-up before commit.
@@ -292,13 +292,15 @@ All new code; no behavioural change to live VMs. Legacy paths remain. This is th
 
 ### 5.4 Node record and obligation field changes
 
-- [ ] **P1.9** — Add `Node.SshCaPublicKey` field and registration plumbing (design §5 Phase 1.6).
+- [x] **P1.9** — Add `Node.SshCaPublicKey` field and registration plumbing (design §5 Phase 1.6).
   - Files: `src/Orchestrator/Models/Node.cs` (add field, in `NodeRegistrationRequest` too), `src/Orchestrator/Services/NodeService.cs` (stamp on register), `src/DeCloud.NodeAgent/Services/OrchestratorClient.cs` (read `/etc/ssh/decloud_ca.pub`, send in registration payload).
   - Acceptance: a node re-registers; orchestrator's stored `Node.SshCaPublicKey` matches the file on the node.
+  - **Done 2026-05-03** (model field already done in P1.6 build-error fixes; plumbing split into four patches that land together). Patches: `P1.9-A` extends `NodeRegistrationRequest` (orchestrator wire DTO), `P1.9-B` extends `NodeRegistration` (node-agent wire DTO — same JSON shape), `P1.9-C` extends `OrchestratorClient.RegisterWithPendingAuthAsync` to read `/etc/ssh/decloud_ca.pub` and populate the field with non-fatal failure handling, `P1.9-D` extends `NodeService.RegisterNodeAsync` to stamp `request.SshCaPublicKey ?? existingNode?.SshCaPublicKey` (mixed-version safe — pre-P1.9 agents don't null out previously-stamped values). All four must ship in one coordinated commit; landing only some leaves the orchestrator with null `SshCaPublicKey` and any tenant deploy that uses `__CA_PUBLIC_KEY__` will fail at render time with the documented message pointing at the gap.
 
-- [ ] **P1.10** — Add `SystemVmObligation.VmName` field (design §11 last row).
+- [x] **P1.10** — Add `SystemVmObligation.VmName` field (design §11 last row).
   - File: `src/Orchestrator/Models/SystemVmObligation.cs`. Nullable string.
   - Acceptance: existing obligation documents load without error.
+  - **Done 2026-05-03** (model field already landed inline as P1.6 build-error fix). Field is `public string? VmName { get; set; }` — null on legacy obligations, populated at obligation creation by P1.11.
 
 - [ ] **P1.11** — Assign `VmId` and `VmName` at obligation creation.
   - File: `src/Orchestrator/Services/SystemVm/SystemVmObligationService.cs`.
