@@ -392,6 +392,8 @@ public class NodeService : INodeService
                     node.SystemVmObligations.Add(new SystemVmObligation
                     {
                         Role = role,
+                        VmId = Guid.NewGuid().ToString(),
+                        VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                         Status = SystemVmStatus.Pending,
                         TemplateId = tpl?.Id,
                     });

@@ -58,6 +58,33 @@ public static class SystemVmRoleMap
         _ => null,   // Ingress etc. — no obligation state
     };
 
+    // ── Enum + node ID → VM name ─────────────────────────────────────────
+
+    /// <summary>
+    /// Build the human-readable VM name for a system-VM obligation, e.g.
+    /// <c>"dht-a1b2c3d4"</c>. Combines the canonical role name with the first
+    /// 8 characters of the node ID. Used by P1.11 (obligation creation) and
+    /// consumed by <c>VmNameResolver</c> at cloud-init render time.
+    ///
+    /// <para>
+    /// Throws if the role has no canonical mapping (e.g. <c>Ingress</c>) —
+    /// callers should already have filtered those out.
+    /// </para>
+    /// </summary>
+    public static string ToVmName(SystemVmRole role, string nodeId)
+    {
+        var canonical = ToCanonicalName(role)
+            ?? throw new ArgumentOutOfRangeException(
+                nameof(role),
+                $"Role {role} has no canonical name; cannot build VM name.");
+
+        if (string.IsNullOrEmpty(nodeId))
+            throw new ArgumentException("nodeId cannot be null or empty.", nameof(nodeId));
+
+        var prefix = nodeId.Length >= 8 ? nodeId[..8] : nodeId;
+        return $"{canonical}-{prefix}";
+    }
+
     /// <summary>
     /// Convert a canonical role name to a <see cref="SystemVmRole"/> enum value.
     /// Returns <c>null</c> for unknown strings (already canonicalised by caller).

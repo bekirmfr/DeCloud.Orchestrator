@@ -216,6 +216,8 @@ public class SystemVmObligationService : BackgroundService
             return new SystemVmObligation
             {
                 Role = role,
+                VmId = Guid.NewGuid().ToString(),
+                VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Pending
             };
         }
@@ -235,6 +237,8 @@ public class SystemVmObligationService : BackgroundService
             return new SystemVmObligation
             {
                 Role = role,
+                VmId = Guid.NewGuid().ToString(),
+                VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Pending
             };
         }
@@ -258,6 +262,7 @@ public class SystemVmObligationService : BackgroundService
             {
                 Role = role,
                 VmId = existingVmId,
+                VmName = vm.Name ?? SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Active,
                 ActiveAt = DateTime.UtcNow
             };
@@ -273,6 +278,7 @@ public class SystemVmObligationService : BackgroundService
             {
                 Role = role,
                 VmId = existingVmId,
+                VmName = vm.Name ?? SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Failed,
                 FailureCount = 1,
                 LastError = vm.StatusMessage ?? "VM in Error state at adoption"
@@ -285,6 +291,7 @@ public class SystemVmObligationService : BackgroundService
         {
             Role = role,
             VmId = existingVmId,
+            VmName = vm.Name ?? SystemVmRoleMap.ToVmName(role, node.Id),
             Status = SystemVmStatus.Deploying,
             DeployedAt = DateTime.UtcNow
         };

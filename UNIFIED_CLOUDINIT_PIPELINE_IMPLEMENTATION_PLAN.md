@@ -31,11 +31,29 @@
 
 ## §1. Current state
 
-**Active phase:** Phase 1 (one task remaining — P1.11).
+**Active phase:** Phase 1 → COMPLETE. Phase 2 begins next.
 
-**Last session:** 2026-05-03 — P1.9 plumbing complete via four coordinated patches (A: orchestrator DTO field, B: node-agent DTO mirror, C: agent reads `/etc/ssh/decloud_ca.pub`, D: orchestrator stamps with mixed-version-safe preservation). P1.10 confirmed done (model field landed earlier as build-error fix).
+**Last session:** 2026-05-03 — P1.11 complete. All five obligation-creation sites stamp `VmId` and `VmName` via the new `SystemVmRoleMap.ToVmName(role, nodeId)` helper. Scope discovery during drafting: plan listed 2 methods, code has 5 sites across 2 files. Forward-compatible with P3.1.5 — values written but not consumed by node-agent yet (zero behavioral change in Phase 1).
 
-**Next task:** P1.11 — assign `VmId` and `VmName` at obligation creation. Single-file change in `SystemVmObligationService.EnsureObligationsAsync` and `TryAdoptExistingVmAsync` — when creating a new `Pending` obligation, set both `VmId = Guid.NewGuid().ToString()` and `VmName = $"{canonicalRole}-{node.Id[..8]}"`. After P1.11, Phase 1 closes and Phase 2 (tenant cutover) begins.
+**Phase 1 status:** All eleven P1.x tasks complete. Orchestrator-side rendering pipeline is functionally and defensively complete:
+
+```
+TemplateComposer → CloudInitRenderer
+                    ├── Pass 1: __VARNAME__ via IVariableResolverRegistry → 15 platform-common resolvers
+                    ├── Pass 2: ${ARTIFACT_URL/SHA256:name} via template.Artifacts
+                    └── Pass 3: CloudInitValidator (3 failure modes, comprehensive errors)
+
+Model:           TemplateVariable, Variables list on VmTemplate + SystemVmTemplate
+                 Node.SshCaPublicKey + registration plumbing
+                 SystemVmObligation.VmName + assignment at creation
+                 SystemVmRoleMap.ToVmName helper
+
+Helpers:         CloudInitFormatting (lift from LibvirtVmManager with fix)
+```
+
+**Live behavior change so far:** zero. Phase 1 is purely additive — new pipeline exists, sits idle, doesn't touch deploys. Phase 2 begins the cutover.
+
+**Next task:** P2.1 — `GeneralVmTemplateSeeder`. Composes `base-tenant.yaml + tenant-vms/general/cloud-init.yaml` via `TemplateComposer`, declares the tenant-VM `Variables` list, upserts the `platform-general` template into MongoDB. After P2.1, the `platform-general` template carries declared variables and is ready for the renderer to consume.
 
 **Pre-Phase-1 user action items (still open):**
 - **Verify BlockStore binary builds:** `cd system-vms/blockstore/src && go mod tidy && go build ./...`. If anything fails, the binary edits need a touch-up before commit.
@@ -302,10 +320,11 @@ All new code; no behavioural change to live VMs. Legacy paths remain. This is th
   - Acceptance: existing obligation documents load without error.
   - **Done 2026-05-03** (model field already landed inline as P1.6 build-error fix). Field is `public string? VmName { get; set; }` — null on legacy obligations, populated at obligation creation by P1.11.
 
-- [ ] **P1.11** — Assign `VmId` and `VmName` at obligation creation.
+- [x] **P1.11** — Assign `VmId` and `VmName` at obligation creation.
   - File: `src/Orchestrator/Services/SystemVm/SystemVmObligationService.cs`.
   - In `EnsureObligationsAsync` and `TryAdoptExistingVmAsync`: when creating a new `Pending` obligation, set `VmId = Guid.NewGuid().ToString()` and `VmName = $"{canonicalRole}-{node.Id[..8]}"`.
   - Acceptance: new obligation documents in MongoDB carry both fields. Existing obligations are untouched (backwards-compatible nullables).
+  - **Done 2026-05-03 (drafted as patch).** Patch at `patches/P1.11_obligation_vmid_vmname_assignment.md`. **Scope discovery:** the plan listed two methods but there are actually **five** `new SystemVmObligation` sites across **two** files — `NodeService.RegisterNodeAsync` has two (fresh registration + re-registration backfill), `SystemVmObligationService.TryAdoptExistingVmAsync` has three (no-existing-VM, stale-VM-ID-fallback, plus the existing Active/Failed/Deploying paths that need `VmName` added). All five must be updated to satisfy the acceptance criterion. **Helper added:** `SystemVmRoleMap.ToVmName(role, nodeId)` consolidates the naming convention (single source of truth, defensive guard for short test-fixture node IDs). For adopted VMs, prefer the existing `vm.Name` over a synthesized one — falls back to synthesis only when `vm.Name` is unset. **Backfill deliberately deferred** — pre-existing obligations carry null values; resolvers' null-guards throw with clear messages if hit. Forward-compatible with P3.1.5 which will invert the VmId flow direction (orchestrator → node-agent instead of the current node-agent → orchestrator-via-adoption). No live behavior change in P1.11; values written but unconsumed until P3.1.5.
 
 **Phase 1 done when:** All P1.x checked. Unit-test coverage on every new class. No live behaviour changed — system VMs still on legacy `LibvirtVmManager` substitution path; tenant VMs still on legacy `VmService` variable-building path.
 
