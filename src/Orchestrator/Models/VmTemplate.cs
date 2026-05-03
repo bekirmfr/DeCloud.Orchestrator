@@ -161,6 +161,27 @@ public class VmTemplate
     /// </summary>
     public string CloudInitTemplate { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Variables declared by this template (design §2.2).
+    ///
+    /// <para>
+    /// First-class metadata that drives:
+    /// <list type="number">
+    ///   <item>render-time substitution of statics</item>
+    ///   <item>the node-local <c>/api/obligations/{role}/environment</c>
+    ///     endpoint's response shape</item>
+    ///   <item>the in-VM watcher's scope policy</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// Default empty list — pre-migration templates carry no declared variables;
+    /// the legacy resolver fallback (P2.4) handles them. Templates added or
+    /// updated after Phase 2 declare their variables explicitly here.
+    /// </para>
+    /// </summary>
+    public List<TemplateVariable> Variables { get; set; } = new();
+
     // ============================================
     // ARTIFACTS
     // ============================================
