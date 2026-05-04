@@ -111,7 +111,7 @@ public sealed class GeneralVmTemplateSeeder
     // Paste this block inside the appropriate tenant template seeder class body.
     // Replace the COMPUTE_FROM_FILE placeholders with the generated values.
 
-    // Generated: 2026-05-03T13:41:02Z
+    // Generated: 2026-05-04T14:48:17Z
 
     // ── General ────────────────────────────────────────────────────────────────
     // general/assets/general-api.py  (2096 bytes)
@@ -124,10 +124,11 @@ public sealed class GeneralVmTemplateSeeder
 
 
     // ── Summary ─────────────────────────────────────────────────────────────────
-    // Generated: 2026-05-03T13:41:02Z
+    // Generated: 2026-05-04T14:48:17Z
     // Roles discovered:
     //   general/assets/ [prefix='General']: 2 files
     // Total: 2 artifact constants
+
 
 
     // ── Infrastructure ───────────────────────────────────────────────────
