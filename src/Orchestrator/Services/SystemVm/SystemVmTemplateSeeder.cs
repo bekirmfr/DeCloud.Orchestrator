@@ -465,25 +465,13 @@ public sealed class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("relay", ct),
-        // Declared statics resolved at render time. Relay does not compose against
-        // base-system-mesh.yaml so it does NOT use BuildMeshSystemVmVariables.
-        // WIREGUARD_PUBLIC_KEY is the only render-time placeholder declared here;
-        // every other __VARNAME__ in the composed cloud-init is substituted by the
-        // legacy node-side path (LibvirtVmManager STEP 5.5 Relay branch) until full
-        // Phase 3 cutover. The renderer is called with strictValidation: false so
-        // those undeclared placeholders don't cause render-time validation failures.
-        Variables = new List<TemplateVariable>
-    {
-        new()
-        {
-            Name = "WIREGUARD_PUBLIC_KEY",
-            Kind = VariableKind.Static,
-            Required = true,
-            Description = "Relay's WireGuard public key (base64). " +
-                          "Resolved by WgPublicKeyResolver from the relay obligation state.",
-            // ResolverKey omitted — defaults to Name, matching WgPublicKeyResolver.ResolverKey
-        },
-    },
+        // Full static set for the v6.1 composed relay cloud-init (base-system + relay role).
+        // Relay has no dynamics in Phase 3 — RELAY_REGION and RELAY_CAPACITY are Static
+        // (baked into relay-metadata.json at render time; relay-api.py reads from that file).
+        // See design §2.3 ("nearly all Static") and P3.1.4 note ("keep that pattern").
+        // RelayWireGuardPrivateKeyResolver intentionally absent — __WIREGUARD_PRIVATE_KEY__
+        // was eliminated from the relay cloud-init in P0.9 (§2 decision log, 2026-05-03/P0.9).
+        Variables = BuildRelayVariables(),
         Artifacts = new List<TemplateArtifact>
         {
             // Relay has no compiled binary — WireGuard is a kernel module.
@@ -656,20 +644,94 @@ public sealed class SystemVmTemplateSeeder
     /// </para>
     /// </summary>
     private static List<TemplateVariable> BuildMeshSystemVmVariables() => new()
-{
-    new TemplateVariable
     {
-        Name = "WG_DESCRIPTION",
-        Kind = VariableKind.Static,
-        // ResolverKey omitted — defaults to Name, matching WgDescriptionResolver.ResolverKey
-    },
-    new TemplateVariable
+        new TemplateVariable
+        {
+            Name = "WG_DESCRIPTION",
+            Kind = VariableKind.Static,
+            // ResolverKey omitted — defaults to Name, matching WgDescriptionResolver.ResolverKey
+        },
+        new TemplateVariable
+        {
+            Name = "DECLOUD_ROLE",
+            Kind = VariableKind.Static,
+            // ResolverKey omitted — defaults to Name, matching DeCloudRoleResolver.ResolverKey
+        },
+    };
+
+    /// <summary>
+    /// Full declared-statics list for the v6.1 relay cloud-init template.
+    /// Every <c>__VARNAME__</c> placeholder in the composed cloud-init must appear here.
+    /// Relay has no dynamics in Phase 3 — RELAY_REGION and RELAY_CAPACITY remain Static
+    /// (substituted at render time into relay-metadata.json; relay-api.py reads that file).
+    /// </summary>
+    private static List<TemplateVariable> BuildRelayVariables() => new()
     {
-        Name = "DECLOUD_ROLE",
-        Kind = VariableKind.Static,
-        // ResolverKey omitted — defaults to Name, matching DeCloudRoleResolver.ResolverKey
-    },
-};
+        // ── Identity / VM context (platform-common resolvers) ────────────────────
+        new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier." },
+        new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
+                Description = "VM display name / relay_name in relay-metadata.json." },
+        new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname (base-system.yaml scalar)." },
+        new() { Name = "NODE_ID",     Kind = VariableKind.Static, Required = true,
+                Description = "Node unique identifier." },
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "Orchestrator HTTP URL for relay-register-poll.sh." },
+        new() { Name = "PUBLIC_IP",   Kind = VariableKind.Static, Required = true,
+                Description = "Node public IP — used in wireguard_endpoint field of relay-metadata.json." },
+        new() { Name = "HOST_MACHINE_ID", Kind = VariableKind.Static, Required = true,
+                Description = "Host /etc/machine-id — injected into decloud-relay-nat-callback.service." },
+        new() { Name = "TIMESTAMP",   Kind = VariableKind.Static, Required = false,
+                DefaultValue = "",
+                Description = "UTC ISO8601 deploy timestamp for relay-metadata.json." },
+
+        // ── SSH / CA (platform-common, base-system.yaml) ─────────────────────────
+        new() { Name = "CA_PUBLIC_KEY",            Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk for cloud-init ssh_authorized_keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK",     Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for cloud-init chpasswd.users." },
+        new() { Name = "SSH_PASSWORD_AUTH",         Kind = VariableKind.Static,
+                DefaultValue = "false",
+                Description = "'true' or 'false' for cloud-init ssh_pwauth." },
+        new() { Name = "ADMIN_PASSWORD",            Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "Plaintext root password. Empty for SSH-only deploys." },
+
+        // ── WireGuard identity (WgPublicKeyResolver — existing) ──────────────────
+        new() { Name = "WIREGUARD_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
+                Description = "Relay WireGuard public key (base64). " +
+                              "Documentary field in relay-metadata.json; " +
+                              "runtime authoritative source is /etc/wireguard/public.key." },
+
+        // ── Relay-specific statics (new resolvers — Files 2–5 below) ─────────────
+        new() { Name = "ORCHESTRATOR_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
+                Description = "Orchestrator WireGuard public key. " +
+                              "Pre-configured as a [Peer] in wg-relay-server.conf " +
+                              "so the orchestrator can reach the relay over WireGuard. " +
+                              "Read from IConfiguration[\"WireGuard:OrchestratorPublicKey\"] " +
+                              "on the orchestrator host." },
+        new() { Name = "ORCHESTRATOR_IP",  Kind = VariableKind.Static, Required = true,
+                Description = "Orchestrator host IP/hostname for the WireGuard [Peer] Endpoint. " +
+                              "Derived from OrchestratorUrl; localhost substituted with node PublicIp." },
+        new() { Name = "ORCHESTRATOR_PORT", Kind = VariableKind.Static, Required = false,
+                DefaultValue = "51821",
+                Description = "Orchestrator WireGuard listen port. Hardcoded 51821 unless " +
+                              "overridden in IConfiguration[\"WireGuard:OrchestratorPort\"]." },
+        new() { Name = "RELAY_SUBNET",    Kind = VariableKind.Static, Required = true,
+                Description = "Relay subnet octet (e.g. '10' for 10.20.10.0/24). " +
+                              "Extracted from RelayObligationState.RelaySubnet." },
+        new() { Name = "RELAY_REGION",    Kind = VariableKind.Static, Required = false,
+                DefaultValue = "default",
+                Description = "Node region label. Written into relay-metadata.json for relay-api.py." },
+        new() { Name = "RELAY_CAPACITY",  Kind = VariableKind.Static, Required = false,
+                DefaultValue = "10",
+                Description = "Max CGNAT node connections. Written into relay-metadata.json." },
+    };
 
     // ── Artifact factory ──────────────────────────────────────────────────
 

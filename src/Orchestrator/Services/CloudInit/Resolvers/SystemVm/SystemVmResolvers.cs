@@ -1,5 +1,7 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Orchestrator.Services.CloudInit.Resolvers.SystemVm;
+using DeCloud.Orchestrator.Services.CloudInit.Resolvers.SystemVm.Relay;
+using Orchestrator.Services.CloudInit.Resolvers.SystemVm.Relay;
 
 namespace DeCloud.Orchestrator.Services.CloudInit.Resolvers;
 
@@ -21,6 +23,14 @@ public static class SystemVmResolvers
     {
         services.AddSingleton<IVariableResolver, WgDescriptionResolver>();
         services.AddSingleton<IVariableResolver, WgPublicKeyResolver>();
+
+        //Relay-related resolvers:
+        services.AddSingleton<IVariableResolver, OrchestratorPublicKeyResolver>();
+        services.AddSingleton<IVariableResolver, OrchestratorIpResolver>();
+        services.AddSingleton<IVariableResolver, OrchestratorWgPortResolver>();
+        services.AddSingleton<IVariableResolver, RelaySubnetResolver>();
+        services.AddSingleton<IVariableResolver, RelayRegionResolver>();
+        services.AddSingleton<IVariableResolver, RelayCapacityResolver>();
         return services;
     }
 }
