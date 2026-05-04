@@ -96,7 +96,6 @@ public sealed class SystemVmTemplateSeeder
     //   Copy the updated constants here, bump TemplateRevision.
 
     // ============================================================
-    // ============================================================
     // artifact-constants.cs  —  AUTO-GENERATED
     // Run: bash tenant-vms/compute-artifact-constants.sh
     // DO NOT EDIT MANUALLY — regenerate from source files.
@@ -111,7 +110,7 @@ public sealed class SystemVmTemplateSeeder
     // Paste this block inside the appropriate tenant template seeder class body.
     // Replace the COMPUTE_FROM_FILE placeholders with the generated values.
 
-    // Generated: 2026-05-04T15:31:38Z
+    // Generated: 2026-05-04T18:42:08Z
 
     // ── Shared ────────────────────────────────────────────────────────────────
     // shared/assets/decloud-env-watcher.service  (918 bytes)
@@ -219,7 +218,7 @@ public sealed class SystemVmTemplateSeeder
 
 
     // ── Summary ─────────────────────────────────────────────────────────────────
-    // Generated: 2026-05-04T15:31:40Z
+    // Generated: 2026-05-04T18:42:11Z
     // Roles discovered:
     //   shared/assets/ [prefix='<none>']: 5 files
     //   blockstore/assets/ [prefix='Blockstore']: 7 files
@@ -496,8 +495,21 @@ public sealed class SystemVmTemplateSeeder
                 sha256: RelayDashboardCssSha256, sourceUrl: RelayDashboardCssDataUri),
 
             Artifact("relay-dashboard-js", "Relay dashboard JS",
-                ArtifactType.WebAsset,
-                sha256: RelayDashboardJsSha256, sourceUrl: RelayDashboardJsDataUri),
+            ArtifactType.WebAsset,
+            sha256: RelayDashboardJsSha256, sourceUrl: RelayDashboardJsDataUri),
+
+            // ── Shared watcher artifacts (P3.1.4) ────────────────────────────────
+            Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                ArtifactType.Script,
+                sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
+
+            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
+
+            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
 
         ExposedPorts = new List<TemplatePort>
@@ -731,6 +743,13 @@ public sealed class SystemVmTemplateSeeder
         new() { Name = "RELAY_CAPACITY",  Kind = VariableKind.Static, Required = false,
                 DefaultValue = "10",
                 Description = "Max CGNAT node connections. Written into relay-metadata.json." },
+
+        // ── Watcher infra (P3.1.4) ───────────────────────────────────────────
+        new() { Name = "VARIABLE_SCOPES_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No dynamic variables declared",
+                Description = "Rendered scope policy file for decloud-env-watcher. " +
+                              "Contains VARNAME=scope lines for each Dynamic variable. " +
+                              "Empty comment for relay (no dynamics in Phase 3)." },
     };
 
     // ── Artifact factory ──────────────────────────────────────────────────
