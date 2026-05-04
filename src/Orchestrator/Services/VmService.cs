@@ -1,4 +1,5 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
+using DeCloud.Shared.Models;
 using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -901,14 +902,14 @@ public class VmService : IVmService
 
         string? processedUserData = vm.Spec.UserData;
 
+        // Fetch the template once up front — both branches need it for different
+        // reasons (new pipeline: full template + Variables; legacy: artifact filter).
+        VmTemplate? template = !string.IsNullOrEmpty(vm.TemplateId)
+            ? await _templateService.GetTemplateByIdAsync(vm.TemplateId)
+            : null;
+
         if (!string.IsNullOrEmpty(vm.Spec.UserData))
         {
-            // Fetch the template once up front — both branches need it for different
-            // reasons (new pipeline: full template + Variables; legacy: artifact filter).
-            VmTemplate? template = !string.IsNullOrEmpty(vm.TemplateId)
-                ? await _templateService.GetTemplateByIdAsync(vm.TemplateId)
-                : null;
-
             bool useNewPipeline = template is { Variables.Count: > 0 };
 
             if (useNewPipeline)
@@ -1217,7 +1218,12 @@ public class VmService : IVmService
                     s.HttpPath,
                     s.ExecCommand,
                     s.TimeoutSeconds
-                }).ToList()
+                }).ToList(),
+                // P2.5 — node-side IVmDeploymentPipeline prefetches these into
+                // the local artifact cache before VM creation. Empty list when
+                // no template (custom cloud-init, container, or template-less).
+                // The pipeline arch-filters internally.
+                Artifacts = template?.Artifacts ?? new List<TemplateArtifact>()
             }),
             RequiresAck: true,
             TargetResourceId: vm.Id
