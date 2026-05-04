@@ -110,7 +110,7 @@ public sealed class SystemVmTemplateSeeder
     // Paste this block inside the appropriate tenant template seeder class body.
     // Replace the COMPUTE_FROM_FILE placeholders with the generated values.
 
-    // Generated: 2026-05-04T18:42:08Z
+    // Generated: 2026-05-04T19:36:04Z
 
     // ── Shared ────────────────────────────────────────────────────────────────
     // shared/assets/decloud-env-watcher.service  (918 bytes)
@@ -218,7 +218,7 @@ public sealed class SystemVmTemplateSeeder
 
 
     // ── Summary ─────────────────────────────────────────────────────────────────
-    // Generated: 2026-05-04T18:42:11Z
+    // Generated: 2026-05-04T19:36:06Z
     // Roles discovered:
     //   shared/assets/ [prefix='<none>']: 5 files
     //   blockstore/assets/ [prefix='Blockstore']: 7 files
@@ -326,6 +326,17 @@ public sealed class SystemVmTemplateSeeder
             Artifact("dht-dashboard-js", "DHT dashboard JS",
                 ArtifactType.WebAsset,
                 sha256: DhtDashboardJsSha256, sourceUrl: DhtDashboardJsDataUri),
+
+            // ── Shared watcher artifacts ─────────────────────────────────────
+            Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                ArtifactType.Script,
+                sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
+            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
+            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
 
         ExposedPorts = new List<TemplatePort>
@@ -412,6 +423,17 @@ public sealed class SystemVmTemplateSeeder
             Artifact("blockstore-dashboard-js", "BlockStore dashboard JS",
                 ArtifactType.WebAsset,
                 sha256: BlockstoreDashboardJsSha256, sourceUrl: BlockstoreDashboardJsDataUri),
+
+            // ── Shared watcher artifacts ─────────────────────────────────────
+            Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                ArtifactType.Script,
+                sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
+            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
+            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                ArtifactType.Config,
+                sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
 
         ExposedPorts = new List<TemplatePort>
