@@ -36,7 +36,7 @@ public sealed partial class SystemVmTemplateSeeder
     // ── Binary release (HTTPS artifacts) ────────────────────────────────
     // Update these when a new binary release is cut in DeCloud.Builds.
 
-    private const string BinaryBaseUrl = "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0";
+    private const string BinaryBaseUrl = "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.1.0";
 
     /// <summary>
     /// Git ref (branch, tag, or commit SHA) used to fetch cloud-init YAML files
@@ -69,15 +69,15 @@ public sealed partial class SystemVmTemplateSeeder
         $"{CloudInitRepoBase}/base-templates/base-system-mesh.yaml";
 
     // SHA256 values from the binaries/v1.0.0 release notes.
-    private const string DhtNodeAmd64Sha256 = "4a7c213bef29b53bc5a3e253e5796628330ffdb743105d468aaab4ad228efdac";
-    private const string DhtNodeArm64Sha256 = "bee3955aa9b8630f4bde1c67879e9bb998e23fcb91b0d0975e49580c3251082d";
-    private const string BlockstoreNodeAmd64Sha256 = "d64663e749ef89965d7d03e0faf908bc89d75e01ba860c2f4f3d080e36f60f1b";
-    private const string BlockstoreNodeArm64Sha256 = "450c3cf4c6383a146e8431242f0850a77b37e9a94c7adc0d51e63738fe228895";
+    private const string DhtNodeAmd64Sha256 = "2cb706387725d13c161fa0781ba5fdf282fd4088e40522cccd4da73c06474210";
+    private const string DhtNodeArm64Sha256 = "52e4cfd2349b53663361872d6dc2324b8bab362fe446c516c31e95fc918d7fd4";
+    private const string BlockstoreNodeAmd64Sha256 = "01c62200e7a0be6c2c8cf5b73c88892b13b176df9269a817b9229df29c3c3cd2";
+    private const string BlockstoreNodeArm64Sha256 = "4cb83cd4721b0c9b4a3ab34898e179851de45f7094dfa49a3a3e93c846e5ffae";
 
-    private const long DhtNodeAmd64Bytes = 30_408_704;
-    private const long DhtNodeArm64Bytes = 29_360_128;
-    private const long BlockstoreNodeAmd64Bytes = 27_262_976;
-    private const long BlockstoreNodeArm64Bytes = 26_214_400;
+    private const long DhtNodeAmd64Bytes = 30_060_696;
+    private const long DhtNodeArm64Bytes = 28_967_064;
+    private const long BlockstoreNodeAmd64Bytes = 26_751_128;
+    private const long BlockstoreNodeArm64Bytes = 25_821_336;
 
     // ── Template revisions ───────────────────────────────────────────────
     // Bump when cloud-init content or artifacts change in a deploy-breaking way.
