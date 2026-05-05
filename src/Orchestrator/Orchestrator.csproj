@@ -95,6 +95,7 @@
 	  <ProjectReference Include="..\..\..\Decloud.Shared\DeCloud.Shared.csproj" />
 	</ItemGroup>
 	<ItemGroup>
+	  <Folder Include="Services\TemplateConstants\" />
 	  <Folder Include="Services\Tenant\" />
 	</ItemGroup>
 
