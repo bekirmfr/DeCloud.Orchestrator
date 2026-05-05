@@ -741,6 +741,7 @@ public class NodeService : INodeService
             TemplateId = template.Id,
             Revision = template.Revision,
             CloudInitContent = template.CloudInitTemplate,
+            Variables = template.Variables ?? new List<TemplateVariable>(),
             Artifacts = template.Artifacts,
             VirtualCpuCores = template.RecommendedSpec?.VirtualCpuCores ?? 1,
             MemoryBytes = template.RecommendedSpec?.MemoryBytes ?? (512L * 1024 * 1024),
@@ -748,14 +749,6 @@ public class NodeService : INodeService
             BaseImageUrl = baseImageUrl,
             BaseImageHash = string.Empty,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
-            {
-                Name = p.Description ?? p.Port.ToString(),
-                Port = p.Port,
-                Protocol = p.Protocol,
-                CheckType = p.ReadinessCheck?.Strategy.ToString() ?? "CloudInitDone",
-                HttpPath = p.ReadinessCheck?.HttpPath,
-                TimeoutSeconds = p.ReadinessCheck?.TimeoutSeconds ?? 300,
-            }).Prepend(new SystemVmServiceDeclaration
             {
                 Name = "System",
                 CheckType = "CloudInitDone",
