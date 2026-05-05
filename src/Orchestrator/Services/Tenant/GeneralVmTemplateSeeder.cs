@@ -72,7 +72,7 @@ public sealed partial class GeneralVmTemplateSeeder
     /// <see cref="GeneralTemplateRevision"/>.
     /// </summary>
     private const string BinaryBaseUrl =
-        "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0";
+        "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.1.0";
 
     // ── Template revision ────────────────────────────────────────────────
 
@@ -92,8 +92,8 @@ public sealed partial class GeneralVmTemplateSeeder
     private const string DecloudAgentArm64Sha256 =
         "349ad8dd16c837a868d8385a693a8ee376f72948660f823e8e70f150bda142ac";
 
-    private const long DecloudAgentAmd64Bytes = 5_087_232;  // 4.85 MB
-    private const long DecloudAgentArm64Bytes = 4_915_200;  // 4.69 MB
+    private const long DecloudAgentAmd64Bytes = 5_087_384;  // 4.85 MB
+    private const long DecloudAgentArm64Bytes = 4_915_352;  // 4.69 MB
 
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
