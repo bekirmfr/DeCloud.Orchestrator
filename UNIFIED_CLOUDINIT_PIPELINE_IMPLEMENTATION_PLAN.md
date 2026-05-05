@@ -187,6 +187,7 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   **Lesson for future acceptance protocols:** procedural checklists ("does this file exist", "is this service running") miss systemic bugs. Substantive end-to-end validation must be part of every acceptance going forward — at minimum: (1) `sqlite3 .../obligation-state.db "SELECT json_extract(template_json, '$.variables') FROM system_template WHERE role=X"` to confirm the node-side cache content, (2) curl the env endpoint and verify the full body matches the seeder's declared variables, (3) dual-tamper drift test exercising at least one Restart-scope dynamic. Adding these to the P3.3.5 (BlockStore acceptance) checklist.
 
   **Deferred for Phase 3 cleanup, not blocking P3.2 closure:** (a) services list on dashboard shows duplicate "System" placeholders with null ports (node-side projection bug — `VmSpec.Services` not being mapped from `SystemVmTemplate.Services` correctly); (b) `dashboard.js` line 708 `rdotFailed` ReferenceError (UI typo, cosmetic); (c) DHT obligation status stuck at `Pending` in DB while VM is Running and services Ready (orchestrator state-machine bug, pre-existing).
+
 ---
 
 ## §3. Pre-flight — must complete before Phase 0
@@ -528,14 +529,89 @@ Reuses the environment-endpoint controller, watcher, and reconciler changes from
 
 ### 7.3 Sub-phase 3.3 — BlockStore cutover
 
-Same shape as DHT.
+Same shape as DHT (P3.2). Apply the same scope re-classifications surfaced
+during P3.2.4 (4 WG_* + region-style variable as Static, not Dynamic) — the
+underlying constraints are identical: `wg-config-fetch.sh` runtime-manages
+WG_* via the existing `wg-mesh.env` path, and `blockstore-metadata.json`
+is written once at boot with no binary re-read mechanism. Expected result:
+BlockStore declares 2 true dynamics through the watcher pipeline,
+`BLOCKSTORE_ADVERTISE_IP` (Restart) and `BLOCKSTORE_BOOTSTRAP_PEERS` (Noop).
+
+**Blocked on:** `binaries/v1.1.0` release (see §1 action items).
 
 - [ ] **P3.3.1** — Update `SystemVmTemplateSeeder` for `system-blockstore`.
+  - Replace `BuildMeshSystemVmVariables()` call with new `BuildBlockStoreVariables()`
+    method, mirroring `BuildDhtVariables()` shape: 12 platform-common statics +
+    5 BlockStore-specific statics + 2 dynamics.
+  - Apply scope re-classifications up front: WG_* and region-style vars as Static.
+  - Bump `BlockStoreTemplateRevision` (currently 1) to 2.
+  - Acceptance: orchestrator startup log shows `✓ System template 'system-blockstore' seeded (r2, ...)`.
+
 - [ ] **P3.3.2** — BlockStore-specific resolvers (orchestrator).
-- [ ] **P3.3.3** — Node-side BlockStore dynamic resolvers.
+  - Per the P3.2.2 coverage pattern, expect no new orchestrator resolver
+    files needed: P1.6 platform-common resolvers cover all 12 statics; existing
+    `WgDescriptionResolver` and `DeCloudRoleResolver` cover the rest.
+    `BlockStoreRegionResolver` (new, Static, mirrors `DhtRegionResolver`) reads
+    `ctx.Node.Region` if BlockStore declares its own region variable.
+  - Acceptance: render of a fresh BlockStore template produces no `__VARNAME__`
+    placeholders in the composed cloud-init output.
+
+- [ ] **P3.3.3** — Node-side BlockStore dynamic resolution.
+  - **Reuses P3.2.3's `NodeRelayConfigProvider`** — no new service needed. Extend
+    `ObligationEnvironmentController.GetEnvironment`'s inline switch with two
+    new cases:
+    ```csharp
+    ("blockstore", "BLOCKSTORE_ADVERTISE_IP")    => DeriveAdvertiseIp(relayConfig),
+    ("blockstore", "BLOCKSTORE_BOOTSTRAP_PEERS") => "",
+    ```
+  - Acceptance: `curl http://192.168.122.1:5100/api/obligations/blockstore/environment`
+    on a node with a BlockStore VM returns 2 dynamics with values + scopes +
+    real generation hash.
+
 - [ ] **P3.3.4** — Update `system-vms/blockstore/cloud-init.yaml`.
+  - Mirror `dht/cloud-init.yaml` v8.2 changes: strip 2 dynamics from `blockstore.env`,
+    parameterise port literals, add `/etc/decloud-blockstore/variable-scopes.conf`
+    (`__VARIABLE_SCOPES_BLOCK__`), add `/etc/decloud-blockstore/environment`
+    stub, second `EnvironmentFile=-/etc/decloud-blockstore/environment` on
+    `decloud-blockstore.service`, initial env-fetch runcmd, watcher timer enable.
+  - **Critical: avoid YAML pitfalls from P3.2.5 bugs.** (1) NO `\<newline>`
+    plain-scalar continuations in runcmd — use single-line commands. (2) Each
+    runcmd entry on its own line with leading `  - `; verify nothing got
+    concatenated by editor whitespace handling. (3) Bump version 4.x → 4.x+1
+    in both header and `blockstore-metadata.json`.
+  - Acceptance: cloud-init log clean on fresh deploy; `cat composed-userdata.yaml`
+    shows correctly-formed runcmd block with each `ln -sf` and `systemctl start`
+    on its own line.
+
 - [ ] **P3.3.5** — Per-role acceptance for BlockStore.
+  - **Substantive validation required**, not just procedural file-existence
+    checks. Per the lesson from P3.2.5 (see §2 / 2026-05-05 / P3.2.5 re-acceptance):
+    1. `sqlite3 /var/lib/decloud/vms/obligation-state.db "SELECT json_extract(template_json, '$.variables') FROM system_template WHERE role='blockstore'" | jq '. | length'`
+       — **must return >= 17** (12 platform statics + ~3-5 BlockStore statics + 2 dynamics).
+       Bug 2 from P3.2.5 (Variables omitted from node-side projection) was a
+       systemic issue that would re-occur if regression-introduced.
+    2. `curl http://192.168.122.1:5100/api/obligations/blockstore/environment`
+       must return both dynamics with non-empty values, real generation hash.
+    3. **Dual-tamper drift test** exercising the Restart scope: corrupt both
+       `ENV_GENERATION` AND `BLOCKSTORE_ADVERTISE_IP` value in
+       `/etc/decloud-blockstore/environment`, wait one watcher tick, verify
+       `journalctl -t decloud-env-watcher` logs `changed: BLOCKSTORE_ADVERTISE_IP
+       (restart) — restarting decloud-blockstore` and `decloud-blockstore.service`
+       `ActiveEnterTimestamp` advances.
+    4. Recovery test: destroy + redeploy preserves peerId from obligation state.
+    5. wg-config endpoint regression check (same wire format and 200/202
+       semantics as before — `NodeRelayConfigProvider` is shared with DHT,
+       so a regression here would have already broken DHT).
+  - Acceptance: all five checks pass on a fresh BlockStore deploy after a
+    second platform reset (no manual intervention).
+
 - [ ] **P3.3.6** — Scope-correctness audit for BlockStore.
+  - Likely pulled forward into P3.3.1 / P3.3.4 just like DHT's P3.2.6 was
+    pulled into P3.2.4. Document the audit findings as decision-log entries
+    rather than as separate code commits.
+  - Acceptance: every variable in `BuildBlockStoreVariables()` has a
+    documented consumer + observability + scope rationale either in the
+    seeder comment or in §2 of this plan.
 
 **Phase 3 done when:** All three roles deploy via new path, all three audits complete, all three recovery + drift tests pass, full release cycle observed without regressions.
 
