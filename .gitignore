@@ -8,8 +8,6 @@ obj/
 publish/
 node_modules/
 
-src/Orchestrator/Services/TemplateConstants/*.Artifacts.cs
-
 # IDE
 .vs/
 .vscode/
