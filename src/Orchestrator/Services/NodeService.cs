@@ -750,6 +750,14 @@ public class NodeService : INodeService
             BaseImageHash = string.Empty,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
             {
+                Name = p.Description ?? p.Port.ToString(),
+                Port = p.Port,
+                Protocol = p.Protocol,
+                CheckType = p.ReadinessCheck?.Strategy.ToString() ?? "CloudInitDone",
+                HttpPath = p.ReadinessCheck?.HttpPath,
+                TimeoutSeconds = p.ReadinessCheck?.TimeoutSeconds ?? 300,
+            }).Prepend(new SystemVmServiceDeclaration
+            {
                 Name = "System",
                 CheckType = "CloudInitDone",
                 TimeoutSeconds = 300,
