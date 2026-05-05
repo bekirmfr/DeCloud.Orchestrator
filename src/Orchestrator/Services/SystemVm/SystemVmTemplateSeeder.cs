@@ -274,7 +274,7 @@ public sealed class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("dht", ct),
-        Variables = BuildMeshSystemVmVariables(),
+        Variables = BuildDhtVariables(),
         Artifacts = new List<TemplateArtifact>
         {
             // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
@@ -692,6 +692,123 @@ public sealed class SystemVmTemplateSeeder
             // ResolverKey omitted — defaults to Name, matching DeCloudRoleResolver.ResolverKey
         },
     };
+
+    /// <summary>
+    /// Full declared variable list for the DHT cloud-init template.
+    /// Every __VARNAME__ placeholder in the composed cloud-init must appear here
+    /// as Static, and every $VARNAME shell reference as Dynamic.
+    ///
+    /// Phase 3.2 note: the 7 dynamics currently appear as __VARNAME__ placeholders
+    /// in the live cloud-init (LibvirtVmManager STEP 5.6 substitutes them on the
+    /// node side). P3.2.4 switches them to $VARNAME shell references and removes
+    /// the legacy substitution. Until then, strictValidation: false prevents the
+    /// renderer from rejecting undeclared placeholders.
+    ///
+    /// DHT_LISTEN_PORT and DHT_API_PORT are declared here even though the current
+    /// cloud-init has them as hardcoded literals (4001, 5080). P3.2.4 introduces
+    /// __DHT_LISTEN_PORT__ and __DHT_API_PORT__ placeholders; declaring them here
+    /// first means P3.2.4's YAML change requires no seeder amendment.
+    /// </summary>
+    private static List<TemplateVariable> BuildDhtVariables() => new()
+{
+    // ── Identity / VM context (platform-common resolvers) ────────────────
+    new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
+            Description = "VM unique identifier." },
+    new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
+            Description = "VM display name (used in dht-metadata.json and final_message)." },
+    new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
+            Description = "Linux hostname (base-system-mesh.yaml scalar)." },
+    new() { Name = "NODE_ID",     Kind = VariableKind.Static, Required = true,
+            Description = "Node unique identifier (DECLOUD_NODE_ID, WG_PARENT_NODE_ID, node_id in metadata)." },
+    new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+            Description = "Orchestrator HTTP URL for dht.env ORCHESTRATOR_URL." },
+    new() { Name = "HOST_MACHINE_ID",  Kind = VariableKind.Static, Required = true,
+            Description = "Host machine UUID for dht.env HOST_MACHINE_ID." },
+    new() { Name = "TIMESTAMP",   Kind = VariableKind.Static, Required = false,
+            DefaultValue = "",
+            Description = "UTC ISO8601 render timestamp for dht-metadata.json created_at." },
+
+    // ── SSH / CA (platform-common, base-system-mesh.yaml) ────────────────
+    new() { Name = "CA_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
+            Description = "SSH certificate authority public key (resolved from Node.SshCaPublicKey)." },
+    new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+            DefaultValue = "# No SSH keys provided",
+            Description = "YAML chunk for cloud-init ssh_authorized_keys." },
+    new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
+            DefaultValue = "# No password authentication",
+            Description = "YAML chunk for cloud-init chpasswd.users." },
+    new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static,
+            DefaultValue = "false",
+            Description = "'true' or 'false' for cloud-init ssh_pwauth." },
+    new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static,
+            DefaultValue = "",
+            Description = "Plaintext root password. Empty for SSH-only deploys (system VMs default)." },
+
+    // ── DHT-specific statics ─────────────────────────────────────────────
+    new() { Name = "WG_DESCRIPTION", Kind = VariableKind.Static, Required = true,
+            Description = "WireGuard peer label for this VM (dht-<obligation-id>). " +
+                          "Resolved by WgDescriptionResolver." },
+    new() { Name = "DECLOUD_ROLE", Kind = VariableKind.Static,
+            DefaultValue = "dht",
+            Description = "Role name injected into wg-mesh.env WG_ROLE and wg-config-fetch.sh DECLOUD_ROLE." },
+    new() { Name = "DHT_LISTEN_PORT", Kind = VariableKind.Static,
+            DefaultValue = "4001",
+            Description = "libp2p listen port. Baked into dht.env. " +
+                          "Currently a literal in cloud-init; __DHT_LISTEN_PORT__ placeholder lands in P3.2.4." },
+    new() { Name = "DHT_API_PORT", Kind = VariableKind.Static,
+            DefaultValue = "5080",
+            Description = "DHT HTTP API port. Baked into dht.env. " +
+                          "Currently a literal in cloud-init; __DHT_API_PORT__ placeholder lands in P3.2.4." },
+
+    // ── Watcher infra ────────────────────────────────────────────────────
+    new() { Name = "VARIABLE_SCOPES_BLOCK", Kind = VariableKind.Static,
+            DefaultValue = "# No dynamic variables declared",
+            Description = "Rendered scope policy file for decloud-env-watcher. " +
+                          "Contains VARNAME=scope lines for each Dynamic variable. " +
+                          "Placeholder __VARIABLE_SCOPES_BLOCK__ lands in P3.2.4." },
+
+    // ── Dynamic variables (7) ────────────────────────────────────────────
+    // Resolved at runtime by node-side resolvers (P3.2.3).
+    // Appear as $VARNAME shell references in dht.env (after P3.2.4 YAML update).
+    // Until P3.2.4: still __VARNAME__ placeholders; LibvirtVmManager STEP 5.6
+    // substitutes them on the node side; renderer called with strictValidation: false.
+
+    new() { Name = "DHT_ADVERTISE_IP",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+            Description = "libp2p advertise IP (WireGuard tunnel IP bare address). " +
+                          "Restart: libp2p multiaddr is bound at startup; can't rebind without restart." },
+
+    new() { Name = "DHT_BOOTSTRAP_PEERS",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
+            Description = "Comma-separated bootstrap peer multiaddrs. " +
+                          "Noop: dht-bootstrap-poll.sh re-sources env each tick; " +
+                          "organic peer discovery continues once joined." },
+
+    new() { Name = "DHT_REGION",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
+            Description = "Node region label. " +
+                          "Noop: cosmetic only; consumed by dht-metadata.json which is written once at boot." },
+
+    new() { Name = "WG_RELAY_ENDPOINT",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+            Description = "WireGuard relay UDP endpoint (host:port). " +
+                          "Restart: WireGuard kernel config; requires wg-quick@wg-mesh restart." },
+
+    new() { Name = "WG_RELAY_PUBKEY",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+            Description = "WireGuard relay public key. " +
+                          "Restart: WireGuard kernel config." },
+
+    new() { Name = "WG_RELAY_API",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+            Description = "Relay HTTP API base URL (used by wg-config-fetch.sh). " +
+                          "Restart: required for re-enrollment via wg-quick@wg-mesh restart." },
+
+    new() { Name = "WG_TUNNEL_IP",
+            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+            Description = "WireGuard tunnel IP assigned to this VM (e.g. 10.30.x.y). " +
+                          "Restart: affects WireGuard Address and DHT_ADVERTISE_IP derivation." },
+};
 
     /// <summary>
     /// Full declared-statics list for the v6.1 relay cloud-init template.
