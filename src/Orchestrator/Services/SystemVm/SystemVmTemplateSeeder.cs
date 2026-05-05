@@ -767,12 +767,38 @@ public sealed class SystemVmTemplateSeeder
                           "Contains VARNAME=scope lines for each Dynamic variable. " +
                           "Placeholder __VARIABLE_SCOPES_BLOCK__ lands in P3.2.4." },
 
-    // ── Dynamic variables (7) ────────────────────────────────────────────
-    // Resolved at runtime by node-side resolvers (P3.2.3).
-    // Appear as $VARNAME shell references in dht.env (after P3.2.4 YAML update).
-    // Until P3.2.4: still __VARNAME__ placeholders; LibvirtVmManager STEP 5.6
-    // substitutes them on the node side; renderer called with strictValidation: false.
+    // ── Mesh statics (filled at boot by wg-config-fetch.sh) ──────────────
+    // Originally classified Dynamic in design §2.3 but the existing
+    // wg-mesh.env path (wg-config-fetch.sh polls /api/obligations/{role}/
+    // wg-config and overwrites the file at boot) supersedes any
+    // orchestrator-render value. Declared Static with empty default so
+    // the renderer substitutes placeholders cleanly; the running binary
+    // observes the real values via the post-render boot-time fill.
+    // Future P4 work may unify through the watcher; not a Phase 3 blocker
+    // (relay reassignment without redeploy is not a working feature today).
+    new() { Name = "WG_RELAY_ENDPOINT", Kind = VariableKind.Static,
+            DefaultValue = "",
+            Description = "WireGuard relay UDP endpoint (host:port). Filled at boot by wg-config-fetch.sh." },
+    new() { Name = "WG_RELAY_PUBKEY", Kind = VariableKind.Static,
+            DefaultValue = "",
+            Description = "WireGuard relay public key. Filled at boot by wg-config-fetch.sh." },
+    new() { Name = "WG_RELAY_API", Kind = VariableKind.Static,
+            DefaultValue = "",
+            Description = "Relay HTTP API base URL. Filled at boot by wg-config-fetch.sh." },
+    new() { Name = "WG_TUNNEL_IP", Kind = VariableKind.Static,
+            DefaultValue = "",
+            Description = "WireGuard tunnel IP for this VM. Filled at boot by wg-config-fetch.sh." },
 
+    // ── DHT_REGION — demoted from Dynamic per scope audit (P3.2.6 finding) ──
+    // Cosmetic; consumed only by dht-metadata.json written once at boot.
+    // No mechanism in the binary observes runtime changes. Resolver reads
+    // ctx.Node.Region.
+    new() { Name = "DHT_REGION", Kind = VariableKind.Static, Required = false,
+            DefaultValue = "default",
+            Description = "Node region label. Baked once into dht-metadata.json at deploy time. " +
+                          "Resolver: DhtRegionResolver reads ctx.Node.Region." },
+
+    // ── True Dynamics (2) — managed via the new env-watcher pipeline ─────
     new() { Name = "DHT_ADVERTISE_IP",
             Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
             Description = "libp2p advertise IP (WireGuard tunnel IP bare address). " +
@@ -781,33 +807,8 @@ public sealed class SystemVmTemplateSeeder
     new() { Name = "DHT_BOOTSTRAP_PEERS",
             Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
             Description = "Comma-separated bootstrap peer multiaddrs. " +
-                          "Noop: dht-bootstrap-poll.sh re-sources env each tick; " +
-                          "organic peer discovery continues once joined." },
-
-    new() { Name = "DHT_REGION",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
-            Description = "Node region label. " +
-                          "Noop: cosmetic only; consumed by dht-metadata.json which is written once at boot." },
-
-    new() { Name = "WG_RELAY_ENDPOINT",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
-            Description = "WireGuard relay UDP endpoint (host:port). " +
-                          "Restart: WireGuard kernel config; requires wg-quick@wg-mesh restart." },
-
-    new() { Name = "WG_RELAY_PUBKEY",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
-            Description = "WireGuard relay public key. " +
-                          "Restart: WireGuard kernel config." },
-
-    new() { Name = "WG_RELAY_API",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
-            Description = "Relay HTTP API base URL (used by wg-config-fetch.sh). " +
-                          "Restart: required for re-enrollment via wg-quick@wg-mesh restart." },
-
-    new() { Name = "WG_TUNNEL_IP",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
-            Description = "WireGuard tunnel IP assigned to this VM (e.g. 10.30.x.y). " +
-                          "Restart: affects WireGuard Address and DHT_ADVERTISE_IP derivation." },
+                          "Noop: dht-bootstrap-poll.sh discovers peers via /api/dht/join " +
+                          "regardless of env value; the env var is currently advisory." },
 };
 
     /// <summary>
