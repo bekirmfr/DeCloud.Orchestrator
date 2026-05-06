@@ -15,11 +15,13 @@ public sealed class VmIdResolver : IVariableResolver
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {
         var id = ctx.Vm?.Id ?? ctx.Obligation?.VmId;
-        if (string.IsNullOrEmpty(id))
-            throw new InvalidOperationException(
-                "VM_ID resolver: neither ctx.Vm.Id nor ctx.Obligation.VmId is set. " +
-                "For tenant flows, ensure VirtualMachine is constructed before render. " +
-                "For system flows, P1.11 must have assigned VmId at obligation creation.");
-        return Task.FromResult(id);
+        // System VM flow (BLOCKSTORE-FIX §6): VmId is minted on the node at
+        // deploy time, so it's null in ResolutionContext at orchestrator render
+        // time. Emit the placeholder literal — SystemVmReconciler.ActCreateAsync
+        // performs a single-pass __VM_ID__ substitution before DeployAsync.
+        // Tenant flows always have ctx.Vm.Id set; this branch never fires for
+        // tenants. The earlier "throw on null" was correct for the pre-Phase 3
+        // pre-assigned VmId pattern but blocked the design migration.
+        return Task.FromResult(string.IsNullOrEmpty(id) ? "__VM_ID__" : id);
     }
 }

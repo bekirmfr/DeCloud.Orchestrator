@@ -396,7 +396,12 @@ public class NodeService : INodeService
                     node.SystemVmObligations.Add(new SystemVmObligation
                     {
                         Role = role,
-                        VmId = Guid.NewGuid().ToString(),
+                        // VmId intentionally NOT pre-assigned (BLOCKSTORE-FIX §6 /
+                        // Phase 3 cleanup). The libvirt domain UUID is the single
+                        // authoritative VmId — minted on the node at deploy time
+                        // and stamped here via SyncVmStateFromHeartbeatAsync's
+                        // empty-VmId adoption guard. VmName remains derivable
+                        // from nodeId (stable across redeploys) so kept as-is.
                         VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                         Status = SystemVmStatus.Pending,
                         TemplateId = tpl?.Id,

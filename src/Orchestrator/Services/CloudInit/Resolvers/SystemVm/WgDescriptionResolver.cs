@@ -59,13 +59,14 @@ public sealed class WgDescriptionResolver : IVariableResolver
                 "use base-system-mesh.yaml so should not declare WG_DESCRIPTION.");
 
         var vmId = ctx.Obligation.VmId;
-        if (string.IsNullOrEmpty(vmId))
-            throw new InvalidOperationException(
-                "WG_DESCRIPTION resolver: ctx.Obligation.VmId is empty. " +
-                "P1.11 must have assigned VmId at obligation creation. " +
-                "Pre-P1.11 obligations carry null VmId; this resolver fails until the " +
-                "obligation is recreated (typically at next reconciliation cycle).");
-
-        return Task.FromResult($"{role}-{vmId}");
+        // System VM flow (BLOCKSTORE-FIX §6): VmId is minted on the node at
+        // deploy time. Embed the __VM_ID__ placeholder so the reconciler's
+        // single-pass __VM_ID__ substitution catches it on its way through.
+        // Result after substitution: "{role}-{vmId}" — same shape as the
+        // legacy pre-assigned path produced.
+        return Task.FromResult(
+            string.IsNullOrEmpty(vmId)
+                ? $"{role}-__VM_ID__"
+                : $"{role}-{vmId}");
     }
 }

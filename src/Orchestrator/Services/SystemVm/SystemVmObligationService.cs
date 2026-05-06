@@ -216,7 +216,8 @@ public class SystemVmObligationService : BackgroundService
             return new SystemVmObligation
             {
                 Role = role,
-                VmId = Guid.NewGuid().ToString(),
+                // VmId intentionally NOT pre-assigned (BLOCKSTORE-FIX §6 /
+                // Phase 3 cleanup). Heartbeat adopts the libvirt-minted UUID.
                 VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Pending
             };
@@ -237,7 +238,8 @@ public class SystemVmObligationService : BackgroundService
             return new SystemVmObligation
             {
                 Role = role,
-                VmId = Guid.NewGuid().ToString(),
+                // VmId intentionally NOT pre-assigned (BLOCKSTORE-FIX §6 /
+                // Phase 3 cleanup). Heartbeat adopts the libvirt-minted UUID.
                 VmName = SystemVmRoleMap.ToVmName(role, node.Id),
                 Status = SystemVmStatus.Pending
             };
