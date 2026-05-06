@@ -800,6 +800,11 @@ public class VmServiceStatus
     /// Current readiness status
     /// </summary>
     public ServiceReadiness Status { get; set; } = ServiceReadiness.Pending;
+    /// <summary>
+    /// When true, this service is periodically re-verified after reaching
+    /// Ready. A failed re-check reverts Ready → Failed. Default: false.
+    /// </summary>
+    public bool LivenessCheck { get; set; } = false;
 
     /// <summary>
     /// Human-readable explanation of current status.

@@ -758,6 +758,12 @@ public class NodeService : INodeService
                 TimeoutSeconds = p.ReadinessCheck?.TimeoutSeconds ?? 300,
             }).Prepend(new SystemVmServiceDeclaration
             {
+                Name = "Guest Agent",
+                CheckType = "GuestAgentPing",
+                LivenessCheck = true,
+                TimeoutSeconds = 300,
+            }).Prepend(new SystemVmServiceDeclaration
+            {
                 Name = "System",
                 CheckType = "CloudInitDone",
                 TimeoutSeconds = 300,
