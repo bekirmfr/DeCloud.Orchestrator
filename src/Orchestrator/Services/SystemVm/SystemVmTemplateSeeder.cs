@@ -243,7 +243,7 @@ public sealed partial class SystemVmTemplateSeeder
         Visibility = TemplateVisibility.Public,
         PricingModel = TemplatePricingModel.Free,
         CloudInitTemplate = await FetchCloudInitAsync("blockstore", ct),
-        Variables = BuildMeshSystemVmVariables(),
+        Variables = BuildBlockStoreVariables(),
         Artifacts = new List<TemplateArtifact>
         {
             Artifact("blockstore-node", "BlockStore node binary",
@@ -578,106 +578,218 @@ public sealed partial class SystemVmTemplateSeeder
     /// first means P3.2.4's YAML change requires no seeder amendment.
     /// </summary>
     private static List<TemplateVariable> BuildDhtVariables() => new()
-{
-    // ── Identity / VM context (platform-common resolvers) ────────────────
-    new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
-            Description = "VM unique identifier." },
-    new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
-            Description = "VM display name (used in dht-metadata.json and final_message)." },
-    new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
-            Description = "Linux hostname (base-system-mesh.yaml scalar)." },
-    new() { Name = "NODE_ID",     Kind = VariableKind.Static, Required = true,
-            Description = "Node unique identifier (DECLOUD_NODE_ID, WG_PARENT_NODE_ID, node_id in metadata)." },
-    new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
-            Description = "Orchestrator HTTP URL for dht.env ORCHESTRATOR_URL." },
-    new() { Name = "HOST_MACHINE_ID",  Kind = VariableKind.Static, Required = true,
-            Description = "Host machine UUID for dht.env HOST_MACHINE_ID." },
-    new() { Name = "TIMESTAMP",   Kind = VariableKind.Static, Required = false,
-            DefaultValue = "",
-            Description = "UTC ISO8601 render timestamp for dht-metadata.json created_at." },
+    {
+        // ── Identity / VM context (platform-common resolvers) ────────────────
+        new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier." },
+        new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
+                Description = "VM display name (used in dht-metadata.json and final_message)." },
+        new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname (base-system-mesh.yaml scalar)." },
+        new() { Name = "NODE_ID",     Kind = VariableKind.Static, Required = true,
+                Description = "Node unique identifier (DECLOUD_NODE_ID, WG_PARENT_NODE_ID, node_id in metadata)." },
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "Orchestrator HTTP URL for dht.env ORCHESTRATOR_URL." },
+        new() { Name = "HOST_MACHINE_ID",  Kind = VariableKind.Static, Required = true,
+                Description = "Host machine UUID for dht.env HOST_MACHINE_ID." },
+        new() { Name = "TIMESTAMP",   Kind = VariableKind.Static, Required = false,
+                DefaultValue = "",
+                Description = "UTC ISO8601 render timestamp for dht-metadata.json created_at." },
 
-    // ── SSH / CA (platform-common, base-system-mesh.yaml) ────────────────
-    new() { Name = "CA_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
-            Description = "SSH certificate authority public key (resolved from Node.SshCaPublicKey)." },
-    new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
-            DefaultValue = "# No SSH keys provided",
-            Description = "YAML chunk for cloud-init ssh_authorized_keys." },
-    new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
-            DefaultValue = "# No password authentication",
-            Description = "YAML chunk for cloud-init chpasswd.users." },
-    new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static,
-            DefaultValue = "false",
-            Description = "'true' or 'false' for cloud-init ssh_pwauth." },
-    new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static,
-            DefaultValue = "",
-            Description = "Plaintext root password. Empty for SSH-only deploys (system VMs default)." },
+        // ── SSH / CA (platform-common, base-system-mesh.yaml) ────────────────
+        new() { Name = "CA_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key (resolved from Node.SshCaPublicKey)." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk for cloud-init ssh_authorized_keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for cloud-init chpasswd.users." },
+        new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static,
+                DefaultValue = "false",
+                Description = "'true' or 'false' for cloud-init ssh_pwauth." },
+        new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "Plaintext root password. Empty for SSH-only deploys (system VMs default)." },
 
-    // ── DHT-specific statics ─────────────────────────────────────────────
-    new() { Name = "WG_DESCRIPTION", Kind = VariableKind.Static, Required = true,
-            Description = "WireGuard peer label for this VM (dht-<obligation-id>). " +
-                          "Resolved by WgDescriptionResolver." },
-    new() { Name = "DECLOUD_ROLE", Kind = VariableKind.Static,
-            DefaultValue = "dht",
-            Description = "Role name injected into wg-mesh.env WG_ROLE and wg-config-fetch.sh DECLOUD_ROLE." },
-    new() { Name = "DHT_LISTEN_PORT", Kind = VariableKind.Static,
-            DefaultValue = "4001",
-            Description = "libp2p listen port. Baked into dht.env. " +
-                          "Currently a literal in cloud-init; __DHT_LISTEN_PORT__ placeholder lands in P3.2.4." },
-    new() { Name = "DHT_API_PORT", Kind = VariableKind.Static,
-            DefaultValue = "5080",
-            Description = "DHT HTTP API port. Baked into dht.env. " +
-                          "Currently a literal in cloud-init; __DHT_API_PORT__ placeholder lands in P3.2.4." },
+        // ── DHT-specific statics ─────────────────────────────────────────────
+        new() { Name = "WG_DESCRIPTION", Kind = VariableKind.Static, Required = true,
+                Description = "WireGuard peer label for this VM (dht-<obligation-id>). " +
+                              "Resolved by WgDescriptionResolver." },
+        new() { Name = "DECLOUD_ROLE", Kind = VariableKind.Static,
+                DefaultValue = "dht",
+                Description = "Role name injected into wg-mesh.env WG_ROLE and wg-config-fetch.sh DECLOUD_ROLE." },
+        new() { Name = "DHT_LISTEN_PORT", Kind = VariableKind.Static,
+                DefaultValue = "4001",
+                Description = "libp2p listen port. Baked into dht.env. " +
+                              "Currently a literal in cloud-init; __DHT_LISTEN_PORT__ placeholder lands in P3.2.4." },
+        new() { Name = "DHT_API_PORT", Kind = VariableKind.Static,
+                DefaultValue = "5080",
+                Description = "DHT HTTP API port. Baked into dht.env. " +
+                              "Currently a literal in cloud-init; __DHT_API_PORT__ placeholder lands in P3.2.4." },
 
-    // ── Watcher infra ────────────────────────────────────────────────────
-    new() { Name = "VARIABLE_SCOPES_BLOCK", Kind = VariableKind.Static,
-            DefaultValue = "# No dynamic variables declared",
-            Description = "Rendered scope policy file for decloud-env-watcher. " +
-                          "Contains VARNAME=scope lines for each Dynamic variable. " +
-                          "Placeholder __VARIABLE_SCOPES_BLOCK__ lands in P3.2.4." },
+        // ── Watcher infra ────────────────────────────────────────────────────
+        new() { Name = "VARIABLE_SCOPES_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No dynamic variables declared",
+                Description = "Rendered scope policy file for decloud-env-watcher. " +
+                              "Contains VARNAME=scope lines for each Dynamic variable. " +
+                              "Placeholder __VARIABLE_SCOPES_BLOCK__ lands in P3.2.4." },
 
-    // ── Mesh statics (filled at boot by wg-config-fetch.sh) ──────────────
-    // Originally classified Dynamic in design §2.3 but the existing
-    // wg-mesh.env path (wg-config-fetch.sh polls /api/obligations/{role}/
-    // wg-config and overwrites the file at boot) supersedes any
-    // orchestrator-render value. Declared Static with empty default so
-    // the renderer substitutes placeholders cleanly; the running binary
-    // observes the real values via the post-render boot-time fill.
-    // Future P4 work may unify through the watcher; not a Phase 3 blocker
-    // (relay reassignment without redeploy is not a working feature today).
-    new() { Name = "WG_RELAY_ENDPOINT", Kind = VariableKind.Static,
-            DefaultValue = "",
-            Description = "WireGuard relay UDP endpoint (host:port). Filled at boot by wg-config-fetch.sh." },
-    new() { Name = "WG_RELAY_PUBKEY", Kind = VariableKind.Static,
-            DefaultValue = "",
-            Description = "WireGuard relay public key. Filled at boot by wg-config-fetch.sh." },
-    new() { Name = "WG_RELAY_API", Kind = VariableKind.Static,
-            DefaultValue = "",
-            Description = "Relay HTTP API base URL. Filled at boot by wg-config-fetch.sh." },
-    new() { Name = "WG_TUNNEL_IP", Kind = VariableKind.Static,
-            DefaultValue = "",
-            Description = "WireGuard tunnel IP for this VM. Filled at boot by wg-config-fetch.sh." },
+        // ── Mesh statics (filled at boot by wg-config-fetch.sh) ──────────────
+        // Originally classified Dynamic in design §2.3 but the existing
+        // wg-mesh.env path (wg-config-fetch.sh polls /api/obligations/{role}/
+        // wg-config and overwrites the file at boot) supersedes any
+        // orchestrator-render value. Declared Static with empty default so
+        // the renderer substitutes placeholders cleanly; the running binary
+        // observes the real values via the post-render boot-time fill.
+        // Future P4 work may unify through the watcher; not a Phase 3 blocker
+        // (relay reassignment without redeploy is not a working feature today).
+        new() { Name = "WG_RELAY_ENDPOINT", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "WireGuard relay UDP endpoint (host:port). Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_RELAY_PUBKEY", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "WireGuard relay public key. Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_RELAY_API", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "Relay HTTP API base URL. Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_TUNNEL_IP", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "WireGuard tunnel IP for this VM. Filled at boot by wg-config-fetch.sh." },
 
-    // ── DHT_REGION — demoted from Dynamic per scope audit (P3.2.6 finding) ──
-    // Cosmetic; consumed only by dht-metadata.json written once at boot.
-    // No mechanism in the binary observes runtime changes. Resolver reads
-    // ctx.Node.Region.
-    new() { Name = "DHT_REGION", Kind = VariableKind.Static, Required = false,
-            DefaultValue = "default",
-            Description = "Node region label. Baked once into dht-metadata.json at deploy time. " +
-                          "Resolver: DhtRegionResolver reads ctx.Node.Region." },
+        // ── DHT_REGION — demoted from Dynamic per scope audit (P3.2.6 finding) ──
+        // Cosmetic; consumed only by dht-metadata.json written once at boot.
+        // No mechanism in the binary observes runtime changes. Resolver reads
+        // ctx.Node.Region.
+        new() { Name = "DHT_REGION", Kind = VariableKind.Static, Required = false,
+                DefaultValue = "default",
+                Description = "Node region label. Baked once into dht-metadata.json at deploy time. " +
+                              "Resolver: DhtRegionResolver reads ctx.Node.Region." },
 
-    // ── True Dynamics (2) — managed via the new env-watcher pipeline ─────
-    new() { Name = "DHT_ADVERTISE_IP",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
-            Description = "libp2p advertise IP (WireGuard tunnel IP bare address). " +
-                          "Restart: libp2p multiaddr is bound at startup; can't rebind without restart." },
+        // ── True Dynamics (2) — managed via the new env-watcher pipeline ─────
+        new() { Name = "DHT_ADVERTISE_IP",
+                Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+                Description = "libp2p advertise IP (WireGuard tunnel IP bare address). " +
+                              "Restart: libp2p multiaddr is bound at startup; can't rebind without restart." },
 
-    new() { Name = "DHT_BOOTSTRAP_PEERS",
-            Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
-            Description = "Comma-separated bootstrap peer multiaddrs. " +
-                          "Noop: dht-bootstrap-poll.sh discovers peers via /api/dht/join " +
-                          "regardless of env value; the env var is currently advisory." },
-};
+        new() { Name = "DHT_BOOTSTRAP_PEERS",
+                Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
+                Description = "Comma-separated bootstrap peer multiaddrs. " +
+                              "Noop: dht-bootstrap-poll.sh discovers peers via /api/dht/join " +
+                              "regardless of env value; the env var is currently advisory." },
+    };
+
+    /// <summary>
+    /// Variables for the BlockStore system VM template — mirror of
+    /// <see cref="BuildDhtVariables"/> with role-specific names substituted.
+    ///
+    /// <para>
+    /// Composition (24 entries):
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>12 platform-common statics (VM identity, SSH/password machinery,
+    ///                       orchestrator URL, timestamp) — covered by P1.6 platform-common
+    ///                       resolvers.</description></item>
+    ///   <item><description>5 BlockStore-specific statics (mesh description, role label,
+    ///                       listen/API ports, variable-scopes block) — covered by
+    ///                       <c>WgDescriptionResolver</c>, <c>DeCloudRoleResolver</c>,
+    ///                       <c>DefaultValue</c> for ports, <c>VariableScopesBlockResolver</c>.
+    ///                       </description></item>
+    ///   <item><description>4 WG_* statics with <c>DefaultValue=""</c> — runtime-managed by
+    ///                       <c>wg-config-fetch.sh</c> at boot, not by the watcher pipeline.
+    ///                       See P3.2.4 decision for full rationale.</description></item>
+    ///   <item><description>1 region static (<c>BLOCKSTORE_REGION</c>) with
+    ///                       <c>DefaultValue="default"</c> — baked into
+    ///                       <c>blockstore-metadata.json</c> at deploy time.</description></item>
+    ///   <item><description>2 true dynamics (<c>BLOCKSTORE_ADVERTISE_IP</c> Restart,
+    ///                       <c>BLOCKSTORE_BOOTSTRAP_PEERS</c> Noop) — managed via the
+    ///                       env-watcher pipeline; node-side resolved by inline switch
+    ///                       in <c>ObligationEnvironmentController</c> (P3.3.3).</description></item>
+    /// </list>
+    /// </summary>
+    private static List<TemplateVariable> BuildBlockStoreVariables() => new()
+    {
+        // ── Platform-common statics (12) ─────────────────────────────────────
+        // Identity, SSH, password, orchestrator URL, timestamp.
+        // All covered by P1.6 platform-common resolvers.
+        new() { Name = "VM_ID",                      Kind = VariableKind.Static, Required = true,
+                Description = "Stable VM UUID assigned by the orchestrator at obligation creation." },
+        new() { Name = "VM_NAME",                    Kind = VariableKind.Static, Required = true,
+                Description = "Human-readable VM name (e.g. blockstore-3b983464)." },
+        new() { Name = "HOSTNAME",                   Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname (typically equal to VM_NAME)." },
+        new() { Name = "NODE_ID",                    Kind = VariableKind.Static, Required = true,
+                Description = "Stable node UUID hosting this VM." },
+        new() { Name = "ORCHESTRATOR_URL",           Kind = VariableKind.Static, Required = true,
+                Description = "Public orchestrator base URL (e.g. https://decloud.stackfi.tech)." },
+        new() { Name = "HOST_MACHINE_ID",            Kind = VariableKind.Static, Required = true,
+                Description = "Linux /etc/machine-id of the host node — used for attestation." },
+        new() { Name = "TIMESTAMP",                  Kind = VariableKind.Static,
+                Description = "Render timestamp (ISO-8601 UTC). Useful for cache-busting." },
+        new() { Name = "CA_PUBLIC_KEY",              Kind = VariableKind.Static, Required = true,
+                Description = "Platform SSH CA public key, written into sshd config." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK",  Kind = VariableKind.Static,
+                Description = "Optional users:authorized_keys YAML block (empty if not configured)." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK",      Kind = VariableKind.Static,
+                Description = "Optional users:passwd YAML block (empty if password auth disabled)." },
+        new() { Name = "SSH_PASSWORD_AUTH",          Kind = VariableKind.Static, DefaultValue = "no",
+                Description = "sshd PasswordAuthentication directive value (yes/no)." },
+        new() { Name = "ADMIN_PASSWORD",             Kind = VariableKind.Static,
+                Description = "Optional admin password (empty when password auth disabled)." },
+
+        // ── BlockStore-specific statics (5) ──────────────────────────────────
+        new() { Name = "WG_DESCRIPTION",             Kind = VariableKind.Static,
+                Description = "WireGuard interface description for this VM (cosmetic — appears in wg-mesh.conf)." },
+        new() { Name = "DECLOUD_ROLE",               Kind = VariableKind.Static, DefaultValue = "blockstore",
+                Description = "Canonical role name. Used in log prefixes and labels." },
+        new() { Name = "BLOCKSTORE_LISTEN_PORT",     Kind = VariableKind.Static, DefaultValue = "5001",
+                Description = "libp2p listen port for BitSwap. Static — port change requires restart " +
+                              "but is a deploy-time decision, not a runtime concern." },
+        new() { Name = "BLOCKSTORE_API_PORT",        Kind = VariableKind.Static, DefaultValue = "5090",
+                Description = "BlockStore HTTP API port (consumed by nginx proxy and dashboard)." },
+        new() { Name = "VARIABLE_SCOPES_BLOCK",      Kind = VariableKind.Static,
+                Description = "Rendered scope policy lines for /etc/decloud-blockstore/variable-scopes.conf — " +
+                              "produced by VariableScopesBlockResolver iterating template.Variables for Dynamics." },
+
+        // ── Mesh statics (4 — filled at boot by wg-config-fetch.sh) ──────────
+        // Originally classified Dynamic in design §2.3 but the existing
+        // wg-mesh.env path (wg-config-fetch.sh polls /api/obligations/{role}/
+        // wg-config and overwrites the file at boot) supersedes any
+        // orchestrator-render value. Declared Static with empty default so the
+        // renderer substitutes placeholders cleanly; the running binary
+        // observes the real values via the post-render boot-time fill.
+        // Future P4 work may unify through the watcher; not a Phase 3 blocker.
+        // See P3.2.4 / DHT for full rationale (same conclusion applies here).
+        new() { Name = "WG_RELAY_ENDPOINT", Kind = VariableKind.Static, DefaultValue = "",
+                Description = "WireGuard relay UDP endpoint. Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_RELAY_PUBKEY",   Kind = VariableKind.Static, DefaultValue = "",
+                Description = "WireGuard relay public key. Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_RELAY_API",      Kind = VariableKind.Static, DefaultValue = "",
+                Description = "Relay HTTP API base URL. Filled at boot by wg-config-fetch.sh." },
+        new() { Name = "WG_TUNNEL_IP",      Kind = VariableKind.Static, DefaultValue = "",
+                Description = "WireGuard tunnel IP for this VM. Filled at boot by wg-config-fetch.sh." },
+
+        // ── BLOCKSTORE_REGION — Static per P3.2.6 scope audit logic ──────────
+        // Cosmetic; consumed only by blockstore-metadata.json written once at
+        // boot. No mechanism in the binary observes runtime changes. Resolver
+        // reads ctx.Node.Region.
+        new() { Name = "BLOCKSTORE_REGION", Kind = VariableKind.Static, Required = false,
+                DefaultValue = "default",
+                Description = "Node region label. Baked once into blockstore-metadata.json at deploy time. " +
+                              "Resolver: BlockStoreRegionResolver reads ctx.Node.Region." },
+
+        // ── True Dynamics (2) — managed via the new env-watcher pipeline ─────
+        new() { Name = "BLOCKSTORE_ADVERTISE_IP",
+                Kind = VariableKind.Dynamic, Scope = WatcherScope.Restart,
+                Description = "libp2p advertise IP (WireGuard tunnel IP bare address). " +
+                              "Restart: libp2p multiaddr is bound at startup; can't rebind without restart." },
+
+        new() { Name = "BLOCKSTORE_BOOTSTRAP_PEERS",
+                Kind = VariableKind.Dynamic, Scope = WatcherScope.Noop,
+                Description = "Comma-separated bootstrap peer multiaddrs. " +
+                              "Noop: BlockStore discovers peers via /api/blockstore/announce regardless of " +
+                              "env value; the env var is currently advisory." },
+    };
 
     /// <summary>
     /// Full declared-statics list for the v6.1 relay cloud-init template.
