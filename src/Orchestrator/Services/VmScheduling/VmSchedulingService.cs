@@ -489,6 +489,31 @@ public class VmSchedulingService : IVmSchedulingService
                 node.Id, nodeZone);
         }
 
+        // 4f. Minimum reputation threshold (tenant preference)
+        //
+        // VmSpec.MinNodeReputationScore (default 0.3) is the floor below
+        // which the tenant refuses to land. Reputation is computed from
+        // the same uptime + success-rate inputs that CalculateNodeScores
+        // uses for soft scoring; the helper below is the single source of
+        // truth so the two sites cannot drift.
+        //
+        // Default 0.3 effectively accepts most healthy nodes; tenants with
+        // compliance/latency-sensitive workloads raise the floor explicitly.
+        if (spec.MinNodeReputationScore > 0)
+        {
+            var reputation = ComputeReputationScore(node);
+
+            if (reputation < spec.MinNodeReputationScore)
+            {
+                return $"Reputation too low " +
+                       $"({reputation:F2} < {spec.MinNodeReputationScore:F2})";
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} reputation {Reputation:F2} meets minimum {Min:F2}",
+                node.Id, reputation, spec.MinNodeReputationScore);
+        }
+
 
         // =====================================================
         // FILTER 5: GPU Mode Requirement
@@ -649,14 +674,10 @@ public class VmSchedulingService : IVmSchedulingService
 
         // =====================================================
         // REPUTATION SCORE (0.0 - 1.0)
-        // Based on uptime and successful VM completions
+        // Based on uptime and successful VM completions.
+        // Single source of truth: ComputeReputationScore.
         // =====================================================
-        var uptimeComponent = node.UptimePercentage / 100.0;
-        var successComponent = node.TotalVmsHosted > 0
-            ? (double)node.SuccessfulVmCompletions / node.TotalVmsHosted
-            : 0.5; // Neutral for new nodes
-
-        var reputationScore = (uptimeComponent * 0.7) + (successComponent * 0.3);
+        var reputationScore = ComputeReputationScore(node);
 
         // =====================================================
         // LOCALITY SCORE (0.0 - 1.0)
@@ -676,6 +697,23 @@ public class VmSchedulingService : IVmSchedulingService
             ReputationScore = reputationScore,
             LocalityScore = localityScore
         };
+    }
+
+    /// <summary>
+    /// Compute a node's reputation score in [0.0, 1.0].
+    /// Used by both the FILTER 4f hard threshold and the soft scoring path.
+    ///
+    /// Formula: <c>(uptimePercent × 0.7) + (successRate × 0.3)</c>.
+    /// New nodes (no VMs hosted) score 0.5 on the success component —
+    /// neutral, neither rewarded nor penalised.
+    /// </summary>
+    private static double ComputeReputationScore(Node node)
+    {
+        var uptimeComponent = node.UptimePercentage / 100.0;
+        var successComponent = node.TotalVmsHosted > 0
+            ? (double)node.SuccessfulVmCompletions / node.TotalVmsHosted
+            : 0.5;
+        return (uptimeComponent * 0.7) + (successComponent * 0.3);
     }
 
     /// <summary>

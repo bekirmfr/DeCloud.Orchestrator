@@ -9,6 +9,7 @@ using Orchestrator.Extensions;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
 using Orchestrator.Interfaces.Blockchain;
+using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Middleware;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -149,6 +150,11 @@ builder.Services.AddCloudInitValidator();
 
 // Locality (country/region/zone reference data + validation)
 builder.Services.AddLocalityServices();
+
+// Constraint evaluator (scheduling-constraint vocabulary + evaluation).
+// Phase A: registered but not yet called from ApplyHardFiltersAsync.
+// See docs/SCHEDULING.md §7. Wire-up lands in Phase B.
+builder.Services.AddSingleton<IConstraintEvaluator, ConstraintEvaluator>();
 
 // Review Service (universal marketplace reviews for templates, nodes, etc.)
 builder.Services.AddSingleton<IReviewService, ReviewService>();

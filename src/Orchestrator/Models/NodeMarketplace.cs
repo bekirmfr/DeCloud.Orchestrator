@@ -92,11 +92,6 @@ public class NodeSearchCriteria
     public string? Region { get; set; }
     
     /// <summary>
-    /// Filter by jurisdiction for compliance (e.g., "us", "eu")
-    /// </summary>
-    public string? Jurisdiction { get; set; }
-    
-    /// <summary>
     /// Maximum acceptable price (USDC per compute point per hour)
     /// </summary>
     public decimal? MaxPricePerPoint { get; set; }

@@ -148,7 +148,7 @@ with `"Node not online (status: {Status})"`.
 ### FILTER 2: Tier eligibility
 
 ```
-node.PerformanceEvaluation.EligibleTiers contains <tier>?
+node.PerformanceEvaluation.EligibleTiers contains <tier>?### FILTER 4: Locality (multi-part)
 ```
 
 A `Standard`-tier VM cannot land on a `Burstable`-only node. The set
@@ -167,10 +167,13 @@ node.Architecture matches required architecture?
 ARM node. This is a security/correctness filter — not a performance
 hint.
 
-### FILTER 4: Locality (multi-part)
+### FILTER 4: Locality and reputation (multi-part)
 
-The locality filter is itself five sub-checks, each evaluated only if
-the corresponding requirement is set on `VmSpec`:
+Six sub-checks, each evaluated only if the corresponding requirement
+is set on `VmSpec`. The first five (4a-e) are locality requirements;
+4f is a tenant-set quality threshold that lives in the same filter
+group because, like locality, it represents a tenant preference rather
+than a node capability.
 
 | Sub-filter | Field on VmSpec | Match against | Semantics |
 | --- | --- | --- | --- |
@@ -179,6 +182,12 @@ the corresponding requirement is set on `VmSpec`:
 | 4c. Forbidden countries | `ForbiddenCountries` | `Node.Locality.Country` | Non-membership |
 | 4d. Required region | `Region` | `Node.Locality.Region` | Equality |
 | 4e. Required zone | `Zone` | `Node.Locality.Zone` | Equality |
+| 4f. Minimum reputation | `MinNodeReputationScore` | `ComputeReputationScore(node)` | `>=` |
+
+The reputation formula `(uptimePercent × 0.7) + (successRate × 0.3)`
+is shared with the soft scoring path via `ComputeReputationScore`.
+The default `MinNodeReputationScore` of 0.3 accepts most healthy nodes;
+tenants raise the floor for compliance or latency-sensitive workloads.
 
 See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the full
 locality model — what each field means, where it comes from, why
@@ -547,26 +556,36 @@ a known place to add it; none are blocked by v1 decisions.
 
 ## API endpoints
 
-### `GET /api/scheduling-config`
+All scheduling-config endpoints live under `/api/admin/` and require
+the `Admin` role (enforced by `[Authorize(Roles = "Admin")]` at the
+controller level). Anonymous access is impossible by construction.
 
-Returns the current `SchedulingConfig`. Authenticated; admin or read-only roles.
+### `GET /api/admin/scheduling-config`
 
-### `PATCH /api/scheduling-config`
+Returns the current `SchedulingConfig`.
 
-Updates the configuration. Admin role required. Validates before
-persisting; archives the previous version with `_id =
-history_{version}_{timestamp}`. Increments `Version`. Cache
-invalidated immediately.
+### `PUT /api/admin/scheduling-config`
 
-### `POST /api/scheduling-config/reload`
+Updates the configuration. Validates before persisting; archives the
+previous version with `_id = history_{version}_{timestamp}`. Increments
+`Version`. Cache invalidated immediately. Validation failures return
+400 with the specific rule that failed.
+
+### `POST /api/admin/scheduling-config/reload`
 
 Forces cache flush. Useful after manual MongoDB edits (rare; not
 recommended).
 
-### `GET /api/scheduling-config/history?limit=10`
+### `GET /api/admin/scheduling-config/history?limit=10`
 
 Returns the N most recent archived configurations, sorted by
-`UpdatedAt` descending.
+`UpdatedAt` descending. `limit` is bounded to `[1, 100]`.
+
+### `POST /api/admin/scheduling-config/validate`
+
+Validates a candidate configuration without persisting it. Useful for
+testing changes before applying them. Returns 200 with `{IsValid: true}`
+on success, 400 with `{IsValid: false, Errors: [...]}` on failure.
 
 ### `GET /api/locality/{countries,regions,suggest/{country}}`
 
