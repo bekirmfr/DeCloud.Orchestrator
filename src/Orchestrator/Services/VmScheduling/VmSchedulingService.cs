@@ -350,58 +350,12 @@ public class VmSchedulingService : IVmSchedulingService
         // ═══════════════════════════════════════════════════════════
         // FILTER 4: LOCALITY REQUIREMENTS
         // ═══════════════════════════════════════════════════════════
-
-        // 4a. Jurisdiction tag (e.g. "EU", "NATO", "USMCA")
-        if (!string.IsNullOrEmpty(spec.RequiredJurisdictionTag))
-        {
-            var nodeTags = node.Locality?.JurisdictionTags
-                ?? new List<string>();
-
-            if (!nodeTags.Contains(
-                    spec.RequiredJurisdictionTag,
-                    StringComparer.OrdinalIgnoreCase))
-            {
-                return $"Jurisdiction mismatch: node does not carry tag " +
-                       $"'{spec.RequiredJurisdictionTag}' " +
-                       $"(country: {node.Locality?.Country ?? "unknown"}, " +
-                       $"tags: [{string.Join(", ", nodeTags)}])";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} carries required jurisdiction tag '{Tag}'",
-                node.Id, spec.RequiredJurisdictionTag);
-        }
-
-        // 4b. Required country (exact)
-        if (!string.IsNullOrEmpty(spec.RequiredCountry))
-        {
-            var nodeCountry = node.Locality?.Country ?? "ZZ";
-
-            if (!string.Equals(
-                    nodeCountry,
-                    spec.RequiredCountry,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return $"Country mismatch: node is in '{nodeCountry}', " +
-                       $"VM requires '{spec.RequiredCountry}'";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} country '{Country}' matches requirement",
-                node.Id, nodeCountry);
-        }
-
-        // 4c. Forbidden countries
-        if (spec.ForbiddenCountries is { Count: > 0 })
-        {
-            var nodeCountry = node.Locality?.Country ?? "ZZ";
-
-            if (spec.ForbiddenCountries.Any(fc =>
-                    string.Equals(fc, nodeCountry, StringComparison.OrdinalIgnoreCase)))
-            {
-                return $"Country '{nodeCountry}' is excluded for this VM";
-            }
-        }
+        // 4a/4b/4c (jurisdiction, country, forbidden) and 4f (reputation)
+        // were removed in Phase B+.3. Their flat fields lower to constraints
+        // at VM creation (LowerLegacyFieldsToConstraints in VmService);
+        // evaluation flows through FILTER 10 (constraints).
+        // 4d (region) and 4e (zone) remain because their input still flows
+        // through method-level requiredRegion/requiredZone parameters.
 
         // 4d. Region (existing behavior — exact case-insensitive match)
         if (!string.IsNullOrEmpty(requiredRegion))
@@ -435,32 +389,6 @@ public class VmSchedulingService : IVmSchedulingService
                 "Node {NodeId} zone '{Zone}' matches requirement",
                 node.Id, nodeZone);
         }
-
-        // 4f. Minimum reputation threshold (tenant preference)
-        //
-        // VmSpec.MinNodeReputationScore (default 0.3) is the floor below
-        // which the tenant refuses to land. Reputation is computed from
-        // the same uptime + success-rate inputs that CalculateNodeScores
-        // uses for soft scoring; the helper below is the single source of
-        // truth so the two sites cannot drift.
-        //
-        // Default 0.3 effectively accepts most healthy nodes; tenants with
-        // compliance/latency-sensitive workloads raise the floor explicitly.
-        if (spec.MinNodeReputationScore > 0)
-        {
-            var reputation = ComputeReputationScore(node);
-
-            if (reputation < spec.MinNodeReputationScore)
-            {
-                return $"Reputation too low " +
-                       $"({reputation:F2} < {spec.MinNodeReputationScore:F2})";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} reputation {Reputation:F2} meets minimum {Min:F2}",
-                node.Id, reputation, spec.MinNodeReputationScore);
-        }
-
 
         // =====================================================
         // FILTER 5: GPU Mode Requirement
@@ -653,9 +581,9 @@ public class VmSchedulingService : IVmSchedulingService
         // =====================================================
         // REPUTATION SCORE (0.0 - 1.0)
         // Based on uptime and successful VM completions.
-        // Single source of truth: ComputeReputationScore.
+        // Single source of truth: NodeReputation.Compute.
         // =====================================================
-        var reputationScore = ComputeReputationScore(node);
+        var reputationScore = NodeReputation.Compute(node);
 
         // =====================================================
         // LOCALITY SCORE (0.0 - 1.0)
@@ -675,23 +603,6 @@ public class VmSchedulingService : IVmSchedulingService
             ReputationScore = reputationScore,
             LocalityScore = localityScore
         };
-    }
-
-    /// <summary>
-    /// Compute a node's reputation score in [0.0, 1.0].
-    /// Used by both the FILTER 4f hard threshold and the soft scoring path.
-    ///
-    /// Formula: <c>(uptimePercent × 0.7) + (successRate × 0.3)</c>.
-    /// New nodes (no VMs hosted) score 0.5 on the success component —
-    /// neutral, neither rewarded nor penalised.
-    /// </summary>
-    private static double ComputeReputationScore(Node node)
-    {
-        var uptimeComponent = node.UptimePercentage / 100.0;
-        var successComponent = node.TotalVmsHosted > 0
-            ? (double)node.SuccessfulVmCompletions / node.TotalVmsHosted
-            : 0.5;
-        return (uptimeComponent * 0.7) + (successComponent * 0.3);
     }
 
     /// <summary>

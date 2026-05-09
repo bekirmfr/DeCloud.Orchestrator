@@ -227,19 +227,54 @@ is set on `VmSpec`. The first five (4a-e) are locality requirements;
 group because, like locality, it represents a tenant preference rather
 than a node capability.
 
-| Sub-filter | Field on VmSpec | Match against | Semantics |
+| Sub-filter | Method parameter | Match against | Semantics |
 | --- | --- | --- | --- |
-| 4a. Jurisdiction tag | `RequiredJurisdictionTag` | `Node.Locality.JurisdictionTags` | Membership |
-| 4b. Required country | `RequiredCountry` | `Node.Locality.Country` | Equality |
-| 4c. Forbidden countries | `ForbiddenCountries` | `Node.Locality.Country` | Non-membership |
-| 4d. Required region | `Region` | `Node.Locality.Region` | Equality |
-| 4e. Required zone | `Zone` | `Node.Locality.Zone` | Equality |
-| 4f. Minimum reputation | `MinNodeReputationScore` | `ComputeReputationScore(node)` | `>=` |
+| 4d. Required region | `requiredRegion` | `Node.Locality.Region` | Equality |
+| 4e. Required zone | `requiredZone` | `Node.Locality.Zone` | Equality |
 
-The reputation formula `(uptimePercent × 0.7) + (successRate × 0.3)`
-is shared with the soft scoring path via `ComputeReputationScore`.
+> Phase B+.1 / B+.2 lowered the four flat fields (`RequiredJurisdictionTag`,
+> `RequiredCountry`, `ForbiddenCountries`, `MinNodeReputationScore`) to
+> constraints at VM creation. Phase B+.3 removed their legacy if-blocks
+> (formerly 4a, 4b, 4c, 4f) once the Mongo audit confirmed no active VM
+> still used the flat-field path. Those checks now flow through FILTER 10
+> (constraints).
+>
+> The `node.reputationScore` constraint target preserves the full reputation
+> formula `(uptimePercent × 0.7) + (successRate × 0.3)` — the same
+> `NodeReputation.Compute` formula that backs the soft scoring path.
+>
+> 4d (region) and 4e (zone) survive because their input flows through
+> method-level `requiredRegion` / `requiredZone` parameters rather than
+> spec fields. Lowering them is a separate piece of work that has to
+> harmonise the call sites with constraints — out of Phase B+ scope.
+**Legacy compat** marks sub-filters whose flat fields are lowered to
+constraints at VM creation (Phase B+.1, in `VmService.CreateVmAsync`
+via `LowerLegacyFieldsToConstraints`). Newly-created VMs have these
+flat fields nulled; their checks fire through FILTER 10 (constraints)
+instead. The 4a/4b/4c if-blocks remain in place as a backward-compat
+read path for VMs already persisted in MongoDB before lowering shipped.
+A future cleanup phase removes the legacy if-blocks once production
+data confirms no VM still uses them.
+
+4d (region) and 4e (zone) stay active because they take their values
+from method-level parameters (`requiredRegion`, `requiredZone`) rather
+than spec fields — lowering them requires harmonizing the call-site
+parameters with constraints, which is its own piece of work.
+
+4f (minimum reputation) is now lowered to a `node.reputationScore gte X`
+constraint at VM creation (Phase B+.2). Newly-created VMs have
+`MinNodeReputationScore` zeroed and a constraint added; the if-block
+remains as a legacy-compat read path for VMs persisted before lowering
+shipped.
+
+The reputation formula `(uptimePercent × 0.7) + (successRate × 0.3)` lives
+in `NodeReputation.Compute` (single source of truth shared by FILTER 4f,
+the soft scoring path, and the `node.reputationScore` constraint target).
 The default `MinNodeReputationScore` of 0.3 accepts most healthy nodes;
 tenants raise the floor for compliance or latency-sensitive workloads.
+After lowering, tenants can also express more flexible reputation
+requirements directly via constraints (e.g., combining
+`node.reputationScore gte 0.7` with `node.locality.country eq DE`).
 
 See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the full
 locality model — what each field means, where it comes from, why

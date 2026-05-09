@@ -87,16 +87,40 @@ public class VmService : IVmService
         // See docs/SCHEDULING.md §7 for the constraint vocabulary.
         // ════════════════════════════════════════════════════════════════════════
         if (request.Spec.Constraints is { Count: > 0 })
-        {
-            var constraintError = _constraintEvaluator.ValidateSet(request.Spec.Constraints);
-            if (constraintError is not null)
+            if (request.Spec.Constraints is { Count: > 0 })
             {
-                _logger.LogWarning(
-                    "VM creation rejected for user {UserId}: {Error}",
-                    userId, constraintError);
-                return new CreateVmResponse(string.Empty, VmStatus.Pending,
-                    $"Invalid constraint: {constraintError}", "INVALID_CONSTRAINT");
+                var constraintError = _constraintEvaluator.ValidateSet(request.Spec.Constraints);
+                if (constraintError is not null)
+                {
+                    _logger.LogWarning(
+                        "VM creation rejected for user {UserId}: {Error}",
+                        userId, constraintError);
+                    return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                        $"Invalid constraint: {constraintError}", "INVALID_CONSTRAINT");
+                }
             }
+
+        // ════════════════════════════════════════════════════════════════════════
+        // Lower legacy flat scheduling fields to constraints (Phase B+.1).
+        //
+        // RequiredJurisdictionTag, RequiredCountry, and ForbiddenCountries are
+        // translated to equivalent constraints in spec.Constraints; the flat
+        // fields are nulled. The legacy if-blocks in ApplyHardFiltersAsync
+        // (FILTER 4a, 4b, 4c) remain in place as a backward-compat read path
+        // for VMs already persisted with flat fields populated.
+        //
+        // MinNodeReputationScore stays as a flat field until Phase B+.2 adds
+        // a node.reputationScore constraint target.
+        //
+        // See docs/SCHEDULING.md §7 and the LowerLegacyFieldsToConstraints
+        // helper xmldoc for the full translation table.
+        // ════════════════════════════════════════════════════════════════════════
+        var loweredCount = LowerLegacyFieldsToConstraints(request.Spec);
+        if (loweredCount > 0)
+        {
+            _logger.LogDebug(
+                "Lowered {Count} legacy flat field(s) to constraints for user {UserId} VM",
+                loweredCount, userId);
         }
 
         // ════════════════════════════════════════════════════════════════════════
@@ -725,7 +749,111 @@ public class VmService : IVmService
         return true;
     }
 
-    
+
+    /// <summary>
+    /// Lower legacy flat scheduling fields on a <see cref="VmSpec"/> to
+    /// equivalent constraints in <c>spec.Constraints</c>.
+    ///
+    /// <para>
+    /// Phase B+.1 lowers three fields:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><c>RequiredJurisdictionTag</c> →
+    ///         <c>{ node.locality.jurisdictionTags contains &lt;tag&gt; }</c></item>
+    ///   <item><c>RequiredCountry</c> →
+    ///         <c>{ node.locality.country eq &lt;country&gt; }</c></item>
+    ///   <item><c>ForbiddenCountries</c> →
+    ///         <c>{ node.locality.country not_in &lt;list&gt; }</c></item>
+    /// </list>
+    ///
+    /// <para>
+    /// After lowering, the flat fields are nulled. The legacy if-blocks
+    /// (FILTER 4a, 4b, 4c in <c>ApplyHardFiltersAsync</c>) short-circuit on
+    /// null fields and remain in place as a backward-compat read path for
+    /// VMs persisted before this lowering shipped.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>MinNodeReputationScore</c> is intentionally NOT lowered here —
+    /// it requires a <c>node.reputationScore</c> constraint target that
+    /// preserves the success-rate term of the reputation formula
+    /// <c>(uptime × 0.7) + (success × 0.3)</c>. That's Phase B+.2.
+    /// </para>
+    ///
+    /// <para>
+    /// Lowered constraints are valid by construction (targets and operators
+    /// come from the canonical vocabulary), so no re-validation is needed.
+    /// </para>
+    ///
+    /// Returns the number of constraints appended for logging.
+    /// </summary>
+    private static int LowerLegacyFieldsToConstraints(VmSpec spec)
+    {
+        var appended = 0;
+        spec.Constraints ??= new List<Constraint>();
+
+        if (!string.IsNullOrEmpty(spec.RequiredJurisdictionTag))
+        {
+            spec.Constraints.Add(new Constraint
+            {
+                Target = "node.locality.jurisdictionTags",
+                Operator = "contains",
+                Value = spec.RequiredJurisdictionTag
+            });
+            spec.RequiredJurisdictionTag = null;
+            appended++;
+        }
+
+        if (!string.IsNullOrEmpty(spec.RequiredCountry))
+        {
+            spec.Constraints.Add(new Constraint
+            {
+                Target = "node.locality.country",
+                Operator = "eq",
+                Value = spec.RequiredCountry
+            });
+            spec.RequiredCountry = null;
+            appended++;
+        }
+
+        if (spec.ForbiddenCountries is { Count: > 0 })
+        {
+            spec.Constraints.Add(new Constraint
+            {
+                Target = "node.locality.country",
+                Operator = "not_in",
+                Value = spec.ForbiddenCountries
+            });
+            spec.ForbiddenCountries = null;
+            appended++;
+        }
+
+        // MinNodeReputationScore lowers to node.reputationScore gte X
+        // (Phase B+.2). The constraint target is backed by the same
+        // NodeReputation.Compute formula the legacy FILTER 4f if-block uses,
+        // so semantics are preserved across the lowering.
+        //
+        // We lower for any non-zero value, including the default 0.3, and
+        // zero the field afterwards so the legacy if-block short-circuits.
+        // This adds one constraint per VM in exchange for eliminating a
+        // dual-path evaluation surface — the explicit constraint is the
+        // canonical representation going forward, and the field becomes a
+        // legacy-read-only artifact for VMs persisted before this shipped.
+        if (spec.MinNodeReputationScore > 0)
+        {
+            spec.Constraints.Add(new Constraint
+            {
+                Target = "node.reputationScore",
+                Operator = "gte",
+                Value = spec.MinNodeReputationScore
+            });
+            spec.MinNodeReputationScore = 0; // Disables legacy if-block; zero short-circuits.
+            appended++;
+        }
+
+        return appended;
+    }
+
     // Scheduling pending vms requires access to plain text passwords, which is a security risk.
 
     /* 
@@ -741,7 +869,6 @@ public class VmService : IVmService
         }
     }
     */
-
     private async Task TryScheduleVmAsync(VirtualMachine vm, string? password = null, string? targetNodeId = null)
     {
         // ========================================

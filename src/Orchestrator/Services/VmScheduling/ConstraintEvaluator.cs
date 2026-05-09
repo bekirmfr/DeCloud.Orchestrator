@@ -181,6 +181,15 @@ public class ConstraintEvaluator : IConstraintEvaluator
             "node.uptimePercent", ConstraintValueType.Numeric,
             (n, _) => (object?)n.UptimePercentage);
 
+        // node.reputationScore preserves the full reputation formula
+        // (uptimePercent × 0.7) + (successRate × 0.3) via NodeReputation.Compute.
+        // Use this target when the composite measure matters (the same value
+        // the soft scoring path uses for its weighted contribution); use
+        // node.uptimePercent if only uptime matters.
+        r["node.reputationScore"] = new TargetDescriptor(
+            "node.reputationScore", ConstraintValueType.Numeric,
+            (n, _) => (object?)NodeReputation.Compute(n));
+
         // ─── Operator metadata ──────────────────────────────────
         r["node.tags"] = new TargetDescriptor(
             "node.tags", ConstraintValueType.StringList,
