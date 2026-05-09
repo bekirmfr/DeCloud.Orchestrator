@@ -171,16 +171,53 @@ of eligible tiers is computed once at node registration and refreshed
 when scheduling config changes (the `NodePerformanceEvaluator` re-runs
 against the new baseline).
 
-### FILTER 3: Architecture
-
-```
-node.Architecture matches required architecture?
-```
+### FILTER 3: Architecture (migration arch-stickiness)requiredArchitecture set?  →  NormalizeArchitecture(node) == NormalizeArchitecture(required)?
 
 `x86_64` (`amd64`) and `aarch64` (`arm64`) are normalized via
-`NormalizeArchitecture`. A VM whose disk image is x86 cannot run on an
-ARM node. This is a security/correctness filter — not a performance
-hint.
+`NormalizeArchitecture`. The check fires only when the caller
+explicitly passes a non-empty `requiredArchitecture` parameter to the
+scheduler.
+
+**Currently invoked by exactly one call site: the background migration
+scheduler.** It passes `requiredArchitecture: sourceNode.Architecture`
+to enforce *arch-stickiness* — a VM that booted on an x86_64 node has
+its overlay disk filled with x86_64 binaries; migrating it to an
+aarch64 node would break, so migration constrains the target to the
+same architecture as the source.
+
+**Initial VM creation does NOT pass `requiredArchitecture`.** That's
+intentional, not a missing parameter. `VmSpec` carries no architecture
+field, and the orchestrator's design resolves architecture *post-
+scheduling*:
+
+1. The scheduler picks any compatible node based on tier, capacity,
+   locality, and the rest of the filter chain.
+2. After selection, `VmService.TryScheduleVmAsync` (STEP 6.5) reads
+   `selectedNode.HardwareInventory.Cpu.Architecture` and uses it to
+   filter `template.Artifacts` — only artifacts matching the chosen
+   node's architecture get their `ARTIFACT_URL:{name}` substituted
+   into cloud-init.
+3. The deployed VM receives binaries that match its host node.
+
+This works cleanly for templates that publish multi-arch artifacts
+(e.g., a Go binary built for both `amd64` and `arm64`). It has a
+known gap for templates with single-arch artifacts and for tenant-
+supplied custom images: the scheduler may pick an architecturally
+incompatible node, artifact resolution finds nothing for that arch,
+and deployment fails at boot time with a stale-binary or missing-
+artifact error.
+
+**To express "this template requires x86_64" at scheduling time
+rather than discovering the gap at deploy time, use the constraint
+engine** (FILTER 10, §7) — add to `spec.constraints`:
+
+```json{ "target": "node.architecture", "operator": "eq", "value": "x86_64" }
+
+The constraint causes the scheduler to refuse incompatible nodes
+upfront, surfacing the failure as a structured "Constraint #N failed:
+node.architecture (aarch64) eq x86_64" rather than as a mysterious
+deploy-time error. Template authors with single-arch artifacts should
+include this constraint in their template's spec.
 
 ### FILTER 4: Locality and reputation (multi-part)
 
@@ -801,6 +838,29 @@ fields.
 ---
 
 ## What is intentionally NOT here
+
+- **Marketplace browse and node listings.** `GET /api/nodes/search`,
+  `GET /api/nodes/featured`, and the marketplace dashboard's filter
+  logic do NOT run through this scheduler's filter chain. Those
+  endpoints implement separate filter logic in
+  `INodeMarketplaceService` (`Region`, `Tags`, `RequiresGpu`,
+  `MinUptimePercent`, etc.) intended for browsing — they show all
+  candidate nodes that match the browse filters, regardless of whether
+  any specific VM could actually be placed on them.
+
+  Scheduling-time eligibility (architecture, KVM, BlockStore-for-
+  replication, jurisdiction tags, constraints, GPU mode, free memory,
+  load average, obligations) is checked at deploy time when the
+  tenant submits `POST /api/vms`. A node visible in the marketplace
+  may be rejected at deploy if the VM's full set of requirements
+  isn't satisfied — that's expected behavior. Marketplace listings
+  are an exploration affordance, not a scheduling pre-flight.
+
+  If a future requirement needs marketplace browse to honor scheduling
+  eligibility (e.g., "show only nodes that could host *this* VM
+  spec"), that's a different endpoint with a `VmSpec` parameter, not
+  a change to the existing browse endpoints. Until then, the
+  divergence is the contract.
 
 - **Live migration.** Scheduling decides where a VM *first lands*.
   Moving a running VM to a new node is a separate concern,
