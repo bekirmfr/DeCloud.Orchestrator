@@ -1,66 +1,10 @@
-﻿using Orchestrator.Models;
+﻿using Orchestrator.Interfaces.VmScheduling;
+using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Locality;
 using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services;
-
-/// <summary>
-/// Interface for VM scheduling service
-/// </summary>
-public interface IVmSchedulingService
-{
-    /// <summary>
-    /// Select the best node for a VM with optional region/zone preferences
-    /// </summary>
-    Task<Node?> SelectBestNodeForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Get all available nodes for a VM with filtering options
-    /// </summary>
-    Task<List<Node>> GetAvailableNodesForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
-        string? regionFilter = null,
-        string? zoneFilter = null,
-        string? architectureFilter = null,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Get scored nodes for a VM with detailed scoring information
-    /// </summary>
-    Task<List<ScoredNode>> GetScoredNodesForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Validate that a specific node can host the given VM spec.
-    /// Returns null when the node is eligible, or a human-readable rejection
-    /// reason when any hard filter fails.
-    ///
-    /// Used to validate user-targeted deployments (marketplace node selection)
-    /// through the same hard filters applied during normal scheduling — so the
-    /// rules are never duplicated and never drift.
-    /// </summary>
-    Task<string?> ValidateNodeForVmAsync(
-        Node node,
-        VmSpec spec,
-        QualityTier tier,
-        string? requiredArchitecture = null,
-        string? requiredRegion = null,
-        string? requiredZone = null,
-        CancellationToken ct = default);
-}
 
 /// <summary>
 /// VM Scheduling Service with architecture awareness and locality optimization
@@ -74,6 +18,7 @@ public class VmSchedulingService : IVmSchedulingService
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
     private readonly ILocalityService _locality;
+    private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<VmSchedulingService> _logger;
 
@@ -81,12 +26,14 @@ public class VmSchedulingService : IVmSchedulingService
         DataStore dataStore,
         ISchedulingConfigService configService,
         ILocalityService locality,
+        IConstraintEvaluator constraintEvaluator,
         ILoggerFactory loggerFactory,
         ILogger<VmSchedulingService> logger)
     {
         _dataStore = dataStore;
         _configService = configService;
         _locality = locality;
+        _constraintEvaluator = constraintEvaluator;
         _loggerFactory = loggerFactory;
         _logger = logger;
     }
@@ -607,6 +554,37 @@ public class VmSchedulingService : IVmSchedulingService
         if (!node.HardwareInventory.KvmAvailable)
             return "Node does not support KVM hardware virtualization. " +
                    "QEMU TCG software emulation is not suitable for any VM workload.";
+
+        // =====================================================
+        // FILTER 10: Tenant-supplied constraints (Phase B)
+        //
+        // Evaluated through the unified IConstraintEvaluator. Each
+        // constraint runs in order; first failure short-circuits with a
+        // structured rejection naming the failing constraint's index.
+        //
+        // Constraints are validated at VM creation time
+        // (VmService.CreateVmAsync), so malformed entries should never
+        // reach this point. The evaluator's belt-and-suspenders validation
+        // catches anything that does and rejects with a clear message.
+        //
+        // See docs/SCHEDULING.md §7 for the constraint vocabulary and
+        // design rationale.
+        // =====================================================
+        if (spec.Constraints is { Count: > 0 })
+        {
+            for (var i = 0; i < spec.Constraints.Count; i++)
+            {
+                var result = _constraintEvaluator.Evaluate(spec.Constraints[i], node);
+                if (!result.Passed)
+                {
+                    return $"Constraint #{i} failed: {result.RejectionReason}";
+                }
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} passed all {Count} tenant constraints",
+                node.Id, spec.Constraints.Count);
+        }
 
         return null; // All filters passed
     }

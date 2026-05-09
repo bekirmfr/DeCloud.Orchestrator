@@ -1,6 +1,7 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Shared.Models;
 using Microsoft.Extensions.Options;
+using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -31,9 +32,9 @@ public class VmService : IVmService
     private readonly INodeCommandService _commandService;
     private readonly IVmSchedulingService _schedulingService;
     private readonly ISchedulingConfigService _configService;
+    private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
-    private readonly INetworkLatencyTracker _latencyTracker;
     private readonly ITemplateService _templateService;
     private readonly IVmNameService _nameService;
     private readonly PricingConfig _pricingConfig;
@@ -47,9 +48,9 @@ public class VmService : IVmService
     INodeCommandService commandService,
     IVmSchedulingService schedulingService,
     ISchedulingConfigService configService,
+    IConstraintEvaluator constraintEvaluator,
     IEventService eventService,
     ICentralIngressService ingressService,
-    INetworkLatencyTracker latencyTracker,
     ITemplateService templateService,
     IVmNameService nameService,
     IOptions<PricingConfig> pricingConfig,
@@ -62,9 +63,9 @@ public class VmService : IVmService
         _commandService = commandService;
         _schedulingService = schedulingService;
         _configService = configService;
+        _constraintEvaluator = constraintEvaluator;
         _eventService = eventService;
         _ingressService = ingressService;
-        _latencyTracker = latencyTracker;
         _templateService = templateService;
         _nameService = nameService;
         _pricingConfig = pricingConfig.Value;
@@ -77,6 +78,26 @@ public class VmService : IVmService
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
         var isSystemVm = request.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore;
+
+        // ════════════════════════════════════════════════════════════════════════
+        // Validate scheduling constraints (Phase B). Reject malformed constraints
+        // before any resource is allocated. ValidateSet walks the list and
+        // returns the first error prefixed with the constraint's index, e.g.:
+        //   "Constraint #2: Unknown target 'node.foobar'"
+        // See docs/SCHEDULING.md §7 for the constraint vocabulary.
+        // ════════════════════════════════════════════════════════════════════════
+        if (request.Spec.Constraints is { Count: > 0 })
+        {
+            var constraintError = _constraintEvaluator.ValidateSet(request.Spec.Constraints);
+            if (constraintError is not null)
+            {
+                _logger.LogWarning(
+                    "VM creation rejected for user {UserId}: {Error}",
+                    userId, constraintError);
+                return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                    $"Invalid constraint: {constraintError}", "INVALID_CONSTRAINT");
+            }
+        }
 
         // ════════════════════════════════════════════════════════════════════════
         // VM Name Pipeline: sanitize → validate → unique suffix → uniqueness check

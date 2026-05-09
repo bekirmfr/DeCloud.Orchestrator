@@ -329,6 +329,31 @@ public class VmSpec
     /// </summary>
     public Dictionary<string, string> SchedulingTags { get; set; } = new();
 
+    /// <summary>
+    /// Tenant-supplied scheduling constraints, evaluated as a flat AND
+    /// alongside the existing hard-filter chain (FILTER 10 in
+    /// <c>VmSchedulingService.ApplyHardFiltersAsync</c>).
+    ///
+    /// <para>
+    /// Each entry is a <c>{ target, operator, value }</c> triple from the
+    /// vocabulary registered in
+    /// <see cref="Orchestrator.Services.VmScheduling.IConstraintEvaluator"/>.
+    /// Validated at VM creation; malformed entries are rejected with the
+    /// failing constraint's index before any resource is allocated.
+    /// </para>
+    ///
+    /// <para>
+    /// Null or empty = no tenant constraints. The existing flat scheduling
+    /// fields (<c>RequiredJurisdictionTag</c>, <c>RequiredCountry</c>,
+    /// <c>ForbiddenCountries</c>, <c>MinNodeReputationScore</c>) continue
+    /// to apply on their own — constraints layer on top in v1, they do not
+    /// replace the bespoke filters.
+    /// </para>
+    ///
+    /// <para>See <c>docs/SCHEDULING.md</c> §7 for the full design.</para>
+    /// </summary>
+    public List<Constraint>? Constraints { get; set; }
+
     // ========================================
     // IMAGE & ACCESS
     // ========================================

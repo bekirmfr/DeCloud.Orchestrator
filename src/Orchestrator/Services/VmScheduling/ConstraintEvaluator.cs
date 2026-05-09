@@ -1,6 +1,8 @@
-﻿using Orchestrator.Interfaces.VmScheduling;
+﻿using MongoDB.Bson;
+using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Services.Locality;
+using System.Text.Json;
 
 namespace Orchestrator.Services.VmScheduling;
 
@@ -47,14 +49,19 @@ public class ConstraintEvaluator : IConstraintEvaluator
         var targetDesc = _targets[constraint.Target];
         var opDesc = _operators[constraint.Operator];
 
+        // Normalize wire-format wrappers (JsonElement, BsonValue) to native
+        // C# types so the operator's evaluator sees typed values. See
+        // NormalizeValue for the full contract.
+        var configuredValue = NormalizeValue(constraint.Value);
+
         var actual = targetDesc.Extract(node, _locality);
-        var passed = opDesc.Eval(actual, constraint.Value, _locality);
+        var passed = opDesc.Eval(actual, configuredValue, _locality);
 
         if (!passed)
         {
             return ConstraintEvaluation.Reject(
                 $"{constraint.Target} ({FormatValue(actual)}) " +
-                $"{constraint.Operator} {FormatValue(constraint.Value)}");
+                $"{constraint.Operator} {FormatValue(configuredValue)}");
         }
 
         return ConstraintEvaluation.Pass();
@@ -81,7 +88,7 @@ public class ConstraintEvaluator : IConstraintEvaluator
             return $"Operator '{constraint.Operator}' is not compatible with " +
                    $"target '{constraint.Target}' (target type: {targetDesc.ValueType})";
 
-        var valueError = opDesc.ValidateValue(targetDesc.ValueType, constraint.Value);
+        var valueError = opDesc.ValidateValue(targetDesc.ValueType, NormalizeValue(constraint.Value));
         if (valueError is not null)
             return $"Constraint value invalid: {valueError}";
 
@@ -433,6 +440,82 @@ public class ConstraintEvaluator : IConstraintEvaluator
         IEnumerable<string> list => $"[{string.Join(", ", list)}]",
         _ => v.ToString() ?? "?"
     };
+
+    // ─── Wire-format normalization ────────────────────────────────────
+
+    /// <summary>
+    /// Convert wire-format value wrappers to native C# types.
+    ///
+    /// <para>
+    /// JSON deserialization (System.Text.Json) packages <c>object?</c> values
+    /// as <see cref="JsonElement"/>. MongoDB BSON deserialization packages
+    /// them as <see cref="BsonValue"/>. The evaluator's type-checking and
+    /// operator implementations expect native C# types
+    /// (<c>string</c>, <c>double</c>, <c>bool</c>, <c>List&lt;string&gt;</c>),
+    /// so we unbox here at the public entry points.
+    /// </para>
+    ///
+    /// <para>
+    /// Already-typed values pass through unchanged. Unknown wrappers return
+    /// as-is and will fail type-checking with a clear error rather than
+    /// throwing — keeping evaluation safe for malformed input.
+    /// </para>
+    ///
+    /// <para>
+    /// Numeric values from BSON int32/int64 are widened to <c>double</c>
+    /// because the operator vocabulary uses double for all numeric
+    /// comparisons (consistent with <c>TryToDouble</c> elsewhere in this
+    /// class).
+    /// </para>
+    /// </summary>
+    private static object? NormalizeValue(object? value)
+    {
+        if (value is null) return null;
+
+        // Already-native types pass through
+        if (value is string or bool or double or float or int or long or decimal)
+            return value;
+        if (value is IEnumerable<string>)
+            return value;
+
+        // System.Text.Json
+        if (value is JsonElement je)
+        {
+            return je.ValueKind switch
+            {
+                JsonValueKind.String => je.GetString(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => je.GetDouble(),
+                JsonValueKind.Array => je.EnumerateArray()
+                    .Select(x => x.GetString() ?? string.Empty)
+                    .ToList(),
+                JsonValueKind.Null => null,
+                _ => je.ToString()
+            };
+        }
+
+        // MongoDB BSON
+        if (value is BsonValue bv)
+        {
+            return bv.BsonType switch
+            {
+                BsonType.String => bv.AsString,
+                BsonType.Boolean => bv.AsBoolean,
+                BsonType.Double => bv.AsDouble,
+                BsonType.Int32 => (double)bv.AsInt32,
+                BsonType.Int64 => (double)bv.AsInt64,
+                BsonType.Array => bv.AsBsonArray
+                    .Select(x => x.IsString ? x.AsString : x.ToString() ?? string.Empty)
+                    .ToList(),
+                BsonType.Null => null,
+                _ => bv.ToString() ?? string.Empty
+            };
+        }
+
+        // Unknown wrapper — return as-is, validation will catch the type mismatch
+        return value;
+    }
 
     // ─── Internal types ──────────────────────────────────────────────
 
