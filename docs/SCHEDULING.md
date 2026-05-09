@@ -74,11 +74,19 @@ preferredZone, requiredArchitecture)`.
                 │ For each node: ScoreNodeForVmAsync         │
                 │   ┌────────────────────────────────────┐   │
                 │   │ 1. ApplyHardFiltersAsync           │   │
-                │   │    - Status, Tier, Architecture    │   │
-                │   │    - Locality (FILTER 4 a–e)       │   │
-                │   │    - KVM availability              │   │
-                │   │    - Constraints (when present)    │   │
-                │   │    Reject → score 0, skip rest     │   │
+                │   │    1. Status                       │   │
+                │   │    2. Tier eligibility             │   │
+                │   │    3. Architecture                 │   │
+                │   │    4. Locality (4a–e)              │   │
+                │   │       + Reputation threshold (4f)  │   │
+                │   │    5. GPU mode                     │   │
+                │   │    6. Load average                 │   │
+                │   │    7. Free memory                  │   │
+                │   │    8. Obligations active           │   │
+                │   │       + BlockStore (8.1, replic'd) │   │
+                │   │    9. KVM                          │   │
+                │   │   10. Constraints (Phase B, future)│   │
+                │   │   Reject → score 0, skip rest      │   │
                 │   ├────────────────────────────────────┤   │
                 │   │ 2. CalculateResourceAvailability   │   │
                 │   ├────────────────────────────────────┤   │
@@ -133,8 +141,15 @@ at registration time and stores the list on
 
 ## Hard filters
 
-Five categorical checks, evaluated in order. First failure returns a
+Nine categorical checks, evaluated in order. First failure returns a
 human-readable rejection reason; the node is removed from consideration.
+The chain short-circuits on the first failure, so most rejected nodes
+pay only the early-filter cost (FILTERs 1–4 are the cheapest and most
+discriminating).
+
+A tenth filter — Constraints (FILTER 10) — is reserved for the
+constraint engine documented in §7. Phase A landed the foundation;
+Phase B wires it into this chain.
 
 ### FILTER 1: Node status
 
@@ -193,23 +208,83 @@ See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the full
 locality model — what each field means, where it comes from, why
 country and region are different things.
 
-### FILTER 5: KVM availability
+### FILTER 5: GPU mode requirement
 
-```
+GPU access modes have different node-capability requirements:
+
+| `VmSpec.GpuMode` | Required of node |
+| --- | --- |
+| `None` | (no filter applied) |
+| `Passthrough` | `SupportsGpu`, `GpuCount > 0`, `HasIommuCapableGpu`, `HasPassthroughCapableGpu` |
+| `Proxied` | `SupportsGpu`, `GpuCount > 0` (no IOMMU needed) |
+
+Passthrough demands a VFIO-capable IOMMU group; proxied mode just needs
+any GPU plus the host-side proxy daemon. Rejection messages identify
+which specific GPU capability is missing on the candidate node.
+
+### FILTER 6: Load average
+node.LatestMetrics.LoadAverage <= config.Limits.MaxLoadAverage?
+
+Default `MaxLoadAverage` is 8.0. Avoids stacking new VMs on already-
+saturated hosts. If `LatestMetrics` is null (node hasn't reported yet),
+the filter passes — there's no signal to reject on.
+
+### FILTER 7: Minimum free memory
+(TotalResources.MemoryBytes - ReservedResources.MemoryBytes) / 1MiB
+>= config.Limits.MinFreeMemoryMb?
+
+Default `MinFreeMemoryMb` is 512 MB — a hard reserve that prevents the
+host OS from being squeezed by VM allocations. Memory is never
+overcommitted (unlike CPU and storage), so the math is straight
+subtraction.
+
+### FILTER 8: All node obligations must be Active
+node.SystemVmObligations.All(o => o.Status == SystemVmStatus.Active)?
+
+A node is not fully onboarded until every obligation it was assigned
+(DHT, Relay, BlockStore, Ingress) has reached `Active`. Pending,
+Deploying, or Failed obligations mean the node's infrastructure isn't
+ready to host tenant workloads. Nodes with no obligations (hardware
+below the DHT/Relay/BlockStore thresholds) have an empty list and
+pass this filter trivially.
+
+This filter supersedes the previous standalone BlockStore check —
+`SystemVmReconciliationService` sets `BlockStoreInfo.Status = Active`
+atomically when the BlockStore obligation flips to `Active`, so
+"all obligations Active" implies "BlockStore Active too."
+
+### FILTER 8.1: Active BlockStore required for replicated VMs
+spec.ReplicationFactor > 0  =>  node.BlockStoreInfo.Status == Active?
+
+Sub-filter that applies only when a VM has `ReplicationFactor > 0`.
+Without an active BlockStore on the host node, the lazysync daemon
+has nowhere to push dirty overlay blocks — replication cannot
+function. Ephemeral VMs (`ReplicationFactor == 0`) bypass this check
+and accept data loss on node failure.
+
+This is partly redundant with FILTER 8 today, but documents the
+specific replication invariant separately because it's a categorically
+different reason for rejection (data-safety, not operational-readiness).
+
+### FILTER 9: KVM availability
 node.HardwareInventory.KvmAvailable?
-```
 
 User VMs require hardware virtualization. QEMU TCG software emulation
 is a non-starter — performance is unsuitable for any real workload.
 Non-KVM nodes can still hold operator-side roles (DHT/BlockStore/Relay)
 but never tenant workloads.
 
-### FILTER 6 (planned): Constraints
+### FILTER 10 (planned): Constraints
 
 When a VmSpec carries a `Constraints` list, each constraint is
 evaluated against the candidate node. A failed constraint short-circuits
 with a structured rejection. This is documented separately in
-[Constraints](#constraints-extension-to-hard-filters) below.
+[§7 Constraints](#constraints-extension-to-hard-filters) below.
+
+Phase A (foundation: types, vocabulary, evaluator, DI registration) has
+landed in code. Phase B (wire-up in `ApplyHardFiltersAsync`, `VmSpec`
+field, lowering of existing flat fields) lands when a concrete tenant
+requirement materializes.
 
 ---
 
@@ -314,13 +389,13 @@ validation rejects updates that omit it.
 
 ### Why
 
-Today's hard filters are five categorical checks plus the multi-part
-locality filter. Each new tenant requirement gets a new flat field on
-`VmSpec` and a new `if` block in `ApplyHardFiltersAsync`. The result
-already shows strain: `RequiredJurisdictionTag`, `RequiredCountry`,
-`ForbiddenCountries`, `Region`, `Zone`, `RequiredArchitecture`,
-`MinNodeReputationScore` — seven scheduling fields and counting, each
-with bespoke handling.
+Today's hard filters are nine categorical checks (see §4); four of them
+respond to fields tenants set directly on `VmSpec`. Each new tenant
+requirement gets a new flat field on `VmSpec` and a new `if` block in
+`ApplyHardFiltersAsync`. The result already shows strain:
+`RequiredJurisdictionTag`, `RequiredCountry`, `ForbiddenCountries`,
+`Region`, `Zone`, `RequiredArchitecture`, `MinNodeReputationScore` —
+seven scheduling fields and counting, each with bespoke handling.
 
 A constraint is a uniform shape that replaces field-sprawl with
 vocabulary:
@@ -406,7 +481,7 @@ or `Node.Locality`, with declared type:
 | `node.tags` | `Node.Tags` | string[] |
 | `node.uptimePercent` | `Node.UptimePercentage` | double |
 | `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | int |
-| `node.gpuModel` | `Node.HardwareInventory.GpuModel` | string |
+| `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` (first GPU; null if no GPUs) | string |
 | `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
 
 New targets are added by editing `ConstraintTarget` enum + extractor
@@ -653,28 +728,38 @@ Mixing flat fields (existing) and constraints (new):
 ```
 
 ### What the scheduler does
+### What the scheduler does
 
 1. **FILTER 1 (Status):** drops offline nodes
 2. **FILTER 2 (Tier):** drops nodes not eligible for `Guaranteed`
 3. **FILTER 3 (Architecture):** no requirement specified — passes all
-4. **FILTER 4 (Locality):**
+4. **FILTER 4 (Locality + reputation):**
    - 4d (Region equality on `eu-central`): drops every node not in
      `eu-central`
-5. **FILTER 5 (KVM):** drops non-KVM nodes (irrelevant here — Guaranteed
-   tier already requires KVM)
-6. **FILTER 6 (Constraints):**
-   - C0: `jurisdictionTags contains EU` — drops any non-EU node that
-     somehow passed (shouldn't happen if region was `eu-central`, but
-     belt-and-suspenders)
-   - C1: `country not_in [RU, BY]` — irrelevant in `eu-central` but
-     evaluated anyway
-   - C2: `uptimePercent gte 99.0` — drops unreliable operators
-   - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes
+   - 4f (`MinNodeReputationScore`): default 0.3 floor passes most
+     nodes (tenant could raise this for stricter gating)
+5. **FILTER 5 (GPU mode):** `GpuMode == None` — no GPU requirement
+6. **FILTER 6 (Load):** drops nodes whose 1-min load exceeds the
+   configured ceiling (default 8.0)
+7. **FILTER 7 (Memory):** drops nodes whose free RAM is below the
+   floor (default 512 MB)
+8. **FILTER 8 (Obligations):** drops nodes with any non-Active
+   system-VM obligation
+9. **FILTER 9 (KVM):** drops non-KVM nodes (irrelevant here —
+   Guaranteed tier already requires KVM)
+10. **FILTER 10 (Constraints, Phase B):**
+    - C0: `jurisdictionTags contains EU` — drops any non-EU node that
+      somehow passed (shouldn't happen if region was `eu-central`, but
+      belt-and-suspenders)
+    - C1: `country not_in [RU, BY]` — irrelevant in `eu-central` but
+      evaluated anyway
+    - C2: `uptimePercent gte 99.0` — drops unreliable operators
+    - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes
 
-7. **Scoring (against survivors):** `Capacity 0.40 + Load 0.25 +
-   Reputation 0.20 + Locality 0.15`. Locality scores `1.0` for
-   any `eu-central` node (region match). The scheduler picks the
-   highest total.
+11. **Scoring (against survivors):** `Capacity 0.40 + Load 0.25 +
+    Reputation 0.20 + Locality 0.15`. Locality scores `1.0` for
+    any `eu-central` node (region match). The scheduler picks the
+    highest total.
 
 ### What if `eu-central` is exhausted?
 
