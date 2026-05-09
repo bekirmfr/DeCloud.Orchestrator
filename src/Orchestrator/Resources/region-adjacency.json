@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "Adjacency graph used for locality soft-scoring in VmSchedulingService.",
+    "Edges represent 'low-latency neighbour' for scheduling fallback when no",
+    "exact-region match is available. Hand-curated based on submarine cable",
+    "topology and major peering points. Approximate; benchmark for production.",
+    "",
+    "Symmetry: edges are conceptually undirected, but each region lists its own",
+    "neighbours explicitly. If you add an edge A->B, also add B->A.",
+    "",
+    "Score model (in CalculateLocalityScore):",
+    "  same zone      = 1.0",
+    "  same region    = 0.8",
+    "  adjacent       = 0.5  (this graph)",
+    "  same continent = 0.3",
+    "  no match       = 0.0"
+  ],
+
+  "na-east":        ["na-central", "eu-west", "sa-east"],
+  "na-central":     ["na-east", "na-west"],
+  "na-west":        ["na-central", "apac-northeast", "oceania", "sa-west"],
+
+  "sa-east":        ["sa-west", "na-east"],
+  "sa-west":        ["sa-east", "na-west"],
+
+  "eu-west":        ["eu-central", "eu-north", "na-east"],
+  "eu-central":     ["eu-west", "eu-north", "eu-south", "eu-east"],
+  "eu-north":       ["eu-west", "eu-central"],
+  "eu-south":       ["eu-central", "eu-east", "me-west", "af-north"],
+  "eu-east":        ["eu-central", "eu-south", "me-west"],
+
+  "me-west":        ["eu-south", "eu-east", "me-east", "af-north"],
+  "me-east":        ["me-west", "apac-south", "af-east"],
+
+  "af-north":       ["eu-south", "me-west", "af-east"],
+  "af-east":        ["af-north", "af-south", "me-east"],
+  "af-south":       ["af-east"],
+
+  "apac-northeast": ["apac-east", "na-west"],
+  "apac-east":      ["apac-northeast", "apac-southeast"],
+  "apac-southeast": ["apac-east", "apac-south", "oceania"],
+  "apac-south":     ["apac-southeast", "me-east"],
+
+  "oceania":        ["apac-southeast", "na-west"]
+}

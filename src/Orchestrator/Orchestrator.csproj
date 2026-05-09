@@ -99,4 +99,24 @@
 	  <Folder Include="Services\Tenant\" />
 	</ItemGroup>
 
+	<!--
+	  Locality reference data — country list, region taxonomy, adjacency graph,
+	  country-region defaults. Embedded in assembly so LocalityService can load
+	  them via Assembly.GetManifestResourceStream. Same pattern as DeCloudEscrow.
+	-->
+	<ItemGroup>
+		<EmbeddedResource Include="Resources\countries.json">
+			<LogicalName>countries.json</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Resources\regions.json">
+			<LogicalName>regions.json</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Resources\region-adjacency.json">
+			<LogicalName>region-adjacency.json</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Resources\country-region-defaults.json">
+			<LogicalName>country-region-defaults.json</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
+
 </Project>

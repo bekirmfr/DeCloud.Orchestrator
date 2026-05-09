@@ -1,0 +1,22 @@
+[
+  { "code": "na-east",        "name": "North America East",     "continent": "NA" },
+  { "code": "na-central",     "name": "North America Central",  "continent": "NA" },
+  { "code": "na-west",        "name": "North America West",     "continent": "NA" },
+  { "code": "sa-east",        "name": "South America East",     "continent": "SA" },
+  { "code": "sa-west",        "name": "South America West",     "continent": "SA" },
+  { "code": "eu-west",        "name": "Europe West",            "continent": "EU" },
+  { "code": "eu-central",     "name": "Europe Central",         "continent": "EU" },
+  { "code": "eu-north",       "name": "Europe North",           "continent": "EU" },
+  { "code": "eu-south",       "name": "Europe South",           "continent": "EU" },
+  { "code": "eu-east",        "name": "Europe East",            "continent": "EU" },
+  { "code": "me-west",        "name": "Middle East West",       "continent": "ME" },
+  { "code": "me-east",        "name": "Middle East East",       "continent": "ME" },
+  { "code": "af-north",       "name": "Africa North",           "continent": "AF" },
+  { "code": "af-south",       "name": "Africa South",           "continent": "AF" },
+  { "code": "af-east",        "name": "Africa East",            "continent": "AF" },
+  { "code": "apac-northeast", "name": "Asia-Pacific Northeast", "continent": "AS" },
+  { "code": "apac-east",      "name": "Asia-Pacific East",      "continent": "AS" },
+  { "code": "apac-southeast", "name": "Asia-Pacific Southeast", "continent": "AS" },
+  { "code": "apac-south",     "name": "Asia-Pacific South",     "continent": "AS" },
+  { "code": "oceania",        "name": "Oceania",                "continent": "OC" }
+]

@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Locality;
 using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using System.Collections.Concurrent;
@@ -67,8 +68,8 @@ public interface INodeService
 public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
-    private readonly IVmSchedulingService _schedulingService;
     private readonly ISchedulingConfigService _configService;
+    private readonly ILocalityService _locality;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
@@ -88,8 +89,8 @@ public class NodeService : INodeService
 
     public NodeService(
         DataStore dataStore,
-        IVmSchedulingService schedulingService,
         ISchedulingConfigService configService,
+        ILocalityService locality,
         IEventService eventService,
         ICentralIngressService ingressService,
         ILogger<NodeService> logger,
@@ -105,8 +106,9 @@ public class NodeService : INodeService
         ObligationStateGenerator stateGenerator)
     {
         _dataStore = dataStore;
-        _schedulingService = schedulingService;
         _configService = configService;
+        
+        _locality = locality;
         _eventService = eventService;
         _ingressService = ingressService;
         _logger = logger;
@@ -203,6 +205,81 @@ public class NodeService : INodeService
         _logger.LogInformation("Generated JWT token for node {NodeId}", nodeId);
 
         // =====================================================
+        // STEP 3.5: Locality validation and derivation
+        // =====================================================
+        // Country: normalize + validate (or treat absent as unknown)
+        var country = string.IsNullOrWhiteSpace(request.Country)
+            ? "ZZ"
+            : request.Country.ToUpperInvariant().Trim();
+
+        if (country != "ZZ" && !_locality.IsValidCountryCode(country))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: invalid country '{Country}' from node {NodeId}",
+                request.Country, nodeId);
+            throw new ArgumentException(
+                $"Invalid country code '{request.Country}'. " +
+                $"Use ISO 3166-1 alpha-2 (e.g. 'TR', 'DE', 'US'). " +
+                $"'ZZ' is accepted to indicate unknown.");
+        }
+
+        // Region: validate if it's not the legacy default sentinel
+        var region = request.Region ?? "default";
+        if (region != "default" && !_locality.IsValidRegionCode(region))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: invalid region '{Region}' from node {NodeId}",
+                region, nodeId);
+            throw new ArgumentException(
+                $"Invalid region '{region}'. " +
+                $"Valid regions: [{string.Join(", ", _locality.Regions.Select(r => r.Code))}].");
+        }
+
+        // Zone: validate format if provided and not the legacy default sentinel
+        var zone = request.Zone ?? "default";
+        if (zone != "default" && !_locality.IsValidZone(zone, region))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: invalid zone '{Zone}' for region '{Region}' from node {NodeId}",
+                zone, region, nodeId);
+            throw new ArgumentException(
+                $"Invalid zone '{zone}'. Zone must follow format '<region>-<n>' " +
+                $"where <n> is a positive integer and the prefix matches " +
+                $"the parent region '{region}'.");
+        }
+
+        // Derive supranational membership tags from the declared country.
+        // Tags are derived server-side from countries.json; the operator
+        // cannot set them directly.
+        var jurisdictionTags = _locality.GetTagsForCountry(country).ToList();
+
+        // IP-derived country: best-effort, for corroboration only.
+        // We have request.PublicIp available; GeoIP lookup is deferred to
+        // when a GeoIP service is wired in. Store null for now so the field
+        // is populated incrementally rather than left permanently absent.
+        string? ipDerivedCountry = null;   // TODO(Phase 3): resolve via GeoIP service
+        var locationMismatch = false;
+
+        var locality = new NodeLocality
+        {
+            Country = country,
+            JurisdictionTags = jurisdictionTags,
+            Region = region == "default" ? "unknown" : region,
+            Zone = zone == "default" ? null : zone,
+            IpDerivedCountry = ipDerivedCountry,
+            LocationMismatch = locationMismatch,
+        };
+
+        _logger.LogInformation(
+            "Node {NodeId} locality resolved: Country={Country}, " +
+            "Tags=[{Tags}], Region={Region}, Zone={Zone}",
+            nodeId,
+            country,
+            string.Join(", ", jurisdictionTags),
+            locality.Region,
+            locality.Zone ?? "(none)");
+
+        // =====================================================
         // STEP 4: Create Node
         // =====================================================
         _logger.LogInformation(
@@ -235,6 +312,7 @@ public class NodeService : INodeService
             SupportedImages = request.SupportedImages,
             Region = request.Region ?? "default",
             Zone = request.Zone ?? "default",
+            Locality = locality,
             RegisteredAt = existingNode?.RegisteredAt ?? request.RegisteredAt,
             LastSeenAt = DateTime.UtcNow,
 
@@ -2823,6 +2901,9 @@ public class NodeService : INodeService
             Description = node.Description,
             Region = node.Region,
             Zone = node.Zone,
+            Country = node.Locality?.Country ?? "ZZ",
+            JurisdictionTags = node.Locality?.JurisdictionTags ?? new List<string>(),
+            LocationMismatch = node.Locality?.LocationMismatch ?? false,
             Tags = node.Tags,
 
             Capabilities = new NodeCapabilities

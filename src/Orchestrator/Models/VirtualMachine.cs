@@ -270,6 +270,45 @@ public class VmSpec
     /// </summary>
     public string? Zone { get; set; }
 
+    // ── Jurisdiction & country hard filters ───────────────────────────────
+
+    /// <summary>
+    /// Supranational membership tag the target node must carry, e.g.
+    /// <c>"EU"</c>, <c>"NATO"</c>, <c>"USMCA"</c>.
+    ///
+    /// When set, the scheduler rejects any node whose
+    /// <c>Node.Locality.JurisdictionTags</c> does not contain this value.
+    /// This is the correct filter for GDPR, data-residency, and similar
+    /// compliance requirements — it tests a legal/political attribute, not
+    /// a network-geography one.
+    ///
+    /// <para>Null = no jurisdiction requirement.</para>
+    /// </summary>
+    public string? RequiredJurisdictionTag { get; set; }
+
+    /// <summary>
+    /// ISO 3166-1 alpha-2 country code the target node must reside in,
+    /// e.g. <c>"DE"</c> for Germany.
+    ///
+    /// Stricter than <see cref="RequiredJurisdictionTag"/> — use when the
+    /// workload has a per-country regulatory requirement rather than a
+    /// bloc-level one. Exact case-insensitive match against
+    /// <c>Node.Locality.Country</c>.
+    ///
+    /// <para>Null = any country.</para>
+    /// </summary>
+    public string? RequiredCountry { get; set; }
+
+    /// <summary>
+    /// Countries the target node must NOT reside in (ISO 3166-1 alpha-2).
+    /// Any node whose <c>Node.Locality.Country</c> appears in this list
+    /// is rejected.
+    ///
+    /// <para>Null or empty = no exclusions.</para>
+    /// </summary>
+    public List<string>? ForbiddenCountries { get; set; }
+
+
     /// <summary>
     /// Minimum node reputation score (0.0 to 1.0) required for scheduling
     /// Higher values = more selective about node quality

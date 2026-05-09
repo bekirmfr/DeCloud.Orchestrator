@@ -135,6 +135,21 @@ public class Node
     // Region/Location for scheduling
     public string Region { get; set; } = "default";
     public string Zone { get; set; } = "default";
+
+    /// <summary>
+    /// Three-axis locality record: country (jurisdiction), region (network
+    /// locality), zone (operator grouping). Populated at registration by
+    /// <c>NodeService.RegisterNodeAsync</c> via <c>ILocalityService</c>.
+    ///
+    /// <para>
+    /// Null on nodes registered before the locality standard (v2.3).
+    /// Consumers should null-coalesce: <c>node.Locality?.Region ?? node.Region ?? "default"</c>.
+    /// </para>
+    ///
+    /// <para>See <c>docs/LOCALITY.md</c> for the full standard.</para>
+    /// </summary>
+    public NodeLocality? Locality { get; set; }
+
     public DateTime? LastSeenAt { get; set; } = null;
     /// <summary>
     /// Last time a command was successfully pushed to this node
@@ -449,6 +464,15 @@ public class NodeRegistrationRequest
     public string StakingTxHash { get; set; } = string.Empty;
     public string? Region { get; set; }
     public string? Zone { get; set; }
+
+    /// <summary>
+    /// ISO 3166-1 alpha-2 country code declared by the operator.
+    /// Optional for backward compatibility with pre-2.3 agents that don't
+    /// send this field. When absent the orchestrator records "ZZ" (unknown).
+    /// When present it is validated against <c>countries.json</c> and the
+    /// matching supranational tags are derived server-side.
+    /// </summary>
+    public string? Country { get; set; }
 
     /// <summary>
     /// Wallet signature proving ownership

@@ -147,6 +147,9 @@ builder.Services.AddSystemVmResolvers();
 builder.Services.AddCloudInitRenderer();
 builder.Services.AddCloudInitValidator();
 
+// Locality (country/region/zone reference data + validation)
+builder.Services.AddLocalityServices();
+
 // Review Service (universal marketplace reviews for templates, nodes, etc.)
 builder.Services.AddSingleton<IReviewService, ReviewService>();
 

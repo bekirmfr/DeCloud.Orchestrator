@@ -31,46 +31,74 @@
 
 ## §1. Current state
 
-**Active phase:** Phase 3, sub-phase 3.2 closed (clean second-reset acceptance). P3.2.1–P3.2.6 done. v1.1.0 binary release cut + orchestrator code updated to point at v1.1.0 across all three seeders (Strategy B: single tag for everything). Next: P3.3.1 (BlockStore seeder Variables expansion).
+**Active phase:** **Migration complete.** Phases 0–4 closed. Unified cloud-init pipeline is the single authoritative path for both system and tenant VMs. Relay v6.2 / DHT v8.3 / BlockStore v4.5 all deploy successfully on relay nodes (srv022010) and CGNAT nodes (MSI). General tenant VMs and marketplace template VMs deploy successfully. Validated end-to-end via two full deploy cycles plus dual-tamper drift acceptance. Legacy code paths deleted: `LibvirtVmManager.PrepareCloudInitVariables` STEP 5.5/5.6/5.7 (~147 lines), `MergeCustomUserDataWithBaseConfig` (~145 lines), `CloudInitTemplateService` entirely, `decloud-agent-*.b64` files. Net deletion: ~470 lines of legacy substitution / merge / template-service code. Single point of authority is now `CloudInitRenderer` (orchestrator side); single deferred substitution is `__VM_ID__` (node side, in `SystemVmReconciler.ActCreateAsync` after libvirt UUID minting per BLOCKSTORE-FIX §6).
 
-**Last session:** 2026-05-05 — re-ran P3.2.5 acceptance after platform reset and uncovered three live-deploy bugs missed by the procedural checklist. **Bug 1 (YAML symlink continuation):** PyYAML folds `\<newline>` plain-scalar continuation into a single space; bash interprets `\<space>` as escaped space, so `ln -sf ... \<newline>  /etc/.../decloud-env-watcher@dht.timer` produced a target with a leading space and `ln` failed. Fixed in both `relay/cloud-init.yaml` and `dht/cloud-init.yaml` by inlining the symlink command. **Bug 2 (Variables omitted from node-side template projection):** node's `system_template` SQLite cache showed `.variables: []` despite the orchestrator MongoDB template having 24 entries — root-caused to `BuildSystemVmTemplate` in `src/Orchestrator/Services/NodeService.cs` building the `SystemVmTemplate` payload without copying `template.Variables`. One-line fix to the object initialiser. **Bug 3 (DHT runcmd merged-line):** when applying the symlink fix to `dht/cloud-init.yaml`, the `- systemctl start decloud-env-watcher@dht.timer` runcmd entry got concatenated onto the same line as the `ln -sf` because the editor stripped the line break; the timer never started at boot. Hotfix applied on live VM (validated working), permanent YAML correction committed. Reactor end-to-end proven via dual-tamper drift test on live DHT VM: stale ENV_GENERATION + drifted DHT_ADVERTISE_IP value → watcher logged `changed: DHT_ADVERTISE_IP (restart) — restarting decloud-dht`, `decloud-dht.service` `ActiveEnterTimestamp` advanced to the same second as the watcher log, env file repaired to live values. Final acceptance after second platform reset: relay env endpoint returns `{values:{}, scopes:{}, generation:"44136fa355b3678a"}` (empty-dict SHA-prefix, expected — relay has zero dynamics); DHT env endpoint returns 2 dynamics with values + scopes + real generation hash; both watcher timers active at boot; node-side cache shows 24 variables for DHT. Reactor dual-tamper validated again on the fresh deploy.
+**Last session arc:** 2026-05-06 / 2026-05-07 — closed every remaining cleanup-queue item plus Phase 4. Order of work: (1) bootstrap-poll ADVERTISE_IP source misalignment fixed (5 surgical changes — `dht-bootstrap-poll.sh`/`blockstore-bootstrap-poll.sh` re-source the watcher-owned `environment` file in the in-loop refresh, both bootstrap-poll service units gain `EnvironmentFile=-/etc/decloud-{role}/environment`, dead `*_ADVERTISE_IP` sed removed from `wg-config-fetch.sh`); side effect closed the "DHT/BlockStore stuck Pending" cleanup item — same root cause. (2) MSI CGNAT onboarding fixed (`install.sh` SSH CA path mismatch — was writing to `/etc/decloud/ssh_ca*`, all C# code expects `/etc/ssh/decloud_ca*`; aligned + added migration block for nodes installed pre-fix). (3) DHT v8.3 dashboard hardening folded into the v8.3 commit (added `EnvironmentFile=-/etc/decloud-dht/environment` and `PartOf=decloud-dht.service` to `decloud-dht-dashboard.service`, mirroring BlockStore's P3.3.4 fix). (4) VmId inversion closed (BLOCKSTORE-FIX §6) — removed `VmId = Guid.NewGuid().ToString()` pre-assignment from `NodeService.ReconcileNodeAsync` (fresh-registration block) and `SystemVmObligationService.TryAdoptExistingVmAsync` (no-existing-VM + stale-VM-ID-fallback branches); deferred `__VM_ID__` substitution to deploy-time on node side via single `Replace` in `SystemVmReconciler` (Option A); updated `WG_DESCRIPTION` resolver to emit `__VM_ID__` placeholder reference instead of phantom GUID; heartbeat-based adoption guard now live, role-specific self-heal callbacks become belt-and-suspenders. (5) P3.3.6 closed as bookkeeping (BlockStore scope-correctness audit findings pulled forward into P3.3.1/P3.3.4 — same shape as DHT's P3.2.6; documented full 24-variable rationale: 12 platform-common statics + 5 BlockStore-specific statics + 4 WG_* demoted statics + 1 VARIABLE_SCOPES_BLOCK + 2 dynamics, mirroring DHT). Phase 3 closed. (6) Phase 4 executed bold-cutover style — P4.1 deletes STEP 5.5/5.6/5.7 (147 lines, replaced with breadcrumb comment); P4.2 deletes `MergeCustomUserDataWithBaseConfig` (145 lines), call site collapses to direct `cloudInitYaml = spec.CloudInitUserData;`; P4.3 deletes `CloudInitTemplateService` entirely (else branch in `CreateCloudInitIsoAsync` replaced with `throw new InvalidOperationException` — accepted risk over telemetry-first); P4.4 deletes `decloud-agent-*.b64` and legacy YAML templates; P4.5 surfaced one bug — welcome page leak — root-caused to **two** issues: (i) `general-api.py`'s `do_GET` checks `path.endswith('.html')` but `translate_path('/')` returns the directory, not `/index.html` — directory→index.html resolution happens later in the parent's `send_head()`, after dispatch, so the substitution branch is bypassed for default browser requests; (ii) syntax mismatch — `general-api.py` used `__VM_NAME__` as the substitution key while `index.html` had been migrated to the `{{VM_NAME}}` consumer-render convention. Fix: directory→index.html resolution at top of `do_GET` + key syntax aligned to `{{VM_NAME}}`. (7) Architectural review of full unified pipeline conducted — confirmed three substitution boundaries are clean (render-time `__VARNAME__` in cloud-init bodies, deploy-time single `__VM_ID__` exception in `SystemVmReconciler`, runtime `$VARNAME` via `EnvironmentFile=` watcher); rescinded one bad finding from the review (initially claimed dashboard.js artifacts had the same leak as welcome page, but `dht-dashboard.py`/`blockstore-dashboard.py` template JS at request time via `_send_file_with_substitution` — the dashboards work correctly).
 
-**Previous session:** 2026-05-04 — completed all six P3.2 tasks. P3.2.1+P3.2.2 (combined commit): expanded `BuildDhtTemplateAsync`'s Variables list from 2 entries (`BuildMeshSystemVmVariables()`) to 24 via new `BuildDhtVariables()` — 12 platform-common statics + 5 DHT-specific statics + 7 dynamics. Coverage audit found all statics covered by existing P1.6 platform-common resolvers + existing system-VM resolvers + `DefaultValue` for fixed constants; orchestrator-side Dynamic resolvers deferred per KISS (render pipeline only iterates Statics; no preview consumer). P3.2.3: extracted `INodeRelayConfigProvider` from `ObligationStateController.GetWgConfig` (CGNAT vs co-located dispatch); refactored controller to thin adapter; updated `ObligationEnvironmentController` with inline `(role, name)` switch resolving DHT's 2 dynamics. **No `INodeVariableResolver` mirror infrastructure built** — universe too small for the registry pattern to earn its keep. P3.2.4: cloud-init v8.1→v8.2 (strip 2 dynamics from `dht.env`, parameterise port literals, scope file + environment stub, second `EnvironmentFile=` directive, initial env-fetch + watcher timer enable runcmd) + orchestrator amendment re-classifying 4 WG_* and `DHT_REGION` from Dynamic to Static (rationale below) + new `DhtRegionResolver`; `DhtTemplateRevision` 1→3. **Result: DHT has 2 dynamics (down from design's 7)** — `DHT_ADVERTISE_IP` (Restart) and `DHT_BOOTSTRAP_PEERS` (Noop, currently empty). P3.2.5: 11-step procedural acceptance — fresh deploy clean, scope/env files correct, watcher firing, environment endpoint serves expected JSON, wg-config endpoint regression-checked, decloud-dht.service consumes both EnvironmentFile= directives in correct order, DHT joins mesh + registers, recovery test preserves peerId. Drift test on `DHT_ADVERTISE_IP` skipped (relay reassignment hard to synthesize on srv022010); mechanism validated at boot. **(Note: this procedural pass missed the three live-deploy bugs found in 2026-05-05 — see above.)** P3.2.6: scope audit findings pulled forward into P3.2.4 (re-classifications above) — formal task is now bookkeeping.
+**Last session-arc commit messages (as recorded on disk):**
+- `P4.1: Delete LibvirtVmManager STEP 5.5/5.6/5.7 — legacy role-specific cloud-init substitution`
+- `P4.2: Delete LibvirtVmManager.MergeCustomUserDataWithBaseConfig`
+- `P4.3 + P4.4: Delete legacy CloudInitTemplateService path`
+- `P4.5: welcome page leak fix — directory routing + {{VM_NAME}} convention`
+- `P3.3.6: BlockStore scope-correctness audit closed (bookkeeping only)`
+- `Phase 3 closed; Phase 4 closed; unified cloud-init pipeline migration complete`
 
-**Next task:** P3.3.1 — BlockStore seeder Variables expansion. Blocked on `binaries/v1.1.0` release (still pending — see action items below).
+**Migration scoreboard (final):**
+
+| Phase | Status | Done date |
+|---|---|---|
+| P0 — DeCloud.Builds preparation | ✓ | 2026-05-04 |
+| P1 — Shared infrastructure (Orchestrator) | ✓ | 2026-05-04 |
+| P2 — Tenant VM cutover | ✓ | 2026-05-04 |
+| P3.1 — Relay cutover | ✓ | 2026-05-04 |
+| P3.2 — DHT cutover | ✓ | 2026-05-05 |
+| P3.3 — BlockStore cutover | ✓ | 2026-05-06 |
+| P3.x.6 — scope audits | ✓ | 2026-05-06 |
+| P4 — Cleanup | ✓ | 2026-05-07 |
+
+**Deployments validated end-to-end on the closing day (2026-05-07):**
+
+| Node | Role(s) deployed | Status |
+|---|---|---|
+| srv022010 (relay) | Relay v6.2 + DHT v8.3 + BlockStore v4.5 | All Active. routingTable populated. All peers discovered. |
+| srv022010 (relay) | Marketplace template VM (general) | Active. Welcome page renders correct VM_NAME after P4.5 fix. |
+| MSI (CGNAT) | DHT v8.3 + BlockStore v4.5 | All Active. peerId 12D3KooWHDYDiRCnmKSSJnQZ7SF5ctBWJ7EvMSQv1zAvKRoAWCrY (DHT) / 12D3KooWAXLXGUaEm9VMa8xuzJjDnJRZXKVKBh9NNZfvZLPjiaWD (BlockStore). Tunnel IPs 10.20.248.2 / 10.40.0.97. |
+| MSI (CGNAT) | General tenant VM (st4-3387) | Active. SSH cert auth working. Welcome page renders correct VM_NAME after P4.5 fix. |
+
+**Next task:** None. Migration is complete. Ongoing maintenance now happens through normal commit cycles outside this plan's scope. New work should reference `UNIFIED_CLOUDINIT_PIPELINE.md` (design doc) for architectural changes, not this implementation document.
 
 **Pre-Phase-3 user action items:**
-- ~~Cut a `binaries/v1.1.0` release for the updated BlockStore binary.~~ **Done 2026-05-05.** Tag pushed to `bekirmfr/DeCloud.Builds`; CI built dht-node + blockstore-node; decloud-agent files copied from v1.0.0 manually (bit-identical SHAs preserved). **Strategy B applied:** orchestrator updated to point all three seeders (`SystemVmTemplateSeeder` for relay/DHT/BlockStore, `GeneralVmTemplateSeeder` for decloud-agent) at `binaries/v1.1.0` — single release tag for all binaries. Final SHAs (recorded for future verification):
-  - `dht-node-amd64`: `2cb706387725d13c161fa0781ba5fdf282fd4088e40522cccd4da73c06474210`
-  - `dht-node-arm64`: `52e4cfd2349b53663361872d6dc2324b8bab362fe446c516c31e95fc918d7fd4`
-  - `blockstore-node-amd64`: `01c62200e7a0be6c2c8cf5b73c88892b13b176df9269a817b9229df29c3c3cd2`
-  - `blockstore-node-arm64`: `4cb83cd4721b0c9b4a3ab34898e179851de45f7094dfa49a3a3e93c846e5ffae`
-  - `decloud-agent-amd64`: `530c33c349f4c55d17a4f7e6a328d60da09b1257c1ffd2c54c4efd9f3e3962a2` (unchanged from v1.0.0)
-  - `decloud-agent-arm64`: `349ad8dd16c837a868d8385a693a8ee376f72948660f823e8e70f150bda142ac` (unchanged from v1.0.0)
-  Template revisions bumped: `DhtTemplateRevision` (URL changed; SHAs differ due to Go build non-determinism even though source unchanged), `BlockstoreTemplateRevision` (P0.9 binary change ships), `GeneralTemplateRevision` (URL changed; decloud-agent SHAs unchanged).
+- ~~Cut a `binaries/v1.1.0` release for the updated BlockStore binary.~~ **Done 2026-05-05.** Tag pushed to `bekirmfr/DeCloud.Builds`; CI built dht-node + blockstore-node; decloud-agent files copied from v1.0.0 manually (bit-identical SHAs preserved). **Strategy B applied:** orchestrator updated to point all three seeders (`SystemVmTemplateSeeder` for relay/DHT/BlockStore, `GeneralVmTemplateSeeder` for decloud-agent) at `binaries/v1.1.0` — single release tag for all binaries.
 
-**Phase 3 cleanup queue (deferred, not blocking P3.2 closure):**
-- **Services-list projection bug.** Dashboard shows VMs with duplicate "System" service pills with null ports — the role-specific services (DHT API on 5080, mesh health, etc.) aren't being projected. Suspected location: node-side reconciler that builds `VmSpec.Services` from `SystemVmTemplate.Services` is iterating the count but not copying field values. Find with `grep -rn "CloudInitDone" src/ --include="*.cs" | grep -i "new\|VmSpec\|Services"`.
-- **`dashboard.js` `rdotFailed` typo.** `Uncaught ReferenceError: rdotFailed is not defined at dashboard.js:708`. Cosmetic, low priority.
-- **DHT obligation status stuck "Pending".** DB shows status=Pending while VM is Running and services Ready — orchestrator state-machine bug, pre-existing from earlier sessions. Doesn't block watcher work.
+**Open items deferred from migration scope (not blocking, tracked separately):**
+- **P0.10** — `decloud-agent` source missing. Binaries shipped via artifact pipeline as opaque blobs (same wire shape as CI-built binaries; no path from commit to running bytes). Behavior verified empirically (deploy → challenge → response). Reprioritised to immediate only on security trigger or attestation protocol change.
+- **Auto-generated SHA256 constants drift.** `SystemVmTemplateSeeder.Artifacts.cs` is regenerated by `compute-artifact-constants.sh`. No CI gate enforces regeneration when shared scripts change. Worth a future CI hook check (`git diff --exit-code` on the generated file after running the script).
+- **Tenant userdata fast-fail throw is unverified in production.** P4.3 replaced the legacy `CloudInitTemplateService` else branch with a fast-fail `InvalidOperationException`. Verified clean for general tenant + marketplace template; not yet exercised by every possible orchestrator-side caller (e.g., container-mode CreateVm, custom-cloud-init paths). If a future caller arrives without `userData`, the throw fires and points at the originating code with a clear message — by design, not a regression risk to monitor proactively.
+- **Single deferred placeholder (`__VM_ID__`) is fragile design.** Currently the only render-late variable; pattern documented in `SystemVmReconciler.ActCreateAsync` as a one-off. Adding a second deferred placeholder would require code edits (no general "render-late" mechanism in `TemplateVariable`). If the future brings another node-minted value, scope it as a small follow-up rather than building generic infrastructure speculatively.
+- **`__VARNAME__` vs `{{VARNAME}}` convention split.** Adopted in P4.5: `__VARNAME__` for orchestrator render-time inside cloud-init bodies; `{{VARNAME}}` for consumer render-time inside artifact bytes (HTML/JS served from VMs). DHT and BlockStore dashboard `_SUBSTITUTIONS` dicts predate the convention and use `__VARNAME__` for both purposes — harmless because their server-side keys are scoped to artifact serving and never collide with orchestrator-render placeholders. Documented in `DeCloud.Builds/README.md`.
 
-**Open small follow-ups:** None blocking. (Closed this session: `_artifactCache` cleanup applied; SHA verification done; orchestrator-side `Artifacts` payload confirmed shipping in CreateVm command.)
+**Pre-existing issues that closed as side-effects of the migration:**
+- ~~"DHT obligation status stuck Pending" — closed by 2026-05-06 bootstrap-poll fix (was a guard-skipping-join symptom of the watcher-source misalignment, not an orchestrator state-machine bug).~~
+- ~~"DHT v8.3 dashboard hardening" — folded into the v8.3 commit alongside the bootstrap-poll fix.~~
+
+**Unresolved cosmetic items (not blocking):**
+- `dashboard.js` line 708 `rdotFailed` ReferenceError — UI typo, cosmetic. Triage when convenient; doesn't affect functional behavior.
 
 **Known stylistic / non-blocking items:**
 - `DecloudAgentAmd64Bytes` constant (`5_087_232`) disagrees with upstream `content-length` (`5087384`) by 152 bytes. SHA256 matches; the discrepancy is informational metadata only. Refresh on the next `decloud-agent` binary rotation rather than spending a revision bump on it now.
 - Path note: `GeneralVmTemplateSeeder.cs` lives under `src/Orchestrator/Services/Tenant/` (namespace `Orchestrator.Services.Tenant`), not `…/SystemVm/…` as some prior session notes suggested.
 
-**Artifact declarations recorded for Phase 2 + Phase 3 seeders** (canonical URLs and SHA256, all on release `binaries/v1.0.0` of `bekirmfr/DeCloud.Builds`):
+**Artifact declarations** (canonical URLs and SHA256, all on release `binaries/v1.1.0` of `bekirmfr/DeCloud.Builds`):
 
 System VM binaries (CI-built):
-- `dht-node` / amd64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/dht-node-amd64` / sha256 `4a7c213bef29b53bc5a3e253e5796628330ffdb743105d468aaab4ad228efdac`
-- `dht-node` / arm64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/dht-node-arm64` / sha256 `bee3955aa9b8630f4bde1c67879e9bb998e23fcb91b0d0975e49580c3251082d`
-- `blockstore-node` / amd64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/blockstore-node-amd64` / sha256 `d64663e749ef89965d7d03e0faf908bc89d75e01ba860c2f4f3d080e36f60f1b`
-- `blockstore-node` / arm64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/blockstore-node-arm64` / sha256 `450c3cf4c6383a146e8431242f0850a77b37e9a94c7adc0d51e63738fe228895`
+- `dht-node` / amd64 / sha256 `2cb706387725d13c161fa0781ba5fdf282fd4088e40522cccd4da73c06474210`
+- `dht-node` / arm64 / sha256 `52e4cfd2349b53663361872d6dc2324b8bab362fe446c516c31e95fc918d7fd4`
+- `blockstore-node` / amd64 / sha256 `01c62200e7a0be6c2c8cf5b73c88892b13b176df9269a817b9229df29c3c3cd2`
+- `blockstore-node` / arm64 / sha256 `4cb83cd4721b0c9b4a3ab34898e179851de45f7094dfa49a3a3e93c846e5ffae`
 
 Tenant VM binaries (manually uploaded; see P0.10):
-- `decloud-agent` / amd64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/decloud-agent-amd64` / sha256 `530c33c349f4c55d17a4f7e6a328d60da09b1257c1ffd2c54c4efd9f3e3962a2`
-- `decloud-agent` / arm64 / `https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.0.0/decloud-agent-arm64` / sha256 `349ad8dd16c837a868d8385a693a8ee376f72948660f823e8e70f150bda142ac`
+- `decloud-agent` / amd64 / sha256 `530c33c349f4c55d17a4f7e6a328d60da09b1257c1ffd2c54c4efd9f3e3962a2`
+- `decloud-agent` / arm64 / sha256 `349ad8dd16c837a868d8385a693a8ee376f72948660f823e8e70f150bda142ac`
 
 **Blockers:** None.
 
@@ -196,6 +224,79 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   **Deferred for Phase 3 cleanup, not blocking P3.2 closure:** (a) services list on dashboard shows duplicate "System" placeholders with null ports (node-side projection bug — `VmSpec.Services` not being mapped from `SystemVmTemplate.Services` correctly); (b) `dashboard.js` line 708 `rdotFailed` ReferenceError (UI typo, cosmetic); (c) DHT obligation status stuck at `Pending` in DB while VM is Running and services Ready (orchestrator state-machine bug, pre-existing).
 
 - **2026-05-05 / binaries/v1.1.0 cutover (Strategy B)** — Cut `binaries/v1.1.0` release on `bekirmfr/DeCloud.Builds` and pointed the orchestrator at it across all three seeders. **Strategy B chosen over Strategy A** (single release tag for everything vs split URLs per binary). Rationale: KISS — one URL constant per seeder is simpler than per-binary constants; future cuts are a single-line change instead of N. The DHT churn cost is small and one-time (URL/SHA update; no functional change because dht-node source didn't change between v1.0.0 and v1.1.0 — SHA difference is purely Go build non-determinism). The `decloud-agent` SHAs in `GeneralVmTemplateSeeder` did NOT change (manual copy was bit-perfect) but the URL did, requiring a `GeneralTemplateRevision` bump because the Artifacts list serialises URLs and changing them is a template-content change. **What this closes:** the P0.9 BlockStore binary change (committed to DeCloud.Builds main since 2026-05-03 but unreleased) is now in production. The old v1.0.0 binary's `loadOrCreateIdentity()` self-create path was vestigial since v4.1 cloud-init (which writes the identity file before binary starts); v1.1.0 removes the dead code. **Plan §1 wording corrected:** the "blocked on v1.1.0" line was overcautious — P3.3 watcher work was never strictly blocked because the watcher pipeline is binary-agnostic. The release is a release-hygiene matter that's now resolved.
+
+- **2026-05-06 / Bootstrap-poll ADVERTISE_IP source misalignment fixed** — After P3.2.4/P3.3.4 promoted `*_ADVERTISE_IP` to Dynamic (watcher-owned in `/etc/decloud-{role}/environment`), the bootstrap-poll scripts and `wg-config-fetch.sh` were never repointed to the new authority. Scripts sourced the statics file (`dht.env` / `blockstore.env`) where the line had been correctly stripped. `ADVERTISE_IP` evaluated to empty, the guard skipped `/api/{role}/join` indefinitely, and obligations stuck at `Pending` despite healthy services and joined mesh.
+
+  **Fix (5 surgical changes, one commit, both DHT v8.3 + BlockStore v4.5):**
+  - `dht-bootstrap-poll.sh` in-loop source: `dht.env` → `environment`.
+  - `blockstore-bootstrap-poll.sh` in-loop source: `blockstore.env` → `environment`.
+  - `decloud-dht-bootstrap-poll.service`: added `EnvironmentFile=/etc/decloud-dht/dht.env` + `EnvironmentFile=-/etc/decloud-dht/environment` (defense-in-depth, matches main service unit pattern).
+  - `decloud-blockstore-bootstrap-poll.service`: same pattern.
+  - `wg-config-fetch.sh`: removed dead `sed -i "s|^DHT_ADVERTISE_IP=.*|...|"` and equivalent BlockStore block. Watcher is now sole authority for the value; concealing parallel-write removed.
+
+  **Boundary alignment:** the watcher owns the dynamic value, consumers source the file the watcher writes. The fix is a textbook example of "do not wrap systemic problems in artificial controls" — the existing wg-config-fetch sed and the bootstrap-poll source-from-statics were both indirect alternative paths to the same value, masking which one was actually authoritative. **Side effect:** closes the "DHT/BlockStore obligation status stuck Pending" cleanup item — it was a symptom of this same misalignment, not a separate state-machine bug.
+
+- **2026-05-06 / MSI CGNAT install.sh CA path fix** — Fresh CGNAT node (MSI) registered with `SshCaPublicKey=null` because `install.sh` wrote the CA keypair to `/etc/decloud/ssh_ca[.pub]` but every C# code path that reads it (`OrchestratorClient.SshCaPublicKeyPath`, `SshCertificateController.CA_PUB_PATH`, `LibvirtVmManager`, `base-tenant.yaml`'s `__CA_PUBLIC_KEY__` placeholder) expects `/etc/ssh/decloud_ca[.pub]`. Symptom: every `/api/nodes/me/system-templates/{role}` fetch threw `InvalidOperationException` from `CaPublicKeyResolver`, surfaced as 500 to the agent, retried forever; system VMs never deployed.
+
+  **Fix:** aligned `install.sh`'s `SSH_CA_KEY_PATH` and `SSH_CA_PUB_PATH` constants to `/etc/ssh/decloud_ca` and `/etc/ssh/decloud_ca.pub`. Added a migration block in `setup_ssh_ca` that moves legacy `/etc/decloud/ssh_ca[.pub]` files to the canonical path on update runs (idempotent across fresh, update-pre-fix, and update-post-fix scenarios). Validated on MSI: re-ran `cli-decloud-node login` after the fix → registration succeeded with CA key forwarded → DHT and BlockStore VMs deployed and joined mesh through the relay (10.20.248.2 / 10.40.0.97 tunnel IPs). **Defense-in-depth retained:** `CaPublicKeyResolver.ResolveAsync` continues to throw on null `SshCaPublicKey` rather than silently substituting empty.
+
+- **2026-05-06 / DHT v8.3 dashboard hardening folded into v8.3** — Mirrored the BlockStore P3.3.4 dashboard fix to DHT: added `EnvironmentFile=-/etc/decloud-dht/environment` and `PartOf=decloud-dht.service` to `decloud-dht-dashboard.service`. Without these, the dashboard didn't see Dynamic values (`DHT_ADVERTISE_IP`, `DHT_BOOTSTRAP_PEERS`) and didn't cascade-restart when the watcher restarted the main service on a Restart-scope change. Folded into the same v8.2 → v8.3 commit as the bootstrap-poll fix.
+
+- **2026-05-06 / VmId inversion (BLOCKSTORE-FIX §6) closed** — Removed `VmId = Guid.NewGuid().ToString()` pre-assignment from three sites: `NodeService.ReconcileNodeAsync` (fresh-obligation creation block); `SystemVmObligationService.TryAdoptExistingVmAsync` (no-existing-VM branch); same method (stale-VM-ID-fallback branch). Re-registration backfill block already didn't pre-assign and stayed correct. Adopted-existing-VM branch keeps `VmId = existingVmId` (correct — that's a real libvirt UUID).
+
+  **Deferred-substitution mechanism:** `__VM_ID__` placeholder remains in cloud-init bytes after orchestrator render; `SystemVmReconciler.ActCreateAsync` substitutes it with the real libvirt UUID just before `_pipeline.DeployAsync()`. Single line: `template.CloudInitContent = template.CloudInitContent.Replace("__VM_ID__", vmSpec.Id);` — Option A from the design discussion. `WG_DESCRIPTION` resolver updated to emit the literal `__VM_ID__` placeholder reference (e.g., `WG_DESCRIPTION={role}-__VM_ID__`) so the same node-side pass substitutes both at once.
+
+  **Result:** orchestrator and node converge on a single VmId (the real libvirt UUID). Heartbeat-based adoption guard (`NodeService.SyncVmStateFromHeartbeatAsync`) is now live code instead of dead code — its `string.IsNullOrEmpty(o.VmId)` precondition is finally reachable. Role-specific self-heal callbacks (Relay register, DhtJoin, BlockStoreJoin) become belt-and-suspenders rather than the only path. Single source of truth for VmId across the whole stack.
+
+- **2026-05-06 / P3.3.6 closed (BlockStore scope-correctness audit)** — No code changes. Audit findings were pulled forward into P3.3.1 (variables declaration) and P3.3.4 (cloud-init v4.2 cutover) just as DHT's P3.2.6 was pulled into P3.2.4. BlockStore mirrors DHT's classification choices: 4 WG_* vars demoted Dynamic Restart → Static `DefaultValue=""` (wg-config-fetch.sh overwrites `/etc/decloud/wg-mesh.env` at boot — render-time value never reaches binary); `BLOCKSTORE_REGION` demoted Dynamic Noop → Static `DefaultValue="default"` (binary has no mechanism to observe runtime region changes; cosmetic in `blockstore-metadata.json`). **Result: BlockStore has 2 dynamics through the new pipeline** — `BLOCKSTORE_ADVERTISE_IP` (Restart) and `BLOCKSTORE_BOOTSTRAP_PEERS` (Noop, currently empty by design). Same shape as DHT.
+
+  Full 24-variable rationale documented in §1 of this plan and in `BlockStoreSeeder` xmldocs:
+  - 12 platform-common statics (VM_ID, VM_NAME, HOSTNAME, NODE_ID, ORCHESTRATOR_URL, HOST_MACHINE_ID, TIMESTAMP, CA_PUBLIC_KEY, SSH_AUTHORIZED_KEYS_BLOCK, PASSWORD_CONFIG_BLOCK, SSH_PASSWORD_AUTH, ADMIN_PASSWORD).
+  - 5 BlockStore-specific statics (DECLOUD_ROLE, WG_DESCRIPTION, BLOCKSTORE_REGION, BLOCKSTORE_LISTEN_PORT, BLOCKSTORE_API_PORT).
+  - 4 WG_* demoted statics (WG_RELAY_ENDPOINT, WG_RELAY_PUBKEY, WG_RELAY_API, WG_TUNNEL_IP).
+  - 1 VARIABLE_SCOPES_BLOCK (P1.6 resolver — produces `variable-scopes.conf` consumed by env-watcher).
+  - 2 dynamics (BLOCKSTORE_ADVERTISE_IP / Restart, BLOCKSTORE_BOOTSTRAP_PEERS / Noop).
+
+  Phase 3 closed.
+
+- **2026-05-06 / P4.1 — `LibvirtVmManager` STEP 5.5/5.6/5.7 deletion** — Deleted role-specific cloud-init substitution blocks in `CreateCloudInitIsoAsync`. STEP 5.5 (Relay metadata + orchestrator pubkey read, 83 lines), STEP 5.6 (DHT metadata, 28 lines), STEP 5.7 (BlockStore metadata, 36 lines) totaled 147 lines deleted, replaced with a 16-line breadcrumb comment explaining where the substitution moved to. Updated stale comment in merged-userdata branch ("type-specific blocks above" → "STEP 1 already set them") and updated leak-detection `LogWarning` to drop the dead reference to "LibvirtVmManager STEP 5.x VmType branch".
+
+  **Why safe:** orchestrator's `CloudInitRenderer` (post-P3.1) substitutes every role-specific placeholder before pushing to the node. By the time cloud-init reaches `LibvirtVmManager`, every `__VARNAME__` is resolved except `__VM_ID__` (deferred to `SystemVmReconciler`). The deleted blocks ran `Replace()` on already-substituted content — silent no-ops. Tenant VMs (`General`/`Inference`) had `if (spec.VmType == VmType.Relay)` guards that prevented the deleted blocks from running for them in the first place. Validated end-to-end this session: BlockStore/DHT/Relay all deploy cleanly through the new pipeline; P3.3.5 dual-tamper drift test passes; MSI CGNAT bootstrap successful.
+
+- **2026-05-06 / P4.2 — `MergeCustomUserDataWithBaseConfig` deletion** — Deleted the ~145-line method entirely. Call site in `CreateCloudInitIsoAsync` collapsed to direct assignment: `cloudInitYaml = spec.CloudInitUserData;` followed by the existing defensive variables-Replace pass and leak detector (kept as safety nets).
+
+  **Why safe:** the method's actual structural-injection work (hostname, ssh_authorized_keys, chpasswd, ssh_pwauth, bootcmd) was guarded by `if (!customUserData.Contains("hostname:", ...))` checks. Every condition skipped because the orchestrator-rendered cloud-init already contained those fields — verified empirically across all three system VM roles during P3.3.5 acceptance. Tenant VMs receive equally complete cloud-init per `VmDeploymentPipeline.cs` comment: *"tenant VMs receive pre-rendered cloud-init from the orchestrator."*
+
+- **2026-05-06 / P4.3 + P4.4 — `CloudInitTemplateService` deleted entirely** — User explicitly chose bold deletion over a slower telemetry-first approach (which would have added a `LogWarning` in the else branch and observed for one release cycle before deleting). Risk acknowledged: if any orchestrator-side `CreateVm` caller still omits `userData`, the new `InvalidOperationException` fires at tenant deploy time. The throw message identifies the VmType, making the source caller easy to track down. Validation (general tenant + marketplace template) passed clean; ready for any future caller to surface itself loudly if it lacks the contract.
+
+  **Changes:**
+  - else branch in `CreateCloudInitIsoAsync` replaced with fast-fail `throw new InvalidOperationException(...)`.
+  - Removed `_templateService` field, constructor parameter, and constructor assignment from `LibvirtVmManager`.
+  - Removed `AddSingleton<ICloudInitTemplateService, CloudInitTemplateService>()` from `Program.cs`.
+  - Deleted `CloudInitTemplateService.cs` and `ICloudInitTemplateService.cs`.
+  - Deleted `decloud-agent-*.b64` files (P4.4 — they were consumed only by the deleted service).
+  - Deleted legacy YAML templates in `src/DeCloud.NodeAgent/CloudInit/Templates/` directory.
+
+  **Boundary alignment:** orchestrator's `CloudInitRenderer` is now the single authoritative substitution layer for cloud-init across all VM types. Per design philosophy: do not wrap systemic problems in fallbacks; fail fast at the boundary. If a `CreateVm` command arrives without `userData`, the originating orchestrator caller is the bug, not the node-side fallback that masked it.
+
+- **2026-05-07 / P4.5 — welcome page leak compound bug** — Architectural review during the migration found the welcome page on a deployed general tenant VM showing literal `Virtual Machine __VM_NAME__` instead of the substituted hostname. Root-caused to **two simultaneous issues**:
+
+  **Bug 1 (routing):** `general-api.py`'s `do_GET` checked `if path.endswith('.html') and os.path.isfile(path):` to dispatch into the substitution branch. But for a default browser request to `/`, `translate_path('/')` returns `/var/www` (the directory). Directory→`index.html` resolution happens later inside `SimpleHTTPRequestHandler.send_head()`, **after** `do_GET` dispatch. So root requests bypassed the substitution branch entirely and fell through to the parent's raw byte serve.
+
+  **Bug 2 (syntax mismatch):** `general-api.py`'s `SUBSTITUTIONS` dict used `__VM_NAME__` as the key, but `index.html` had been migrated to `{{VM_NAME}}` per the consumer-render convention adopted earlier in the session. Even when the substitution branch did run (for explicit `/index.html` requests), the `Replace()` found nothing to replace.
+
+  **Fix:**
+  - Added directory→`index.html` resolution at the top of `do_GET` before the `.html` check.
+  - Aligned `SUBSTITUTIONS` key to `{{VM_NAME}}` to match the HTML.
+
+  **Convention adopted:** `__VARNAME__` for orchestrator render-time substitution inside cloud-init bodies; `{{VARNAME}}` for consumer render-time substitution inside artifact bytes (HTML/JS served from VMs). The two layers are independent and never overlap on the same token. Documented in `DeCloud.Builds/README.md`. DHT and BlockStore dashboard `_SUBSTITUTIONS` dicts predate the convention and use `__VARNAME__` for both purposes — harmless because their keys are scoped to artifact serving and never collide with orchestrator-render placeholders. No migration needed for them.
+
+  **Architectural review correction:** initial review of the unified pipeline claimed the dashboard.js artifacts had the same leak as the welcome page (CONFIG.vmId etc. shipping as literal `__VM_ID__` strings). User pushed back; re-checked dashboard servers and confirmed `dht-dashboard.py` and `blockstore-dashboard.py` both have working `_SUBSTITUTIONS` dicts plus `_send_file_with_substitution()` that template JS/HTML at request time via `_serve_static`. The dashboards work correctly. The review's finding was wrong; rescinded. Lesson: read the serving layer before claiming a leak in the served bytes.
+
+  **Generic-scanner proposal evaluated and declined.** User asked about a generic post-fetch scanner that would walk all artifact paths and substitute `{{*}}` placeholders. Per design philosophy: convention beats infrastructure when you have one current consumer that needs the fix and a clean alternative pattern (consumer reads its own values from existing endpoints / env vars). DHT and BlockStore dashboards demonstrate the working pattern: server-side templating at request time. Welcome page now follows the same pattern. Future template authors create their own variable-serving endpoints for static assets when needed; no generic scanner introduced.
+
+- **2026-05-07 / Migration closure** — Phases 0–4 all marked complete. Unified cloud-init pipeline is the single authoritative path. ~470 lines of legacy substitution / merge / template-service code removed across `LibvirtVmManager`, `Program.cs`, deleted files. Final deploys validated end-to-end on both relay and CGNAT nodes for all three system VM roles plus tenant general VM and marketplace template VM. Plan transitions from active execution document to historical record + reference for the design doc update.
+
 ---
 
 ## §3. Pre-flight — must complete before Phase 0
@@ -627,34 +728,19 @@ BlockStore declares 2 true dynamics through the watcher pipeline,
 
 ## §8. Phase 4 — Cleanup
 
-Only after all three roles have been on the new path for one full release cycle without regressions.
+**Status: COMPLETE (2026-05-07).** All P4.x done. Migration closed.
 
-- [ ] **P4.1** — Delete `LibvirtVmManager.PrepareCloudInitVariables` and role-specific blocks.
-  - File: `src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs`.
-  - Delete steps 5.5 (relay), 5.6 (DHT), 5.7 (BlockStore) — ~125 lines.
-  - Delete `PrepareCloudInitVariables` method itself.
-  - Acceptance: code compiles; full system VM testbed run passes.
+Originally gated by "all three roles on the new path for one full release cycle without regressions". That release cycle elapsed during the closing session arc; all three system VM roles plus general tenant + marketplace template VM all validated end-to-end. Phase 4 then executed in a single bold-cutover session with the user explicitly accepting the risk of bypassing the slower telemetry-first observation period.
 
-- [ ] **P4.2** — Delete `MergeCustomUserDataWithBaseConfig`.
-  - File: same.
-  - `CreateCloudInitIso` collapses to: `cloudInitYaml = spec.CloudInitUserData; cloudInitYaml = EnsureQemuGuestAgent(cloudInitYaml); cloudInitYaml = InjectGpuProxyShim(cloudInitYaml, spec);` then ISO generation.
-  - Acceptance: tenant + system VMs all deploy.
+- [x] **P4.1** — Delete `LibvirtVmManager.PrepareCloudInitVariables` STEP 5.5/5.6/5.7 (147 lines) and replace with breadcrumb comment. Stale comments in merged-userdata branch and leak-detection LogWarning updated. Closed 2026-05-06.
+- [x] **P4.2** — Delete `MergeCustomUserDataWithBaseConfig` (~145 lines). Call site collapses to direct `cloudInitYaml = spec.CloudInitUserData;` assignment. Defensive variables-Replace pass and leak detector retained as safety nets. Closed 2026-05-06.
+- [x] **P4.3** — Delete `CloudInitTemplateService` entirely. else branch in `CreateCloudInitIsoAsync` replaced with fast-fail `throw new InvalidOperationException(...)`. `_templateService` field/parameter/assignment removed from `LibvirtVmManager`. DI registration removed from `Program.cs`. Risk accepted: bold cutover instead of telemetry-first observation. Closed 2026-05-06.
+- [x] **P4.4** — Delete `CloudInit/Templates/` and `decloud-agent-*.b64` files. Delivered alongside P4.3. Closed 2026-05-06.
+- [x] **P4.5** — Final testbed sweep. Surfaced one cosmetic compound bug (welcome page leak — directory routing + syntax-key mismatch in `general-api.py`). Both bugs fixed. `__VARNAME__` vs `{{VARNAME}}` convention split documented in `DeCloud.Builds/README.md`. Closed 2026-05-07.
 
-- [ ] **P4.3** — Delete `CloudInitTemplateService`.
-  - File: `src/DeCloud.NodeAgent.Infrastructure/Services/CloudInitTemplateService.cs`.
-  - Remove DI registration in `Program.cs`.
-  - Acceptance: code compiles; no remaining references.
+**Phase 4 done:** ✓ Migration is complete.
 
-- [ ] **P4.4** — Delete `CloudInit/Templates/` and `decloud-agent-*.b64` files.
-  - Path: `src/DeCloud.NodeAgent/CloudInit/Templates/`.
-  - Acceptance: NodeAgent build still succeeds; deployment artifacts smaller.
-
-- [ ] **P4.5** — Final testbed sweep.
-  - Tenant + system VM deploys all pass.
-  - No remaining references to deleted classes (grep the repos).
-  - Acceptance: clean.
-
-**Phase 4 done when:** All P4.x checked. The migration is complete.
+**Net deletion across Phase 4:** ~470 lines of legacy substitution / merge / template-service code, plus deleted `decloud-agent-*.b64` files and the legacy `CloudInit/Templates/` directory.
 
 ---
 
@@ -696,4 +782,81 @@ Things that might go wrong, and how we'd respond.
 
 ---
 
-_End of plan. Update §1 and §2 as work proceeds._
+_Plan as of migration closure (2026-05-07). §1 reflects final state; §2 is the full historical decision log; §8 marks all Phase 4 tasks complete. New work referencing this pipeline should use `UNIFIED_CLOUDINIT_PIPELINE.md` (the design document) as its primary reference, not this plan._
+
+---
+
+## §11. Migration closure summary
+
+This section captures the final-state architecture as the unified pipeline closes Phase 4 and transitions out of the active execution doc into reference material.
+
+### Three substitution boundaries (final)
+
+The pipeline has three explicit, well-bounded substitution layers. Boundaries are documented in code (`TemplateVariable.cs` xmldocs, `IVmDeploymentPipeline.cs`, `SystemVmReconciler` comments) and respected by both Orchestrator and NodeAgent.
+
+| Layer | When | Where (code) | Syntax | Authoritative for |
+|---|---|---|---|---|
+| **Render-time** | Template push to node (`/api/nodes/me/system-templates/{role}` or tenant `CreateVm` command construction) | Orchestrator's `CloudInitRenderer.RenderAsync` → `ResolveStaticsAsync` | `__VARNAME__` | Cloud-init body content (yaml that becomes `spec.CloudInitUserData`). Single authoritative substitution layer for both system and tenant VMs. |
+| **Deploy-time** | Node receives template, mints libvirt UUID | `SystemVmReconciler.ActCreateAsync` → `template.CloudInitContent.Replace("__VM_ID__", vmSpec.Id)` | `__VM_ID__` only | A single deferred placeholder. The libvirt UUID is minted on the node, not the orchestrator. Only deferred variable in the entire pipeline. |
+| **Runtime** | Inside the VM, post-boot, polling `/api/obligations/{role}/environment` every 60s | `decloud-env-watcher.sh` (in VM) reads response, diffs against `/etc/decloud-{role}/environment`, applies `max(scope)` action across changed variables | `$VARNAME` (shell-source via `EnvironmentFile=`) | Dynamic values that change without redeploy. Currently 2 dynamics per mesh-participant role: `*_ADVERTISE_IP` (Restart), `*_BOOTSTRAP_PEERS` (Noop). |
+
+A separate, **independent** substitution boundary exists inside artifact serving:
+
+| Layer | When | Where | Syntax | Authoritative for |
+|---|---|---|---|---|
+| **Consumer-render** | Browser request to a VM's served HTTP endpoint | Per-template Python server (e.g., `dht-dashboard.py` `_send_file_with_substitution`, `general-api.py` HTML branch) | `{{VARNAME}}` (new convention; DHT/BlockStore dashboards still use `__VARNAME__` for legacy reasons) | Per-VM content inside artifact bytes (HTML/JS files served from VMs). The orchestrator's render layer cannot reach into artifacts because they're content-addressed by SHA256; the consumer reads its own values from `os.environ` or local files (`/etc/decloud/{role}-metadata.json`). |
+
+### Key invariants
+
+1. **One render authority.** `CloudInitRenderer` is the only layer that substitutes `__VARNAME__` in cloud-init bodies. Node-side substitution is reduced to a single deferred placeholder (`__VM_ID__`).
+2. **One file authority per scope.** Statics live in `/etc/decloud-{role}/{role}.env` (written by cloud-init `write_files`, never mutated post-boot). Dynamics live in `/etc/decloud-{role}/environment` (watcher-managed, never written by anyone else). Service units load both via two separate `EnvironmentFile=` directives — systemd's later-wins merge keeps them disambiguated by file path, not by key.
+3. **Content-addressed artifacts.** Every artifact is fetched by SHA256 from the node-local cache (`http://192.168.122.1:5100/api/artifacts/{sha256}`). Verified on cache write and re-verified on serve. SHA256 baked into cloud-init at render time via `${ARTIFACT_URL:name}` and `${ARTIFACT_SHA256:name}` substitutions.
+4. **Identity persistence across redeploys.** `ObligationStateBase` subclasses (`RelayObligationState`, `DhtObligationState`, `BlockStoreObligationState`) preserve role identity (WG keypair, libp2p Ed25519 keypair, peerId, authToken) across `virsh destroy` + redeploy. Cloud-init fetches identity from `/api/obligations/{role}/state` before binary starts.
+5. **Single VmId.** Post-BLOCKSTORE-FIX §6, both orchestrator and node converge on the libvirt UUID. No more pre-assigned phantom GUIDs. Heartbeat-based adoption is now the live convergence path; role-specific self-heal callbacks are belt-and-suspenders.
+6. **Fast-fail at boundaries.** Required Statics throw on missing input (e.g., `CaPublicKeyResolver` if `Node.SshCaPublicKey` is null). Tenant userdata throws if `spec.CloudInitUserData` is empty (post-P4.3). No silent fallbacks that mask systemic gaps.
+
+### Key files
+
+**Shared (`DeCloud.Shared`):**
+- `Models/TemplateVariable.cs` — first-class metadata declaring variable kind + scope. Single source of truth for render-time, env-endpoint, and watcher behavior.
+- `Models/SystemVmTemplate.cs` — node-side projection of `VmTemplate` pushed via SQLite-cached payload.
+- `Models/TemplateArtifact.cs` — content-addressed artifact metadata (SHA256, source URL or data: URI).
+- `Models/ObligationState.cs` — `ObligationStateBase` + role subclasses for identity persistence.
+
+**Orchestrator (`DeCloud.Orchestrator`):**
+- `Services/CloudInit/CloudInitRenderer.cs` — render engine. `ResolveStaticsAsync` iterates `template.Variables`, dispatches to registered resolvers.
+- `Services/CloudInit/Resolvers/PlatformCommon/*.cs` — 12 platform-common resolvers (VM_ID, VM_NAME, NODE_ID, ORCHESTRATOR_URL, CA_PUBLIC_KEY, etc.).
+- `Services/SystemVm/SystemVmTemplateSeeder.cs` — composes base + role layers, declares Variables and Artifacts, bumps `Revision` on cloud-init/binary changes.
+- `Services/SystemVm/SystemVmTemplateSeeder.Artifacts.cs` — auto-generated SHA256 constants (regenerated by `system-vms/compute-artifact-constants.sh`).
+- `Controllers/NodeSelfController.cs` `GetSystemTemplate` — endpoint that renders + serves the template payload.
+
+**NodeAgent (`DeCloud.NodeAgent`):**
+- `Infrastructure/Services/SystemVm/SystemVmReconciler.cs` — consumes pushed templates, performs the single deferred substitution (`__VM_ID__`), dispatches to `_pipeline.DeployAsync()`.
+- `Infrastructure/Libvirt/LibvirtVmManager.CreateCloudInitIsoAsync` — post-P4 minimal flow: take `spec.CloudInitUserData` as-is, defensive variables-Replace pass, leak detector, ISO generation.
+- `Controllers/ObligationEnvironmentController.cs` — serves `/api/obligations/{role}/environment` with inline `(role, name)` switch resolving 2 dynamics per role.
+- `Infrastructure/Services/VmDeploymentPipeline.cs` — unified deploy entry point (artifact prefetch + binary verification + manager dispatch) for both system and tenant VMs.
+
+**Build outputs (`DeCloud.Builds`):**
+- `system-vms/base-system-mesh.yaml` — base layer for mesh-participant system VMs (DHT/BlockStore).
+- `system-vms/{role}/cloud-init.yaml` — role layers, composed with base by `TemplateComposer` at seed time.
+- `system-vms/shared/assets/decloud-env-watcher.{sh,service,timer}` — generic watcher (parameterised by role argument).
+- `system-vms/shared/assets/wg-config-fetch.sh` — WG mesh enrollment script.
+- `tenant-vms/general/cloud-init.yaml` + `tenant-vms/general/assets/general-api.py` + `index.html` — tenant general VM template + welcome page.
+
+### Latent issues deferred from migration scope
+
+These are tracked but not blocking and have low likelihood of biting in normal operation:
+
+1. **Auto-generated SHA256 constants drift** — `SystemVmTemplateSeeder.Artifacts.cs` is regenerated by `compute-artifact-constants.sh`. No CI gate enforces regeneration when shared scripts change. A developer modifying a `.sh` file but forgetting to run the script causes orchestrator/node SHA mismatch at deploy time → `sha256sum -c` fails inside cloud-init → VM bootstrap aborts. Worth a future CI hook.
+2. **Single deferred placeholder is fragile design** — `__VM_ID__` is currently the only render-late variable. Adding a second deferred placeholder requires editing `SystemVmReconciler` (no general "render-late" mechanism in `TemplateVariable`). Acceptable as long as the count stays at 1.
+3. **Required-Static resolvers don't fall through on throw** — `CloudInitRenderer.ResolveStaticsAsync` propagates exceptions; a single resolver throw fails the whole template fetch. Correct behavior per fail-fast philosophy, but it means every Required Static is a single point of failure. No "warn-and-substitute-empty" middle ground today.
+4. **Tenant userdata fast-fail throw is unverified across all callers** — P4.3 replaced the legacy fallback with a throw. General tenant + marketplace template confirmed clean; not yet exercised by every possible orchestrator-side `CreateVm` caller. By design — if a future caller arrives without `userData`, the throw fires loudly and points at the originating code.
+5. **`__VARNAME__` vs `{{VARNAME}}` convention split** — Adopted in P4.5. DHT/BlockStore dashboards predate the convention and use `__VARNAME__` for both render-time and consumer-side substitution. Harmless because their dictionaries are scoped to artifact serving and never collide with orchestrator-render placeholders. Future artifacts should use `{{VARNAME}}` for consumer-side; documented in `DeCloud.Builds/README.md`.
+
+### Architectural review verdict
+
+**The unified pipeline is well-architected and cleanly layered.** Three substitution boundaries are real, distinct, and respected. Shared models in `DeCloud.Shared` provide single-source-of-truth metadata. Code documentation (xmldocs in models, header comments in pipeline files) makes the design intent visible to future readers. Recent surgical fixes during the closing session arc (VmId pre-assignment removal, bootstrap-poll source alignment, `EnvironmentFile=` discipline, P4 legacy deletion) closed several boundary-mismatch issues; the pipeline now has fewer concealed paths.
+
+The five latent issues above are tractable. (1) is a CI gate. (2) is a design consideration if the count grows. (3) is correct fail-fast behavior; no action needed unless a specific scenario forces a middle ground. (4) self-surfaces if a regression happens. (5) is a documented convention going forward.
+
+**End of plan.**

@@ -1,5 +1,6 @@
 ﻿using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Locality;
 using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services;
@@ -72,17 +73,20 @@ public class VmSchedulingService : IVmSchedulingService
 {
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
+    private readonly ILocalityService _locality;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<VmSchedulingService> _logger;
 
     public VmSchedulingService(
         DataStore dataStore,
         ISchedulingConfigService configService,
+        ILocalityService locality,
         ILoggerFactory loggerFactory,
         ILogger<VmSchedulingService> logger)
     {
         _dataStore = dataStore;
         _configService = configService;
+        _locality = locality;
         _loggerFactory = loggerFactory;
         _logger = logger;
     }
@@ -302,8 +306,7 @@ public class VmSchedulingService : IVmSchedulingService
             // STEP 5: CALCULATE WEIGHTED SCORES
             // =====================================================
 
-            scored.Scores = CalculateNodeScores(
-                node, availability, spec, preferredRegion, preferredZone, config.Weights);
+            scored.Scores = CalculateNodeScores(node, availability, spec, preferredRegion, preferredZone, config.Weights);
 
             scored.TotalScore = CalculateTotalScore(scored.Scores, config.Weights);
 
@@ -397,36 +400,95 @@ public class VmSchedulingService : IVmSchedulingService
                 node.Id, node.Architecture, requiredArchitecture);
         }
 
-        // =====================================================
-        // FILTER 4: REGION/ZONE REQUIREMENTS (GEOGRAPHIC)
-        // =====================================================
+        // ═══════════════════════════════════════════════════════════
+        // FILTER 4: LOCALITY REQUIREMENTS
+        // ═══════════════════════════════════════════════════════════
+
+        // 4a. Jurisdiction tag (e.g. "EU", "NATO", "USMCA")
+        if (!string.IsNullOrEmpty(spec.RequiredJurisdictionTag))
+        {
+            var nodeTags = node.Locality?.JurisdictionTags
+                ?? new List<string>();
+
+            if (!nodeTags.Contains(
+                    spec.RequiredJurisdictionTag,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                return $"Jurisdiction mismatch: node does not carry tag " +
+                       $"'{spec.RequiredJurisdictionTag}' " +
+                       $"(country: {node.Locality?.Country ?? "unknown"}, " +
+                       $"tags: [{string.Join(", ", nodeTags)}])";
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} carries required jurisdiction tag '{Tag}'",
+                node.Id, spec.RequiredJurisdictionTag);
+        }
+
+        // 4b. Required country (exact)
+        if (!string.IsNullOrEmpty(spec.RequiredCountry))
+        {
+            var nodeCountry = node.Locality?.Country ?? "ZZ";
+
+            if (!string.Equals(
+                    nodeCountry,
+                    spec.RequiredCountry,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return $"Country mismatch: node is in '{nodeCountry}', " +
+                       $"VM requires '{spec.RequiredCountry}'";
+            }
+
+            _logger.LogDebug(
+                "Node {NodeId} country '{Country}' matches requirement",
+                node.Id, nodeCountry);
+        }
+
+        // 4c. Forbidden countries
+        if (spec.ForbiddenCountries is { Count: > 0 })
+        {
+            var nodeCountry = node.Locality?.Country ?? "ZZ";
+
+            if (spec.ForbiddenCountries.Any(fc =>
+                    string.Equals(fc, nodeCountry, StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"Country '{nodeCountry}' is excluded for this VM";
+            }
+        }
+
+        // 4d. Region (existing behavior — exact case-insensitive match)
         if (!string.IsNullOrEmpty(requiredRegion))
         {
-            var nodeRegion = node.Region ?? "default";
+            // Prefer authoritative locality region; fall back to legacy field
+            var nodeRegion = node.Locality?.Region ?? node.Region ?? "default";
 
             if (!string.Equals(nodeRegion, requiredRegion, StringComparison.OrdinalIgnoreCase))
             {
-                return $"Region mismatch: Node is in '{nodeRegion}', VM requires '{requiredRegion}'";
+                return $"Region mismatch: node is in '{nodeRegion}', " +
+                       $"VM requires '{requiredRegion}'";
             }
 
             _logger.LogDebug(
-                "Node {NodeId} region {Region} matches requirement",
+                "Node {NodeId} region '{Region}' matches requirement",
                 node.Id, nodeRegion);
         }
 
+        // 4e. Zone (existing behavior — exact case-insensitive match)
         if (!string.IsNullOrEmpty(requiredZone))
         {
-            var nodeZone = node.Zone ?? "default";
+            var nodeZone = node.Locality?.Zone ?? node.Zone ?? "default";
 
             if (!string.Equals(nodeZone, requiredZone, StringComparison.OrdinalIgnoreCase))
             {
-                return $"Zone mismatch: Node is in '{nodeZone}', VM requires '{requiredZone}'";
+                return $"Zone mismatch: node is in '{nodeZone}', " +
+                       $"VM requires '{requiredZone}'";
             }
 
             _logger.LogDebug(
-                "Node {NodeId} zone {Zone} matches requirement",
+                "Node {NodeId} zone '{Zone}' matches requirement",
                 node.Id, nodeZone);
         }
+
 
         // =====================================================
         // FILTER 5: GPU Mode Requirement
@@ -601,8 +663,9 @@ public class VmSchedulingService : IVmSchedulingService
         // Rewards nodes in preferred region/zone
         // =====================================================
         var localityScore = CalculateLocalityScore(
-            node.Region,
-            node.Zone,
+            // Prefer authoritative locality; fall back to legacy nullable strings
+            node.Locality?.Region ?? node.Region,
+            node.Locality?.Zone ?? node.Zone,
             preferredRegion,
             preferredZone);
 
@@ -616,57 +679,93 @@ public class VmSchedulingService : IVmSchedulingService
     }
 
     /// <summary>
-    /// Calculate locality score based on region/zone matching
-    /// 
-    /// SCORING RULES:
-    /// - Exact region + zone match: 1.0 (perfect)
-    /// - Region match, different zone: 0.7 (good)
-    /// - Different region, same zone name: 0.4 (ok)
-    /// - No preferences specified: 0.5 (neutral)
-    /// - No match: 0.3 (acceptable)
+    /// Calculate locality score based on region/zone matching.
+    ///
+    /// Scoring tiers (defined in LOCALITY.md):
+    ///   1.0 — same zone (implies same region)
+    ///   0.8 — same region, any zone
+    ///   0.5 — adjacent region per <c>region-adjacency.json</c>
+    ///   0.3 — same continent
+    ///   0.0 — no relationship
+    ///   0.5 — no preference specified (neutral, does not penalise)
     /// </summary>
     private double CalculateLocalityScore(
-        string nodeRegion,
-        string nodeZone,
+        string? nodeRegion,
+        string? nodeZone,
         string? preferredRegion,
         string? preferredZone)
     {
-        // No preferences = neutral score
+        // No preferences = neutral; don't penalise nodes for having a location
         if (string.IsNullOrEmpty(preferredRegion) && string.IsNullOrEmpty(preferredZone))
-        {
             return 0.5;
-        }
 
         var regionMatch = !string.IsNullOrEmpty(preferredRegion) &&
-                         string.Equals(nodeRegion, preferredRegion, StringComparison.OrdinalIgnoreCase);
+                          string.Equals(
+                              nodeRegion,
+                              preferredRegion,
+                              StringComparison.OrdinalIgnoreCase);
 
         var zoneMatch = !string.IsNullOrEmpty(preferredZone) &&
-                       string.Equals(nodeZone, preferredZone, StringComparison.OrdinalIgnoreCase);
+                        string.Equals(
+                            nodeZone,
+                            preferredZone,
+                            StringComparison.OrdinalIgnoreCase);
 
-        // Perfect match: same region AND zone
+        // Tier 1: exact zone match (zone implies region)
         if (regionMatch && zoneMatch)
         {
             _logger.LogDebug(
-                "Perfect locality match: {Region}/{Zone}",
+                "Locality score 1.0: exact zone match {Region}/{Zone}",
                 nodeRegion, nodeZone);
             return 1.0;
         }
 
-        // Good match: same region, different/no zone preference
+        // Tier 2: same region
         if (regionMatch)
         {
             _logger.LogDebug(
-                "Region match: {Region} (zone: {Zone})",
-                nodeRegion, nodeZone);
-            return 0.7;
+                "Locality score 0.8: region match {Region}", nodeRegion);
+            return 0.8;
         }
 
-        // No match: acceptable but not preferred
+        // Tier 3: adjacent region (per region-adjacency.json)
+        if (!string.IsNullOrEmpty(preferredRegion) &&
+            !string.IsNullOrEmpty(nodeRegion))
+        {
+            var adjacent = _locality.GetAdjacentRegions(preferredRegion);
+            if (adjacent.Contains(nodeRegion, StringComparer.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug(
+                    "Locality score 0.5: adjacent region {NodeRegion} neighbours {PreferredRegion}",
+                    nodeRegion, preferredRegion);
+                return 0.5;
+            }
+
+            // Tier 4: same continent
+            var preferredContinent = _locality.GetContinentForRegion(preferredRegion);
+            var nodeContinent = _locality.GetContinentForRegion(nodeRegion);
+            if (preferredContinent is not null &&
+                nodeContinent is not null &&
+                string.Equals(
+                    preferredContinent,
+                    nodeContinent,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug(
+                    "Locality score 0.3: same continent {Continent} " +
+                    "({NodeRegion} vs {PreferredRegion})",
+                    nodeContinent, nodeRegion, preferredRegion);
+                return 0.3;
+            }
+        }
+
+        // Tier 5: no relationship
         _logger.LogDebug(
-            "No locality match: node is {Region}/{Zone}, preferred is {PreferredRegion}/{PreferredZone}",
-            nodeRegion, nodeZone, preferredRegion ?? "any", preferredZone ?? "any");
+            "Locality score 0.0: no match — node {NodeRegion}, preferred {PreferredRegion}",
+            nodeRegion ?? "unknown", preferredRegion ?? "any");
         return 0.0;
     }
+
 
     /// <summary>
     /// Calculate final weighted total score

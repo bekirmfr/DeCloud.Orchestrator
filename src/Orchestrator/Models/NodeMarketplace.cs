@@ -13,7 +13,28 @@ public class NodeAdvertisement
     public string? Description { get; set; }
     public string Region { get; set; } = string.Empty;
     public string Zone { get; set; } = string.Empty;
-    
+    /// <summary>
+    /// ISO 3166-1 alpha-2 country code declared by the operator.
+    /// <c>"ZZ"</c> = unknown / pre-locality-standard node.
+    /// </summary>
+    public string Country { get; set; } = "ZZ";
+
+    /// <summary>
+    /// Supranational membership tags derived from <see cref="Country"/>
+    /// at registration, e.g. <c>["EU", "EEA", "Schengen", "NATO"]</c>.
+    /// Empty for nodes with unknown country or countries with no tracked blocs.
+    /// </summary>
+    public List<string> JurisdictionTags { get; set; } = new();
+
+    /// <summary>
+    /// True when the node's declared country differs from the country
+    /// inferred from its registration IP. Surfaced so tenants paying a
+    /// premium for jurisdiction can see when network location and declared
+    /// location disagree (VPN, CGNAT, leased datacenter in another country).
+    /// </summary>
+    public bool LocationMismatch { get; set; }
+
+
     // Tags for discovery
     public List<string> Tags { get; set; } = new();
     
