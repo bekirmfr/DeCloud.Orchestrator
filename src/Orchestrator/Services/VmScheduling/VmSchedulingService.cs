@@ -1,23 +1,23 @@
 ﻿using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services.Locality;
 using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services;
 
 /// <summary>
-/// VM Scheduling Service with architecture awareness and locality optimization
-/// 
-/// SECURITY: Strict architecture validation prevents incompatible VM deployment
-/// PERFORMANCE: Multi-dimensional scoring ensures optimal node selection
-/// RELIABILITY: Comprehensive filtering prevents resource exhaustion
+/// VM scheduling service. All hard-filter logic lives in
+/// <see cref="ApplyHardFiltersAsync"/>; all scheduling requirements
+/// are expressed via <c>spec.Constraints</c> (FILTER 10).
+///
+/// Soft locality preferences are neutral (0.5) until a soft-preference
+/// mechanism is designed. Hard locality requirements (region, zone,
+/// country, jurisdiction) are expressed as constraints.
 /// </summary>
 public class VmSchedulingService : IVmSchedulingService
 {
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
-    private readonly ILocalityService _locality;
     private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<VmSchedulingService> _logger;
@@ -25,14 +25,12 @@ public class VmSchedulingService : IVmSchedulingService
     public VmSchedulingService(
         DataStore dataStore,
         ISchedulingConfigService configService,
-        ILocalityService locality,
         IConstraintEvaluator constraintEvaluator,
         ILoggerFactory loggerFactory,
         ILogger<VmSchedulingService> logger)
     {
         _dataStore = dataStore;
         _configService = configService;
-        _locality = locality;
         _constraintEvaluator = constraintEvaluator;
         _loggerFactory = loggerFactory;
         _logger = logger;
@@ -46,26 +44,20 @@ public class VmSchedulingService : IVmSchedulingService
     /// Select best node for VM with optional preferences
     /// </summary>
     public async Task<Node?> SelectBestNodeForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
-        CancellationToken ct = default)
+            VmSpec spec,
+            QualityTier tier = QualityTier.Standard,
+            CancellationToken ct = default)
     {
         _logger.LogInformation(
             "Selecting node for VM: {VCpus} vCPUs, {MemoryMB}MB RAM, {DiskGB}GB, " +
-            "tier: {Tier}, arch: {Architecture}, region: {Region}, zone: {Zone}",
+            "tier: {Tier}, constraints: {ConstraintCount}",
             spec.VirtualCpuCores,
             spec.MemoryBytes / 1024 / 1024,
             spec.DiskBytes / 1024 / 1024 / 1024,
             tier,
-            requiredArchitecture ?? "any",
-            preferredRegion ?? "any",
-            preferredZone ?? "any");
+            spec.Constraints?.Count ?? 0);
 
-        var scoredNodes = await GetScoredNodesForVmAsync(
-            spec, tier, preferredRegion, preferredZone, requiredArchitecture, ct);
+        var scoredNodes = await GetScoredNodesForVmAsync(spec, tier, ct);
 
         var eligibleNodes = scoredNodes
             .Where(sn => sn.RejectionReason == null)
@@ -74,8 +66,8 @@ public class VmSchedulingService : IVmSchedulingService
         if (!eligibleNodes.Any())
         {
             _logger.LogWarning(
-                "No eligible nodes found for VM (tier: {Tier}, arch: {Architecture})",
-                tier, requiredArchitecture ?? "any");
+                "No eligible nodes found for VM (tier: {Tier}, constraints: {ConstraintCount})",
+                tier, spec.Constraints?.Count ?? 0);
             return null;
         }
 
@@ -100,15 +92,11 @@ public class VmSchedulingService : IVmSchedulingService
     /// Get all available nodes for VM with filtering
     /// </summary>
     public async Task<List<Node>> GetAvailableNodesForVmAsync(
-        VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
-        string? regionFilter = null,
-        string? zoneFilter = null,
-        string? architectureFilter = null,
-        CancellationToken ct = default)
+            VmSpec spec,
+            QualityTier tier = QualityTier.Standard,
+            CancellationToken ct = default)
     {
-        var scoredNodes = await GetScoredNodesForVmAsync(
-            spec, tier, regionFilter, zoneFilter, architectureFilter, ct);
+        var scoredNodes = await GetScoredNodesForVmAsync(spec, tier, ct);
 
         return scoredNodes
             .Where(sn => sn.RejectionReason == null)
@@ -122,9 +110,6 @@ public class VmSchedulingService : IVmSchedulingService
     public async Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
         CancellationToken ct = default)
     {
         var allNodes = await _dataStore.GetAllNodesAsync(NodeStatus.Online);
@@ -135,8 +120,7 @@ public class VmSchedulingService : IVmSchedulingService
 
         foreach (var node in allNodes)
         {
-            var scored = await ScoreNodeForVmAsync(
-                node, spec, tier, preferredRegion, preferredZone, requiredArchitecture, ct);
+            var scored = await ScoreNodeForVmAsync(node, spec, tier, ct);
 
             _logger.LogInformation(
                 "Node {NodeId} ({Architecture}, {Region}/{Zone}) - " +
@@ -170,13 +154,10 @@ public class VmSchedulingService : IVmSchedulingService
     /// Score a node for VM placement with all filters and scoring
     /// </summary>
     private async Task<ScoredNode> ScoreNodeForVmAsync(
-        Node node,
-        VmSpec spec,
-        QualityTier tier,
-        string? preferredRegion,
-        string? preferredZone,
-        string? requiredArchitecture,
-        CancellationToken ct = default)
+            Node node,
+            VmSpec spec,
+            QualityTier tier,
+            CancellationToken ct = default)
     {
         try
         {
@@ -190,14 +171,13 @@ public class VmSchedulingService : IVmSchedulingService
             // STEP 1: HARD FILTERS (Must pass or node rejected)
             // =====================================================
 
-            var rejection = await ApplyHardFiltersAsync(
-                node, spec, tier, tierConfig, config, requiredArchitecture,
-                preferredRegion, preferredZone, ct);
+            var rejectionReason = await ApplyHardFiltersAsync(
+                node, spec, tier, tierConfig, config, ct);
 
-            if (rejection != null)
+            if (rejectionReason != null)
             {
-                _logger.LogInformation("Node {NodeId} rejected: {Reason}", node.Id, rejection);
-                scored.RejectionReason = rejection;
+                _logger.LogInformation("Node {NodeId} rejected: {Reason}", node.Id, rejectionReason);
+                scored.RejectionReason = rejectionReason;
                 scored.TotalScore = 0;
                 return scored;
             }
@@ -253,8 +233,7 @@ public class VmSchedulingService : IVmSchedulingService
             // STEP 5: CALCULATE WEIGHTED SCORES
             // =====================================================
 
-            scored.Scores = CalculateNodeScores(node, availability, spec, preferredRegion, preferredZone, config.Weights);
-
+            scored.Scores = CalculateNodeScores(node, availability, spec, config.Weights);
             scored.TotalScore = CalculateTotalScore(scored.Scores, config.Weights);
 
             return scored;
@@ -273,22 +252,17 @@ public class VmSchedulingService : IVmSchedulingService
 
     /// <inheritdoc />
     public async Task<string?> ValidateNodeForVmAsync(
-        Node node,
-        VmSpec spec,
-        QualityTier tier,
-        string? requiredArchitecture = null,
-        string? requiredRegion = null,
-        string? requiredZone = null,
-        CancellationToken ct = default)
+            Node node,
+            VmSpec spec,
+            QualityTier tier,
+            CancellationToken ct = default)
     {
         var config = await _configService.GetConfigAsync(ct);
 
         if (!config.Tiers.TryGetValue(tier, out var tierConfig))
             return $"No tier configuration found for tier {tier}";
 
-        return await ApplyHardFiltersAsync(
-            node, spec, tier, tierConfig, config,
-            requiredArchitecture, requiredRegion, requiredZone, ct);
+        return await ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct);
     }
 
     // ============================================================================
@@ -302,15 +276,12 @@ public class VmSchedulingService : IVmSchedulingService
     /// LOCALITY: Region/zone filtering ensures geographic constraints are met
     /// </summary>
     private async Task<string?> ApplyHardFiltersAsync(
-        Node node,
-        VmSpec spec,
-        QualityTier tier,
-        TierConfiguration tierConfig,
-        SchedulingConfig config,
-        string? requiredArchitecture,
-        string? requiredRegion = null,
-        string? requiredZone = null,
-        CancellationToken ct = default)
+            Node node,
+            VmSpec spec,
+            QualityTier tier,
+            TierConfiguration tierConfig,
+            SchedulingConfig config,
+            CancellationToken ct = default)
     {
         // =====================================================
         // FILTER 1: Node Status
@@ -329,66 +300,9 @@ public class VmSchedulingService : IVmSchedulingService
             return $"Node not eligible for tier {tier} " +
                    $"(eligible: [{string.Join(", ", evaluation.EligibleTiers)}])";
 
-        // =====================================================
-        // FILTER 3: ARCHITECTURE COMPATIBILITY (CRITICAL)
-        // =====================================================
-        if (!string.IsNullOrEmpty(requiredArchitecture))
-        {
-            var nodeArch = NormalizeArchitecture(node.Architecture);
-            var requiredArch = NormalizeArchitecture(requiredArchitecture);
-
-            if (nodeArch != requiredArch)
-            {
-                return $"Architecture mismatch: Node has {nodeArch}, VM requires {requiredArch}";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} architecture {Architecture} matches requirement {Required}",
-                node.Id, node.Architecture, requiredArchitecture);
-        }
-
-        // ═══════════════════════════════════════════════════════════
-        // FILTER 4: LOCALITY REQUIREMENTS
-        // ═══════════════════════════════════════════════════════════
-        // 4a/4b/4c (jurisdiction, country, forbidden) and 4f (reputation)
-        // were removed in Phase B+.3. Their flat fields lower to constraints
-        // at VM creation (LowerLegacyFieldsToConstraints in VmService);
-        // evaluation flows through FILTER 10 (constraints).
-        // 4d (region) and 4e (zone) remain because their input still flows
-        // through method-level requiredRegion/requiredZone parameters.
-
-        // 4d. Region (existing behavior — exact case-insensitive match)
-        if (!string.IsNullOrEmpty(requiredRegion))
-        {
-            // Prefer authoritative locality region; fall back to legacy field
-            var nodeRegion = node.Locality?.Region ?? node.Region ?? "default";
-
-            if (!string.Equals(nodeRegion, requiredRegion, StringComparison.OrdinalIgnoreCase))
-            {
-                return $"Region mismatch: node is in '{nodeRegion}', " +
-                       $"VM requires '{requiredRegion}'";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} region '{Region}' matches requirement",
-                node.Id, nodeRegion);
-        }
-
-        // 4e. Zone (existing behavior — exact case-insensitive match)
-        if (!string.IsNullOrEmpty(requiredZone))
-        {
-            var nodeZone = node.Locality?.Zone ?? node.Zone ?? "default";
-
-            if (!string.Equals(nodeZone, requiredZone, StringComparison.OrdinalIgnoreCase))
-            {
-                return $"Zone mismatch: node is in '{nodeZone}', " +
-                       $"VM requires '{requiredZone}'";
-            }
-
-            _logger.LogDebug(
-                "Node {NodeId} zone '{Zone}' matches requirement",
-                node.Id, nodeZone);
-        }
+        // FILTER 3 (architecture) and FILTER 4 (locality, reputation) have
+        // been fully removed. All such requirements are expressed in
+        // spec.Constraints and evaluated in FILTER 10 below.
 
         // =====================================================
         // FILTER 5: GPU Mode Requirement
@@ -555,12 +469,10 @@ public class VmSchedulingService : IVmSchedulingService
     /// Calculate multi-dimensional node scores
     /// </summary>
     private NodeScores CalculateNodeScores(
-        Node node,
-        NodeResourceAvailability availability,
-        VmSpec spec,
-        string? preferredRegion,
-        string? preferredZone,
-        ScoringWeightsConfig weights)
+            Node node,
+            NodeResourceAvailability availability,
+            VmSpec spec,
+            ScoringWeightsConfig weights)
     {
         // =====================================================
         // CAPACITY SCORE (0.0 - 1.0)
@@ -587,14 +499,11 @@ public class VmSchedulingService : IVmSchedulingService
 
         // =====================================================
         // LOCALITY SCORE (0.0 - 1.0)
-        // Rewards nodes in preferred region/zone
+        // Neutral (0.5) — soft locality preferences are deferred.
+        // Hard region/zone/country/jurisdiction requirements are
+        // expressed as constraints in spec.Constraints (FILTER 10).
         // =====================================================
-        var localityScore = CalculateLocalityScore(
-            // Prefer authoritative locality; fall back to legacy nullable strings
-            node.Locality?.Region ?? node.Region,
-            node.Locality?.Zone ?? node.Zone,
-            preferredRegion,
-            preferredZone);
+        const double localityScore = 0.5;
 
         return new NodeScores
         {
@@ -606,95 +515,6 @@ public class VmSchedulingService : IVmSchedulingService
     }
 
     /// <summary>
-    /// Calculate locality score based on region/zone matching.
-    ///
-    /// Scoring tiers (defined in LOCALITY.md):
-    ///   1.0 — same zone (implies same region)
-    ///   0.8 — same region, any zone
-    ///   0.5 — adjacent region per <c>region-adjacency.json</c>
-    ///   0.3 — same continent
-    ///   0.0 — no relationship
-    ///   0.5 — no preference specified (neutral, does not penalise)
-    /// </summary>
-    private double CalculateLocalityScore(
-        string? nodeRegion,
-        string? nodeZone,
-        string? preferredRegion,
-        string? preferredZone)
-    {
-        // No preferences = neutral; don't penalise nodes for having a location
-        if (string.IsNullOrEmpty(preferredRegion) && string.IsNullOrEmpty(preferredZone))
-            return 0.5;
-
-        var regionMatch = !string.IsNullOrEmpty(preferredRegion) &&
-                          string.Equals(
-                              nodeRegion,
-                              preferredRegion,
-                              StringComparison.OrdinalIgnoreCase);
-
-        var zoneMatch = !string.IsNullOrEmpty(preferredZone) &&
-                        string.Equals(
-                            nodeZone,
-                            preferredZone,
-                            StringComparison.OrdinalIgnoreCase);
-
-        // Tier 1: exact zone match (zone implies region)
-        if (regionMatch && zoneMatch)
-        {
-            _logger.LogDebug(
-                "Locality score 1.0: exact zone match {Region}/{Zone}",
-                nodeRegion, nodeZone);
-            return 1.0;
-        }
-
-        // Tier 2: same region
-        if (regionMatch)
-        {
-            _logger.LogDebug(
-                "Locality score 0.8: region match {Region}", nodeRegion);
-            return 0.8;
-        }
-
-        // Tier 3: adjacent region (per region-adjacency.json)
-        if (!string.IsNullOrEmpty(preferredRegion) &&
-            !string.IsNullOrEmpty(nodeRegion))
-        {
-            var adjacent = _locality.GetAdjacentRegions(preferredRegion);
-            if (adjacent.Contains(nodeRegion, StringComparer.OrdinalIgnoreCase))
-            {
-                _logger.LogDebug(
-                    "Locality score 0.5: adjacent region {NodeRegion} neighbours {PreferredRegion}",
-                    nodeRegion, preferredRegion);
-                return 0.5;
-            }
-
-            // Tier 4: same continent
-            var preferredContinent = _locality.GetContinentForRegion(preferredRegion);
-            var nodeContinent = _locality.GetContinentForRegion(nodeRegion);
-            if (preferredContinent is not null &&
-                nodeContinent is not null &&
-                string.Equals(
-                    preferredContinent,
-                    nodeContinent,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogDebug(
-                    "Locality score 0.3: same continent {Continent} " +
-                    "({NodeRegion} vs {PreferredRegion})",
-                    nodeContinent, nodeRegion, preferredRegion);
-                return 0.3;
-            }
-        }
-
-        // Tier 5: no relationship
-        _logger.LogDebug(
-            "Locality score 0.0: no match — node {NodeRegion}, preferred {PreferredRegion}",
-            nodeRegion ?? "unknown", preferredRegion ?? "any");
-        return 0.0;
-    }
-
-
-    /// <summary>
     /// Calculate final weighted total score
     /// </summary>
     private double CalculateTotalScore(NodeScores scores, ScoringWeightsConfig weights)
@@ -703,29 +523,5 @@ public class VmSchedulingService : IVmSchedulingService
                (scores.LoadScore * weights.Load) +
                (scores.ReputationScore * weights.Reputation) +
                (scores.LocalityScore * weights.Locality);
-    }
-
-    // ============================================================================
-    // PRIVATE - Architecture Helpers
-    // ============================================================================
-
-    /// <summary>
-    /// Normalize architecture names for consistent comparison
-    /// 
-    /// SECURITY: Standardizes architecture identifiers to prevent bypass
-    /// </summary>
-    private string NormalizeArchitecture(string architecture)
-    {
-        if (string.IsNullOrEmpty(architecture))
-            return "x86_64"; // Default for backward compatibility
-
-        return architecture.ToLower() switch
-        {
-            "x86_64" or "amd64" or "x64" => "x86_64",
-            "aarch64" or "arm64" => "aarch64",
-            "i686" or "i386" or "x86" => "i686",
-            "armv7l" or "armv7" or "arm" => "armv7l",
-            _ => architecture.ToLower()
-        };
     }
 }

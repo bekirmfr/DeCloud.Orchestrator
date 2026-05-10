@@ -3,41 +3,41 @@
 namespace Orchestrator.Interfaces.VmScheduling;
 
 /// <summary>
-/// Interface for VM scheduling service
+/// Scheduling interface for VM node selection and eligibility checking.
+///
+/// All scheduling constraints (architecture, locality, reputation, GPU,
+/// jurisdiction, country, zone) are expressed via <c>spec.Constraints</c>
+/// and evaluated through FILTER 10 in <c>ApplyHardFiltersAsync</c>.
+/// No legacy per-parameter overrides exist — the constraint vocabulary
+/// is the single mechanism.
 /// </summary>
 public interface IVmSchedulingService
 {
     /// <summary>
-    /// Select the best node for a VM with optional region/zone preferences
+    /// Select the best eligible node for a VM.
+    /// All scheduling requirements must be in <c>spec.Constraints</c>
+    /// before calling — see <c>VmService.LowerLegacyFieldsToConstraints</c>.
     /// </summary>
     Task<Node?> SelectBestNodeForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Get all available nodes for a VM with filtering options
+    /// Return all nodes that pass the hard filter chain for this spec.
     /// </summary>
     Task<List<Node>> GetAvailableNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard,
-        string? regionFilter = null,
-        string? zoneFilter = null,
-        string? architectureFilter = null,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Get scored nodes for a VM with detailed scoring information
+    /// Return all online nodes scored against this spec, including rejected
+    /// ones with their rejection reason. Used for diagnostics and dashboards.
     /// </summary>
     Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
         QualityTier tier = QualityTier.Standard,
-        string? preferredRegion = null,
-        string? preferredZone = null,
-        string? requiredArchitecture = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -45,16 +45,12 @@ public interface IVmSchedulingService
     /// Returns null when the node is eligible, or a human-readable rejection
     /// reason when any hard filter fails.
     ///
-    /// Used to validate user-targeted deployments (marketplace node selection)
-    /// through the same hard filters applied during normal scheduling — so the
-    /// rules are never duplicated and never drift.
+    /// Used for user-targeted deployments (marketplace node selection)
+    /// through the same hard filter chain as normal scheduling.
     /// </summary>
     Task<string?> ValidateNodeForVmAsync(
         Node node,
         VmSpec spec,
         QualityTier tier,
-        string? requiredArchitecture = null,
-        string? requiredRegion = null,
-        string? requiredZone = null,
         CancellationToken ct = default);
 }

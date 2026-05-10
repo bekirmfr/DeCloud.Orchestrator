@@ -1,9 +1,10 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
+using System.Security.Claims;
 
 namespace Orchestrator.Controllers;
 
@@ -14,17 +15,20 @@ public class VmsController : ControllerBase
 {
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
+    private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly DataStore _dataStore;
     private readonly ILogger<VmsController> _logger;
 
     public VmsController(
         IVmService vmService,
         INodeService nodeService,
+        IConstraintEvaluator constraintEvaluator,
         DataStore dataStore,
         ILogger<VmsController> logger)
     {
         _vmService = vmService;
         _nodeService = nodeService;
+        _constraintEvaluator = constraintEvaluator;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -191,12 +195,25 @@ public class VmsController : ControllerBase
     }
 
     /// <summary>
-    /// Update scheduling preferences (region/zone) on a stranded VM.
-    /// Only allowed when VM is in Error state — preferences are fixed once running.
+    /// Replace the scheduling constraints on a stranded VM.
+    /// Only allowed when VM is in Error state — constraints are fixed once running.
     /// The migration scheduler picks up the change on its next cycle (≤10 seconds).
+    ///
+    /// Replaces <c>vm.Spec.Constraints</c> entirely with the supplied list.
+    /// Pass null or an empty list to remove all constraints (schedule to any node).
+    /// Constraints are validated before saving; malformed entries are rejected.
+    ///
+    /// Example — broaden from a single region to two:
+    /// <code>
+    /// PATCH /api/vms/{id}/scheduling
+    /// { "constraints": [
+    ///     { "target": "node.locality.region", "operator": "in",
+    ///       "value": ["eu-central", "eu-west"] }
+    ///   ] }
+    /// </code>
     /// </summary>
     [HttpPatch("{vmId}/scheduling")]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateSchedulingPreferences(
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateSchedulingConstraints(
         string vmId,
         [FromBody] UpdateSchedulingRequest request)
     {
@@ -212,27 +229,33 @@ public class VmsController : ControllerBase
         if (vm.Status != VmStatus.Error)
             return BadRequest(ApiResponse<bool>.Fail(
                 "INVALID_STATE",
-                "Scheduling preferences can only be changed when the VM is in Error state."));
+                "Scheduling constraints can only be changed when the VM is in Error state."));
 
-        vm.Spec.Region = string.IsNullOrWhiteSpace(request.Region) ? null : request.Region.Trim();
-        vm.Spec.Zone = string.IsNullOrWhiteSpace(request.Zone) ? null : request.Zone.Trim();
-        vm.StatusMessage = vm.Spec.Region == null
-            ? "Scheduling preference cleared — migrating to any available region."
-            : $"Scheduling preference updated to region '{vm.Spec.Region}'" +
-              (vm.Spec.Zone != null ? $" / zone '{vm.Spec.Zone}'" : "") +
-              " — awaiting eligible node.";
+        var incoming = request.Constraints ?? new List<Constraint>();
+
+        if (incoming.Count > 0)
+        {
+            var validationError = _constraintEvaluator.ValidateSet(incoming);
+            if (validationError is not null)
+                return BadRequest(ApiResponse<bool>.Fail("INVALID_CONSTRAINT", validationError));
+        }
+
+        vm.Spec.Constraints = incoming.Count > 0 ? incoming : null;
+        vm.StatusMessage = incoming.Count == 0
+            ? "Scheduling constraints cleared — migrating to any eligible node."
+            : $"Scheduling constraints updated ({incoming.Count} constraint(s)) — awaiting eligible node.";
         vm.UpdatedAt = DateTime.UtcNow;
 
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
-            "VM {VmId}: scheduling preference updated to region={Region} zone={Zone} by user {UserId}",
-            vmId, vm.Spec.Region ?? "any", vm.Spec.Zone ?? "any", userId);
+            "VM {VmId}: scheduling constraints updated ({Count} constraint(s)) by user {UserId}",
+            vmId, incoming.Count, userId);
 
         return Ok(ApiResponse<bool>.Ok(true));
     }
 
-    public record UpdateSchedulingRequest(string? Region, string? Zone);
+    public record UpdateSchedulingRequest(List<Constraint>? Constraints);
 
     /// <summary>
     /// Get VM metrics

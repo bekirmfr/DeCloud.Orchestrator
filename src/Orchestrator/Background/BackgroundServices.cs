@@ -1,6 +1,7 @@
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using System.Text.Json;
+using Orchestrator.Interfaces.VmScheduling;
 
 namespace Orchestrator.Services;
 
@@ -198,24 +199,41 @@ public class VmSchedulerService : BackgroundService
         }
 
         // ── Step 2: Select target node ───────────────────────────────────────
-        // Region/zone come from vm.Spec — the user's preference, not the source
-        // node's geography. Architecture still required (binary compatibility).
+        // Region/zone constraints are already in vm.Spec.Constraints (lowered
+        // at VM creation). Architecture stickiness is added as an ephemeral
+        // constraint on a spec clone — a VM that booted on x86_64 has its
+        // overlay disk filled with x86_64 binaries; migration must target
+        // the same architecture. The constraint is NOT persisted on the VM.
         var sourceNode = await dataStore.GetNodeAsync(vm.NodeId ?? "");
         Node? targetNode;
+
+        var originalConstraints = vm.Spec.Constraints;
+        vm.Spec.Constraints = (originalConstraints ?? new List<Constraint>())
+            .Append(new Constraint
+            {
+                Target = "node.architecture",
+                Operator = "eq",
+                Value = sourceNode?.Architecture ?? "x86_64"
+            })
+            .ToList();
+
         try
         {
             targetNode = await schedulingService.SelectBestNodeForVmAsync(
                 vm.Spec,
                 vm.Spec.QualityTier,
-                preferredRegion: vm.Spec.Region,
-                preferredZone: vm.Spec.Zone,
-                requiredArchitecture: sourceNode?.Architecture,
                 ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "VM {VmId}: scheduling service failed during migration", vm.Id);
             return;
+        }
+        finally
+        {
+            // Restore original constraints — the architecture stickiness
+            // constraint is migration-specific and must not persist on the VM.
+            vm.Spec.Constraints = originalConstraints;
         }
 
         if (targetNode == null)
@@ -225,14 +243,20 @@ public class VmSchedulerService : BackgroundService
             var strandedVm = await dataStore.GetVmAsync(vm.Id);
             if (strandedVm != null)
             {
-                var regionHint = !string.IsNullOrEmpty(vm.Spec.Region)
-                    ? $" in region '{vm.Spec.Region}'"
+                // Derive a region hint from the locality constraint if one is set,
+                // so the status message remains informative without reading flat fields.
+                var regionConstraint = vm.Spec.Constraints?
+                    .FirstOrDefault(c => c.Target == "node.locality.region" && c.Operator == "eq");
+                var regionHint = regionConstraint != null
+                    ? $" in region '{regionConstraint.Value}'"
                     : "";
+                var hasConstraints = vm.Spec.Constraints is { Count: > 0 };
+
                 var newMessage =
                     $"Waiting for an available node{regionHint}. " +
                     "Migration will proceed automatically when one becomes available" +
-                    (!string.IsNullOrEmpty(vm.Spec.Region)
-                        ? ", or update your region/zone preference to migrate sooner."
+                    (hasConstraints
+                        ? ", or update your scheduling constraints to broaden eligibility."
                         : ".");
 
                 if (strandedVm.StatusMessage != newMessage)

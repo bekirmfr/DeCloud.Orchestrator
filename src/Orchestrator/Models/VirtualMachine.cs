@@ -1,8 +1,7 @@
 using MongoDB.Bson.Serialization.Attributes;
-using Orchestrator.Services;
 using Orchestrator.Models.Payment;
+using Orchestrator.Services;
 using System.Text.Json.Serialization;
-using Orchestrator.Services;  // BlockSizeConstants
 
 namespace Orchestrator.Models;
 
@@ -259,64 +258,6 @@ public class VmSpec
     // ========================================
 
     /// <summary>
-    /// Preferred region for deployment (e.g., "us-west", "eu-central")
-    /// If null, any region is acceptable
-    /// </summary>
-    public string? Region { get; set; }
-
-    /// <summary>
-    /// Preferred availability zone within region (e.g., "us-west-2a")
-    /// If null, any zone in preferred region is acceptable
-    /// </summary>
-    public string? Zone { get; set; }
-
-    // ── Jurisdiction & country hard filters ───────────────────────────────
-
-    /// <summary>
-    /// Supranational membership tag the target node must carry, e.g.
-    /// <c>"EU"</c>, <c>"NATO"</c>, <c>"USMCA"</c>.
-    ///
-    /// When set, the scheduler rejects any node whose
-    /// <c>Node.Locality.JurisdictionTags</c> does not contain this value.
-    /// This is the correct filter for GDPR, data-residency, and similar
-    /// compliance requirements — it tests a legal/political attribute, not
-    /// a network-geography one.
-    ///
-    /// <para>Null = no jurisdiction requirement.</para>
-    /// </summary>
-    public string? RequiredJurisdictionTag { get; set; }
-
-    /// <summary>
-    /// ISO 3166-1 alpha-2 country code the target node must reside in,
-    /// e.g. <c>"DE"</c> for Germany.
-    ///
-    /// Stricter than <see cref="RequiredJurisdictionTag"/> — use when the
-    /// workload has a per-country regulatory requirement rather than a
-    /// bloc-level one. Exact case-insensitive match against
-    /// <c>Node.Locality.Country</c>.
-    ///
-    /// <para>Null = any country.</para>
-    /// </summary>
-    public string? RequiredCountry { get; set; }
-
-    /// <summary>
-    /// Countries the target node must NOT reside in (ISO 3166-1 alpha-2).
-    /// Any node whose <c>Node.Locality.Country</c> appears in this list
-    /// is rejected.
-    ///
-    /// <para>Null or empty = no exclusions.</para>
-    /// </summary>
-    public List<string>? ForbiddenCountries { get; set; }
-
-
-    /// <summary>
-    /// Minimum node reputation score (0.0 to 1.0) required for scheduling
-    /// Higher values = more selective about node quality
-    /// Default: 0.3 (accept most nodes)
-    /// </summary>
-    public double MinNodeReputationScore { get; set; } = 0.3;
-
-    /// <summary>
     /// Maximum acceptable CPU overcommit ratio
     /// Example: 2.0 means accept up to 2:1 CPU overcommit
     /// If null, use tier default
@@ -330,27 +271,24 @@ public class VmSpec
     public Dictionary<string, string> SchedulingTags { get; set; } = new();
 
     /// <summary>
-    /// Tenant-supplied scheduling constraints, evaluated as a flat AND
-    /// alongside the existing hard-filter chain (FILTER 10 in
-    /// <c>VmSchedulingService.ApplyHardFiltersAsync</c>).
+    /// Scheduling constraints evaluated as a flat AND in FILTER 10 of
+    /// <c>VmSchedulingService.ApplyHardFiltersAsync</c>. This is the sole
+    /// scheduling mechanism for node selection requirements — locality,
+    /// architecture, reputation, jurisdiction, country, GPU model, and
+    /// any other per-node requirement is expressed here.
     ///
     /// <para>
-    /// Each entry is a <c>{ target, operator, value }</c> triple from the
-    /// vocabulary registered in
-    /// <see cref="Orchestrator.Services.VmScheduling.IConstraintEvaluator"/>.
-    /// Validated at VM creation; malformed entries are rejected with the
-    /// failing constraint's index before any resource is allocated.
+    /// Each entry is a <c>{ target, operator, value }</c> triple validated
+    /// at VM creation. Malformed entries are rejected with the failing
+    /// constraint's index before any resource is allocated.
     /// </para>
     ///
     /// <para>
-    /// Null or empty = no tenant constraints. The existing flat scheduling
-    /// fields (<c>RequiredJurisdictionTag</c>, <c>RequiredCountry</c>,
-    /// <c>ForbiddenCountries</c>, <c>MinNodeReputationScore</c>) continue
-    /// to apply on their own — constraints layer on top in v1, they do not
-    /// replace the bespoke filters.
+    /// Null or empty = no scheduling constraints beyond the fixed hard
+    /// filters (tier eligibility, GPU mode, load, memory, obligations, KVM).
     /// </para>
     ///
-    /// <para>See <c>docs/SCHEDULING.md</c> §7 for the full design.</para>
+    /// <para>See <c>docs/SCHEDULING.md</c> §7 for the full vocabulary.</para>
     /// </summary>
     public List<Constraint>? Constraints { get; set; }
 

@@ -3,7 +3,7 @@
 namespace Orchestrator.Interfaces.VmScheduling;
 /// <summary>
 /// Evaluates scheduling constraints against candidate nodes, and validates
-/// constraints at creation time before they reach the scheduler.
+/// constraints at VM creation time before they reach the scheduler.
 ///
 /// <para>
 /// Design and vocabulary documented in <c>docs/SCHEDULING.md</c> §7.
@@ -12,9 +12,12 @@ namespace Orchestrator.Interfaces.VmScheduling;
 /// </para>
 ///
 /// <para>
-/// Phase A scope: types, vocabulary, evaluation logic, validation.
-/// No call sites yet — <see cref="VmSchedulingService.ApplyHardFiltersAsync"/>
-/// will invoke <see cref="Evaluate"/> in Phase B.
+/// <see cref="Evaluate"/> is called from
+/// <c>VmSchedulingService.ApplyHardFiltersAsync</c> (FILTER 10) for every
+/// candidate node during scheduling. <see cref="ValidateSet"/> is called
+/// from <c>VmService.CreateVmAsync</c> before any resource is allocated.
+/// Constraints are the sole mechanism for expressing node selection
+/// requirements — no bespoke per-field if-blocks exist in the scheduler.
 /// </para>
 /// </summary>
 public interface IConstraintEvaluator
