@@ -148,7 +148,7 @@ public class RelayController : ControllerBase
                     var parts = state.RelaySubnet.Split('/')[0].Split('.');
                     if (parts.Length >= 3) int.TryParse(parts[2], out relaySubnet);
                 }
-                region = node.Region;
+                region = node.Locality.Region;
             }
             catch { /* use defaults */ }
 

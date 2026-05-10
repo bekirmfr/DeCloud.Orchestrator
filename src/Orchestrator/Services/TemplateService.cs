@@ -801,8 +801,8 @@ public class TemplateService : ITemplateService
         if (node != null)
         {
             variables["DECLOUD_NODE_ID"] = node.Id;
-            variables["DECLOUD_NODE_REGION"] = node.Region ?? "unknown";
-            variables["DECLOUD_NODE_ZONE"] = node.Zone ?? "unknown";
+            variables["DECLOUD_NODE_REGION"] = node.Locality.Region ?? "unknown";
+            variables["DECLOUD_NODE_ZONE"] = node.Locality.Zone ?? "unknown";
         }
 
         if (!string.IsNullOrEmpty(vm.NetworkConfig?.PrivateIp))

@@ -27,7 +27,7 @@ public sealed class BlockStoreRegionResolver : IVariableResolver
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {
-        var region = ctx.Node?.Region;
+        var region = ctx.Node?.Locality.Region;
         return Task.FromResult(string.IsNullOrEmpty(region) ? "default" : region);
     }
 }

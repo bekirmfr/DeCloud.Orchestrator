@@ -65,8 +65,8 @@ public class NodeMarketplaceService : INodeMarketplaceService
         // Filter by region
         if (!string.IsNullOrEmpty(criteria.Region))
         {
-            nodes = nodes.Where(n => 
-                n.Region.Equals(criteria.Region, StringComparison.OrdinalIgnoreCase));
+            nodes = nodes.Where(n =>
+                n.Locality.Region.Equals(criteria.Region, StringComparison.OrdinalIgnoreCase));
         }
 
         // Filter by GPU requirement
@@ -213,10 +213,13 @@ public class NodeMarketplaceService : INodeMarketplaceService
             NodeId = node.Id,
             OperatorName = node.Name,
             Description = node.Description,
-            Region = node.Region,
-            Zone = node.Zone,
+            Region = node.Locality.Region,
+            Zone = node.Locality.Zone ?? "default",
+            Country = node.Locality.Country,
+            JurisdictionTags = node.Locality.JurisdictionTags,
+            LocationMismatch = node.Locality.LocationMismatch,
             Tags = node.Tags,
-            
+
             Capabilities = new NodeCapabilities
             {
                 HasGpu = node.HardwareInventory.SupportsGpu,

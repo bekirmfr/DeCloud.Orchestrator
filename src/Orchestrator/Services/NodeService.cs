@@ -301,8 +301,6 @@ public class NodeService : INodeService
             ReservedResources = existingNode?.ReservedResources ?? new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
-            Region = request.Region ?? "default",
-            Zone = request.Zone ?? "default",
             Locality = locality,
             RegisteredAt = existingNode?.RegisteredAt ?? request.RegisteredAt,
             LastSeenAt = DateTime.UtcNow,
@@ -598,7 +596,7 @@ public class NodeService : INodeService
             Payload = new Dictionary<string, object>
             {
                 ["name"] = node.Name,
-                ["region"] = node.Region,
+                ["region"] = node.Locality.Region,
                 ["machineId"] = node.MachineId,
                 ["wallet"] = node.WalletAddress,
                 ["resources"] = JsonSerializer.Serialize(node.TotalResources)
@@ -3145,7 +3143,7 @@ public class NodeService : INodeService
         if (!string.IsNullOrEmpty(criteria.Region))
         {
             nodes = nodes.Where(n =>
-                n.Region.Equals(criteria.Region, StringComparison.OrdinalIgnoreCase));
+                n.Locality.Region.Equals(criteria.Region, StringComparison.OrdinalIgnoreCase));
         }
 
         // Filter by GPU requirement
@@ -3239,11 +3237,11 @@ public class NodeService : INodeService
             NodeId = node.Id,
             OperatorName = node.Name,
             Description = node.Description,
-            Region = node.Region,
-            Zone = node.Zone,
-            Country = node.Locality?.Country ?? "ZZ",
-            JurisdictionTags = node.Locality?.JurisdictionTags ?? new List<string>(),
-            LocationMismatch = node.Locality?.LocationMismatch ?? false,
+            Region = node.Locality.Region,
+            Zone = node.Locality.Zone ?? "default",
+            Country = node.Locality.Country,
+            JurisdictionTags = node.Locality.JurisdictionTags,
+            LocationMismatch = node.Locality.LocationMismatch,
             Tags = node.Tags,
 
             Capabilities = new NodeCapabilities

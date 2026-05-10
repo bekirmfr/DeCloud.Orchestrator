@@ -438,7 +438,7 @@ public class NodesController : ControllerBase
 
             // Group nodes by region and count
             var regions = nodes
-                .GroupBy(n => n.Region ?? "default")
+                .GroupBy(n => n.Locality.Region)
                 .Select(g => new RegionInfo
                 {
                     Region = g.Key,
@@ -480,8 +480,8 @@ public class NodesController : ControllerBase
 
             // Filter by region and group by zone
             var zones = nodes
-                .Where(n => (n.Region ?? "default") == region)
-                .GroupBy(n => n.Zone ?? "default")
+                .Where(n => n.Locality.Region == region)
+                .GroupBy(n => n.Locality.Zone ?? "default")
                 .Select(g => new ZoneInfo
                 {
                     Zone = g.Key,

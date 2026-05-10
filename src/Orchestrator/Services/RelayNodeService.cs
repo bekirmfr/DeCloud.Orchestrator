@@ -130,7 +130,7 @@ public class RelayNodeService : IRelayNodeService
             "Selected relay {RelayId} for CGNAT node {CgnatId} " +
             "(Region: {Region}, Load: {Load}/{Capacity}, Score: {Score:F2})",
             bestRelay.Id, cgnatNode.Id,
-            bestRelay.Region, bestRelay.RelayInfo!.CurrentLoad,
+            bestRelay.Locality.Region, bestRelay.RelayInfo!.CurrentLoad,
             bestRelay.RelayInfo.MaxCapacity, scoredRelays.First().Score);
 
         return bestRelay;
@@ -141,9 +141,9 @@ public class RelayNodeService : IRelayNodeService
         var score = 100.0;
 
         // Geographic proximity (50 points max)
-        if (relayNode.Region == cgnatNode.Region)
+        if (relayNode.Locality.Region == cgnatNode.Locality.Region)
             score += 50;
-        else if (relayNode.Zone == cgnatNode.Zone)
+        else if (relayNode.Locality.Zone == cgnatNode.Locality.Zone)
             score += 25;
 
         // Load factor (30 points max)
@@ -192,7 +192,7 @@ public class RelayNodeService : IRelayNodeService
                 AssignedRelayNodeId = relayNode.Id,
                 TunnelIp = tunnelIp,
                 WireGuardConfig = wgConfig,
-                PublicEndpoint = $"https://relay-{relayNode.Region}-{relayNode.Id[..8]}.{baseDomain}",
+                PublicEndpoint = $"https://relay-{relayNode.Locality.Region}-{relayNode.Id[..8]}.{baseDomain}",
                 TunnelStatus = TunnelStatus.Connecting,
                 LastHandshake = null
             };

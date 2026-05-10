@@ -152,23 +152,13 @@ public class Node
     /// </summary>
     public DateTime? LastFailedHeartbeatCheckAt { get; set; }
 
-    // Region/Location for scheduling
-    public string Region { get; set; } = "default";
-    public string Zone { get; set; } = "default";
-
     /// <summary>
     /// Three-axis locality record: country (jurisdiction), region (network
     /// locality), zone (operator grouping). Populated at registration by
     /// <c>NodeService.RegisterNodeAsync</c> via <c>ILocalityService</c>.
-    ///
-    /// <para>
-    /// Null on nodes registered before the locality standard (v2.3).
-    /// Consumers should null-coalesce: <c>node.Locality?.Region ?? node.Region ?? "default"</c>.
-    /// </para>
-    ///
     /// <para>See <c>docs/LOCALITY.md</c> for the full standard.</para>
     /// </summary>
-    public NodeLocality? Locality { get; set; }
+    public NodeLocality Locality { get; set; } = new();
 
     public DateTime? LastSeenAt { get; set; } = null;
     /// <summary>

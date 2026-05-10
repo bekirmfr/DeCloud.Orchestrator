@@ -81,7 +81,7 @@ public class NodeSelfController : ControllerBase
         {
             NodeId = node.Id,
             Status = node.Status,
-            Region = node.Region,
+            Region = node.Locality.Region,
             PublicIp = node.PublicIp,
             RegisteredAt = node.RegisteredAt,
             LastHeartbeat = node.LastHeartbeat,

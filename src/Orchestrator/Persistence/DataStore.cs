@@ -118,7 +118,7 @@ public class DataStore
                 Builders<Node>.IndexKeys.Ascending(n => n.LastHeartbeat),
                 new CreateIndexOptions { Name = "idx_heartbeat" }),
             new CreateIndexModel<Node>(
-                Builders<Node>.IndexKeys.Ascending(n => n.Region).Ascending(n => n.Zone),
+                Builders<Node>.IndexKeys.Ascending(n => n.Locality.Region).Ascending(n => n.Locality.Zone),
                 new CreateIndexOptions { Name = "idx_region_zone" })
             };
             

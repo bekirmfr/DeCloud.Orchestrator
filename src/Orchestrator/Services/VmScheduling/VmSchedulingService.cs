@@ -80,8 +80,8 @@ public class VmSchedulingService : IVmSchedulingService
             "with score {Score:F2} for {Tier} tier VM",
             bestNode.Node.Id,
             bestNode.Node.Architecture,
-            bestNode.Node.Region,
-            bestNode.Node.Zone,
+            bestNode.Node.Locality.Region,
+            bestNode.Node.Locality.Zone,
             bestNode.TotalScore,
             tier);
 
@@ -129,8 +129,8 @@ public class VmSchedulingService : IVmSchedulingService
                 "Locality: {LocalityScore:F2}, Rejection: {RejectionReason}",
                 node.Id,
                 node.Architecture,
-                node.Region,
-                node.Zone,
+                node.Locality.Region,
+                node.Locality.Zone,
                 scored.TotalScore,
                 scored.Scores.CapacityScore,
                 scored.Scores.LoadScore,

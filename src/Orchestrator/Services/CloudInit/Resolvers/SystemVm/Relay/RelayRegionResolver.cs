@@ -17,5 +17,5 @@ public sealed class RelayRegionResolver : IVariableResolver
     public VariableKind Kind => VariableKind.Static;
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct) =>
-        Task.FromResult(ctx.Node.Region ?? "default");
+        Task.FromResult(ctx.Node.Locality.Region);
 }
