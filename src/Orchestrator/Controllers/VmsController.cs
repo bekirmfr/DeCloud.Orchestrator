@@ -258,6 +258,21 @@ public class VmsController : ControllerBase
     public record UpdateSchedulingRequest(List<Constraint>? Constraints);
 
     /// <summary>
+    /// Returns the registered constraint target and operator names for the
+    /// dashboard constraint builder. The frontend uses this to populate
+    /// dropdowns without hardcoding the vocabulary.
+    /// </summary>
+    [HttpGet("constraint-vocabulary")]
+    public IActionResult GetConstraintVocabulary()
+    {
+        return Ok(new
+        {
+            targets = _constraintEvaluator.KnownTargets.Order(),
+            operators = _constraintEvaluator.KnownOperators.Order()
+        });
+    }
+
+    /// <summary>
     /// Get VM metrics
     /// </summary>
     [HttpGet("{vmId}/metrics")]

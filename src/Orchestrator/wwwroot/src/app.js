@@ -97,24 +97,24 @@ const BANDWIDTH_TIERS = {
 
 const REPLICATION_TIERS = {
     0: {
-        label:       'Ephemeral',
+        label: 'Ephemeral',
         description: 'No replication. Data is lost permanently if the node fails. Use for stateless workloads, batch jobs, CI runners.',
-        badge:       'No protection'
+        badge: 'No protection'
     },
     1: {
-        label:       'Single replica (1×)',
+        label: 'Single replica (1×)',
         description: 'One replica. Survives if at least 1 block store provider holds the blocks.',
-        badge:       'Basic protection'
+        badge: 'Basic protection'
     },
     3: {
-        label:       'Standard (3×)',
+        label: 'Standard (3×)',
         description: 'Three replicas. Survives loss of 2 provider nodes simultaneously. Recommended for all production workloads.',
-        badge:       'Standard protection'
+        badge: 'Standard protection'
     },
     5: {
-        label:       'High Availability (5×)',
+        label: 'High Availability (5×)',
         description: 'Five replicas. Survives loss of 4 provider nodes. Use for databases, ML checkpoints, critical stateful services.',
-        badge:       'Maximum protection'
+        badge: 'Maximum protection'
     }
 };
 
@@ -142,6 +142,9 @@ let ethersSigner = null;
 let connectedAddress = null;
 let appKitModal = null;
 
+// Constraint vocabulary cache (fetched once from /api/vms/constraint-vocabulary)
+let constraintVocabulary = { targets: [], operators: [] };
+
 // Password encryption cache
 let cachedEncryptionKey = null;
 const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
@@ -162,6 +165,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!sessionRestored) {
         showLogin();
     }
+
+    // Load constraint vocabulary for builder dropdowns
+    loadConstraintVocabulary();
 
     updateTierInfo();
     updateBandwidthInfo();
@@ -1140,6 +1146,11 @@ function renderVMsTable(vms) {
 
         const tierBadge = tierBadges[vm.spec.qualityTier] || '';
 
+        const constraintCount = vm.spec?.constraints?.length ?? 0;
+        const constraintChip = constraintCount > 0
+            ? `<span class="cb-chip" title="${constraintCount} scheduling constraint(s)">⚙ ${constraintCount}</span>`
+            : '';
+
         return `
         <tr data-status="${getStatusClass(vm.status)}">
             <td>
@@ -1148,6 +1159,7 @@ function renderVMsTable(vms) {
                     ${escapeHtml(vm.name)}
                     ${tierBadge}
                 </div>
+                ${constraintChip ? `<div style="margin-top:3px">${constraintChip}</div>` : ''}
             </td>
             <td>${escapeHtml(nodeName)}</td>
             <td>${vm.spec?.virtualCpuCores || 0} cores</td>
@@ -1250,6 +1262,16 @@ function renderVMsTable(vms) {
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                         </svg>
                     </button>
+
+                    <!-- Update Constraints (visible on Error state) -->
+                    ${vm.status === 8 ? `
+                    <button class="btn btn-sm btn-secondary"
+                            onclick="openUpdateConstraintsModal('${vm.id}', ${JSON.stringify(JSON.stringify(vm.spec?.constraints ?? []))})"
+                            title="Update Scheduling Constraints">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+                        </svg>
+                    </button>` : ''}
                 </div>
             </td>
         </tr>
@@ -1361,88 +1383,13 @@ function renderSSHKeysTable(keys) {
 async function openCreateVMModal() {
     document.getElementById('create-vm-modal').classList.add('active');
 
-    // Load available regions
-    await loadVmRegions();
+    // Attach constraint builder (clears any previous rows)
+    const container = document.getElementById('constraint-builder-container');
+    if (container) attachConstraintBuilder(container);
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('active');
-}
-
-/**
- * Load available regions for VM creation
- */
-async function loadVmRegions() {
-    try {
-        const response = await api('/api/nodes/regions?onlineOnly=true');
-        const data = await response.json();
-
-        const regions = data.data || data;
-        const regionSelect = document.getElementById('vm-region');
-
-        if (!regionSelect) return;
-
-        // Clear existing options except the default
-        regionSelect.innerHTML = '<option value="">Any region (default)</option>';
-
-        // Add region options
-        regions.forEach(region => {
-            const opt = document.createElement('option');
-            opt.value = region.region;
-            opt.textContent = `${region.region} (${region.nodeCount} nodes, ${region.availableComputePoints} compute points)`;
-            regionSelect.appendChild(opt);
-        });
-
-        console.log('[VM Creation] Loaded {0} available regions', regions.length);
-    } catch (error) {
-        console.error('[VM Creation] Failed to load regions:', error);
-    }
-}
-
-/**
- * Handle region change in VM creation modal
- */
-async function onVmRegionChange() {
-    const regionSelect = document.getElementById('vm-region');
-    const zoneSelect = document.getElementById('vm-zone');
-
-    if (!regionSelect || !zoneSelect) return;
-
-    const selectedRegion = regionSelect.value;
-
-    // Reset zone selector
-    zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
-
-    if (!selectedRegion) {
-        zoneSelect.disabled = true;
-        return;
-    }
-
-    // Load zones for selected region
-    try {
-        const response = await api(`/api/nodes/regions/${encodeURIComponent(selectedRegion)}/zones?onlineOnly=true`);
-        const data = await response.json();
-
-        const zones = data.data || data;
-
-        if (zones.length > 0) {
-            zones.forEach(zone => {
-                const opt = document.createElement('option');
-                opt.value = zone.zone;
-                opt.textContent = `${zone.zone} (${zone.nodeCount} nodes, ${zone.availableComputePoints} compute points)`;
-                zoneSelect.appendChild(opt);
-            });
-
-            zoneSelect.disabled = false;
-            console.log('[VM Creation] Loaded {0} zones for region {1}', zones.length, selectedRegion);
-        } else {
-            zoneSelect.disabled = true;
-            console.log('[VM Creation] No zones available for region {0}', selectedRegion);
-        }
-    } catch (error) {
-        console.error('[VM Creation] Failed to load zones:', error);
-        zoneSelect.disabled = true;
-    }
 }
 
 /**
@@ -1509,11 +1456,16 @@ async function createVM() {
     const qualityTier = parseInt(document.getElementById('quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
     const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
-    const region = document.getElementById('vm-region')?.value || null;
-    const zone = document.getElementById('vm-zone')?.value || null;
 
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
+
+    // Read constraints — returns null if any row is incomplete
+    const constraints = readConstraints();
+    if (constraints === null) {
+        showToast('Fix constraint errors before creating VM', 'error');
+        return;
+    }
 
     // Client-side name validation (server is the authority, this is for UX)
     const sanitized = sanitizeVmName(name);
@@ -1534,8 +1486,7 @@ async function createVM() {
                 qualityTier: qualityTier,
                 bandwidthTier: bandwidthTier,
                 replicationFactor: replicationFactor,
-                region: region,
-                zone: zone
+                constraints: constraints.length > 0 ? constraints : undefined
             }
         };
 
@@ -1566,15 +1517,15 @@ async function createVM() {
             closeModal('create-vm-modal');
 
             document.getElementById('vm-name').value = '';
-            document.getElementById('quality-tier').value = '1';  // ← RESET TO STANDARD
-            document.getElementById('bandwidth-tier').value = '3'; // ← RESET TO UNMETERED
-            document.getElementById('replication-factor').value = '3'; // ← RESET TO STANDARD
-            document.getElementById('vm-region').value = '';  // ← RESET REGION
-            document.getElementById('vm-zone').value = '';    // ← RESET ZONE
-            document.getElementById('vm-zone').disabled = true;  // ← DISABLE ZONE
-            updateTierInfo();  // ← REFRESH TIER INFO
+            document.getElementById('quality-tier').value = '1';
+            document.getElementById('bandwidth-tier').value = '3';
+            document.getElementById('replication-factor').value = '3';
+            updateTierInfo();
             updateBandwidthInfo();
             updateReplicationInfo();
+            // Reset constraint builder
+            const cbContainer = document.getElementById('constraint-builder-container');
+            if (cbContainer) attachConstraintBuilder(cbContainer);
 
             await refreshData();
         } else {
@@ -1756,8 +1707,8 @@ function updateReplicationInfo() {
             <div class="tier-pricing">
                 <span class="tier-points">${tier.badge}</span>
                 ${factor === 0
-                    ? '<span class="tier-multiplier">No storage cost</span>'
-                    : `<span class="tier-multiplier">+storage replication cost (${factor}×)</span>`}
+                ? '<span class="tier-multiplier">No storage cost</span>'
+                : `<span class="tier-multiplier">+storage replication cost (${factor}×)</span>`}
             </div>
         `;
     }
@@ -1789,6 +1740,292 @@ function updateEstimatedCost() {
     document.getElementById('compute-points').textContent = `${computePoints} points`;
     document.getElementById('estimated-cost').textContent = `~$${hourlyTotal.toFixed(4)}/hr (default rates)`;
 }
+
+// ============================================
+// CONSTRAINT BUILDER
+// ============================================
+
+/**
+ * Fetch constraint vocabulary from the backend once and cache it.
+ * Called on DOMContentLoaded so the dropdowns are ready before any modal opens.
+ */
+async function loadConstraintVocabulary() {
+    try {
+        const res = await api('/api/vms/constraint-vocabulary');
+        const data = await res.json();
+        if (data?.targets && data?.operators) {
+            constraintVocabulary = data;
+            console.log('[Constraints] Vocabulary loaded:', data.targets.length, 'targets,', data.operators.length, 'operators');
+        }
+    } catch (e) {
+        console.warn('[Constraints] Failed to load vocabulary:', e);
+    }
+}
+
+/**
+ * Inject the row-based constraint builder into containerEl.
+ * Call each time the deploy modal opens — idempotent, clears previous rows.
+ * @param {HTMLElement} containerEl
+ * @param {Array} [initial] — pre-populate rows (e.g. from existing VM spec)
+ */
+function attachConstraintBuilder(containerEl, initial = []) {
+    containerEl.innerHTML = '';
+
+    const section = document.createElement('div');
+    section.className = 'cb-section';
+    section.innerHTML = `
+        <button type="button" class="cb-toggle" aria-expanded="false">
+            <span class="cb-toggle-label"><span class="cb-icon">⚙</span> Scheduling Constraints</span>
+            <span class="cb-toggle-count" style="display:none"></span>
+            <span class="cb-chevron">›</span>
+        </button>
+        <div class="cb-body" style="display:none">
+            <p class="cb-hint">Each constraint is a hard filter — the VM only lands on nodes where ALL constraints pass. Leave empty to accept any eligible node.</p>
+            <div class="cb-rows"></div>
+            <div class="cb-footer">
+                <button type="button" class="cb-add-btn">+ Add Constraint</button>
+            </div>
+        </div>
+    `;
+    containerEl.appendChild(section);
+
+    const toggle = section.querySelector('.cb-toggle');
+    const body = section.querySelector('.cb-body');
+    const chevron = section.querySelector('.cb-chevron');
+    const rows = section.querySelector('.cb-rows');
+    const addBtn = section.querySelector('.cb-add-btn');
+    const countEl = section.querySelector('.cb-toggle-count');
+
+    toggle.addEventListener('click', () => {
+        const open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'flex';
+        toggle.setAttribute('aria-expanded', String(!open));
+        chevron.textContent = open ? '›' : '‹';
+    });
+
+    addBtn.addEventListener('click', () => {
+        rows.appendChild(buildConstraintRow(rows, countEl));
+        updateConstraintCount(rows, countEl);
+    });
+
+    // Pre-populate
+    initial.forEach(c => {
+        const row = buildConstraintRow(rows, countEl);
+        rows.appendChild(row);
+        fillConstraintRow(row, c);
+        updateConstraintCount(rows, countEl);
+    });
+
+    if (initial.length > 0) {
+        body.style.display = 'flex';
+        toggle.setAttribute('aria-expanded', 'true');
+        chevron.textContent = '‹';
+    }
+}
+
+function buildConstraintRow(rowContainer, countEl) {
+    const row = document.createElement('div');
+    row.className = 'cb-row';
+
+    const targetOpts = constraintVocabulary.targets
+        .map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    const opOpts = constraintVocabulary.operators
+        .map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+
+    row.innerHTML = `
+        <select class="cb-target">
+            <option value="">— target —</option>${targetOpts}
+        </select>
+        <select class="cb-operator">
+            <option value="">— op —</option>${opOpts}
+        </select>
+        <input type="text" class="cb-value" placeholder="value  (e.g. DE  or  DE,FR  or  99.5)" autocomplete="off">
+        <button type="button" class="cb-remove" title="Remove constraint">✕</button>
+    `;
+    row.querySelector('.cb-remove').addEventListener('click', () => {
+        row.remove();
+        updateConstraintCount(rowContainer, countEl);
+    });
+    return row;
+}
+
+function fillConstraintRow(row, c) {
+    const tgt = row.querySelector('.cb-target');
+    const op = row.querySelector('.cb-operator');
+    const val = row.querySelector('.cb-value');
+    if (tgt) tgt.value = c.target ?? '';
+    if (op) op.value = c.operator ?? '';
+    if (val) {
+        const v = c.value;
+        val.value = Array.isArray(v) ? v.join(', ') : String(v ?? '');
+    }
+}
+
+function updateConstraintCount(rows, countEl) {
+    const n = rows.querySelectorAll('.cb-row').length;
+    countEl.style.display = n > 0 ? 'inline' : 'none';
+    countEl.textContent = n;
+}
+
+/**
+ * Read all constraint rows from the create-VM modal.
+ * Returns the constraint array, or null if any row has an incomplete target/operator.
+ */
+function readConstraints() {
+    const rows = document.querySelectorAll('#constraint-builder-container .cb-row');
+    const result = [];
+    let valid = true;
+
+    rows.forEach(row => {
+        const target = row.querySelector('.cb-target')?.value.trim() ?? '';
+        const operator = row.querySelector('.cb-operator')?.value.trim() ?? '';
+        const raw = row.querySelector('.cb-value')?.value.trim() ?? '';
+
+        row.classList.remove('cb-row--error');
+        row.querySelector('.cb-row-tip')?.remove();
+
+        if (!target || !operator) {
+            row.classList.add('cb-row--error');
+            const tip = document.createElement('span');
+            tip.className = 'cb-row-tip';
+            tip.textContent = 'Select a target and operator';
+            row.appendChild(tip);
+            valid = false;
+            return;
+        }
+        result.push({ target, operator, value: parseConstraintValue(raw) });
+    });
+
+    return valid ? result : null;
+}
+
+function parseConstraintValue(raw) {
+    if (raw === '') return null;
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    if (raw.startsWith('[')) { try { return JSON.parse(raw); } catch { /* not valid JSON — fall through */ } }
+    if (raw.includes(',')) {
+        return raw.split(',').map(s => {
+            const t = s.trim();
+            const n = Number(t);
+            return isNaN(n) ? t : n;
+        });
+    }
+    const n = Number(raw);
+    if (!isNaN(n) && raw !== '') return n;
+    return raw;
+}
+
+/**
+ * Open the Update Scheduling Constraints modal for an Error-state VM.
+ * @param {string} vmId
+ * @param {string|Array} currentConstraintsJson — JSON string (from onclick attr) or array
+ */
+function openUpdateConstraintsModal(vmId, currentConstraintsJson) {
+    const currentConstraints = typeof currentConstraintsJson === 'string'
+        ? JSON.parse(currentConstraintsJson)
+        : (currentConstraintsJson ?? []);
+
+    let modal = document.getElementById('update-constraints-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'update-constraints-modal';
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal" style="max-width:560px">
+                <div class="modal-header">
+                    <h2 class="modal-title">Update Scheduling Constraints</h2>
+                    <button class="modal-close" onclick="closeModal('update-constraints-modal')">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-help" style="margin-bottom:1rem">
+                        Replaces all scheduling constraints. The migration scheduler picks up changes within 10 s.
+                        Clear all rows to accept any eligible node.
+                    </p>
+                    <div id="update-constraints-builder"></div>
+                    <p id="update-constraints-error" style="display:none;color:var(--color-error,#e53e3e);font-size:0.8rem;margin-top:0.5rem"></p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeModal('update-constraints-modal')">Cancel</button>
+                    <button class="btn btn-primary" id="update-constraints-save">Save Constraints</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    // Attach fresh builder with current constraints
+    const builderEl = modal.querySelector('#update-constraints-builder');
+    attachConstraintBuilder(builderEl, currentConstraints);
+
+    // Reset UI
+    const errorEl = modal.querySelector('#update-constraints-error');
+    errorEl.style.display = 'none';
+    modal.classList.add('active');
+
+    // Override the save button each time (re-capture vmId in closure)
+    const saveBtn = modal.querySelector('#update-constraints-save');
+    saveBtn.onclick = async () => {
+        errorEl.style.display = 'none';
+
+        // Read from the update-modal's rows specifically
+        const modalRows = builderEl.querySelectorAll('.cb-row');
+        const constraints = [];
+        let valid = true;
+
+        modalRows.forEach(row => {
+            const target = row.querySelector('.cb-target')?.value.trim() ?? '';
+            const operator = row.querySelector('.cb-operator')?.value.trim() ?? '';
+            const raw = row.querySelector('.cb-value')?.value.trim() ?? '';
+            row.classList.remove('cb-row--error');
+            row.querySelector('.cb-row-tip')?.remove();
+            if (!target || !operator) {
+                row.classList.add('cb-row--error');
+                const tip = document.createElement('span');
+                tip.className = 'cb-row-tip';
+                tip.textContent = 'Select target and operator';
+                row.appendChild(tip);
+                valid = false;
+                return;
+            }
+            constraints.push({ target, operator, value: parseConstraintValue(raw) });
+        });
+
+        if (!valid) return;
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+
+        try {
+            const res = await api(`/api/vms/${vmId}/scheduling`, {
+                method: 'PATCH',
+                body: JSON.stringify({ constraints })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                showToast('Scheduling constraints updated', 'success');
+                closeModal('update-constraints-modal');
+                await refreshData();
+            } else {
+                errorEl.textContent = data.message || `Error ${res.status}`;
+                errorEl.style.display = 'block';
+            }
+        } catch (err) {
+            errorEl.textContent = `Network error: ${err.message}`;
+            errorEl.style.display = 'block';
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Constraints';
+        }
+    };
+}
+
+window.openUpdateConstraintsModal = openUpdateConstraintsModal;
 
 async function deleteVM(vmId, vmName) {
     if (!confirm(`Are you sure you want to delete "${vmName}"? This action cannot be undone.`)) {
@@ -2726,14 +2963,14 @@ function renderCustomDomainsList(domains, vmId) {
             </thead>
             <tbody>
                 ${domains.map(d => {
-                    const statusInfo = DOMAIN_STATUS_LABELS[d.status] || DOMAIN_STATUS_LABELS.Error;
-                    return `
+        const statusInfo = DOMAIN_STATUS_LABELS[d.status] || DOMAIN_STATUS_LABELS.Error;
+        return `
                     <tr>
                         <td>
                             ${d.status === 'Active' && d.publicUrl
-                                ? `<a href="${escapeHtml(d.publicUrl)}" target="_blank" class="domain-link">${escapeHtml(d.domain)}</a>`
-                                : `<code>${escapeHtml(d.domain)}</code>`
-                            }
+                ? `<a href="${escapeHtml(d.publicUrl)}" target="_blank" class="domain-link">${escapeHtml(d.domain)}</a>`
+                : `<code>${escapeHtml(d.domain)}</code>`
+            }
                         </td>
                         <td><code>${d.targetPort}</code></td>
                         <td><span class="status-badge ${statusInfo.class}">${statusInfo.text}</span></td>
@@ -2774,7 +3011,7 @@ function renderCustomDomainsList(domains, vmId) {
                     </tr>
                     ` : ''}
                     `;
-                }).join('')}
+    }).join('')}
             </tbody>
         </table>
     `;
@@ -2802,7 +3039,7 @@ function renderCustomDomainsAddForm(vmId) {
     container.style.display = 'block';
 }
 
-window.addCustomDomain = async function(vmId) {
+window.addCustomDomain = async function (vmId) {
     const domainInput = document.getElementById('custom-domain-input');
     const portInput = document.getElementById('custom-domain-port');
 
@@ -2840,7 +3077,7 @@ window.addCustomDomain = async function(vmId) {
     }
 };
 
-window.verifyCustomDomain = async function(vmId, domainId) {
+window.verifyCustomDomain = async function (vmId, domainId) {
     try {
         showToast('Verifying DNS...', 'info');
 
@@ -2869,7 +3106,7 @@ window.verifyCustomDomain = async function(vmId, domainId) {
     }
 };
 
-window.removeCustomDomain = async function(vmId, domainId, domainName) {
+window.removeCustomDomain = async function (vmId, domainId, domainName) {
     if (!confirm(`Remove custom domain ${domainName}?`)) {
         return;
     }

@@ -672,29 +672,6 @@
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="vm-region" class="form-label">
-                            Region
-                            <span class="label-hint">(Geographic location)</span>
-                        </label>
-                        <select id="vm-region" class="form-control" onchange="onVmRegionChange()">
-                            <option value="">Any region (default)</option>
-                            <!-- Options populated by JS from online nodes -->
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="vm-zone" class="form-label">
-                            Zone
-                            <span class="label-hint">(Specific datacenter - optional)</span>
-                        </label>
-                        <select id="vm-zone" class="form-control" disabled>
-                            <option value="">Any zone (default)</option>
-                            <!-- Options populated by JS based on selected region -->
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
                         <label class="form-label">CPU Cores</label>
                         <input type="number" class="form-input" id="vm-cpu" value="2" min="1" max="16">
                     </div>
@@ -727,11 +704,15 @@
                     </select>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="createVM()">Create VM</button>
-            </div>
+            <!-- Scheduling Constraints -->
+            <div id="constraint-builder-container"></div>
+
         </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('create-vm-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="createVM()">Create VM</button>
+        </div>
+    </div>
     </div>
 
     <!-- Add SSH Key Modal -->
@@ -1060,5 +1041,210 @@
             </div>
         </div>
     </div>
+    <!-- Constraint Builder Styles -->
+    <style>
+        /* ── Section wrapper ───────────────────────────────────────── */
+        .cb-section {
+            margin-top: 1.25rem;
+            border: 1px solid var(--border, #2a2d36);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        /* ── Toggle button ─────────────────────────────────────────── */
+        .cb-toggle {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.6rem 0.85rem;
+            background: var(--surface-2, #1a1d26);
+            border: none;
+            cursor: pointer;
+            color: var(--text-secondary, #9ca3af);
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            text-align: left;
+            transition: background 0.15s, color 0.15s;
+        }
+
+            .cb-toggle:hover {
+                background: var(--surface-3, #22252e);
+                color: var(--text-primary, #f0f2f5);
+            }
+
+            .cb-toggle[aria-expanded="true"] {
+                color: var(--accent, #10b981);
+                border-bottom: 1px solid var(--border, #2a2d36);
+            }
+
+        .cb-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex: 1;
+        }
+
+        .cb-icon {
+            font-size: 0.75rem;
+            opacity: 0.7;
+        }
+
+        .cb-toggle-count {
+            background: var(--accent, #10b981);
+            color: #000;
+            font-size: 0.65rem;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 0.05rem 0.4rem;
+            min-width: 1.1rem;
+            text-align: center;
+        }
+
+        .cb-chevron {
+            font-size: 1rem;
+            color: var(--text-secondary, #9ca3af);
+        }
+
+        .cb-toggle[aria-expanded="true"] .cb-chevron {
+            color: var(--accent, #10b981);
+        }
+        /* ── Body ──────────────────────────────────────────────────── */
+        .cb-body {
+            padding: 0.85rem;
+            background: var(--surface-1, #13161f);
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .cb-hint {
+            font-size: 0.75rem;
+            color: var(--text-secondary, #9ca3af);
+            line-height: 1.45;
+        }
+        /* ── Rows ──────────────────────────────────────────────────── */
+        .cb-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .cb-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1.4fr auto;
+            gap: 0.4rem;
+            align-items: center;
+            position: relative;
+        }
+
+        .cb-row--error > select,
+        .cb-row--error > input {
+            border-color: var(--color-error, #e53e3e) !important;
+        }
+
+        .cb-row-tip {
+            position: absolute;
+            bottom: -1rem;
+            left: 0;
+            font-size: 0.68rem;
+            color: var(--color-error, #e53e3e);
+        }
+
+        .cb-target, .cb-operator {
+            padding: 0.38rem 0.5rem;
+            background: var(--surface-2, #1a1d26);
+            border: 1px solid var(--border, #2a2d36);
+            border-radius: 5px;
+            color: var(--text-primary, #f0f2f5);
+            font-size: 0.78rem;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+            .cb-target:focus, .cb-operator:focus {
+                border-color: var(--accent, #10b981);
+            }
+
+        .cb-value {
+            padding: 0.38rem 0.5rem;
+            background: var(--surface-2, #1a1d26);
+            border: 1px solid var(--border, #2a2d36);
+            border-radius: 5px;
+            color: var(--text-primary, #f0f2f5);
+            font-size: 0.78rem;
+            font-family: 'JetBrains Mono', monospace;
+            outline: none;
+            transition: border-color 0.15s;
+            min-width: 0;
+        }
+
+            .cb-value:focus {
+                border-color: var(--accent, #10b981);
+            }
+
+            .cb-value::placeholder {
+                color: var(--text-secondary, #6b7280);
+                font-style: italic;
+                font-size: 0.7rem;
+            }
+
+        .cb-remove {
+            width: 1.8rem;
+            height: 1.8rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: none;
+            border: 1px solid var(--border, #2a2d36);
+            border-radius: 5px;
+            color: var(--text-secondary, #9ca3af);
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: border-color 0.15s, color 0.15s;
+            flex-shrink: 0;
+        }
+
+            .cb-remove:hover {
+                border-color: var(--color-error, #e53e3e);
+                color: var(--color-error, #e53e3e);
+            }
+        /* ── Footer ────────────────────────────────────────────────── */
+        .cb-footer {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .cb-add-btn {
+            padding: 0.35rem 0.85rem;
+            background: none;
+            border: 1px dashed var(--border, #2a2d36);
+            border-radius: 5px;
+            color: var(--accent, #10b981);
+            font-size: 0.78rem;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+            .cb-add-btn:hover {
+                background: rgba(16,185,129,0.08);
+                border-color: var(--accent, #10b981);
+            }
+        /* ── Constraint chip in VM table ───────────────────────────── */
+        .cb-chip {
+            display: inline-block;
+            padding: 0.08rem 0.4rem;
+            background: rgba(16,185,129,0.1);
+            border: 1px solid rgba(16,185,129,0.25);
+            border-radius: 999px;
+            font-size: 0.66rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent, #10b981);
+            white-space: nowrap;
+        }
+    </style>
 </body>
 </html>
