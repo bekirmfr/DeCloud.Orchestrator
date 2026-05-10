@@ -180,7 +180,8 @@ public class NodeService : INodeService
         // =====================================================
         // Generate JWT token for node authentication
         // =====================================================
-        var apiKey = GenerateNodeJwtToken(nodeId, request.WalletAddress, request.MachineId);
+        var jti = Guid.NewGuid().ToString();
+        var apiKey = GenerateNodeJwtToken(nodeId, request.WalletAddress, request.MachineId, jti);
         var apiKeyHash = GenerateHash(apiKey);
 
         _logger.LogInformation("Generated JWT token for node {NodeId}", nodeId);
@@ -283,6 +284,7 @@ public class NodeService : INodeService
             MachineId = request.MachineId,
             Name = request.Name,
             WalletAddress = request.WalletAddress,
+            CurrentJti = jti,
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
@@ -2916,7 +2918,7 @@ public class NodeService : INodeService
             _ => "Node offline"
         };
 
-    private string GenerateNodeJwtToken(string nodeId, string walletAddress, string machineId)
+    private string GenerateNodeJwtToken(string nodeId, string walletAddress, string machineId, string jti)
     {
         // Get JWT configuration (same as user JWT)
         var jwtKey = _configuration["Jwt:Key"]
@@ -2935,7 +2937,7 @@ public class NodeService : INodeService
             new Claim("wallet", walletAddress),
             new Claim("machine_id", machineId),
             new Claim(ClaimTypes.Role, "node"),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, jti),
             new Claim(JwtRegisteredClaimNames.Iat,
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
                 ClaimValueTypes.Integer64)
