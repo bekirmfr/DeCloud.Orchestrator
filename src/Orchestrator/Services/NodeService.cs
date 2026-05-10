@@ -3,6 +3,7 @@ using DeCloud.Shared;
 using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.IdentityModel.Tokens;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -16,54 +17,6 @@ using System.Text;
 using System.Text.Json;
 
 namespace Orchestrator.Services;
-
-public interface INodeService
-{
-    Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
-    Task<NodeHeartbeatResponse> ProcessHeartbeatAsync(string nodeId, NodeHeartbeat heartbeat, CancellationToken ct = default);
-    /// <summary>
-    /// Process command acknowledgment from node
-    /// </summary>
-    Task<bool> ProcessCommandAcknowledgmentAsync(
-        string nodeId,
-        string commandId,
-        CommandAcknowledgment ack);
-
-    Task<bool> UpdateNodeStatusAsync(string nodeId, NodeStatus status);
-    Task CheckNodeHealthAsync();
-    /// <summary>
-    /// Request node to sign an SSH certificate using its CA
-    /// </summary>
-    Task<CertificateSignResponse> SignCertificateAsync(
-        string nodeId,
-        CertificateSignRequest request,
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Inject SSH public key into a VM's authorized_keys
-    /// </summary>
-    Task<bool> InjectSshKeyAsync(
-        string nodeId,
-        string vmId,
-        string publicKey,
-        string username = "root",
-        CancellationToken ct = default);
-
-    /// <summary>
-    /// Search nodes based on criteria (for marketplace/public browsing)
-    /// </summary>
-    Task<List<NodeAdvertisement>> SearchNodesAsync(NodeSearchCriteria criteria);
-
-    /// <summary>
-    /// Get featured nodes (high uptime, good capacity)
-    /// </summary>
-    Task<List<NodeAdvertisement>> GetFeaturedNodesAsync();
-
-    /// <summary>
-    /// Get node advertisement details
-    /// </summary>
-    Task<NodeAdvertisement?> GetNodeAdvertisementAsync(string nodeId);
-}
 
 public class NodeService : INodeService
 {
@@ -151,6 +104,34 @@ public class NodeService : INodeService
         {
             _logger.LogError("Node registration rejected: Invalid wallet signature");
             throw new UnauthorizedAccessException("Invalid wallet signature. Please ensure you're using the correct wallet.");
+        }
+
+        // =====================================================
+        // STEP 1.6: Validate Signature Freshness
+        //
+        // The signed message embeds an ISO 8601 timestamp. We enforce a
+        // 5-minute validity window with ±2-minute skew tolerance to prevent
+        // replay of captured signatures.
+        //
+        // Messages in the legacy format (pre-canonical, no "Timestamp:" line
+        // with ISO 8601) skip this check for backward compatibility. Once all
+        // nodes are updated, the fallback can be removed.
+        // =====================================================
+        var timestampFreshness = ValidateSignatureTimestamp(request.Message);
+        if (timestampFreshness != null)
+        {
+            _logger.LogWarning(
+                "Node registration timestamp validation: {Result} for wallet {Wallet}",
+                timestampFreshness, request.WalletAddress);
+
+            if (timestampFreshness == "EXPIRED" || timestampFreshness == "FUTURE")
+            {
+                throw new UnauthorizedAccessException(
+                    $"Signature timestamp is {timestampFreshness.ToLower()}. " +
+                    "The signing message is valid for 5 minutes from creation. " +
+                    "Please re-sign and try again.");
+            }
+            // "VALID" or "LEGACY_FORMAT" — proceed
         }
 
         // =====================================================
@@ -305,6 +286,11 @@ public class NodeService : INodeService
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
+            // New registrations default to scheduling-ready for backward compat.
+            // Under the target lifecycle, the operator calls login separately
+            // after register. Until the CLI is updated, this preserves the
+            // current behavior where register implies ready.
+            SchedulingReady = existingNode?.SchedulingReady ?? true,
             HardwareInventory = request.HardwareInventory,
             TotalResources = new ResourceSnapshot(),
             ReservedResources = existingNode?.ReservedResources ?? new ResourceSnapshot(),
@@ -602,6 +588,55 @@ public class NodeService : INodeService
             systemTemplates,
             obligationDescriptors);
     }
+
+    // ============================================================================
+    // Login / Logout (scheduling readiness)
+    // ============================================================================
+
+    public async Task<NodeLoginResponse> LoginNodeAsync(string nodeId, CancellationToken ct = default)
+    {
+        var node = await _dataStore.GetNodeAsync(nodeId)
+            ?? throw new KeyNotFoundException($"Node {nodeId} not found");
+
+        node.SchedulingReady = true;
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Node {NodeId} logged in — scheduling resumed",
+            nodeId);
+
+        return new NodeLoginResponse
+        {
+            SchedulingReady = true,
+            SettingsDriftWarning = null   // TODO(Tier 3): compare settings hash
+        };
+    }
+
+    public async Task<NodeLogoutResponse> LogoutNodeAsync(string nodeId, CancellationToken ct = default)
+    {
+        var node = await _dataStore.GetNodeAsync(nodeId)
+            ?? throw new KeyNotFoundException($"Node {nodeId} not found");
+
+        node.SchedulingReady = false;
+        await _dataStore.SaveNodeAsync(node);
+
+        // Count VMs still running on this node so the operator knows
+        // whether a drain is needed before uninstall.
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        var activeCount = nodeVms.Count(v =>
+            v.Status == VmStatus.Running || v.Status == VmStatus.Provisioning);
+
+        _logger.LogInformation(
+            "Node {NodeId} logged out — scheduling paused ({ActiveVms} active VMs remain)",
+            nodeId, activeCount);
+
+        return new NodeLogoutResponse
+        {
+            SchedulingReady = false,
+            ActiveVmCount = activeCount
+        };
+    }
+
     /// <summary>
     /// For each obligation on <paramref name="node"/>, generate fresh identity
     /// state if none exists (StateVersion == 0), or re-send existing state if
@@ -871,6 +906,67 @@ public class NodeService : INodeService
             _logger.LogError(ex, "Error verifying wallet signature");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Extract and validate the ISO 8601 timestamp from the canonical
+    /// signing message. Returns:
+    ///   "VALID"         — timestamp within acceptable window
+    ///   "EXPIRED"       — timestamp too old (> 5 min + 2 min skew)
+    ///   "FUTURE"        — timestamp too far in the future (> 2 min skew)
+    ///   "LEGACY_FORMAT" — message doesn't contain a parseable ISO timestamp
+    ///                     (pre-canonical format, skip validation)
+    ///   null            — couldn't determine (treat as legacy)
+    /// </summary>
+    private static string? ValidateSignatureTimestamp(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return null;
+
+        // Look for "Timestamp:  2026-05-09T11:42:30Z" in the canonical format.
+        // The legacy format uses "Timestamp: {unix_epoch}" which won't parse
+        // as ISO 8601, so it falls through to LEGACY_FORMAT.
+        const string prefix = "Timestamp:";
+        var lines = message.Split('\n');
+        string? timestampStr = null;
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                timestampStr = trimmed.Substring(prefix.Length).Trim();
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(timestampStr))
+            return "LEGACY_FORMAT";
+
+        // Try ISO 8601 parse
+        if (!DateTime.TryParse(timestampStr, null,
+                System.Globalization.DateTimeStyles.AdjustToUniversal |
+                System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var signedAt))
+        {
+            // Could be a Unix epoch from legacy format — not an error
+            return "LEGACY_FORMAT";
+        }
+
+        var now = DateTime.UtcNow;
+        var age = now - signedAt;
+
+        // Allow ±2 minutes for clock skew
+        const int skewToleranceMinutes = 2;
+        const int validityWindowMinutes = 5;
+
+        if (age.TotalMinutes > (validityWindowMinutes + skewToleranceMinutes))
+            return "EXPIRED";
+
+        if (age.TotalMinutes < -skewToleranceMinutes)
+            return "FUTURE";
+
+        return "VALID";
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Orchestrator.Interfaces;
 using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Persistence;

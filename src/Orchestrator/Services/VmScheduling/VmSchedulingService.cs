@@ -290,6 +290,17 @@ public class VmSchedulingService : IVmSchedulingService
             return $"Node not online (status: {node.Status})";
 
         // =====================================================
+        // FILTER 1.5: Scheduling Readiness
+        //
+        // Operator-controlled pause. A logged-out node is online and
+        // heartbeating but has explicitly opted out of new VM placement.
+        // This is the natural boundary for the logout → configure →
+        // register → login settings-change flow.
+        // =====================================================
+        if (!node.SchedulingReady)
+            return "Node not scheduling-ready (operator logged out)";
+
+        // =====================================================
         // FILTER 2: Tier Eligibility
         // =====================================================
         var evaluation = node.PerformanceEvaluation;

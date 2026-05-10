@@ -75,6 +75,21 @@ public class Node
 
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
+    /// <summary>
+    /// Operator-controlled scheduling readiness flag.
+    /// When false, the scheduler skips this node for new VM placement.
+    /// The node continues heartbeating and hosting existing VMs.
+    ///
+    /// Set to true by POST /api/nodes/{id}/login (operator signals readiness).
+    /// Set to false by POST /api/nodes/{id}/logout (operator pauses scheduling).
+    ///
+    /// Defaults to true for backward compatibility: existing nodes that
+    /// registered before this field was introduced are implicitly ready.
+    /// New registrations also default to true so that the current
+    /// register-and-go flow continues to work until the CLI is updated
+    /// to call the login endpoint separately.
+    /// </summary>
+    public bool SchedulingReady { get; set; } = true;
     public DateTime RegisteredAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastHeartbeat { get; set; } = null;
     public string AgentVersion { get; set; } = string.Empty;
@@ -553,6 +568,41 @@ public record NodeRegistrationResponse(
     List<ObligationDescriptorPayload>? Obligations = null
 );
 
+/// <summary>
+/// Response to POST /api/nodes/{id}/login.
+/// </summary>
+public class NodeLoginResponse
+{
+    /// <summary>True if the node is now scheduling-ready.</summary>
+    public bool SchedulingReady { get; set; }
+
+    /// <summary>
+    /// Non-null when the node's local settings hash (from the most recent
+    /// heartbeat) doesn't match the orchestrator's stored registration state.
+    /// Login is still accepted — scheduling resumes — but the operator
+    /// should investigate and re-register if needed.
+    /// </summary>
+    /// <remarks>
+    /// This is a warning, not a hard rejection. The design considered
+    /// rejecting login on drift, but drift detection belongs in the
+    /// heartbeat loop (continuous) not at login (one-time). The warning
+    /// here is a courtesy so operators see it immediately rather than
+    /// waiting for the next heartbeat cycle.
+    /// </remarks>
+    public string? SettingsDriftWarning { get; set; }
+}
+
+/// <summary>
+/// Response to POST /api/nodes/{id}/logout.
+/// </summary>
+public class NodeLogoutResponse
+{
+    /// <summary>Always false after a successful logout.</summary>
+    public bool SchedulingReady { get; set; }
+
+    /// <summary>Count of VMs still running on this node.</summary>
+    public int ActiveVmCount { get; set; }
+}
 
 /// <summary>
 /// Carries a single role's identity state in the NodeRegistrationResponse.

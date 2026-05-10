@@ -2,6 +2,7 @@ using Orchestrator.Persistence;
 using Orchestrator.Models;
 using System.Text.Json;
 using Orchestrator.Interfaces.VmScheduling;
+using Orchestrator.Interfaces;
 
 namespace Orchestrator.Services;
 

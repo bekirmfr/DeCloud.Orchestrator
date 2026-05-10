@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Orchestrator.Services;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 
@@ -47,6 +47,69 @@ public class NodesController : ControllerBase
         {
             _logger.LogError(ex, "Error registering node");
             return BadRequest(ApiResponse<NodeRegistrationResponse>.Fail("REGISTRATION_ERROR", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Signal that this node is ready for VM scheduling.
+    /// Lightweight — JWT-authenticated, no wallet signature required.
+    /// Sets Node.SchedulingReady = true.
+    /// </summary>
+    [HttpPost("{nodeId}/login")]
+    public async Task<ActionResult<ApiResponse<NodeLoginResponse>>> Login(string nodeId)
+    {
+        var claimNodeId = User.FindFirst("node_id")?.Value;
+
+        if (claimNodeId != nodeId)
+        {
+            return Unauthorized(ApiResponse<NodeLoginResponse>.Fail(
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
+        }
+
+        try
+        {
+            var response = await _nodeService.LoginNodeAsync(nodeId);
+            return Ok(ApiResponse<NodeLoginResponse>.Ok(response));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<NodeLoginResponse>.Fail(
+                "NODE_NOT_FOUND", "Node not registered"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<NodeLoginResponse>.Fail(
+                "LOGIN_REJECTED", ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Pause VM scheduling for this node.
+    /// Node continues heartbeating and hosting existing VMs.
+    /// Sets Node.SchedulingReady = false.
+    /// </summary>
+    [HttpPost("{nodeId}/logout")]
+    public async Task<ActionResult<ApiResponse<NodeLogoutResponse>>> Logout(string nodeId)
+    {
+        var claimNodeId = User.FindFirst("node_id")?.Value;
+
+        if (claimNodeId != nodeId)
+        {
+            return Unauthorized(ApiResponse<NodeLogoutResponse>.Fail(
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
+        }
+
+        try
+        {
+            var response = await _nodeService.LogoutNodeAsync(nodeId);
+            return Ok(ApiResponse<NodeLogoutResponse>.Ok(response));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<NodeLogoutResponse>.Fail(
+                "NODE_NOT_FOUND", "Node not registered"));
         }
     }
 
