@@ -1,28 +1,28 @@
 # DeCloud Scheduling
 
-How the orchestrator places tenant VMs onto operator nodes: the data
-flow, the filter and scoring chain, the tunable parameters, and the
-constraint vocabulary that lets tenants express placement requirements
-beyond what flat fields on `VmSpec` can carry.
+How the orchestrator places tenant VMs onto operator nodes: the entry
+paths, the filter chain, the scoring model, the tunable parameters, and
+the constraint vocabulary that lets tenants express all node selection
+requirements.
 
 > **Companion documents:**
 > - [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) — the country/region/zone model the scheduler consumes
-> - [`NODE-LIFECYCLE.md`](NODE-LIFECYCLE.md) — how nodes get into a state where they're schedulable
-> - [`RELEASE-PIPELINE.md`](RELEASE-PIPELINE.md) — how the orchestrator binary that runs this code is produced
+> - [`NODE-LIFECYCLE.md`](NODE-LIFECYCLE.md) — how nodes reach a schedulable state
+> - [`RELEASE-PIPELINE.md`](RELEASE-PIPELINE.md) — how the orchestrator binary is produced
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [The scheduling pipeline](#the-scheduling-pipeline)
-3. [Quality tiers](#quality-tiers)
-4. [Hard filters](#hard-filters)
+2. [Entry paths](#entry-paths)
+3. [The filter chain](#the-filter-chain)
+4. [Quality tiers](#quality-tiers)
 5. [Scoring](#scoring)
 6. [Tunable parameters](#tunable-parameters)
-7. [Constraints (extension to hard filters)](#constraints-extension-to-hard-filters)
+7. [Constraint vocabulary](#constraint-vocabulary)
 8. [API endpoints](#api-endpoints)
-9. [Worked example: EU-only payment processor](#worked-example-eu-only-payment-processor)
+9. [Worked example](#worked-example)
 10. [What is intentionally NOT here](#what-is-intentionally-not-here)
 11. [References](#references)
 
@@ -30,341 +30,197 @@ beyond what flat fields on `VmSpec` can carry.
 
 ## Overview
 
-When a tenant requests a VM, the orchestrator must pick a single node
-from the federated pool to host it. The scheduler does this in two
-phases:
+When a tenant requests a VM, the orchestrator picks a single node from
+the federated pool. The scheduler does this in two phases:
 
-1. **Hard filtering** — eliminate every node that *cannot* host this
-   VM (architecture mismatch, insufficient capacity, region/jurisdiction
-   violation, KVM unavailable, etc.). A failed hard filter is a
-   categorical reject; no scoring happens.
+1. **Hard filtering** — eliminate every node that cannot host this VM.
+   A failed hard filter is a categorical reject; no scoring happens.
 
-2. **Scoring** — among nodes that pass all hard filters, compute a
-   weighted score across multiple dimensions (capacity, load,
-   reputation, locality) and pick the highest.
+2. **Scoring** — among eligible nodes, compute a weighted score across
+   capacity, load, reputation, and locality, then pick the highest.
+
+**The constraint engine is the sole mechanism for node selection
+requirements.** Tenants express all requirements — locality, architecture,
+reputation, jurisdiction, GPU model, or any other per-node predicate —
+as a flat AND list of `{ target, operator, value }` constraints in
+`spec.Constraints`. No bespoke flat fields exist for scheduling. No
+method-level override parameters exist on the scheduler interface.
 
 Configuration lives in MongoDB (`scheduling_configs` collection,
-versioned with history) and is exposed via `ISchedulingConfigService`
-with a 5-minute in-memory cache. Operators with admin role update it
-through `PATCH /api/scheduling-config`; the change takes effect on the
-next cache refresh.
-
-The scheduler is implemented in `VmSchedulingService` and the entry
-point is `SelectBestNodeForVmAsync(spec, tier, preferredRegion,
-preferredZone, requiredArchitecture)`.
+versioned with audit history) and is served by `ISchedulingConfigService`
+with a 5-minute in-memory cache. Operators with the `Admin` role update
+it through `PUT /api/admin/scheduling-config`.
 
 ---
 
-## The scheduling pipeline
+## Entry paths
+
+Three paths reach the scheduler. All converge on the same filter chain.
+
+### Path A — Auto-scheduling (default VM creation)
 
 ```
-                   ┌─────────────────────────────────────┐
-                   │ VmService.CreateVmAsync(spec, tier) │
-                   └──────────────┬──────────────────────┘
-                                  ▼
-                   ┌─────────────────────────────────────┐
-                   │ SelectBestNodeForVmAsync(...)       │
-                   └──────────────┬──────────────────────┘
-                                  ▼
-                   ┌─────────────────────────────────────┐
-                   │ GetAllNodesAsync(NodeStatus.Online) │
-                   └──────────────┬──────────────────────┘
-                                  ▼
-                ┌────────────────────────────────────────────┐
-                │ For each node: ScoreNodeForVmAsync         │
-                │   ┌────────────────────────────────────┐   │
-                │   │ 1. ApplyHardFiltersAsync           │   │
-                │   │    1. Status                       │   │
-                │   │    2. Tier eligibility             │   │
-                │   │    3. Architecture                 │   │
-                │   │    4. Locality (4a–e)              │   │
-                │   │       + Reputation threshold (4f)  │   │
-                │   │    5. GPU mode                     │   │
-                │   │    6. Load average                 │   │
-                │   │    7. Free memory                  │   │
-                │   │    8. Obligations active           │   │
-                │   │       + BlockStore (8.1, replic'd) │   │
-                │   │    9. KVM                          │   │
-                │   │   10. Constraints (Phase B, future)│   │
-                │   │   Reject → score 0, skip rest      │   │
-                │   ├────────────────────────────────────┤   │
-                │   │ 2. CalculateResourceAvailability   │   │
-                │   ├────────────────────────────────────┤   │
-                │   │ 3. Verify VM fits (overcommit)     │   │
-                │   ├────────────────────────────────────┤   │
-                │   │ 4. Check utilization safety        │   │
-                │   ├────────────────────────────────────┤   │
-                │   │ 5. CalculateNodeScores             │   │
-                │   │    - Capacity, Load,               │   │
-                │   │      Reputation, Locality          │   │
-                │   └────────────────────────────────────┘   │
-                └────────────────────────┬───────────────────┘
-                                         ▼
-                          ┌─────────────────────────────┐
-                          │ OrderByDescending(Score)    │
-                          │ → return highest            │
-                          └─────────────────────────────┘
+POST /api/vms  (no targetNodeId)
+  → VmsController.Create
+  → VmService.CreateVmAsync
+      STEP 1: validate spec.Constraints (ValidateSet)
+      STEP 2: name pipeline, quota check, password gen
+      STEP 3: persist VM (status: Pending)
+      STEP 4: TryScheduleVmAsync
+                → _schedulingService.SelectBestNodeForVmAsync(spec, tier)
+                    → GetScoredNodesForVmAsync
+                    → for each Online node: ScoreNodeForVmAsync
+                        → ApplyHardFiltersAsync   ← single filter chain
+                        → score if eligible
+                    → sort by total score, pick highest
 ```
 
-Every step is implemented as a private method on `VmSchedulingService`
-with a clear contract: returns either an eligibility decision or a
-score component. The chain is linear and short-circuits on the first
-hard-filter failure for performance — most rejected nodes pay only
-the FILTER 1–4 cost.
+### Path B — Marketplace-targeted deployment
+
+```
+POST /api/vms  (targetNodeId set)
+  → VmService.CreateVmAsync
+      (same constraint validation and spec steps as Path A)
+      STEP 4: TryScheduleVmAsync
+                → dataStore.GetNodeAsync(targetNodeId)
+                → _schedulingService.ValidateNodeForVmAsync(node, spec, tier)
+                    → ApplyHardFiltersAsync   ← same filter chain, single node
+                    → null = eligible, string = rejection reason
+```
+
+System VMs (Relay, DHT, BlockStore) bypass eligibility checks — they are
+orchestrator-controlled placements targeting a specific node by design.
+
+### Path C — Background migration (error recovery)
+
+```
+VmSchedulerService (BackgroundService, polls every ~10 s)
+  → detects VM in Error state with offline host and no in-flight command
+  → MigrateVmAsync
+      → add ephemeral architecture-stickiness constraint to spec copy:
+          { target: node.architecture, operator: eq, value: sourceNode.Architecture }
+        (NOT persisted on the VM — migration-specific, restored in finally)
+      → _schedulingService.SelectBestNodeForVmAsync(specCopy, tier)
+          → same filter chain as Path A
+```
+
+A VM that booted on an x86_64 node has its overlay disk filled with
+x86_64 binaries. Migration enforces architecture stickiness via a
+constraint so the VM cannot land on an architecturally incompatible node.
+
+### Marketplace browse — NOT scheduling
+
+```
+GET /api/nodes/search
+GET /api/nodes/featured
+  → INodeMarketplaceService
+  → _dataStore.GetAllNodesAsync() + LINQ filter
+  → does NOT call IVmSchedulingService
+```
+
+Browse is an exploration affordance — it shows candidate nodes regardless
+of whether any specific VM could be placed on them. Eligibility is checked
+at deploy time (Path A or B). A node visible in marketplace listings may
+be rejected at deploy if the VM's constraints are not satisfied. This is
+expected and by design.
+
+---
+
+## The filter chain
+
+All three scheduling paths converge on `ApplyHardFiltersAsync` in
+`VmSchedulingService`. It evaluates filters in order, short-circuiting on
+the first failure. The rejection reason is a human-readable string returned
+to the caller (and surfaced in `ScoredNode.RejectionReason`).
+
+```
+ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
+  │
+  ├── FILTER 1: Node status
+  │     node.Status == Online?
+  │     Source: node heartbeat
+  │
+  ├── FILTER 2: Tier eligibility
+  │     node.PerformanceEvaluation.EligibleTiers contains tier?
+  │     Source: NodePerformanceEvaluator at registration
+  │
+  ├── FILTER 5: GPU mode
+  │     spec.GpuMode == Passthrough → node has IOMMU-capable GPU for VFIO?
+  │     spec.GpuMode == Proxied     → node has any GPU?
+  │     spec.GpuMode == None        → (no check)
+  │     Source: spec.GpuMode + node.HardwareInventory
+  │
+  ├── FILTER 6: Load average
+  │     node.LatestMetrics.LoadAverage <= config.Limits.MaxLoadAverage?
+  │     Passes if LatestMetrics is null (no signal to reject on).
+  │     Source: node telemetry
+  │
+  ├── FILTER 7: Free memory
+  │     (node.TotalResources.Memory - node.ReservedResources.Memory) / 1MiB
+  │       >= config.Limits.MinFreeMemoryMb?
+  │     Source: node-side
+  │
+  ├── FILTER 8: Obligations active
+  │     All node.SystemVmObligations have Status == Active?
+  │     A node that hasn't completed platform obligations (DHT, Relay,
+  │     BlockStore, Ingress) is not fully onboarded.
+  │     Source: node-side
+  │
+  ├── FILTER 8.1: BlockStore for replication
+  │     spec.ReplicationFactor > 0 → node has an Active BlockStore obligation?
+  │     A VM requesting replication needs a node that participates in the
+  │     block-storage layer.
+  │     Source: spec.ReplicationFactor + node-side
+  │
+  ├── FILTER 9: KVM available
+  │     node.HardwareInventory.KvmAvailable?
+  │     Source: node-side
+  │
+  └── FILTER 10: Constraints
+        spec.Constraints non-empty?
+        → for each constraint at index i:
+            IConstraintEvaluator.Evaluate(constraint, node)
+            if !passed → "Constraint #i failed: {target} ({actual}) {op} {value}"
+        Source: spec.Constraints (validated at VM creation)
+```
+
+**FILTER 3 (architecture) and FILTER 4 (locality, reputation) do not
+exist as bespoke if-blocks.** All such requirements are expressed via
+`spec.Constraints` and evaluated in FILTER 10. FILTER numbering is
+preserved for historical reference in commit history.
 
 ---
 
 ## Quality tiers
 
-A tier expresses the performance contract a tenant pays for. The
-orchestrator's `SchedulingConfig.Tiers` dictionary defines four:
+Tiers determine overcommit ratios, price multipliers, and node eligibility
+floors. `NodePerformanceEvaluator` assigns each node a set of eligible
+tiers at registration based on its benchmark score.
 
-| Tier | Min benchmark | CPU overcommit | Storage overcommit | Price multiplier | Use case |
-| --- | --- | --- | --- | --- | --- |
-| `Burstable` | 1000 | 4.0 | 2.5 | 0.5× | Dev, test, light workloads |
-| `Balanced` | 1500 | 2.7 | 2.0 | 0.7× | Web servers, databases, AI inference |
-| `Standard` | 2500 | 1.6 | 1.5 | 1.0× | High-traffic apps, real-time processing |
-| `Guaranteed` | 4000 | 1.0 | 1.0 | 1.8× | Mission-critical, financial trading |
+| Tier | CPU overcommit | Storage overcommit | Benchmark floor | Price multiplier |
+|---|---|---|---|---|
+| Burstable | 4.0× | 2.5× | 1 000 | 0.5× |
+| Balanced | 2.7× | 2.0× | 1 500 | 0.7× |
+| Standard | 1.6× | 1.5× | 2 500 | 1.0× |
+| Guaranteed | 1.0× | 1.0× | 4 000 | 1.8× |
 
-A tier maps to:
+`Burstable` is the baseline tier; all nodes that pass the performance
+evaluation qualify for it. A node qualifies for a higher tier when its
+benchmark score meets or exceeds that tier's floor.
 
-- A floor for the node's CPU benchmark score (a node below it can't host this tier)
-- An overcommit ratio used to compute "how much logical CPU capacity does this node expose for this tier"
-- A price multiplier the tenant pays vs. baseline
-
-`NodePerformanceEvaluator` computes which tiers a node is eligible for
-at registration time and stores the list on
-`Node.PerformanceEvaluation.EligibleTiers`. FILTER 2 in
-`ApplyHardFiltersAsync` reads this list directly.
-
----
-
-## Hard filters
-
-Nine categorical checks, evaluated in order. First failure returns a
-human-readable rejection reason; the node is removed from consideration.
-The chain short-circuits on the first failure, so most rejected nodes
-pay only the early-filter cost (FILTERs 1–4 are the cheapest and most
-discriminating).
-
-A tenth filter — Constraints (FILTER 10) — is reserved for the
-constraint engine documented in §7. Phase A landed the foundation;
-Phase B wires it into this chain.
-
-### FILTER 1: Node status
+Compute points per vCPU:
 
 ```
-node.Status == NodeStatus.Online?
+pointsPerVCpu = (tierMinBenchmark / baselineBenchmark)
+              × (baselineOvercommitRatio / tierCpuOvercommitRatio)
 ```
-
-Anything else (`Offline`, `Suspended`, `Maintenance`, etc.) is rejected
-with `"Node not online (status: {Status})"`.
-
-### FILTER 2: Tier eligibility
-
-```
-node.PerformanceEvaluation.EligibleTiers contains <tier>?### FILTER 4: Locality (multi-part)
-```
-
-A `Standard`-tier VM cannot land on a `Burstable`-only node. The set
-of eligible tiers is computed once at node registration and refreshed
-when scheduling config changes (the `NodePerformanceEvaluator` re-runs
-against the new baseline).
-
-### FILTER 3: Architecture (migration arch-stickiness)requiredArchitecture set?  →  NormalizeArchitecture(node) == NormalizeArchitecture(required)?
-
-`x86_64` (`amd64`) and `aarch64` (`arm64`) are normalized via
-`NormalizeArchitecture`. The check fires only when the caller
-explicitly passes a non-empty `requiredArchitecture` parameter to the
-scheduler.
-
-**Currently invoked by exactly one call site: the background migration
-scheduler.** It passes `requiredArchitecture: sourceNode.Architecture`
-to enforce *arch-stickiness* — a VM that booted on an x86_64 node has
-its overlay disk filled with x86_64 binaries; migrating it to an
-aarch64 node would break, so migration constrains the target to the
-same architecture as the source.
-
-**Initial VM creation does NOT pass `requiredArchitecture`.** That's
-intentional, not a missing parameter. `VmSpec` carries no architecture
-field, and the orchestrator's design resolves architecture *post-
-scheduling*:
-
-1. The scheduler picks any compatible node based on tier, capacity,
-   locality, and the rest of the filter chain.
-2. After selection, `VmService.TryScheduleVmAsync` (STEP 6.5) reads
-   `selectedNode.HardwareInventory.Cpu.Architecture` and uses it to
-   filter `template.Artifacts` — only artifacts matching the chosen
-   node's architecture get their `ARTIFACT_URL:{name}` substituted
-   into cloud-init.
-3. The deployed VM receives binaries that match its host node.
-
-This works cleanly for templates that publish multi-arch artifacts
-(e.g., a Go binary built for both `amd64` and `arm64`). It has a
-known gap for templates with single-arch artifacts and for tenant-
-supplied custom images: the scheduler may pick an architecturally
-incompatible node, artifact resolution finds nothing for that arch,
-and deployment fails at boot time with a stale-binary or missing-
-artifact error.
-
-**To express "this template requires x86_64" at scheduling time
-rather than discovering the gap at deploy time, use the constraint
-engine** (FILTER 10, §7) — add to `spec.constraints`:
-
-```json{ "target": "node.architecture", "operator": "eq", "value": "x86_64" }
-
-The constraint causes the scheduler to refuse incompatible nodes
-upfront, surfacing the failure as a structured "Constraint #N failed:
-node.architecture (aarch64) eq x86_64" rather than as a mysterious
-deploy-time error. Template authors with single-arch artifacts should
-include this constraint in their template's spec.
-
-### FILTER 4: Locality and reputation (multi-part)
-
-Six sub-checks, each evaluated only if the corresponding requirement
-is set on `VmSpec`. The first five (4a-e) are locality requirements;
-4f is a tenant-set quality threshold that lives in the same filter
-group because, like locality, it represents a tenant preference rather
-than a node capability.
-
-| Sub-filter | Method parameter | Match against | Semantics |
-| --- | --- | --- | --- |
-| 4d. Required region | `requiredRegion` | `Node.Locality.Region` | Equality |
-| 4e. Required zone | `requiredZone` | `Node.Locality.Zone` | Equality |
-
-> Phase B+.1 / B+.2 lowered the four flat fields (`RequiredJurisdictionTag`,
-> `RequiredCountry`, `ForbiddenCountries`, `MinNodeReputationScore`) to
-> constraints at VM creation. Phase B+.3 removed their legacy if-blocks
-> (formerly 4a, 4b, 4c, 4f) once the Mongo audit confirmed no active VM
-> still used the flat-field path. Those checks now flow through FILTER 10
-> (constraints).
->
-> The `node.reputationScore` constraint target preserves the full reputation
-> formula `(uptimePercent × 0.7) + (successRate × 0.3)` — the same
-> `NodeReputation.Compute` formula that backs the soft scoring path.
->
-> 4d (region) and 4e (zone) survive because their input flows through
-> method-level `requiredRegion` / `requiredZone` parameters rather than
-> spec fields. Lowering them is a separate piece of work that has to
-> harmonise the call sites with constraints — out of Phase B+ scope.
-**Legacy compat** marks sub-filters whose flat fields are lowered to
-constraints at VM creation (Phase B+.1, in `VmService.CreateVmAsync`
-via `LowerLegacyFieldsToConstraints`). Newly-created VMs have these
-flat fields nulled; their checks fire through FILTER 10 (constraints)
-instead. The 4a/4b/4c if-blocks remain in place as a backward-compat
-read path for VMs already persisted in MongoDB before lowering shipped.
-A future cleanup phase removes the legacy if-blocks once production
-data confirms no VM still uses them.
-
-4d (region) and 4e (zone) stay active because they take their values
-from method-level parameters (`requiredRegion`, `requiredZone`) rather
-than spec fields — lowering them requires harmonizing the call-site
-parameters with constraints, which is its own piece of work.
-
-4f (minimum reputation) is now lowered to a `node.reputationScore gte X`
-constraint at VM creation (Phase B+.2). Newly-created VMs have
-`MinNodeReputationScore` zeroed and a constraint added; the if-block
-remains as a legacy-compat read path for VMs persisted before lowering
-shipped.
-
-The reputation formula `(uptimePercent × 0.7) + (successRate × 0.3)` lives
-in `NodeReputation.Compute` (single source of truth shared by FILTER 4f,
-the soft scoring path, and the `node.reputationScore` constraint target).
-The default `MinNodeReputationScore` of 0.3 accepts most healthy nodes;
-tenants raise the floor for compliance or latency-sensitive workloads.
-After lowering, tenants can also express more flexible reputation
-requirements directly via constraints (e.g., combining
-`node.reputationScore gte 0.7` with `node.locality.country eq DE`).
-
-See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the full
-locality model — what each field means, where it comes from, why
-country and region are different things.
-
-### FILTER 5: GPU mode requirement
-
-GPU access modes have different node-capability requirements:
-
-| `VmSpec.GpuMode` | Required of node |
-| --- | --- |
-| `None` | (no filter applied) |
-| `Passthrough` | `SupportsGpu`, `GpuCount > 0`, `HasIommuCapableGpu`, `HasPassthroughCapableGpu` |
-| `Proxied` | `SupportsGpu`, `GpuCount > 0` (no IOMMU needed) |
-
-Passthrough demands a VFIO-capable IOMMU group; proxied mode just needs
-any GPU plus the host-side proxy daemon. Rejection messages identify
-which specific GPU capability is missing on the candidate node.
-
-### FILTER 6: Load average
-node.LatestMetrics.LoadAverage <= config.Limits.MaxLoadAverage?
-
-Default `MaxLoadAverage` is 8.0. Avoids stacking new VMs on already-
-saturated hosts. If `LatestMetrics` is null (node hasn't reported yet),
-the filter passes — there's no signal to reject on.
-
-### FILTER 7: Minimum free memory
-(TotalResources.MemoryBytes - ReservedResources.MemoryBytes) / 1MiB
->= config.Limits.MinFreeMemoryMb?
-
-Default `MinFreeMemoryMb` is 512 MB — a hard reserve that prevents the
-host OS from being squeezed by VM allocations. Memory is never
-overcommitted (unlike CPU and storage), so the math is straight
-subtraction.
-
-### FILTER 8: All node obligations must be Active
-node.SystemVmObligations.All(o => o.Status == SystemVmStatus.Active)?
-
-A node is not fully onboarded until every obligation it was assigned
-(DHT, Relay, BlockStore, Ingress) has reached `Active`. Pending,
-Deploying, or Failed obligations mean the node's infrastructure isn't
-ready to host tenant workloads. Nodes with no obligations (hardware
-below the DHT/Relay/BlockStore thresholds) have an empty list and
-pass this filter trivially.
-
-This filter supersedes the previous standalone BlockStore check —
-`SystemVmReconciliationService` sets `BlockStoreInfo.Status = Active`
-atomically when the BlockStore obligation flips to `Active`, so
-"all obligations Active" implies "BlockStore Active too."
-
-### FILTER 8.1: Active BlockStore required for replicated VMs
-spec.ReplicationFactor > 0  =>  node.BlockStoreInfo.Status == Active?
-
-Sub-filter that applies only when a VM has `ReplicationFactor > 0`.
-Without an active BlockStore on the host node, the lazysync daemon
-has nowhere to push dirty overlay blocks — replication cannot
-function. Ephemeral VMs (`ReplicationFactor == 0`) bypass this check
-and accept data loss on node failure.
-
-This is partly redundant with FILTER 8 today, but documents the
-specific replication invariant separately because it's a categorically
-different reason for rejection (data-safety, not operational-readiness).
-
-### FILTER 9: KVM availability
-node.HardwareInventory.KvmAvailable?
-
-User VMs require hardware virtualization. QEMU TCG software emulation
-is a non-starter — performance is unsuitable for any real workload.
-Non-KVM nodes can still hold operator-side roles (DHT/BlockStore/Relay)
-but never tenant workloads.
-
-### FILTER 10 (planned): Constraints
-
-When a VmSpec carries a `Constraints` list, each constraint is
-evaluated against the candidate node. A failed constraint short-circuits
-with a structured rejection. This is documented separately in
-[§7 Constraints](#constraints-extension-to-hard-filters) below.
-
-Phase A (foundation: types, vocabulary, evaluator, DI registration) has
-landed in code. Phase B (wire-up in `ApplyHardFiltersAsync`, `VmSpec`
-field, lowering of existing flat fields) lands when a concrete tenant
-requirement materializes.
 
 ---
 
 ## Scoring
 
-After hard filters pass, four components contribute to the node's
-total score. Each returns a value in `[0.0, 1.0]`. Weights sum to 1.0
-(enforced by `ScoringWeightsConfig.IsValid`).
+Nodes that pass all hard filters are scored across four dimensions. Each
+returns a value in `[0.0, 1.0]`. The weighted sum determines placement.
 
 ### Capacity score
 
@@ -372,8 +228,9 @@ total score. Each returns a value in `[0.0, 1.0]`. Weights sum to 1.0
 remainingComputePoints / totalComputePoints
 ```
 
-Higher remaining capacity = better. Encourages spreading load and
-keeping nodes from saturating.
+Higher remaining capacity = better. Encourages spreading load across the
+pool and keeping nodes from saturating. Falls to 0.0 when remaining
+capacity is zero.
 
 ### Load score
 
@@ -381,8 +238,8 @@ keeping nodes from saturating.
 max(0, 1.0 - loadAverage / 16.0)
 ```
 
-Lower current load = better. Falls back to neutral 0.5 if metrics
-unavailable.
+Lower current load = better. Avoids stacking new VMs on already-saturated
+hosts. Neutral 0.5 when `LatestMetrics` is null.
 
 ### Reputation score
 
@@ -390,23 +247,24 @@ unavailable.
 (uptimePercent × 0.7) + (successRate × 0.3)
 ```
 
-Where `successRate = successfulVmCompletions / totalVmsHosted` (or 0.5
-for new nodes). Rewards reliable history.
+Where `successRate = successfulVmCompletions / totalVmsHosted`, or `0.5`
+for new nodes (neutral — neither rewarded nor penalised before they have a
+track record).
+
+Single source of truth: `NodeReputation.Compute(node)` in
+`src/Orchestrator/Services/VmScheduling/NodeReputation.cs`. Both the
+scoring path and the `node.reputationScore` constraint target use this
+method.
 
 ### Locality score
 
-```
-1.0 — same zone (implies same region)
-0.8 — same region, any zone
-0.5 — adjacent region per region-adjacency.json
-0.3 — same continent
-0.0 — no relationship
-0.5 — no preference specified (neutral)
-```
-
-Implementation in `CalculateLocalityScore`. The adjacency graph is the
-hand-curated `region-adjacency.json` — see `LOCALITY_STANDARDS.md` for
-the topology rationale.
+**Currently neutral (0.5) for all nodes.** Hard locality requirements
+(region, zone, country, jurisdiction) are expressed as constraints in
+FILTER 10 and evaluated as categorical hard filters. Soft locality
+preferences — graduated rewards for proximity, adjacency, or
+same-continent placement — are a deferred design concern. When
+implemented, they will use a dedicated soft-preference mechanism that
+feeds the locality score component without changing the hard-filter chain.
 
 ### Default weights
 
@@ -414,111 +272,64 @@ the topology rationale.
 Capacity:    0.40
 Load:        0.25
 Reputation:  0.20
-Locality:    0.15
+Locality:    0.15   (weight retained; score is neutral until soft preferences ship)
 ```
 
-Operators can change these via `PATCH /api/scheduling-config`. A
-config change increments `SchedulingConfig.Version` and is recorded
-to history collection for audit. Nodes pick up the new weights on
-next scheduling decision (cache TTL: 5 minutes).
+Operators change weights via `PUT /api/admin/scheduling-config`. The
+update increments `SchedulingConfig.Version`, archives the previous
+version, and takes effect on the next scheduling decision (cache TTL:
+5 minutes). Weights must sum to 1.0; validation rejects any update that
+violates this.
 
 ---
 
 ## Tunable parameters
 
-Everything in the table below lives in `SchedulingConfig` (MongoDB,
-versioned, audit-logged). Defaults are conservative; production
-clusters may need to adjust based on workload mix.
+Everything below lives in `SchedulingConfig` in MongoDB — versioned,
+audit-logged, and updateable without a deploy. Defaults are conservative.
 
-| Parameter | Default | Type | Effect |
-| --- | --- | --- | --- |
-| `BaselineBenchmark` | 1000 | int | Reference benchmark score for "1 point per core" |
-| `BaselineOvercommitRatio` | 4.0 | double | Used in `NodeCapacityCalculator` for max-tier capacity |
-| `MaxPerformanceMultiplier` | 20.0 | double | Caps benchmark advantage of fast hardware |
-| `Tiers[t].MinimumBenchmark` | varies | int | Floor for tier eligibility |
-| `Tiers[t].CpuOvercommitRatio` | varies | double | Logical CPU capacity multiplier per tier |
-| `Tiers[t].StorageOvercommitRatio` | varies | double | qcow2 thin-provisioning multiplier |
-| `Tiers[t].PriceMultiplier` | varies | decimal | Tenant pays this × baseline rate |
-| `Limits.MaxUtilizationPercent` | 90.0 | double | Reject if placement would exceed this |
-| `Limits.MinFreeMemoryMb` | 512 | long | Reserve always-free RAM |
-| `Limits.MaxLoadAverage` | 8.0 | double | Avoid nodes above this load |
-| `Limits.PreferLocalRegion` | true | bool | Soft preference for region match |
-| `Weights.Capacity` | 0.40 | double | Score weight |
-| `Weights.Load` | 0.25 | double | Score weight |
-| `Weights.Reputation` | 0.20 | double | Score weight |
-| `Weights.Locality` | 0.15 | double | Score weight |
+| Parameter | Default | Effect |
+|---|---|---|
+| `BaselineBenchmark` | 1 000 | Reference benchmark for "1 point per core" |
+| `BaselineOvercommitRatio` | 4.0 | Burstable-tier overcommit, used in capacity calculation |
+| `MaxPerformanceMultiplier` | 20.0 | Caps benchmark advantage of exceptionally fast hardware |
+| `Tiers[t].MinimumBenchmark` | varies | Node benchmark floor for tier eligibility |
+| `Tiers[t].CpuOvercommitRatio` | varies | Logical CPU capacity multiplier |
+| `Tiers[t].StorageOvercommitRatio` | varies | qcow2 thin-provisioning multiplier |
+| `Tiers[t].PriceMultiplier` | varies | Tenant pays this × baseline rate |
+| `Limits.MaxUtilizationPercent` | 90.0 | Reject if VM placement would push node above this |
+| `Limits.MinFreeMemoryMb` | 512 | Always-free RAM reservation |
+| `Limits.MaxLoadAverage` | 8.0 | Reject nodes above this 1-minute load |
+| `Weights.Capacity` | 0.40 | Scoring weight |
+| `Weights.Load` | 0.25 | Scoring weight |
+| `Weights.Reputation` | 0.20 | Scoring weight |
+| `Weights.Locality` | 0.15 | Scoring weight |
 
-`Weights` must sum to 1.0; validation rejects any update that violates
-this. Tier configurations must include `Burstable` (used as baseline);
-validation rejects updates that omit it.
+`Burstable` tier must always be present in the configuration (it is the
+baseline for capacity calculations); validation rejects any update that
+omits it.
 
 ---
 
-## Constraints (extension to hard filters)
+## Constraint vocabulary
 
-> **Status:** designed, not yet implemented. This section is the
-> contract for what gets built.
+Constraints are the sole mechanism for expressing VM node-selection
+requirements. All entries in `spec.Constraints` are evaluated as a flat
+AND in FILTER 10. Validated at VM creation; malformed entries are rejected
+before any resource is allocated.
 
-### Why
-
-Today's hard filters are nine categorical checks (see §4); four of them
-respond to fields tenants set directly on `VmSpec`. Each new tenant
-requirement gets a new flat field on `VmSpec` and a new `if` block in
-`ApplyHardFiltersAsync`. The result already shows strain:
-`RequiredJurisdictionTag`, `RequiredCountry`, `ForbiddenCountries`,
-`Region`, `Zone`, `RequiredArchitecture`, `MinNodeReputationScore` —
-seven scheduling fields and counting, each with bespoke handling.
-
-A constraint is a uniform shape that replaces field-sprawl with
-vocabulary:
-
-```json
-{
-  "target":   "node.locality.country",
-  "operator": "in",
-  "value":    ["DE", "FR", "NL"]
-}
-```
-
-A `VmSpec.Constraints` list is a flat AND of these. Constraints
-evaluate as a sixth hard filter, after the existing five. New tenant
-requirements add vocabulary entries (a new operator or target),
-not C# fields.
-
-### Scope (v1)
-
-Explicit, narrow:
-
-- **VM-side only.** A VmSpec carries constraints; the orchestrator
-  evaluates them against each candidate node. Node-side constraints
-  ("operator policies") are a separate future feature and not included
-  here.
-- **Hard filters only.** Constraints are categorical AND checks. They
-  do not feed into scoring — soft preferences continue to use the
-  existing weighted scorer.
-- **Flat AND composition.** A constraint set is a list. All must pass.
-  No OR, no nesting, no NOT-groups. Negation expressible per-constraint
-  via operators (`not_in`, `not_contains`, etc.).
-- **Static fields only.** Constraints target fields persisted on
-  `Node` and `Node.Locality`. Derived/computed values (current
-  utilization, runtime reputation deltas, computed compute-points)
-  are not addressable as constraint targets in v1 — they belong to
-  scoring or to dedicated checks.
-- **Fixed vocabulary.** Targets and operators come from a
-  build-time-defined enum. Operators cannot define new ones at runtime.
-
-### Constraint shape
+### Wire shape
 
 ```csharp
 public class Constraint
 {
-    public required string Target   { get; set; }   // e.g. "node.locality.country"
-    public required string Operator { get; set; }   // e.g. "in"
-    public required object Value    { get; set; }   // type depends on target+operator
+    public required string  Target   { get; set; }  // e.g. "node.locality.country"
+    public required string  Operator { get; set; }  // e.g. "in"
+    public required object? Value    { get; set; }  // type depends on target + operator
 }
 ```
 
-JSON form on the wire:
+JSON form:
 
 ```json
 { "target": "node.locality.jurisdictionTags",
@@ -526,413 +337,349 @@ JSON form on the wire:
   "value": ["EU", "Schengen"] }
 ```
 
-`VmSpec` gains a single new field:
+### Typed constants
+
+All target and operator names are available as compile-time constants in
+`src/Orchestrator/Models/ConstraintVocabulary.cs`. Use these instead of
+string literals everywhere a constraint is constructed or compared.
 
 ```csharp
-public List<Constraint>? Constraints { get; set; }
+// Correct — compile-time constant, refactor-safe
+new Constraint
+{
+    Target   = ConstraintTargets.Node.Locality.Country,
+    Operator = ConstraintOperators.In,
+    Value    = new[] { "DE", "FR", "NL" }
+}
+
+// Wrong — string literal, breaks silently on typo
+new Constraint { Target = "node.locality.cuntry", Operator = "in", ... }
 ```
 
-Null or empty = no constraints (existing behavior). Non-empty = each
-constraint must evaluate to true against the candidate node.
+### Target vocabulary
 
-### Target vocabulary (v1)
+| Constant | Wire value | Node source | Type |
+|---|---|---|---|
+| `ConstraintTargets.Node.Country` | `node.country` | `Node.Locality.Country` | string (alias) |
+| `ConstraintTargets.Node.Locality.Country` | `node.locality.country` | `Node.Locality.Country` | string |
+| `ConstraintTargets.Node.Locality.Region` | `node.locality.region` | `Node.Locality.Region` | string |
+| `ConstraintTargets.Node.Locality.Zone` | `node.locality.zone` | `Node.Locality.Zone` | string |
+| `ConstraintTargets.Node.Locality.JurisdictionTags` | `node.locality.jurisdictionTags` | `Node.Locality.JurisdictionTags` | string[] |
+| `ConstraintTargets.Node.Locality.LocationMismatch` | `node.locality.locationMismatch` | `Node.Locality.LocationMismatch` | bool |
+| `ConstraintTargets.Node.Architecture` | `node.architecture` | `Node.Architecture` | string |
+| `ConstraintTargets.Node.KvmAvailable` | `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
+| `ConstraintTargets.Node.GpuModel` | `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` | string |
+| `ConstraintTargets.Node.Tier` | `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] |
+| `ConstraintTargets.Node.BenchmarkScore` | `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
+| `ConstraintTargets.Node.UptimePercent` | `node.uptimePercent` | `Node.UptimePercentage` | numeric |
+| `ConstraintTargets.Node.ReputationScore` | `node.reputationScore` | `NodeReputation.Compute(node)` | numeric |
+| `ConstraintTargets.Node.Tags` | `node.tags` | `Node.Tags` | string[] |
 
-Whitelisted, build-time enum. Each entry maps to a property on `Node`
-or `Node.Locality`, with declared type:
+`node.country` and `node.locality.country` resolve to the same field.
+Prefer `ConstraintTargets.Node.Locality.Country` in new code.
 
-| Target | Source | Type |
-| --- | --- | --- |
-| `node.country` | `Node.Locality.Country` | string |
-| `node.locality.country` | `Node.Locality.Country` | string (alias) |
-| `node.locality.region` | `Node.Locality.Region` | string |
-| `node.locality.zone` | `Node.Locality.Zone` | string |
-| `node.locality.jurisdictionTags` | `Node.Locality.JurisdictionTags` | string[] |
-| `node.locality.locationMismatch` | `Node.Locality.LocationMismatch` | bool |
-| `node.architecture` | `Node.Architecture` | string |
-| `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] (tier names) |
-| `node.tags` | `Node.Tags` | string[] |
-| `node.uptimePercent` | `Node.UptimePercentage` | double |
-| `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | int |
-| `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` (first GPU; null if no GPUs) | string |
-| `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
+Use `ConstraintTargets.Node.ReputationScore` when the composite reputation
+measure matters; use `ConstraintTargets.Node.UptimePercent` when only
+uptime matters.
 
-New targets are added by editing `ConstraintTarget` enum + extractor
-table. Adding a target is a deliberate code change, not a runtime
-configuration. This is a feature, not a bug — it bounds the surface
-area and makes every supported target documentable.
+Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
+(2) a `TargetDescriptor` entry in `ConstraintEvaluator.BuildTargetRegistry`,
+(3) an entry in this table.
 
-### Operator vocabulary (v1)
+### Operator vocabulary
 
-| Operator | Value type vs target type | Semantics |
-| --- | --- | --- |
-| `eq` | scalar = scalar | Equality (case-insensitive for strings) |
-| `neq` | scalar ≠ scalar | Negation of `eq` |
-| `in` | scalar ∈ list | Member of allowed list |
-| `not_in` | scalar ∉ list | Not in disallowed list |
-| `contains` | list ⊇ {scalar} | Target list contains the value |
-| `not_contains` | list ⊉ {scalar} | Target list does not contain the value |
-| `contains_all` | list ⊇ list | Target list is a superset of value list |
-| `contains_any` | list ∩ list ≠ ∅ | Any overlap |
-| `contains_none` | list ∩ list = ∅ | No overlap |
-| `gte` | numeric ≥ numeric | Greater-or-equal |
-| `lte` | numeric ≤ numeric | Less-or-equal |
-| `gt` | numeric > numeric | Strictly greater |
-| `lt` | numeric < numeric | Strictly less |
-| **Domain operators** | | |
-| `adjacent_to` | region ↔ region | Per `region-adjacency.json` |
-| `same_continent_as` | region ↔ region | Continent equality |
-| `has_jurisdiction_tag` | country → tag | Country's jurisdictionTags contains value |
-
-Each `(target_type, operator, value_type)` triple has explicit
-type-compatibility rules enforced at validation time. A constraint
-with `node.country` (string) and `gte` (numeric op) is rejected
-before scheduling — the scheduler never sees malformed constraints.
+| Constant | Wire value | Semantics | Compatible types |
+|---|---|---|---|
+| `ConstraintOperators.Eq` | `eq` | Equality (case-insensitive for strings) | string, numeric, bool |
+| `ConstraintOperators.Neq` | `neq` | Inequality | string, numeric, bool |
+| `ConstraintOperators.In` | `in` | Scalar is a member of configured list | string, numeric |
+| `ConstraintOperators.NotIn` | `not_in` | Scalar is not a member of configured list | string, numeric |
+| `ConstraintOperators.Contains` | `contains` | Target list contains the configured scalar | string[] |
+| `ConstraintOperators.NotContains` | `not_contains` | Target list does not contain configured scalar | string[] |
+| `ConstraintOperators.ContainsAll` | `contains_all` | Target list is a superset of configured list | string[] |
+| `ConstraintOperators.ContainsAny` | `contains_any` | Target list and configured list overlap | string[] |
+| `ConstraintOperators.ContainsNone` | `contains_none` | Target list and configured list do not overlap | string[] |
+| `ConstraintOperators.Gte` | `gte` | Greater than or equal | numeric |
+| `ConstraintOperators.Lte` | `lte` | Less than or equal | numeric |
+| `ConstraintOperators.Gt` | `gt` | Strictly greater than | numeric |
+| `ConstraintOperators.Lt` | `lt` | Strictly less than | numeric |
+| `ConstraintOperators.AdjacentTo` | `adjacent_to` | Node's region is adjacent to configured region per `region-adjacency.json` | string (region) |
+| `ConstraintOperators.SameContinentAs` | `same_continent_as` | Node's region shares a continent with configured region | string (region) |
+| `ConstraintOperators.HasJurisdictionTag` | `has_jurisdiction_tag` | Node's country carries the configured supranational tag | string (country) |
 
 ### Validation
 
-Constraints are validated at VM creation, not at scheduling time:
+Constraints are validated at VM creation in `VmService.CreateVmAsync`
+via `IConstraintEvaluator.ValidateSet` — before any resource is allocated,
+before scheduling is attempted. Validation checks:
 
-- Unknown `target` → reject with `"unknown constraint target '{target}'"`
-- Unknown `operator` → reject with `"unknown operator '{operator}'"`
-- Type mismatch → reject with `"operator '{op}' is not valid for target '{tgt}' (expected {type1}, got {type2})"`
-- Malformed `value` (e.g., `in` with scalar instead of list) → reject
+- Unknown `target` → reject with `"Unknown target '...'"`
+- Unknown `operator` → reject with `"Unknown operator '...'"`
+- Type incompatibility → reject with `"Operator '...' is not compatible with target '...'"`
+- Malformed `value` (e.g., `in` with a scalar instead of a list) → reject
 
-Errors include the constraint's index in the list so tenants can
-locate the offending entry. The scheduler trusts that anything in
-`spec.Constraints` is well-formed; runtime failures here would
-indicate a bug in validation, not a tenant input issue.
+Error messages include the constraint index so tenants can locate the
+offending entry: `"Constraint #2: Unknown target 'node.foobar'"`.
 
-### Evaluation
-
-Implementation lives in `IConstraintEvaluator`, called from
-`ApplyHardFiltersAsync` after FILTER 5 (KVM):
+### FILTER 10 evaluation loop
 
 ```csharp
 if (spec.Constraints is { Count: > 0 })
 {
-    foreach (var (constraint, index) in spec.Constraints.Select((c, i) => (c, i)))
+    for (var i = 0; i < spec.Constraints.Count; i++)
     {
-        var result = _constraintEvaluator.Evaluate(constraint, node);
+        var result = _constraintEvaluator.Evaluate(spec.Constraints[i], node);
         if (!result.Passed)
-            return $"Constraint #{index} failed: {result.RejectionReason}";
+            return $"Constraint #{i} failed: {result.RejectionReason}";
     }
 }
 ```
 
-The evaluator does:
-1. Look up the target's extractor function from the vocabulary table
-2. Extract the actual value from `node`
-3. Look up the operator's evaluator function
-4. Compute the boolean result with a structured rejection reason on failure
+The evaluator is a singleton; its target and operator registries are
+built once at construction and are immutable and thread-safe. The hot
+path is: look up target extractor → extract node value → look up operator
+evaluator → compare actual vs configured value.
 
-Rejection reasons are designed for operator + tenant readability:
+### Updating constraints on a stranded VM
 
-```
-"Constraint #2 failed: node.locality.country (BR) not_in [DE, FR, NL]"
-"Constraint #0 failed: node.locality.jurisdictionTags ([NATO, EU-CustomsUnion])
-                       does not contain_all [EU, Schengen]"
-```
-
-### Migration of existing fields
-
-The flat fields on `VmSpec` (`RequiredJurisdictionTag`,
-`RequiredCountry`, `ForbiddenCountries`, etc.) stay. Server-side, at
-VM creation, they lower into constraints:
+A tenant whose VM is in `Error` state waiting for migration can update
+its scheduling constraints via:
 
 ```
-RequiredJurisdictionTag: "EU"
-  ↓ lowers to
-{ target: "node.locality.jurisdictionTags",
-  operator: "contains",
-  value: "EU" }
-
-ForbiddenCountries: ["RU", "BY"]
-  ↓ lowers to
-{ target: "node.locality.country",
-  operator: "not_in",
-  value: ["RU", "BY"] }
+PATCH /api/vms/{vmId}/scheduling
+Body: { "constraints": [ ... ] }
 ```
 
-A tenant request can use the flat fields, the structured `Constraints`
-list, or both — both forms produce the same evaluation result. New
-clients prefer `Constraints`; the flat fields stay as wire-format
-sugar for the common cases. No deprecation timeline; both forms work
-indefinitely.
+The full constraint list is replaced atomically. The migration scheduler
+picks up the change on its next scan cycle (≤10 s). Validation runs
+before saving; malformed entries are rejected. Passing `null` or an
+empty list removes all constraints (VM will migrate to any eligible node).
 
-### Logging and debuggability
-
-Every scheduling decision logs structured information per node:
-
-```
-Node {NodeId} ({Architecture}, {Region}/{Zone}) — Score: 0.00,
-Capacity: 0.00, Load: 0.00, Reputation: 0.00, Locality: 0.00,
-Rejection: "Constraint #1 failed: node.locality.country (BR) not_in [DE, FR, NL]"
-```
-
-The existing log format already prints `RejectionReason`. Constraint
-failures slot in here without adding new infrastructure.
-
-A future `decloud vm explain <vm-id>` command (deferred) would surface
-the per-node, per-constraint matrix to tenants debugging "why didn't
-my VM place" — but the underlying log entries are already sufficient
-to answer this question via orchestrator logs.
-
-### Extension points (deferred, documented for future work)
-
-The v1 design has explicit hooks for things we know will come:
-
-- **Composite logic (AND/OR/NOT trees).** Today's `Constraints` is
-  `List<Constraint>` evaluating as flat AND. A future `ConstraintTree`
-  field can carry nested expressions; when both fields are present,
-  the flat list lowers to `{ op: and, rules: [...] }` and merges with
-  the tree. No breaking change to existing wire format.
-- **Derived/runtime values.** When a use case demands `computePoints
-  >= 100` as a hard filter, a `NodeScoringContext` pre-computation
-  step is introduced. Both constraint evaluation and scoring read
-  from it. Static-field constraints are unaffected.
-- **Node-side constraints.** A `Node.Constraints` field would let
-  operators declare placement policies ("only Guaranteed tier",
-  "no GPU workloads"). The evaluator already accepts
-  `(constraint, node, vmSpec)` so the inverse direction is one
-  call site change plus the new field.
-
-These are *plug-in points*, not v1 work. Each has a clear shape and
-a known place to add it; none are blocked by v1 decisions.
+Only allowed in `Error` state. The endpoint requires ownership or `Admin`
+role.
 
 ---
 
 ## API endpoints
 
-All scheduling-config endpoints live under `/api/admin/` and require
-the `Admin` role (enforced by `[Authorize(Roles = "Admin")]` at the
-controller level). Anonymous access is impossible by construction.
+### Scheduling configuration (Admin only)
 
-### `GET /api/admin/scheduling-config`
+All endpoints under `/api/admin/` require the `Admin` role. Authentication
+is enforced at the controller level.
 
-Returns the current `SchedulingConfig`.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/admin/scheduling-config` | Current configuration |
+| `PUT` | `/api/admin/scheduling-config` | Replace configuration (validates, archives previous, increments version) |
+| `POST` | `/api/admin/scheduling-config/reload` | Force cache flush |
+| `GET` | `/api/admin/scheduling-config/history?limit=10` | N most recent archived configurations |
+| `POST` | `/api/admin/scheduling-config/validate` | Validate a candidate config without persisting |
 
-### `PUT /api/admin/scheduling-config`
+### VM scheduling constraint update
 
-Updates the configuration. Validates before persisting; archives the
-previous version with `_id = history_{version}_{timestamp}`. Increments
-`Version`. Cache invalidated immediately. Validation failures return
-400 with the specific rule that failed.
+| Method | Path | Description |
+|---|---|---|
+| `PATCH` | `/api/vms/{vmId}/scheduling` | Replace scheduling constraints on a stranded VM (Error state only) |
 
-### `POST /api/admin/scheduling-config/reload`
+### Locality reference (read-only, anonymous)
 
-Forces cache flush. Useful after manual MongoDB edits (rare; not
-recommended).
+See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the country/region
+model. Reference endpoints:
 
-### `GET /api/admin/scheduling-config/history?limit=10`
-
-Returns the N most recent archived configurations, sorted by
-`UpdatedAt` descending. `limit` is bounded to `[1, 100]`.
-
-### `POST /api/admin/scheduling-config/validate`
-
-Validates a candidate configuration without persisting it. Useful for
-testing changes before applying them. Returns 200 with `{IsValid: true}`
-on success, 400 with `{IsValid: false, Errors: [...]}` on failure.
-
-### `GET /api/locality/{countries,regions,suggest/{country}}`
-
-Read-only locality reference data. See `LOCALITY_STANDARDS.md` for
-contract.
-
-### Constraints — no new endpoints
-
-Constraints flow through the existing `POST /api/vms` (VM creation)
-and `GET /api/vms/{id}/scheduling-explanation` (planned) endpoints.
-No constraint-management API; constraints are properties of the VM
-spec, not first-class resources.
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/locality/countries` | Full country list with jurisdiction tags |
+| `GET` | `/api/locality/regions` | Full region list |
+| `GET` | `/api/locality/suggest/{country}` | Suggested region for a country code |
 
 ---
 
-## Worked example: EU-only payment processor
+## Worked example
 
-A hypothetical fintech tenant wants to deploy a payment-processing VM
-with these requirements:
+A fintech tenant needs a payment-processing VM with strict placement
+requirements:
 
 1. Must run in an EU member state (GDPR, PSD2)
-2. Must NOT run in countries on their internal exclusion list (RU, BY)
-3. Must have a Guaranteed-tier node (no overcommit, predictable latency)
-4. Operator must have ≥99% uptime over the rolling window
-5. Must NOT be a node flagged with location mismatch (declared locality
-   differs from IP-derived) — they want strict jurisdictional certainty
-6. Prefers `eu-central` region for proximity to their existing infra
-7. If `eu-central` capacity exhausted, accepts `eu-west` or `eu-north`
-   over going to `eu-east`
+2. Must not run in countries on their internal exclusion list
+3. Must have a Guaranteed-tier node (predictable performance)
+4. Operator must have ≥ 99 % uptime
+5. Must not be on a node with a location mismatch (IP-derived country
+   disagrees with declared country — they need jurisdictional certainty)
+6. Must run in `eu-central` or `eu-west` specifically
 
-### How they'd express it
+All requirements are expressed in `spec.Constraints`. Constraints are
+built using the typed constants from `ConstraintVocabulary.cs`:
 
-Mixing flat fields (existing) and constraints (new):
+```csharp
+var constraints = new List<Constraint>
+{
+    // C0 — EU jurisdiction (GDPR, PSD2)
+    new() {
+        Target   = ConstraintTargets.Node.Locality.JurisdictionTags,
+        Operator = ConstraintOperators.Contains,
+        Value    = "EU"
+    },
+    // C1 — country exclusion list
+    new() {
+        Target   = ConstraintTargets.Node.Locality.Country,
+        Operator = ConstraintOperators.NotIn,
+        Value    = new[] { "RU", "BY", "CN" }
+    },
+    // C2 — operator reliability floor
+    new() {
+        Target   = ConstraintTargets.Node.UptimePercent,
+        Operator = ConstraintOperators.Gte,
+        Value    = 99.0
+    },
+    // C3 — jurisdictional certainty (no IP/declared country mismatch)
+    new() {
+        Target   = ConstraintTargets.Node.Locality.LocationMismatch,
+        Operator = ConstraintOperators.Eq,
+        Value    = false
+    },
+    // C4 — region preference as hard requirement
+    new() {
+        Target   = ConstraintTargets.Node.Locality.Region,
+        Operator = ConstraintOperators.In,
+        Value    = new[] { "eu-central", "eu-west" }
+    },
+};
+```
+
+Over the wire (JSON), each constant resolves to its string value — see
+the vocabulary table in §7 for the mapping. The JSON form a tenant sends
+in `POST /api/vms` is:
 
 ```json
 {
   "name": "payment-processor-prod-1",
   "spec": {
-    "vCpus": 4,
-    "memoryMB": 8192,
-    "diskGB": 100,
+    "virtualCpuCores": 4,
+    "memoryBytes": 8589934592,
+    "diskBytes": 107374182400,
     "qualityTier": "Guaranteed",
-
-    "region":           "eu-central",
-
     "constraints": [
-      { "target": "node.locality.jurisdictionTags",
-        "operator": "contains",
-        "value": "EU" },
-
-      { "target": "node.locality.country",
-        "operator": "not_in",
-        "value": ["RU", "BY"] },
-
-      { "target": "node.uptimePercent",
-        "operator": "gte",
-        "value": 99.0 },
-
-      { "target": "node.locality.locationMismatch",
-        "operator": "eq",
-        "value": false }
+      { "target": "node.locality.jurisdictionTags", "operator": "contains",  "value": "EU" },
+      { "target": "node.locality.country",          "operator": "not_in",    "value": ["RU", "BY", "CN"] },
+      { "target": "node.uptimePercent",             "operator": "gte",       "value": 99.0 },
+      { "target": "node.locality.locationMismatch", "operator": "eq",        "value": false },
+      { "target": "node.locality.region",           "operator": "in",        "value": ["eu-central", "eu-west"] }
     ]
   }
 }
 ```
 
 ### What the scheduler does
-### What the scheduler does
 
-1. **FILTER 1 (Status):** drops offline nodes
+1. **FILTER 1 (Status):** drops offline nodes.
 2. **FILTER 2 (Tier):** drops nodes not eligible for `Guaranteed`
-3. **FILTER 3 (Architecture):** no requirement specified — passes all
-4. **FILTER 4 (Locality + reputation):**
-   - 4d (Region equality on `eu-central`): drops every node not in
-     `eu-central`
-   - 4f (`MinNodeReputationScore`): default 0.3 floor passes most
-     nodes (tenant could raise this for stricter gating)
-5. **FILTER 5 (GPU mode):** `GpuMode == None` — no GPU requirement
-6. **FILTER 6 (Load):** drops nodes whose 1-min load exceeds the
-   configured ceiling (default 8.0)
-7. **FILTER 7 (Memory):** drops nodes whose free RAM is below the
-   floor (default 512 MB)
-8. **FILTER 8 (Obligations):** drops nodes with any non-Active
-   system-VM obligation
-9. **FILTER 9 (KVM):** drops non-KVM nodes (irrelevant here —
-   Guaranteed tier already requires KVM)
-10. **FILTER 10 (Constraints, Phase B):**
-    - C0: `jurisdictionTags contains EU` — drops any non-EU node that
-      somehow passed (shouldn't happen if region was `eu-central`, but
-      belt-and-suspenders)
-    - C1: `country not_in [RU, BY]` — irrelevant in `eu-central` but
-      evaluated anyway
-    - C2: `uptimePercent gte 99.0` — drops unreliable operators
-    - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes
+   (benchmark < 4 000).
+3. **FILTER 5 (GPU):** `GpuMode` not set → passes all nodes.
+4. **FILTER 6 (Load):** drops nodes above the load ceiling (default 8.0).
+5. **FILTER 7 (Memory):** drops nodes below the free-memory floor (default 512 MB).
+6. **FILTER 8 (Obligations):** drops nodes with any non-Active system obligation.
+7. **FILTER 8.1 (BlockStore):** `ReplicationFactor` not set → passes all nodes.
+8. **FILTER 9 (KVM):** drops non-KVM nodes.
+9. **FILTER 10 (Constraints):**
+   - C0: `jurisdictionTags contains EU` — drops non-EU nodes.
+   - C1: `country not_in [RU, BY, CN]` — drops excluded countries.
+   - C2: `uptimePercent gte 99.0` — drops unreliable operators.
+   - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes.
+   - C4: `region in [eu-central, eu-west]` — restricts to preferred regions.
 
-11. **Scoring (against survivors):** `Capacity 0.40 + Load 0.25 +
-    Reputation 0.20 + Locality 0.15`. Locality scores `1.0` for
-    any `eu-central` node (region match). The scheduler picks the
-    highest total.
+Eligible survivors are scored (capacity 0.40 + load 0.25 + reputation
+0.20 + locality 0.15 neutral). The node with the highest total score
+wins.
 
-### What if `eu-central` is exhausted?
+### Adding architecture pinning
 
-Current behavior: hard region filter drops all non-`eu-central`
-candidates. If none survive, scheduling fails with "no eligible
-nodes."
+If this tenant's template only publishes x86_64 artifacts, add one more
+constraint using the typed constant:
 
-For the "fall back to eu-west / eu-north" preference to work, the
-tenant has two choices:
+```csharp
+new() {
+    Target   = ConstraintTargets.Node.Architecture,
+    Operator = ConstraintOperators.Eq,
+    Value    = "x86_64"
+}
+```
 
-- **Don't set `region`.** Let scoring's locality score handle the
-  preference: `0.8` for region match, `0.5` for adjacent regions.
-  The scheduler will prefer `eu-central` when available, fall back to
-  `eu-west` (adjacent) over `eu-east` (also adjacent — see the graph),
-  and so on. But the *constraints* still ensure jurisdictional
-  correctness regardless of which region wins.
+Wire form: `{ "target": "node.architecture", "operator": "eq", "value": "x86_64" }`.
 
-- **Wait for composite logic (v2).** A future `ConstraintTree` could
-  express `region in [eu-central, eu-west, eu-north]` as a hard filter
-  with explicit fallback ordering. Not in v1.
-
-For most tenants, the first option (preference via scoring) is the
-right answer — it gives flexibility while still preferring the named
-region.
-
-### Why this case justifies constraints
-
-Without constraints, expressing "uptime ≥ 99%" would require a new
-flat field `MinUptimePercent` on `VmSpec`, plus its handling in
-`ApplyHardFiltersAsync`. Same for `locationMismatch eq false`. Two
-new fields for one tenant. With constraints, the existing vocabulary
-(target `node.uptimePercent`, operator `gte`, value `99.0`) handles
-both new requirements without touching `VmSpec` or the filter chain.
-
-The next tenant might want `gpuModel not_in [consumer-grade-list]`
-or `tags contains_any [pci-dss-certified]`. Same engine, no new
-fields.
+Multi-arch templates do not need this — architecture is resolved
+post-scheduling from the selected node's `HardwareInventory.Cpu.Architecture`,
+and artifact URLs are substituted accordingly.
 
 ---
 
 ## What is intentionally NOT here
 
-- **Marketplace browse and node listings.** `GET /api/nodes/search`,
-  `GET /api/nodes/featured`, and the marketplace dashboard's filter
-  logic do NOT run through this scheduler's filter chain. Those
-  endpoints implement separate filter logic in
-  `INodeMarketplaceService` (`Region`, `Tags`, `RequiresGpu`,
-  `MinUptimePercent`, etc.) intended for browsing — they show all
-  candidate nodes that match the browse filters, regardless of whether
-  any specific VM could actually be placed on them.
+- **Marketplace browse.** `GET /api/nodes/search` and `GET /api/nodes/featured`
+  do not run through the scheduler's filter chain. They are a browse
+  affordance backed by `INodeMarketplaceService` with its own, independent
+  filter logic. A node listed in the marketplace may be rejected at deploy
+  time. This is by design — browse is exploration, not pre-flight. If a
+  future requirement needs eligibility-aware browsing for a specific VM
+  spec, that is a new endpoint with a `VmSpec` parameter, not a change to
+  the existing browse paths.
 
-  Scheduling-time eligibility (architecture, KVM, BlockStore-for-
-  replication, jurisdiction tags, constraints, GPU mode, free memory,
-  load average, obligations) is checked at deploy time when the
-  tenant submits `POST /api/vms`. A node visible in the marketplace
-  may be rejected at deploy if the VM's full set of requirements
-  isn't satisfied — that's expected behavior. Marketplace listings
-  are an exploration affordance, not a scheduling pre-flight.
+- **Soft locality preferences.** The locality score is neutral (0.5) today.
+  Graduated rewards for same-region, adjacent-region, or same-continent
+  placement are deferred. Hard locality requirements (specific region,
+  country, jurisdiction) are fully expressible via constraints. When soft
+  preferences ship, they will feed the locality scoring component through a
+  separate mechanism without touching the hard-filter chain.
 
-  If a future requirement needs marketplace browse to honor scheduling
-  eligibility (e.g., "show only nodes that could host *this* VM
-  spec"), that's a different endpoint with a `VmSpec` parameter, not
-  a change to the existing browse endpoints. Until then, the
-  divergence is the contract.
+- **Node-side constraints.** Operator placement policies ("this node only
+  accepts Guaranteed-tier VMs") are a future feature. `IConstraintEvaluator`
+  is designed to support the inverse direction (`constraint, node, vmSpec`),
+  but no `Node.Constraints` field exists yet.
 
-- **Live migration.** Scheduling decides where a VM *first lands*.
-  Moving a running VM to a new node is a separate concern,
-  implemented in `VmService.MigrateVmAsync`, with its own constraints
-  (drain mode, target eligibility, stop-start vs. live).
-- **Cost-optimal placement.** The scheduler picks based on hard
-  filters + the four scoring dimensions. Tenant cost optimization
-  (cheapest node that meets requirements) is not a scheduling-time
-  concern; tenants control cost by choosing tier and constraint set.
-- **Affinity / anti-affinity between VMs.** "Place this VM in the
-  same zone as VM-X" or "never co-locate these two VMs on the same
-  node" — these are valid future scheduling concerns but not in
-  the constraint engine v1. They require multi-VM scheduling state,
-  which the current single-VM-per-decision pipeline doesn't model.
-- **Operator-defined tiers.** Tier configuration is system-wide.
-  A node operator cannot define their own tier with bespoke
-  overcommit ratios. If this becomes necessary, it's a different
-  feature.
-- **Per-tenant scheduling overrides.** Some platforms allow trusted
-  tenants to bypass certain filters (e.g., unverified node OK for
-  internal testing). DeCloud doesn't, and this isn't planned.
+- **Affinity / anti-affinity between VMs.** "Place this VM in the same
+  zone as VM-X" or "never co-locate these two VMs on the same node" are
+  valid future concerns but require multi-VM scheduling state the current
+  single-VM-per-decision pipeline does not model.
+
+- **Soft constraint composition (OR, NOT groups).** The constraint list is a
+  flat AND. Negation is expressible per-constraint (`not_in`,
+  `not_contains`, `neq`). OR composition and nested groups are not in v1.
+
+- **Per-tenant scheduling overrides.** No mechanism exists for trusted
+  tenants to bypass filters. Not planned.
+
+- **Cost-optimal placement.** The scheduler picks the highest-scoring
+  eligible node, not the cheapest. Tenants control cost through tier
+  selection and constraint design.
+
+- **Live migration.** The scheduler decides where a VM first lands.
+  Moving a running VM is handled by `BackgroundServices.MigrateVmAsync`,
+  which calls the same filter chain but adds an architecture-stickiness
+  constraint.
 
 ---
 
 ## References
 
-- **Code:**
-  - `src/Orchestrator/Services/VmScheduling/VmSchedulingService.cs` — pipeline + filters + scoring
-  - `src/Orchestrator/Services/VmScheduling/SchedulingConfigService.cs` — versioned config + history
-  - `src/Orchestrator/Services/Locality/LocalityService.cs` — locality data + adjacency
-  - `src/Orchestrator/Services/NodeCapacityCalculator.cs` — overcommit math
-  - `src/Orchestrator/Services/NodePerformanceEvaluator.cs` — tier eligibility
-  - `src/Orchestrator/Models/SchedulingConfig.cs` — config schema
-  - `src/Orchestrator/Models/VirtualMachine.cs` — VmSpec (host of `Constraints`)
-- **Related docs:**
-  - `LOCALITY_STANDARDS.md` — country/region/zone model
-  - `NODE-LIFECYCLE.md` — node states the scheduler consumes
-- **External standards:**
-  - ISO 3166-1 alpha-2 — country codes (used in country target)
-  - JSONLogic — design inspiration for constraint shape (we don't use the library; we built our own narrower vocabulary)
+**Code**
+
+| File | Role |
+|---|---|
+| `src/Orchestrator/Services/VmScheduling/VmSchedulingService.cs` | Filter chain, scoring, public scheduling API |
+| `src/Orchestrator/Services/VmScheduling/ConstraintEvaluator.cs` | Constraint evaluation, target and operator registries |
+| `src/Orchestrator/Models/ConstraintVocabulary.cs` | `ConstraintTargets` and `ConstraintOperators` typed constants |
+| `src/Orchestrator/Models/Constraint.cs` | `Constraint` and `ConstraintEvaluation` models |
+| `src/Orchestrator/Services/VmScheduling/NodeReputation.cs` | Reputation formula (single source of truth) |
+| `src/Orchestrator/Services/VmScheduling/SchedulingConfigService.cs` | Versioned config + history |
+| `src/Orchestrator/Services/Locality/LocalityService.cs` | Locality data + adjacency graph |
+| `src/Orchestrator/Services/NodeCapacityCalculator.cs` | Overcommit math |
+| `src/Orchestrator/Services/NodePerformanceEvaluator.cs` | Tier eligibility |
+| `src/Orchestrator/Models/SchedulingConfig.cs` | Config schema |
+| `src/Orchestrator/Models/VirtualMachine.cs` | `VmSpec` (host of `Constraints`) |
+| `src/Orchestrator/Controllers/VmsController.cs` | VM creation + PATCH /scheduling |
+| `src/Orchestrator/Background/BackgroundServices.cs` | Migration scheduler |
+| `src/Orchestrator/Interfaces/VmScheduling/IVmSchedulingService.cs` | Scheduler contract |
+
+**Related docs**
+
+- [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) — country/region/zone model
+- [`NODE-LIFECYCLE.md`](NODE-LIFECYCLE.md) — node states the scheduler consumes
