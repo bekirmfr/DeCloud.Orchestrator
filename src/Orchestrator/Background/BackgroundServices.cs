@@ -211,8 +211,8 @@ public class VmSchedulerService : BackgroundService
         vm.Spec.Constraints = (originalConstraints ?? new List<Constraint>())
             .Append(new Constraint
             {
-                Target = "node.architecture",
-                Operator = "eq",
+                Target = ConstraintTargets.Node.Architecture,
+                Operator = ConstraintOperators.Eq,
                 Value = sourceNode?.Architecture ?? "x86_64"
             })
             .ToList();
@@ -246,7 +246,8 @@ public class VmSchedulerService : BackgroundService
                 // Derive a region hint from the locality constraint if one is set,
                 // so the status message remains informative without reading flat fields.
                 var regionConstraint = vm.Spec.Constraints?
-                    .FirstOrDefault(c => c.Target == "node.locality.region" && c.Operator == "eq");
+                    .FirstOrDefault(c => c.Target == ConstraintTargets.Node.Locality.Region
+                    && c.Operator == ConstraintOperators.Eq);
                 var regionHint = regionConstraint != null
                     ? $" in region '{regionConstraint.Value}'"
                     : "";

@@ -122,77 +122,74 @@ public class ConstraintEvaluator : IConstraintEvaluator
         var r = new Dictionary<string, TargetDescriptor>(StringComparer.Ordinal);
 
         // ─── Locality (jurisdiction-aware) ─────────────────────────
-        // node.country and node.locality.country are aliases.
-        r["node.country"] = new TargetDescriptor(
-            "node.country", ConstraintValueType.String,
+        // Node.Country and Node.Locality.Country are aliases.
+        r[ConstraintTargets.Node.Country] = new TargetDescriptor(
+            ConstraintTargets.Node.Country, ConstraintValueType.String,
             (n, _) => n.Locality?.Country);
-        r["node.locality.country"] = new TargetDescriptor(
-            "node.locality.country", ConstraintValueType.String,
+        r[ConstraintTargets.Node.Locality.Country] = new TargetDescriptor(
+            ConstraintTargets.Node.Locality.Country, ConstraintValueType.String,
             (n, _) => n.Locality?.Country);
 
-        r["node.locality.region"] = new TargetDescriptor(
-            "node.locality.region", ConstraintValueType.String,
+        r[ConstraintTargets.Node.Locality.Region] = new TargetDescriptor(
+            ConstraintTargets.Node.Locality.Region, ConstraintValueType.String,
             (n, _) => n.Locality?.Region ?? n.Region);
 
-        r["node.locality.zone"] = new TargetDescriptor(
-            "node.locality.zone", ConstraintValueType.String,
+        r[ConstraintTargets.Node.Locality.Zone] = new TargetDescriptor(
+            ConstraintTargets.Node.Locality.Zone, ConstraintValueType.String,
             (n, _) => n.Locality?.Zone ?? n.Zone);
 
-        r["node.locality.jurisdictionTags"] = new TargetDescriptor(
-            "node.locality.jurisdictionTags", ConstraintValueType.StringList,
+        r[ConstraintTargets.Node.Locality.JurisdictionTags] = new TargetDescriptor(
+            ConstraintTargets.Node.Locality.JurisdictionTags, ConstraintValueType.StringList,
             (n, _) => (object?)(n.Locality?.JurisdictionTags ?? new List<string>()));
 
-        r["node.locality.locationMismatch"] = new TargetDescriptor(
-            "node.locality.locationMismatch", ConstraintValueType.Boolean,
+        r[ConstraintTargets.Node.Locality.LocationMismatch] = new TargetDescriptor(
+            ConstraintTargets.Node.Locality.LocationMismatch, ConstraintValueType.Boolean,
             (n, _) => (object?)(n.Locality?.LocationMismatch ?? false));
 
         // ─── Hardware capability ────────────────────────────────────
-        r["node.architecture"] = new TargetDescriptor(
-            "node.architecture", ConstraintValueType.String,
+        r[ConstraintTargets.Node.Architecture] = new TargetDescriptor(
+            ConstraintTargets.Node.Architecture, ConstraintValueType.String,
             (n, _) => n.Architecture);
 
-        r["node.kvmAvailable"] = new TargetDescriptor(
-            "node.kvmAvailable", ConstraintValueType.Boolean,
+        r[ConstraintTargets.Node.KvmAvailable] = new TargetDescriptor(
+            ConstraintTargets.Node.KvmAvailable, ConstraintValueType.Boolean,
             (n, _) => (object?)n.HardwareInventory.KvmAvailable);
 
-        // node.gpuModel returns the first GPU's model (or null if no GPUs).
+        // GpuModel returns the first GPU's model (null if no GPUs).
         // Multi-GPU nodes filter on a single representative model. If a
-        // future tenant requirement needs all-GPU matching, we add
-        // node.gpuModels (plural, StringList type) as a separate target.
-        r["node.gpuModel"] = new TargetDescriptor(
-            "node.gpuModel", ConstraintValueType.String,
+        // future requirement needs all-GPU matching, add GpuModels
+        // (plural, StringList type) as a separate target.
+        r[ConstraintTargets.Node.GpuModel] = new TargetDescriptor(
+            ConstraintTargets.Node.GpuModel, ConstraintValueType.String,
             (n, _) => n.HardwareInventory.Gpus.FirstOrDefault()?.Model);
 
         // ─── Performance / reputation ────────────────────────────
-        // node.tier returns the list of tier names this node qualifies for
-        // (Burstable, Balanced, Standard, Guaranteed). Use with `contains`
-        // to filter for "this node can host tier X".
-        r["node.tier"] = new TargetDescriptor(
-            "node.tier", ConstraintValueType.StringList,
+        // Tier returns the list of quality-tier names this node qualifies
+        // for. Use with Contains to require a specific tier capability.
+        r[ConstraintTargets.Node.Tier] = new TargetDescriptor(
+            ConstraintTargets.Node.Tier, ConstraintValueType.StringList,
             (n, _) => (object?)(n.PerformanceEvaluation?.EligibleTiers
                 .Select(t => t.ToString()).ToList()
                 ?? new List<string>()));
 
-        r["node.benchmarkScore"] = new TargetDescriptor(
-            "node.benchmarkScore", ConstraintValueType.Numeric,
+        r[ConstraintTargets.Node.BenchmarkScore] = new TargetDescriptor(
+            ConstraintTargets.Node.BenchmarkScore, ConstraintValueType.Numeric,
             (n, _) => (object?)(n.PerformanceEvaluation?.BenchmarkScore));
 
-        r["node.uptimePercent"] = new TargetDescriptor(
-            "node.uptimePercent", ConstraintValueType.Numeric,
+        r[ConstraintTargets.Node.UptimePercent] = new TargetDescriptor(
+            ConstraintTargets.Node.UptimePercent, ConstraintValueType.Numeric,
             (n, _) => (object?)n.UptimePercentage);
 
-        // node.reputationScore preserves the full reputation formula
-        // (uptimePercent × 0.7) + (successRate × 0.3) via NodeReputation.Compute.
-        // Use this target when the composite measure matters (the same value
-        // the soft scoring path uses for its weighted contribution); use
-        // node.uptimePercent if only uptime matters.
-        r["node.reputationScore"] = new TargetDescriptor(
-            "node.reputationScore", ConstraintValueType.Numeric,
+        // ReputationScore: full composite formula via NodeReputation.Compute.
+        // Use when the weighted uptime+success measure matters; use
+        // UptimePercent when only uptime matters.
+        r[ConstraintTargets.Node.ReputationScore] = new TargetDescriptor(
+            ConstraintTargets.Node.ReputationScore, ConstraintValueType.Numeric,
             (n, _) => (object?)NodeReputation.Compute(n));
 
         // ─── Operator metadata ──────────────────────────────────
-        r["node.tags"] = new TargetDescriptor(
-            "node.tags", ConstraintValueType.StringList,
+        r[ConstraintTargets.Node.Tags] = new TargetDescriptor(
+            ConstraintTargets.Node.Tags, ConstraintValueType.StringList,
             (n, _) => (object?)(n.Tags ?? new List<string>()));
 
         return r;
@@ -210,16 +207,16 @@ public class ConstraintEvaluator : IConstraintEvaluator
         var r = new Dictionary<string, OperatorDescriptor>(StringComparer.Ordinal);
 
         // ── Equality / inequality (scalar = scalar) ────────────────
-        r["eq"] = new OperatorDescriptor(
-            "eq",
+        r[ConstraintOperators.Eq] = new OperatorDescriptor(
+            ConstraintOperators.Eq,
             t => t is ConstraintValueType.String
                 or ConstraintValueType.Numeric
                 or ConstraintValueType.Boolean,
             (t, v) => ValidateScalar(t, v),
             (actual, configured, _) => ScalarEquals(actual, configured));
 
-        r["neq"] = new OperatorDescriptor(
-            "neq",
+        r[ConstraintOperators.Neq] = new OperatorDescriptor(
+            ConstraintOperators.Neq,
             t => t is ConstraintValueType.String
                 or ConstraintValueType.Numeric
                 or ConstraintValueType.Boolean,
@@ -227,76 +224,76 @@ public class ConstraintEvaluator : IConstraintEvaluator
             (actual, configured, _) => !ScalarEquals(actual, configured));
 
         // ── Membership: scalar in/not_in list ──────────────────────
-        r["in"] = new OperatorDescriptor(
-            "in",
+        r[ConstraintOperators.In] = new OperatorDescriptor(
+            ConstraintOperators.In,
             t => t is ConstraintValueType.String or ConstraintValueType.Numeric,
             (t, v) => ValidateList(t, v),
             (actual, configured, _) => ListContainsScalar(configured, actual));
 
-        r["not_in"] = new OperatorDescriptor(
-            "not_in",
+        r[ConstraintOperators.NotIn] = new OperatorDescriptor(
+            ConstraintOperators.NotIn,
             t => t is ConstraintValueType.String or ConstraintValueType.Numeric,
             (t, v) => ValidateList(t, v),
             (actual, configured, _) => !ListContainsScalar(configured, actual));
 
         // ── List-on-scalar: list contains/not_contains a value ────────
-        r["contains"] = new OperatorDescriptor(
-            "contains",
+        r[ConstraintOperators.Contains] = new OperatorDescriptor(
+            ConstraintOperators.Contains,
             t => t == ConstraintValueType.StringList,
             (_, v) => ValidateScalar(ConstraintValueType.String, v),
             (actual, configured, _) => ListContainsScalar(actual, configured));
 
-        r["not_contains"] = new OperatorDescriptor(
-            "not_contains",
+        r[ConstraintOperators.NotContains] = new OperatorDescriptor(
+            ConstraintOperators.NotContains,
             t => t == ConstraintValueType.StringList,
             (_, v) => ValidateScalar(ConstraintValueType.String, v),
             (actual, configured, _) => !ListContainsScalar(actual, configured));
 
-        // ── List-on-list: contains_all / contains_any / contains_none ─
-        r["contains_all"] = new OperatorDescriptor(
-            "contains_all",
+        // ── List-on-list ───────────────────────────────────────────
+        r[ConstraintOperators.ContainsAll] = new OperatorDescriptor(
+            ConstraintOperators.ContainsAll,
             t => t == ConstraintValueType.StringList,
             (_, v) => ValidateList(ConstraintValueType.String, v),
             (actual, configured, _) => ListContainsAll(actual, configured));
 
-        r["contains_any"] = new OperatorDescriptor(
-            "contains_any",
+        r[ConstraintOperators.ContainsAny] = new OperatorDescriptor(
+            ConstraintOperators.ContainsAny,
             t => t == ConstraintValueType.StringList,
             (_, v) => ValidateList(ConstraintValueType.String, v),
             (actual, configured, _) => ListContainsAny(actual, configured));
 
-        r["contains_none"] = new OperatorDescriptor(
-            "contains_none",
+        r[ConstraintOperators.ContainsNone] = new OperatorDescriptor(
+            ConstraintOperators.ContainsNone,
             t => t == ConstraintValueType.StringList,
             (_, v) => ValidateList(ConstraintValueType.String, v),
             (actual, configured, _) => !ListContainsAny(actual, configured));
 
         // ── Numeric ordering ───────────────────────────────────────
-        r["gte"] = new OperatorDescriptor(
-            "gte", t => t == ConstraintValueType.Numeric,
+        r[ConstraintOperators.Gte] = new OperatorDescriptor(
+            ConstraintOperators.Gte, t => t == ConstraintValueType.Numeric,
             (_, v) => ValidateScalar(ConstraintValueType.Numeric, v),
             (actual, configured, _) => NumericCompare(actual, configured) is int c && c >= 0);
 
-        r["lte"] = new OperatorDescriptor(
-            "lte", t => t == ConstraintValueType.Numeric,
+        r[ConstraintOperators.Lte] = new OperatorDescriptor(
+            ConstraintOperators.Lte, t => t == ConstraintValueType.Numeric,
             (_, v) => ValidateScalar(ConstraintValueType.Numeric, v),
             (actual, configured, _) => NumericCompare(actual, configured) is int c && c <= 0);
 
-        r["gt"] = new OperatorDescriptor(
-            "gt", t => t == ConstraintValueType.Numeric,
+        r[ConstraintOperators.Gt] = new OperatorDescriptor(
+            ConstraintOperators.Gt, t => t == ConstraintValueType.Numeric,
             (_, v) => ValidateScalar(ConstraintValueType.Numeric, v),
             (actual, configured, _) => NumericCompare(actual, configured) is int c && c > 0);
 
-        r["lt"] = new OperatorDescriptor(
-            "lt", t => t == ConstraintValueType.Numeric,
+        r[ConstraintOperators.Lt] = new OperatorDescriptor(
+            ConstraintOperators.Lt, t => t == ConstraintValueType.Numeric,
             (_, v) => ValidateScalar(ConstraintValueType.Numeric, v),
             (actual, configured, _) => NumericCompare(actual, configured) is int c && c < 0);
 
         // ── Domain operators (locality-aware) ──────────────────────
-        // adjacent_to: node's region is adjacent to the configured region
-        // per region-adjacency.json. Only valid against region targets.
-        r["adjacent_to"] = new OperatorDescriptor(
-            "adjacent_to", t => t == ConstraintValueType.String,
+        // AdjacentTo: node's region is adjacent to the configured region
+        // per region-adjacency.json.
+        r[ConstraintOperators.AdjacentTo] = new OperatorDescriptor(
+            ConstraintOperators.AdjacentTo, t => t == ConstraintValueType.String,
             (_, v) => ValidateScalar(ConstraintValueType.String, v),
             (actual, configured, locality) =>
             {
@@ -307,9 +304,9 @@ public class ConstraintEvaluator : IConstraintEvaluator
                     .Contains(nodeRegion, StringComparer.OrdinalIgnoreCase);
             });
 
-        // same_continent_as: node's region shares a continent with configured.
-        r["same_continent_as"] = new OperatorDescriptor(
-            "same_continent_as", t => t == ConstraintValueType.String,
+        // SameContinentAs: node's region shares a continent with configured.
+        r[ConstraintOperators.SameContinentAs] = new OperatorDescriptor(
+            ConstraintOperators.SameContinentAs, t => t == ConstraintValueType.String,
             (_, v) => ValidateScalar(ConstraintValueType.String, v),
             (actual, configured, locality) =>
             {
@@ -322,11 +319,11 @@ public class ConstraintEvaluator : IConstraintEvaluator
                        string.Equals(c1, c2, StringComparison.OrdinalIgnoreCase);
             });
 
-        // has_jurisdiction_tag: node's country (string target) carries the
-        // configured supranational tag. Lets a constraint on country target
-        // ask "is this country in the EU?" without enumerating EU members.
-        r["has_jurisdiction_tag"] = new OperatorDescriptor(
-            "has_jurisdiction_tag", t => t == ConstraintValueType.String,
+        // HasJurisdictionTag: node's country carries the configured
+        // supranational tag — lets a constraint ask "is this country in
+        // the EU?" without enumerating member states.
+        r[ConstraintOperators.HasJurisdictionTag] = new OperatorDescriptor(
+            ConstraintOperators.HasJurisdictionTag, t => t == ConstraintValueType.String,
             (_, v) => ValidateScalar(ConstraintValueType.String, v),
             (actual, configured, locality) =>
             {
