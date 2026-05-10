@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Orchestrator.Services;
+using Orchestrator.Interfaces;
 
 namespace Orchestrator.Hubs;
 

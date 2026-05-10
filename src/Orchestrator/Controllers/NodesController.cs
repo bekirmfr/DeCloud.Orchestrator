@@ -51,6 +51,43 @@ public class NodesController : ControllerBase
     }
 
     /// <summary>
+    /// Deregister a node. Called by uninstall.sh.
+    /// Refuses if tenant VMs are running unless force=true.
+    /// Revokes the node's JWT on success.
+    /// </summary>
+    [HttpPost("{nodeId}/deregister")]
+    public async Task<ActionResult<ApiResponse<NodeDeregisterResponse>>> Deregister(
+        string nodeId,
+        [FromBody] NodeDeregisterRequest request)
+    {
+        var claimNodeId = User.FindFirst("node_id")?.Value;
+
+        if (claimNodeId != nodeId)
+        {
+            return Unauthorized(ApiResponse<NodeDeregisterResponse>.Fail(
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
+        }
+
+        try
+        {
+            var response = await _nodeService.DeregisterNodeAsync(
+                nodeId, request.Force, request.Reason);
+            return Ok(ApiResponse<NodeDeregisterResponse>.Ok(response));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<NodeDeregisterResponse>.Fail(
+                "NODE_NOT_FOUND", "Node not registered"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<NodeDeregisterResponse>.Fail(
+                "TENANT_VMS_RUNNING", ex.Message));
+        }
+    }
+
+    /// <summary>
     /// Signal that this node is ready for VM scheduling.
     /// Lightweight — JWT-authenticated, no wallet signature required.
     /// Sets Node.SchedulingReady = true.

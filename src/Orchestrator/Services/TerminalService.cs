@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
+using Orchestrator.Interfaces;
 
 namespace Orchestrator.Services;
 

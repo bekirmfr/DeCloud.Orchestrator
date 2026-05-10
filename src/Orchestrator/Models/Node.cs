@@ -19,6 +19,11 @@ public class Node
     /// </summary>
     public required string MachineId { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
+    /// <summary>
+    /// JWT ID (jti claim) of the most recently issued JWT for this node.
+    /// Used to revoke the token on deregister/uninstall.
+    /// </summary>
+    public string? CurrentJti { get; set; }
 
     /// <summary>
     /// SSH certificate authority public key for this node, captured at
@@ -215,6 +220,12 @@ public class Node
     /// If null or zero rates, platform defaults are used.
     /// </summary>
     public NodePricing Pricing { get; set; } = new();
+    /// <summary>
+    /// SHA-256 hash of the settings as they were at last registration.
+    /// Computed by SettingsHash.Compute() from the registration request fields.
+    /// Compared against the heartbeat-reported hash for drift detection.
+    /// </summary>
+    public string? RegisteredSettingsHash { get; set; }
 }
 
 /// <summary>
@@ -527,6 +538,19 @@ public class NodeRegistrationRequest
     public Dictionary<string, int>? SystemTemplateVersions { get; set; }
 }
 
+public class NodeDeregisterRequest
+{
+    public string Reason { get; set; } = "manual_uninstall";
+    public bool Force { get; set; } = false;
+}
+
+public class NodeDeregisterResponse
+{
+    public bool Deregistered { get; set; }
+    public int TenantVmsDestroyed { get; set; }
+    public string? Message { get; set; }
+}
+
 /// <summary>
 /// Wire DTO for a single obligation pushed to the node agent at registration.
 /// Carries the canonical role name and its dependency list so the node can
@@ -665,7 +689,14 @@ public record NodeHeartbeat(
     /// Parallel to ObligationStateVersions for templates.
     /// Null on agents that pre-date P9.
     /// </summary>
-    Dictionary<string, int>? SystemTemplateVersions = null
+    Dictionary<string, int>? SystemTemplateVersions = null,
+    /// <summary>
+    /// SHA-256 hash of the node's local settings (wallet, country, region, zone).
+    /// Compared against the orchestrator's stored registration state to detect
+    /// local edits that weren't committed via re-register.
+    /// Null for agents that pre-date this feature — no drift check performed.
+    /// </summary>
+    string? SettingsHash = null
 );
 
 /// <summary>
@@ -760,9 +791,25 @@ public record NodeHeartbeatResponse(
     /// listed role and persist the result via SaveSystemTemplateAsync.
     /// Null or empty = all templates current.
     /// </summary>
-    List<string>? SystemTemplatesPending = null
-
+    List<string>? SystemTemplatesPending = null,
+    /// <summary>
+    /// Non-null when the node's reported settings hash doesn't match
+    /// the orchestrator's stored registration hash. Contains a
+    /// diagnostic message identifying the mismatch.
+    /// </summary>
+    SettingsDriftInfo? SettingsDrift = null
 );
+
+/// <summary>
+/// Drift detection result included in heartbeat response when
+/// the node's local settings don't match registered state.
+/// </summary>
+public class SettingsDriftInfo
+{
+    public string Message { get; set; } = string.Empty;
+    public string ExpectedHash { get; set; } = string.Empty;
+    public string ReportedHash { get; set; } = string.Empty;
+}
 
 /// <summary>
 /// Command sent from orchestrator to node agent

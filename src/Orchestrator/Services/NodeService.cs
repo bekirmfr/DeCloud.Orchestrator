@@ -315,6 +315,10 @@ public class NodeService : INodeService
             DhtInfo = existingNode?.DhtInfo,
             RelayInfo = existingNode?.RelayInfo,
             CgnatInfo = existingNode?.CgnatInfo,
+            RegisteredSettingsHash = DeCloud.Shared.SettingsHash.Compute(
+                request.WalletAddress,
+                country,
+                region == "default" ? "unknown" : region)
         };
 
         if (existingNode != null)
@@ -587,6 +591,62 @@ public class NodeService : INodeService
             obligationStates,
             systemTemplates,
             obligationDescriptors);
+    }
+
+    public async Task<NodeDeregisterResponse> DeregisterNodeAsync(
+    string nodeId, bool force, string reason,
+    CancellationToken ct = default)
+    {
+        var node = await _dataStore.GetNodeAsync(nodeId)
+            ?? throw new KeyNotFoundException($"Node {nodeId} not found");
+
+        // Check for running tenant VMs
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        var tenantVms = nodeVms.Where(v =>
+            v.VmType == VmType.General &&
+            (v.Status == VmStatus.Running || v.Status == VmStatus.Provisioning))
+            .ToList();
+
+        if (tenantVms.Count > 0 && !force)
+        {
+            throw new InvalidOperationException(
+                $"Node has {tenantVms.Count} running tenant VM(s). " +
+                "Use --force to deregister anyway, or drain VMs first " +
+                "with 'decloud vm drain'.");
+        }
+
+        // Revoke JWT
+        if (!string.IsNullOrEmpty(node.CurrentJti))
+        {
+            var revocationService = _serviceProvider
+                .GetRequiredService<IJwtRevocationService>();
+            await revocationService.RevokeAsync(
+                node.CurrentJti, nodeId, $"deregister: {reason}", ct);
+        }
+
+        // Remove node record
+        try
+        {
+            await _dataStore.DeleteNodeAsync(nodeId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete node {NodeId} from store", nodeId);
+        }
+
+        _logger.LogInformation(
+            "Node {NodeId} deregistered: reason={Reason}, force={Force}, " +
+            "tenantVms={TenantVmCount}",
+            nodeId, reason, force, tenantVms.Count);
+
+        return new NodeDeregisterResponse
+        {
+            Deregistered = true,
+            TenantVmsDestroyed = force ? tenantVms.Count : 0,
+            Message = tenantVms.Count > 0 && force
+                ? $"{tenantVms.Count} tenant VM(s) will be orphaned"
+                : null
+        };
     }
 
     // ============================================================================
@@ -989,6 +1049,40 @@ public class NodeService : INodeService
         node.LatestMetrics = heartbeat.Metrics;
         node.LastSeenAt = DateTime.UtcNow;
 
+        // =====================================================
+        // Settings drift detection
+        //
+        // Compare the node's reported settings hash against what we
+        // stored at registration. Mismatch means the operator edited
+        // /etc/decloud/settings locally without re-registering.
+        //
+        // Null hash from agent = pre-feature agent, skip check.
+        // Null hash on node = pre-feature registration, skip check.
+        // =====================================================
+        SettingsDriftInfo? settingsDrift = null;
+
+        if (!string.IsNullOrEmpty(heartbeat.SettingsHash) &&
+            !string.IsNullOrEmpty(node.RegisteredSettingsHash))
+        {
+            if (!string.Equals(heartbeat.SettingsHash,
+                    node.RegisteredSettingsHash,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                settingsDrift = new SettingsDriftInfo
+                {
+                    Message = "Local settings hash does not match registered state. " +
+                              "Run 'decloud register' to re-commit, or revert local edits.",
+                    ExpectedHash = node.RegisteredSettingsHash,
+                    ReportedHash = heartbeat.SettingsHash
+                };
+
+                _logger.LogWarning(
+                    "Settings drift detected on node {NodeId}: " +
+                    "registered={ExpectedHash}, reported={ReportedHash}",
+                    nodeId, node.RegisteredSettingsHash, heartbeat.SettingsHash);
+            }
+        }
+
         if (node.IsBehindCgnat)
         {
             await SyncCgnatStateFromHeartbeatAsync(node, heartbeat.CgnatInfo, ct);
@@ -1194,7 +1288,8 @@ public class NodeService : INodeService
         agentSchedulingConfig,
         node.CgnatInfo, invalidVmIds,
         obligationStatesPending.Count > 0 ? obligationStatesPending : null,
-        systemTemplatesPending);
+        systemTemplatesPending,
+        settingsDrift);
     }
 
     /// <summary>
@@ -2835,16 +2930,16 @@ public class NodeService : INodeService
         // Create claims for the node
         var claims = new[]
         {
-        new Claim(ClaimTypes.NameIdentifier, nodeId),
-        new Claim("node_id", nodeId),
-        new Claim("wallet", walletAddress),
-        new Claim("machine_id", machineId),
-        new Claim(ClaimTypes.Role, "node"),
-        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-        new Claim(JwtRegisteredClaimNames.Iat,
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
-            ClaimValueTypes.Integer64)
-    };
+            new Claim(ClaimTypes.NameIdentifier, nodeId),
+            new Claim("node_id", nodeId),
+            new Claim("wallet", walletAddress),
+            new Claim("machine_id", machineId),
+            new Claim(ClaimTypes.Role, "node"),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(JwtRegisteredClaimNames.Iat,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                ClaimValueTypes.Integer64)
+        };
 
         // Create long-lived token for nodes (1 year expiration)
         // Nodes don't need frequent token refresh like users

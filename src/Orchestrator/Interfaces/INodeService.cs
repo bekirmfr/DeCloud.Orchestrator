@@ -7,6 +7,14 @@ public interface INodeService
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
 
     /// <summary>
+    /// Deregister a node. Refuses with tenant VMs unless force=true.
+    /// Revokes JWT on success.
+    /// </summary>
+    Task<NodeDeregisterResponse> DeregisterNodeAsync(
+        string nodeId, bool force, string reason,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Set scheduling-ready flag. Lightweight, JWT-authenticated.
     /// </summary>
     Task<NodeLoginResponse> LoginNodeAsync(string nodeId, CancellationToken ct = default);

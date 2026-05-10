@@ -8,6 +8,7 @@ using Orchestrator.Background;
 using Orchestrator.Extensions;
 using Orchestrator.Hubs;
 using Orchestrator.Infrastructure;
+using Orchestrator.Interfaces;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Middleware;
@@ -90,6 +91,12 @@ builder.Services.AddSingleton(sp =>
     var database = sp.GetService<IMongoDatabase>();
     var logger = sp.GetRequiredService<ILogger<DataStore>>();
     return new DataStore(database, logger);
+});
+builder.Services.AddSingleton<IJwtRevocationService>(sp =>
+{
+    var db = sp.GetService<IMongoDatabase>();
+    var logger = sp.GetRequiredService<ILogger<JwtRevocationService>>();
+    return new JwtRevocationService(db, logger);
 });
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
@@ -310,6 +317,25 @@ builder.Services.AddAuthentication(options =>
     // Allow SignalR and WebSocket proxy to use token from query string
     options.Events = new JwtBearerEvents
     {
+        OnTokenValidated = context =>
+        {
+            // Check JWT revocation list
+            var jti = context.Principal?.FindFirst("jti")?.Value;
+            if (!string.IsNullOrEmpty(jti))
+            {
+                var revocationService = context.HttpContext
+                    .RequestServices.GetRequiredService<IJwtRevocationService>();
+
+                if (revocationService.IsRevoked(jti))
+                {
+                    context.Fail("Token has been revoked");
+                    return Task.CompletedTask;
+                }
+            }
+
+            // Existing SignalR/WebSocket token handling...
+            return Task.CompletedTask;
+        },
         OnMessageReceived = context =>
         {
             var path = context.HttpContext.Request.Path;
@@ -444,6 +470,10 @@ if (mongoDatabase != null)
             var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
             await attestationService.InitializeAsync();
             logger.LogInformation("✓ Attestation stats restored for running VMs");
+
+            // Load revoked JWTs into memory cache
+            var revocationService = app.Services.GetRequiredService<IJwtRevocationService>();
+            await revocationService.LoadFromStoreAsync();
 
             var ingressService = scope.ServiceProvider.GetRequiredService<ICentralIngressService>();
             if (ingressService.IsEnabled)
