@@ -712,10 +712,28 @@ public class NodeService : INodeService
             "Node {NodeId} logged in — scheduling resumed",
             nodeId);
 
+        if (!string.IsNullOrEmpty(node.RegisteredSettingsHash) &&
+            !string.IsNullOrEmpty(node.LatestHeartbeatSettingsHash) &&
+            !string.Equals(node.RegisteredSettingsHash,
+            node.LatestHeartbeatSettingsHash,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Settings drift detected — local settings do not match registered state. " +
+                "Run 'decloud register' to re-commit settings before logging in.");
+        }
+
+        node.SchedulingReady = true;
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Node {NodeId} logged in — scheduling resumed",
+            nodeId);
+
         return new NodeLoginResponse
         {
             SchedulingReady = true,
-            SettingsDriftWarning = null   // TODO(Tier 3): compare settings hash
+            SettingsDriftWarning = null
         };
     }
 
@@ -1095,6 +1113,11 @@ public class NodeService : INodeService
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
         node.LastSeenAt = DateTime.UtcNow;
+        // Persist the reported hash so login can gate on it
+        if (!string.IsNullOrEmpty(heartbeat.SettingsHash))
+        {
+            node.LatestHeartbeatSettingsHash = heartbeat.SettingsHash;
+        }
 
         // =====================================================
         // Settings drift detection

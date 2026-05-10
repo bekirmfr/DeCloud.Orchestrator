@@ -226,6 +226,13 @@ public class Node
     /// Compared against the heartbeat-reported hash for drift detection.
     /// </summary>
     public string? RegisteredSettingsHash { get; set; }
+
+    /// <summary>
+    /// Settings hash most recently reported by the node agent in its heartbeat.
+    /// Stored so LoginNodeAsync can compare without waiting for a heartbeat.
+    /// Set in ProcessHeartbeatAsync; null until first heartbeat.
+    /// </summary>
+    public string? LatestHeartbeatSettingsHash { get; set; }
 }
 
 /// <summary>
