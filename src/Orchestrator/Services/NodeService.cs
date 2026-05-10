@@ -4,6 +4,7 @@ using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Interfaces;
+using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -22,6 +23,7 @@ public class NodeService : INodeService
 {
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
+    private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly ILocalityService _locality;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
@@ -43,6 +45,7 @@ public class NodeService : INodeService
     public NodeService(
         DataStore dataStore,
         ISchedulingConfigService configService,
+        IConstraintEvaluator constraintEvaluator,
         ILocalityService locality,
         IEventService eventService,
         ICentralIngressService ingressService,
@@ -60,7 +63,7 @@ public class NodeService : INodeService
     {
         _dataStore = dataStore;
         _configService = configService;
-        
+        _constraintEvaluator = constraintEvaluator;
         _locality = locality;
         _eventService = eventService;
         _ingressService = ingressService;
@@ -545,6 +548,47 @@ public class NodeService : INodeService
             registrationLock.Release();
         }
 
+        // =====================================================
+        // VM compliance check on re-registration
+        //
+        // If this is a re-registration (existingNode != null) and locality
+        // has changed, walk running VMs and flag any whose placement
+        // constraints are no longer satisfied by the new locality.
+        //
+        // The check runs after the node is saved so constraint evaluation
+        // sees the new locality. Flagged VMs are included in the response
+        // so the operator sees them immediately.
+        // =====================================================
+        List<NonCompliantVmInfo> nonCompliantVms = new();
+
+        if (existingNode != null)
+        {
+            var localityChanged =
+                existingNode.Locality?.Country != node.Locality?.Country ||
+                existingNode.Locality?.Region != node.Locality?.Region;
+
+            if (localityChanged)
+            {
+                _logger.LogInformation(
+                    "Locality changed for node {NodeId}: {OldCountry}/{OldRegion} → {NewCountry}/{NewRegion}. " +
+                    "Checking VM compliance.",
+                    nodeId,
+                    existingNode.Locality?.Country ?? "ZZ",
+                    existingNode.Locality?.Region ?? "unknown",
+                    node.Locality?.Country ?? "ZZ",
+                    node.Locality?.Region ?? "unknown");
+
+                nonCompliantVms = await FlagNonCompliantVmsAsync(node, ct);
+
+                if (nonCompliantVms.Count > 0)
+                {
+                    _logger.LogWarning(
+                        "Node {NodeId}: {Count} VM(s) flagged for migration due to locality change",
+                        nodeId, nonCompliantVms.Count);
+                }
+            }
+        }
+
         await _eventService.EmitAsync(new OrchestratorEvent
         {
             Type = EventType.NodeRegistered,
@@ -592,7 +636,8 @@ public class NodeService : INodeService
             dhtBootstrapPeers,
             obligationStates,
             systemTemplates,
-            obligationDescriptors);
+            obligationDescriptors,
+            nonCompliantVms.Count > 0 ? nonCompliantVms : null);
     }
 
     public async Task<NodeDeregisterResponse> DeregisterNodeAsync(
@@ -1634,6 +1679,16 @@ public class NodeService : INodeService
                 "Creation confirmed for VM {VmId} - transitioning to Running",
                 affectedVm.Id);
 
+            // Clear compliance flag after successful migration
+            if (affectedVm.NonCompliantSince != null)
+            {
+                affectedVm.NonCompliantSince = null;
+                affectedVm.NonComplianceReason = null;
+                _logger.LogInformation(
+                    "VM {VmId} compliance flag cleared after successful migration",
+                    affectedVm.Id);
+            }
+
             await lifecycleManager.TransitionAsync(
                 affectedVm.Id,
                 VmStatus.Running,
@@ -2536,6 +2591,75 @@ public class NodeService : INodeService
                 "Failed to recover orphaned VM {VmId} on node {NodeId}",
                 vmId, nodeId);
         }
+    }
+
+    /// <summary>
+    /// Walk all running tenant VMs on this node and evaluate each VM's
+    /// placement constraints against the node's new locality. Flag any
+    /// VM whose constraints are no longer satisfied.
+    ///
+    /// Uses the same IConstraintEvaluator as FILTER 10 in the scheduling
+    /// chain — no parallel logic, one evaluator, one answer.
+    ///
+    /// Returns the list of newly flagged VMs (for inclusion in the
+    /// registration response so the operator sees them immediately).
+    /// </summary>
+    private async Task<List<NonCompliantVmInfo>> FlagNonCompliantVmsAsync(
+        Node node, CancellationToken ct)
+    {
+        var flagged = new List<NonCompliantVmInfo>();
+
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
+
+        foreach (var vm in nodeVms)
+        {
+            // Only check tenant VMs that are running or provisioning
+            if (vm.VmType != VmType.General)
+                continue;
+
+            if (vm.Status != VmStatus.Running && vm.Status != VmStatus.Provisioning)
+                continue;
+
+            // VMs without constraints made no locality demands — always compliant
+            if (vm.Spec.Constraints is not { Count: > 0 })
+                continue;
+
+            // Already flagged — don't overwrite the original timestamp
+            if (vm.NonCompliantSince != null)
+                continue;
+
+            // Evaluate each constraint against the node's current (new) locality
+            string? failureReason = null;
+            for (var i = 0; i < vm.Spec.Constraints.Count; i++)
+            {
+                var result = _constraintEvaluator.Evaluate(vm.Spec.Constraints[i], node);
+                if (!result.Passed)
+                {
+                    failureReason = $"Constraint #{i} failed: {result.RejectionReason}";
+                    break;
+                }
+            }
+
+            if (failureReason != null)
+            {
+                vm.NonCompliantSince = DateTime.UtcNow;
+                vm.NonComplianceReason = failureReason;
+                await _dataStore.SaveVmAsync(vm);
+
+                flagged.Add(new NonCompliantVmInfo
+                {
+                    VmId = vm.Id,
+                    VmName = vm.Name,
+                    Reason = failureReason
+                });
+
+                _logger.LogWarning(
+                    "VM {VmId} ({VmName}) flagged non-compliant on node {NodeId}: {Reason}",
+                    vm.Id, vm.Name, node.Id, failureReason);
+            }
+        }
+
+        return flagged;
     }
 
     private VmStatus ParseVmStatus(string? state) => state?.ToLower() switch

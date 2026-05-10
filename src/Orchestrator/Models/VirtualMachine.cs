@@ -55,6 +55,30 @@ public class VirtualMachine
     /// </summary>
     public DateTime? LastHeartbeatAt { get; set; }
 
+    /// <summary>
+    /// Set when this VM's placement constraints are no longer satisfied by
+    /// its host node's locality — typically after the operator changes the
+    /// node's country or region via re-registration.
+    ///
+    /// The migration scheduler treats NonCompliantSince != null as a trigger
+    /// to relocate the VM to a compliant node, the same way it treats
+    /// VmStatus.Error as a trigger for offline-node recovery.
+    ///
+    /// Cleared when the VM is successfully migrated to a compliant node, or
+    /// when the node's locality is changed back to a compliant state.
+    /// </summary>
+    public DateTime? NonCompliantSince { get; set; }
+
+    /// <summary>
+    /// Human-readable explanation of why the VM is non-compliant.
+    /// Set alongside NonCompliantSince by FlagNonCompliantVms.
+    ///
+    /// Examples:
+    ///   "Constraint #0 failed: node.locality.jurisdictionTags contains EU — node country BR has tags [Mercosur]"
+    ///   "Constraint #2 failed: node.locality.country in [DE, FR] — node is now BR"
+    /// </summary>
+    public string? NonComplianceReason { get; set; }
+
     // Networking
     public VmNetworkConfig NetworkConfig { get; set; } = new();
 

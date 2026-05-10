@@ -170,6 +170,59 @@ public class VmSchedulerService : BackgroundService
                 _logger.LogError(ex, "Migration failed for VM {VmId}", vm.Id);
             }
         }
+
+        // ── Compliance migration ─────────────────────────────────────────────
+        // VMs flagged non-compliant by FlagNonCompliantVmsAsync during
+        // re-registration. These are Running on an online node — the node
+        // itself is fine, but its new locality violates the VM's constraints.
+        //
+        // Transition to Error to enter the existing migration pipeline.
+        // The migration will select a compliant target node via the same
+        // constraint-aware scheduling chain.
+        var complianceCandidates = allVms
+            .Where(v =>
+                v.NonCompliantSince != null &&
+                v.Status == VmStatus.Running &&
+                v.VmType == VmType.General &&
+                string.IsNullOrEmpty(v.ActiveCommandId))
+            .ToList();
+
+        if (complianceCandidates.Count > 0)
+        {
+            _logger.LogInformation(
+                "VmSchedulerService: {Count} VM(s) non-compliant, transitioning for migration",
+                complianceCandidates.Count);
+
+            var lifecycleManager = services.GetRequiredService<IVmLifecycleManager>();
+
+            foreach (var vm in complianceCandidates)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                try
+                {
+                    _logger.LogInformation(
+                        "VM {VmId} ({VmName}) non-compliant since {Since}: {Reason}. " +
+                        "Transitioning to Error for migration.",
+                        vm.Id, vm.Name, vm.NonCompliantSince, vm.NonComplianceReason);
+
+                    vm.PushMessage(
+                        $"Non-compliant: {vm.NonComplianceReason}. Scheduling migration.",
+                        VmMessageLevel.Warning, "scheduler");
+
+                    await lifecycleManager.TransitionAsync(
+                        vm.Id,
+                        VmStatus.Error,
+                        TransitionContext.Compliance(vm.NonComplianceReason));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Failed to transition non-compliant VM {VmId} to Error",
+                        vm.Id);
+                }
+            }
+        }
     }
 
     private async Task MigrateVmAsync(

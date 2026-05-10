@@ -589,7 +589,13 @@ public record NodeRegistrationResponse(
     /// <c>SystemVmReconciler</c> can compute intent without calling home.
     /// Always included — empty list means the node has no current obligations.
     /// </summary>
-    List<ObligationDescriptorPayload>? Obligations = null
+    List<ObligationDescriptorPayload>? Obligations = null,
+    /// <summary>
+    /// VMs on this node whose placement constraints are no longer
+    /// satisfied after a locality change. Empty on first registration
+    /// or when no VMs are affected.
+    /// </summary>
+    List<NonCompliantVmInfo>? NonCompliantVms = null
 );
 
 /// <summary>
@@ -809,6 +815,17 @@ public class SettingsDriftInfo
     public string Message { get; set; } = string.Empty;
     public string ExpectedHash { get; set; } = string.Empty;
     public string ReportedHash { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Included in the registration response when a locality change
+/// makes existing VMs non-compliant with their placement constraints.
+/// </summary>
+public class NonCompliantVmInfo
+{
+    public string VmId { get; set; } = string.Empty;
+    public string VmName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
 }
 
 /// <summary>

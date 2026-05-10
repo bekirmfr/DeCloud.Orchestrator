@@ -87,6 +87,12 @@ public class TransitionContext
         StatusMessage = "Node went offline"
     };
 
+    public static TransitionContext Compliance(string? reason) => new() {
+        Trigger = TransitionTrigger.Compliance,
+        Source = "BackgroundServices.ScanMigratingVmsAsync",
+        StatusMessage = reason != null ? $"Compliance action: {reason}" : "Compliance action"
+    };
+
     public static TransitionContext CommandFailed(string commandId, string nodeId, string? error = null) => new()
     {
         Trigger = TransitionTrigger.CommandFailed,
@@ -104,6 +110,7 @@ public enum TransitionTrigger
     Manual,
     Timeout,
     NodeOffline,
+    Compliance,
     CommandFailed
 }
 
