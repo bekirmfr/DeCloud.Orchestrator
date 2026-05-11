@@ -267,8 +267,8 @@ function createTemplateModal() {
                             <code>__VM_ID__</code> <code>__HOSTNAME__</code> <code>__CA_PUBLIC_KEY__</code>
                             <code>__SSH_AUTHORIZED_KEYS_BLOCK__</code> <code>__ORCHESTRATOR_URL__</code><br>
                             Boot-time env vars (from Default Environment Variables below):
-                            <code>${DECLOUD_PASSWORD}</code> <code>${DECLOUD_DOMAIN}</code><br>
-                            Artifact references: <code>${ARTIFACT_URL:name}</code> <code>${ARTIFACT_SHA256:name}</code>
+                            <code>$\{DECLOUD_PASSWORD}</code> <code>$\{DECLOUD_DOMAIN}</code><br>
+                            Artifact references: <code>$\{ARTIFACT_URL:name}</code> <code>$\{ARTIFACT_SHA256:name}</code>
                         </p>
                     </div>
                 </div>
@@ -380,8 +380,8 @@ function createTemplateModal() {
                     <h3 class="form-section-title">Artifacts</h3>
                     <p class="form-help" style="margin-bottom: 8px;">
                         External files your template fetches at deploy time (binaries, scripts, dashboards).
-                        Reference them in cloud-init as <code>${ARTIFACT_URL:name}</code> and
-                        <code>${ARTIFACT_SHA256:name}</code>.
+                        Reference them in cloud-init as <code>$\{ARTIFACT_URL:name}</code> and
+                        <code>$\{ARTIFACT_SHA256:name}</code>.
                         Binary artifacts must use an HTTPS URL (no inline data: URIs).
                         Scripts and configs may be inline (data: URI, ≤5 MB per artifact, ≤10 MB total).
                     </p>
@@ -391,7 +391,7 @@ function createTemplateModal() {
                             <div class="form-group">
                                 <label class="form-label" style="font-size:11px;">Name *</label>
                                 <input type="text" class="form-input" id="ct-art-name" placeholder="e.g. my-binary">
-                                <p class="form-help">Referenced as <code>${ARTIFACT_URL:my-binary}</code> in cloud-init.</p>
+                                <p class="form-help">Referenced as <code>$\{ARTIFACT_URL:my-binary}</code> in cloud-init.</p>
                             </div>
                             <div class="form-group">
                                 <label class="form-label" style="font-size:11px;">Type</label>
