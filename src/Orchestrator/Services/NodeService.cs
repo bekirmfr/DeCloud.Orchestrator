@@ -3269,6 +3269,7 @@ public class NodeService : INodeService
             Pricing = node.Pricing,
 
             IsOnline = node.Status == NodeStatus.Online,
+            SchedulingReady = node.SchedulingReady,
             AvailableComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
             AvailableMemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
             AvailableStorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes

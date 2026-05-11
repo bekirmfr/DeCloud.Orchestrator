@@ -53,6 +53,12 @@ public class NodeAdvertisement
 
     // Availability
     public bool IsOnline { get; set; }
+
+    /// <summary>
+    /// True when the operator has logged in and the node accepts new VM placements.
+    /// False when the operator has logged out (online but paused).
+    /// </summary>
+    public bool SchedulingReady { get; set; }
     public int AvailableComputePoints { get; set; }
     public long AvailableMemoryBytes { get; set; }
     public long AvailableStorageBytes { get; set; }

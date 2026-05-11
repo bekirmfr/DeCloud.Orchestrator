@@ -208,8 +208,13 @@ function renderNodeCards(container, nodes) {
             ? escapeHtmlFn(node.description)
             : '<span style="color: var(--text-muted); font-style: italic;">No description provided</span>';
 
+        const isPaused = node.isOnline && node.schedulingReady === false;
+        const statusClass = !node.isOnline ? 'offline' : (isPaused ? 'paused' : 'online');
+        const statusLabel = !node.isOnline ? 'Offline' : (isPaused ? 'Paused' : 'Online');
+        const canDeploy = node.isOnline && !isPaused;
+
         return `
-            <div class="mp-node-card${node.isOnline ? '' : ' offline'}" data-node-id="${escapeHtmlFn(node.nodeId)}">
+            <div class="mp-node-card${node.isOnline ? '' : ' offline'}${isPaused ? ' paused' : ''}" data-node-id="${escapeHtmlFn(node.nodeId)}">
                 <div class="mp-card-header">
                     <div>
                         <div class="mp-node-name">
@@ -218,9 +223,9 @@ function renderNodeCards(container, nodes) {
                         </div>
                         <div class="mp-node-region">${escapeHtmlFn(node.region || 'Unknown')}${node.zone ? ' / ' + escapeHtmlFn(node.zone) : ''}</div>
                     </div>
-                    <span class="mp-node-status ${node.isOnline ? 'online' : 'offline'}">
+                    <span class="mp-node-status ${statusClass}">
                         <span class="mp-status-dot"></span>
-                        ${node.isOnline ? 'Online' : 'Offline'}
+                        ${statusLabel}
                     </span>
                 </div>
 
@@ -293,7 +298,7 @@ function renderNodeCards(container, nodes) {
                 </div>
 
                 <div class="mp-card-actions">
-                    <button class="mp-btn-primary" onclick="window.nodeMarketplace.deployToNode('${escapeHtmlFn(node.nodeId)}', '${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}')" ${!node.isOnline ? 'disabled' : ''}>
+                    <button class="mp-btn-primary" onclick="window.nodeMarketplace.deployToNode('${escapeHtmlFn(node.nodeId)}', '${escapeHtmlFn(node.operatorName || node.nodeId.substring(0, 12))}')" ${!canDeploy ? 'disabled' : ''} ${isPaused ? 'title="Node is paused and not accepting new VMs"' : ''}>
                         🚀 Deploy VM
                     </button>
                     <button class="mp-btn-secondary" onclick="window.nodeMarketplace.openNodeDetail('${escapeHtmlFn(node.nodeId)}')">
@@ -381,8 +386,8 @@ export async function openNodeDetail(nodeId) {
                         <div class="node-detail-section-title">Availability</div>
                         <div class="node-detail-row">
                             <span class="node-detail-label">Status</span>
-                            <span class="node-detail-value" style="color: ${node.isOnline ? 'var(--accent-primary)' : 'var(--text-muted)'}">
-                                ${node.isOnline ? 'Online' : 'Offline'}
+                            <span class="node-detail-value" style="color: ${!node.isOnline ? 'var(--text-muted)' : (node.schedulingReady === false ? '#f59e0b' : 'var(--accent-primary)')}">
+                                ${!node.isOnline ? 'Offline' : (node.schedulingReady === false ? 'Paused' : 'Online')}
                             </span>
                         </div>
                         <div class="node-detail-row">
