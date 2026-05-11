@@ -219,6 +219,7 @@ function createTemplateModal() {
                         <div class="form-group">
                             <label class="form-label">Category</label>
                             <select class="form-input" id="ct-category">
+                                <option value="gaming">Games</option>
                                 <option value="dev-tools">Dev Tools</option>
                                 <option value="ai-ml">AI/ML</option>
                                 <option value="databases">Databases</option>
@@ -784,7 +785,7 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-category').value = template.category || 'dev-tools';
     document.getElementById('ct-version').value = template.version || '1.0.0';
     document.getElementById('ct-tags').value = (template.tags || []).join(', ');
-    document.getElementById('ct-image').value = template.imageId || 'ubuntu-22.04';
+    document.getElementById('ct-image').value = template.containerImage || 'ubuntu-22.04';
     document.getElementById('ct-cloudinit').value = template.cloudInitTemplate || '';
     document.getElementById('ct-requires-gpu').checked = template.requiresGpu || false;
     document.getElementById('ct-gpu-mode').value = template.defaultGpuMode || 1;
