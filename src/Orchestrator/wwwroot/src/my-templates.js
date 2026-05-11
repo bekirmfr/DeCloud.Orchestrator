@@ -3,7 +3,7 @@
 // Create, manage, and publish user-owned VM templates
 // ============================================================================
 
-import { escapeHtml as sharedEscapeHtml, showToast as sharedShowToast } from './utils.js';
+import { escapeHtml as sharedEscapeHtml, escapeJs, showToast as sharedShowToast } from './utils.js';
 
 let myTemplates = [];
 
@@ -235,6 +235,17 @@ function createTemplateModal() {
                         <label class="form-label">Tags (comma-separated)</label>
                         <input type="text" class="form-input" id="ct-tags" placeholder="docker, linux, web">
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Icon URL</label>
+                            <input type="text" class="form-input" id="ct-icon-url" placeholder="https://example.com/icon.png">
+                            <p class="form-help">PNG or SVG shown in the marketplace. 128×128 recommended.</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">License</label>
+                            <input type="text" class="form-input" id="ct-license" placeholder="MIT, Apache-2.0, GPL-3.0, …">
+                        </div>
+                    </div>
                 </div>
 
                 <!-- VM Configuration -->
@@ -251,7 +262,14 @@ function createTemplateModal() {
                     <div class="form-group">
                         <label class="form-label">Cloud-Init Script *</label>
                         <textarea class="form-input" id="ct-cloudinit" rows="10" placeholder="#cloud-config&#10;package_update: true&#10;packages:&#10;  - nginx" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
-                        <p class="form-help">Cloud-init configuration to set up the VM. Use {{PASSWORD}}, {{SSH_KEY}} variables.</p>
+                        <p class="form-help">
+                            Cloud-init YAML. Render-time statics (substituted by orchestrator before deploy):
+                            <code>__VM_ID__</code> <code>__HOSTNAME__</code> <code>__CA_PUBLIC_KEY__</code>
+                            <code>__SSH_AUTHORIZED_KEYS_BLOCK__</code> <code>__ORCHESTRATOR_URL__</code><br>
+                            Boot-time env vars (from Default Environment Variables below):
+                            <code>${DECLOUD_PASSWORD}</code> <code>${DECLOUD_DOMAIN}</code><br>
+                            Artifact references: <code>${ARTIFACT_URL:name}</code> <code>${ARTIFACT_SHA256:name}</code>
+                        </p>
                     </div>
                 </div>
 
@@ -357,6 +375,74 @@ function createTemplateModal() {
                     </button>
                 </div>
 
+                <!-- Artifacts -->
+                <div class="form-section" id="ct-artifacts-section">
+                    <h3 class="form-section-title">Artifacts</h3>
+                    <p class="form-help" style="margin-bottom: 8px;">
+                        External files your template fetches at deploy time (binaries, scripts, dashboards).
+                        Reference them in cloud-init as <code>${ARTIFACT_URL:name}</code> and
+                        <code>${ARTIFACT_SHA256:name}</code>.
+                        Binary artifacts must use an HTTPS URL (no inline data: URIs).
+                        Scripts and configs may be inline (data: URI, ≤5 MB per artifact, ≤10 MB total).
+                    </p>
+                    <div id="ct-artifacts-list"></div>
+                    <div id="ct-artifact-new-row" style="display:none; margin-top:12px; padding:12px; border:1px solid var(--border-color, #333); border-radius:6px;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Name *</label>
+                                <input type="text" class="form-input" id="ct-art-name" placeholder="e.g. my-binary">
+                                <p class="form-help">Referenced as <code>${ARTIFACT_URL:my-binary}</code> in cloud-init.</p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Type</label>
+                                <select class="form-input" id="ct-art-type">
+                                    <option value="0">Binary</option>
+                                    <option value="1" selected>Script</option>
+                                    <option value="2">Web Asset</option>
+                                    <option value="3">Config</option>
+                                    <option value="4">Archive</option>
+                                    <option value="5">Image</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Architecture</label>
+                                <select class="form-input" id="ct-art-arch">
+                                    <option value="">Any (universal)</option>
+                                    <option value="amd64">amd64</option>
+                                    <option value="arm64">arm64</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:11px;">Source URL *</label>
+                            <input type="text" class="form-input" id="ct-art-url"
+                                placeholder="https://github.com/.../releases/download/v1.0/binary-amd64  — or —  data:text/x-sh;base64,…">
+                            <p class="form-help">HTTPS URL (fetched and SHA256-verified by platform immediately on registration) or inline <code>data:;base64,…</code>. Binary type rejects data: URIs.</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">SHA256 *</label>
+                                <input type="text" class="form-input" id="ct-art-sha256" placeholder="64-character lowercase hex">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Description</label>
+                                <input type="text" class="form-input" id="ct-art-description" placeholder="Optional">
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-top:4px;">
+                            <button class="btn btn-sm btn-primary" onclick="window.myTemplates.saveArtifact()" type="button">Add Artifact</button>
+                            <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.cancelArtifact()" type="button">Cancel</button>
+                        </div>
+                    </div>
+                    <div id="ct-artifacts-save-first" style="color: var(--text-muted, #6b7280); font-size:13px; margin-top:8px;">
+                        Save the template as a draft first, then reopen it to add artifacts.
+                    </div>
+                    <button class="btn btn-sm btn-secondary" id="ct-add-artifact-btn"
+                        onclick="window.myTemplates.showArtifactRow()" type="button" style="margin-top:8px; display:none;">
+                        + Add Artifact
+                    </button>
+                </div>
+
                 <!-- Visibility & Pricing -->
                 <div class="form-section">
                     <h3 class="form-section-title">Visibility & Pricing</h3>
@@ -411,7 +497,8 @@ function createTemplateModal() {
 function resetCreateForm() {
     const fields = ['ct-template-id', 'ct-name', 'ct-slug', 'ct-description',
         'ct-long-description', 'ct-tags', 'ct-cloudinit', 'ct-source-url',
-        'ct-access-url', 'ct-default-username', 'ct-revenue-wallet'];
+        'ct-access-url', 'ct-default-username', 'ct-revenue-wallet',
+        'ct-icon-url', 'ct-license'];
     fields.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -436,6 +523,10 @@ function resetCreateForm() {
     document.getElementById('ct-env-vars-list').innerHTML = '';
     document.getElementById('ct-submit-btn').textContent = 'Create as Draft';
     document.getElementById('create-template-modal-title').textContent = 'Create Template';
+    document.getElementById('ct-artifacts-list').innerHTML = '';
+    document.getElementById('ct-artifact-new-row').style.display = 'none';
+    document.getElementById('ct-artifacts-save-first').style.display = '';
+    document.getElementById('ct-add-artifact-btn').style.display = 'none';
 }
 
 export function onGpuToggle() {
@@ -621,7 +712,10 @@ function buildTemplatePayload() {
         pricingModel: PRICING_TO_INT[document.getElementById('ct-pricing').value] ?? 0,
         templatePrice: parseFloat(document.getElementById('ct-price').value) || 0,
         authorRevenueWallet: document.getElementById('ct-revenue-wallet').value.trim() || null,
-        sourceUrl: document.getElementById('ct-source-url').value.trim() || null
+        sourceUrl: document.getElementById('ct-source-url').value.trim() || null,
+        iconUrl: document.getElementById('ct-icon-url').value.trim() || null,
+        license: document.getElementById('ct-license').value.trim() || null,
+        containerImage: document.getElementById('ct-image').value || null
     };
 }
 
@@ -697,6 +791,8 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-gpu-mode-group').style.display = template.requiresGpu ? '' : 'none';
     document.getElementById('ct-gpu-requirement').value = template.gpuRequirement || '';
     document.getElementById('ct-source-url').value = template.sourceUrl || '';
+    document.getElementById('ct-icon-url').value = template.iconUrl || '';
+    document.getElementById('ct-license').value = template.license || '';
 
     // Access & credentials
     document.getElementById('ct-access-url').value = template.defaultAccessUrl || '';
@@ -751,6 +847,11 @@ export async function editTemplate(templateId) {
         row.querySelector('[data-env-field="key"]').value = key;
         row.querySelector('[data-env-field="value"]').value = value;
     });
+
+    // Artifacts — unlock the section now that we have a templateId
+    document.getElementById('ct-artifacts-save-first').style.display = 'none';
+    document.getElementById('ct-add-artifact-btn').style.display = '';
+    renderArtifactsList(template.artifacts || [], template.id);
 }
 
 export async function publishTemplate(templateId) {
@@ -796,6 +897,128 @@ export async function deleteTemplate(templateId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ARTIFACT MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ARTIFACT_TYPE_LABELS = ['Binary', 'Script', 'Web Asset', 'Config', 'Archive', 'Image'];
+
+function renderArtifactsList(artifacts, templateId) {
+    const list = document.getElementById('ct-artifacts-list');
+    if (!list) return;
+
+    if (!artifacts.length) {
+        list.innerHTML = '<p style="color: var(--text-muted, #6b7280); font-size:13px; margin-bottom:4px;">No artifacts attached.</p>';
+        return;
+    }
+
+    // escapeJs is imported from utils.js alongside escapeHtml — use it for onclick attribute values.
+    list.innerHTML = artifacts.map(a => `
+        <div class="artifact-row" style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color, #333);">
+            <div style="flex:1; min-width:0; overflow:hidden;">
+                <span style="font-weight:600; font-family:var(--font-mono); font-size:13px;">${escapeHtml(a.name)}</span>
+                <span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? String(a.type))}${a.architecture ? ' · ' + escapeHtml(a.architecture) : ''}</span>
+                ${a.description ? `<span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">— ${escapeHtml(a.description)}</span>` : ''}
+            </div>
+            <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-muted,#6b7280); flex-shrink:0;">${escapeHtml((a.sha256 || '').slice(0, 12))}…</span>
+            <button class="btn btn-sm btn-danger"
+                onclick="window.myTemplates.removeArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
+                type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
+        </div>
+    `).join('');
+}
+
+export function showArtifactRow() {
+    document.getElementById('ct-artifact-new-row').style.display = '';
+    document.getElementById('ct-add-artifact-btn').style.display = 'none';
+    // Clear all inputs
+    ['ct-art-name', 'ct-art-url', 'ct-art-sha256', 'ct-art-description'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    document.getElementById('ct-art-type').value = '1';   // Script default
+    document.getElementById('ct-art-arch').value = '';
+}
+
+export function cancelArtifact() {
+    document.getElementById('ct-artifact-new-row').style.display = 'none';
+    document.getElementById('ct-add-artifact-btn').style.display = '';
+}
+
+export async function saveArtifact() {
+    const templateId = document.getElementById('ct-template-id').value;
+    if (!templateId) return;  // shouldn't be reachable — button is hidden before save
+
+    const name    = document.getElementById('ct-art-name').value.trim();
+    const srcUrl  = document.getElementById('ct-art-url').value.trim();
+    const sha256  = document.getElementById('ct-art-sha256').value.trim().toLowerCase();
+
+    if (!name)   { showToast('error', 'Artifact name is required'); return; }
+    if (!srcUrl) { showToast('error', 'Source URL is required'); return; }
+    if (!sha256) { showToast('error', 'SHA256 is required'); return; }
+    if (sha256.length !== 64 || !/^[0-9a-f]+$/.test(sha256)) {
+        showToast('error', 'SHA256 must be a 64-character lowercase hex string');
+        return;
+    }
+
+    const payload = {
+        name,
+        description:  document.getElementById('ct-art-description').value.trim() || null,
+        sha256,
+        sizeBytes:    0,   // server fills this in for HTTPS artifacts; inline artifacts compute it
+        sourceUrl:    srcUrl,
+        architecture: document.getElementById('ct-art-arch').value || null,
+        type:         parseInt(document.getElementById('ct-art-type').value, 10)
+    };
+
+    try {
+        const response = await api(`/api/marketplace/templates/${templateId}/artifacts`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || err || 'Failed to add artifact');
+        }
+
+        showToast('success', `Artifact '${name}' added`);
+        cancelArtifact();
+
+        // Refresh local cache and re-render
+        await loadMyTemplates();
+        const updated = myTemplates.find(t => t.id === templateId);
+        if (updated) renderArtifactsList(updated.artifacts || [], templateId);
+    } catch (error) {
+        showToast('error', error.message);
+    }
+}
+
+export async function removeArtifact(templateId, artifactId) {
+    if (!confirm('Remove this artifact from the template?')) return;
+
+    try {
+        const response = await api(
+            `/api/marketplace/templates/${templateId}/artifacts/${artifactId}`,
+            { method: 'DELETE' }
+        );
+
+        // 204 No Content is success; any non-ok status is an error
+        if (!response.ok && response.status !== 204) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to remove artifact');
+        }
+
+        showToast('success', 'Artifact removed');
+
+        await loadMyTemplates();
+        const updated = myTemplates.find(t => t.id === templateId);
+        if (updated) renderArtifactsList(updated.artifacts || [], templateId);
+    } catch (error) {
+        showToast('error', error.message);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -810,5 +1033,9 @@ window.myTemplates = {
     addEnvVar,
     onPricingChange,
     onGpuToggle,
-    onPortProtocolChange
+    onPortProtocolChange,
+    showArtifactRow,
+    cancelArtifact,
+    saveArtifact,
+    removeArtifact
 };
