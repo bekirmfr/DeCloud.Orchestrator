@@ -57,7 +57,8 @@ export async function showTemplateDetail(templateIdOrSlug) {
         // Show modal
         const modal = document.getElementById('template-detail-modal');
         if (modal) {
-            modal.classList.add('active');
+            if (window.openStaticModal) window.openStaticModal(modal);
+            else modal.classList.add('active');
             document.body.style.overflow = 'hidden';
         }
     } catch (error) {
@@ -72,7 +73,7 @@ export async function showTemplateDetail(templateIdOrSlug) {
 export function closeTemplateDetail() {
     const modal = document.getElementById('template-detail-modal');
     if (modal) {
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
         document.body.style.overflow = '';
     }
     currentTemplate = null;
@@ -385,7 +386,8 @@ export async function openDeployTemplateModal(template) {
     updateDeployCostEstimate();
 
     // Show modal
-    modal.classList.add('active');
+    if (window.openStaticModal) window.openStaticModal(modal);
+    else modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 }
 
@@ -395,7 +397,7 @@ export async function openDeployTemplateModal(template) {
 export function closeDeployTemplateModal() {
     const modal = document.getElementById('deploy-template-modal');
     if (modal) {
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
         document.body.style.overflow = '';
     }
     const replicationSelect = document.getElementById('deploy-replication-factor');

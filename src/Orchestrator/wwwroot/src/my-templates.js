@@ -164,14 +164,15 @@ export function showCreateModal() {
         modal = document.getElementById('create-template-modal');
     }
     resetCreateForm();
-    modal.classList.add('active');
+    if (window.openStaticModal) window.openStaticModal(modal);
+    else modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 }
 
 function closeCreateModal() {
     const modal = document.getElementById('create-template-modal');
     if (modal) {
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
         document.body.style.overflow = '';
     }
 }

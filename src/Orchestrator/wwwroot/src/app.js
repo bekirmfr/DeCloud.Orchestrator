@@ -6,10 +6,6 @@ import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { mainnet, polygon, polygonAmoy, arbitrum } from '@reown/appkit/networks';
 import { BrowserProvider } from 'ethers';
 
-// @noble/ciphers - Works on HTTP and HTTPS (no secure context required)
-import { gcm } from '@noble/ciphers/aes';
-import { randomBytes } from '@noble/ciphers/webcrypto';
-import { sha256 } from '@noble/hashes/sha256';
 import {
     getSSHCertificate,
     showSSHConnectionModal,
@@ -30,14 +26,44 @@ import {
     searchNodes,
     clearNodeFilters
 } from './marketplace.js';
-import {
-    initMarketplaceTemplates
-} from './marketplace-templates.js';
-import {
-    initMyTemplates
-} from './my-templates.js';
+import { initMarketplaceTemplates } from './marketplace-templates.js';
+import { initMyTemplates } from './my-templates.js';
 import './template-detail.js';
 import './direct-access.js';
+
+// Shared utilities + extracted modules
+import {
+    escapeHtml,
+    sanitizeUrl,
+    isValidIp,
+    showToast,
+    makeModalAccessible
+} from './utils.js';
+import {
+    getStatusClass,
+    getStatusText,
+    renderServiceReadiness,
+    renderServiceBadge
+} from './status-helpers.js';
+import {
+    encryptPassword,
+    decryptPassword,
+    clearEncryptionKey
+} from './wallet-crypto.js';
+import {
+    showPasswordModal,
+    revealPassword,
+    showConnectInfo,
+    showSshInstructions,
+    downloadSSHConfig,
+    openTerminal,
+    openFileBrowser,
+    showVmMessages
+} from './vm-modals.js';
+import {
+    openCustomDomainsModal,
+    closeCustomDomainsModal
+} from './custom-domains.js';
 
 // ============================================
 // CONFIGURATION
@@ -144,10 +170,6 @@ let appKitModal = null;
 
 // Constraint vocabulary cache (fetched once from /api/vms/constraint-vocabulary)
 let constraintVocabulary = { targets: [], operators: [] };
-
-// Password encryption cache
-let cachedEncryptionKey = null;
-const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
 
 // AppKit unsubscribe functions
 let appKitUnsubscribers = [];
@@ -532,7 +554,7 @@ function clearSession() {
     refreshToken = null;
     currentUser = null;
     CONFIG.wallet = null;
-    cachedEncryptionKey = null;
+    clearEncryptionKey();
 
     // SECURITY: Clear sensitive data
     localStorage.removeItem('authToken');
@@ -746,144 +768,7 @@ async function api(endpoint, options = {}) {
     return response;
 }
 
-// ============================================
-// PASSWORD ENCRYPTION - @noble/ciphers
-// Works on HTTP and HTTPS - No secure context required!
-// ============================================
-
-/**
- * Get encryption key from wallet signature
- * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
- * 
- * @returns {Promise<Uint8Array>} 32-byte AES-256 key
- */
-async function getEncryptionKey() {
-    if (cachedEncryptionKey) {
-        return cachedEncryptionKey;
-    }
-
-    if (!ethersSigner) {
-        throw new Error('Wallet not connected');
-    }
-
-    try {
-        console.log('[Encryption] Deriving key from wallet signature...');
-
-        // Get wallet signature
-        const signature = await ethersSigner.signMessage(ENCRYPTION_MESSAGE);
-
-        // Hash the signature to get a consistent 32-byte key using SHA-256
-        // This is secure and deterministic (same wallet = same key)
-        const keyMaterial = sha256(new TextEncoder().encode(signature));
-
-        // Cache the key (32 bytes for AES-256)
-        cachedEncryptionKey = keyMaterial;
-
-        console.log('[Encryption] ✓ Key derived successfully');
-        return cachedEncryptionKey;
-    } catch (error) {
-        console.error('[Encryption] Failed to generate key:', error);
-        throw new Error(`Key generation failed: ${error.message}`);
-    }
-}
-
-/**
- * Encrypt password using AES-256-GCM
- * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
- * 
- * @param {string} password - Plain text password to encrypt
- * @returns {Promise<string>} Base64-encoded encrypted data (nonce + ciphertext + tag)
- */
-async function encryptPassword(password) {
-    try {
-        console.log('[Encryption] Encrypting password...');
-
-        // Get encryption key (32 bytes for AES-256)
-        const key = await getEncryptionKey();
-
-        // Generate random 12-byte nonce (IV) for GCM mode
-        // Using @noble/ciphers randomBytes - works on HTTP!
-        const nonce = randomBytes(12);
-
-        // Convert password to bytes
-        const plaintext = new TextEncoder().encode(password);
-
-        // Create AES-256-GCM cipher using @noble/ciphers
-        // This works on HTTP, HTTPS, and localhost - no crypto.subtle needed!
-        const cipher = gcm(key, nonce);
-
-        // Encrypt (produces ciphertext + 16-byte authentication tag)
-        const ciphertext = cipher.encrypt(plaintext);
-
-        // Combine nonce + ciphertext (which includes auth tag)
-        // Format: [12-byte nonce][ciphertext + 16-byte tag]
-        const combined = new Uint8Array(nonce.length + ciphertext.length);
-        combined.set(nonce, 0);
-        combined.set(ciphertext, nonce.length);
-
-        // Convert to base64 for storage/transmission
-        const encrypted = btoa(String.fromCharCode(...combined));
-
-        console.log('[Encryption] ✓ Password encrypted successfully');
-        return encrypted;
-    } catch (error) {
-        console.error('[Encryption] Failed to encrypt:', error);
-        throw new Error(`Encryption failed: ${error.message}`);
-    }
-}
-
-/**
- * Decrypt password using AES-256-GCM
- * Uses @noble/ciphers - works everywhere (HTTP, HTTPS, localhost)
- * 
- * @param {string} encryptedPassword - Base64-encoded encrypted data
- * @returns {Promise<string>} Decrypted plain text password
- */
-async function decryptPassword(encryptedPassword) {
-    try {
-        console.log('[Decryption] Decrypting password...');
-
-        // Get encryption key (must be same wallet that encrypted)
-        const key = await getEncryptionKey();
-
-        // Decode base64 to bytes
-        const combined = Uint8Array.from(atob(encryptedPassword), c => c.charCodeAt(0));
-
-        // Split into nonce and ciphertext
-        const nonce = combined.slice(0, 12);
-        const ciphertext = combined.slice(12);
-
-        // Create AES-256-GCM cipher using @noble/ciphers
-        const cipher = gcm(key, nonce);
-
-        // Decrypt (automatically verifies authentication tag)
-        const plaintext = cipher.decrypt(ciphertext);
-
-        // Convert bytes to string
-        const password = new TextDecoder().decode(plaintext);
-
-        console.log('[Decryption] ✓ Password decrypted successfully');
-        return password;
-    } catch (error) {
-        console.error('[Decryption] Failed to decrypt:', error);
-
-        // Provide helpful error messages
-        if (error.message.includes('Invalid')) {
-            throw new Error('Decryption failed: Invalid key or corrupted data. Make sure you\'re using the same wallet.');
-        }
-
-        throw new Error(`Decryption failed: ${error.message}`);
-    }
-}
-
-/**
- * Clear cached encryption key
- * Call this when wallet disconnects
- */
-function clearEncryptionKey() {
-    cachedEncryptionKey = null;
-    console.log('[Encryption] Key cache cleared');
-}
+// Password encryption moved to wallet-crypto.js.
 
 // ============================================
 // UI FUNCTIONS
@@ -931,23 +816,7 @@ function hideLoginStatus() {
     }
 }
 
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-
-    container.appendChild(toast);
-
-    setTimeout(() => toast.classList.add('show'), 10);
-
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
+// showToast moved to utils.js.
 
 function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => {
@@ -1446,16 +1315,41 @@ function attachSshKeysTableDelegation(tbody) {
 // ============================================
 
 async function openCreateVMModal() {
-    document.getElementById('create-vm-modal').classList.add('active');
-
-    // Attach constraint builder (clears any previous rows)
+    openStaticModal(document.getElementById('create-vm-modal'));
     const container = document.getElementById('constraint-builder-container');
     if (container) attachConstraintBuilder(container);
 }
 
-function closeModal(modalId) {
-    document.getElementById(modalId).classList.remove('active');
+// Tracks accessibility-cleanup functions per static modal so we can run them
+// when the modal is closed (regardless of how it was closed).
+const _modalA11yCleanups = new Map();
+
+function openStaticModal(modalEl, options = {}) {
+    if (!modalEl) return;
+    modalEl.classList.add('active');
+    if (_modalA11yCleanups.has(modalEl)) _modalA11yCleanups.get(modalEl)();
+    const cleanup = makeModalAccessible(modalEl, () => closeModal(modalEl.id), options);
+    _modalA11yCleanups.set(modalEl, cleanup);
 }
+
+function closeModal(modalId) {
+    const modalEl = document.getElementById(modalId);
+    if (!modalEl) return;
+    closeStaticModal(modalEl);
+}
+
+function closeStaticModal(modalEl) {
+    if (!modalEl) return;
+    modalEl.classList.remove('active');
+    const cleanup = _modalA11yCleanups.get(modalEl);
+    if (cleanup) {
+        cleanup();
+        _modalA11yCleanups.delete(modalEl);
+    }
+}
+
+window.openStaticModal = openStaticModal;
+window.closeStaticModal = closeStaticModal;
 
 /**
  * Sanitize a raw VM name to DNS-safe format (mirrors server-side VmNameService.Sanitize).
@@ -2030,7 +1924,7 @@ function openUpdateConstraintsModal(vmId, currentConstraintsJson) {
     // Reset UI
     const errorEl = modal.querySelector('#update-constraints-error');
     errorEl.style.display = 'none';
-    modal.classList.add('active');
+    openStaticModal(modal);
 
     // Override the save button each time (re-capture vmId in closure)
     const saveBtn = modal.querySelector('#update-constraints-save');
@@ -2116,122 +2010,13 @@ async function deleteVM(vmId, vmName) {
     }
 }
 
-/**
-* Show password modal and handle encryption
-*/
-async function showPasswordModal(vmId, vmName, password) {
-    return new Promise((resolve) => {
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay active';
-        modal.id = 'password-modal';
-        modal.innerHTML = `
-                    <div class="modal-content" style="max-width: 550px;">
-                        <h3>🔐 Save Your VM Password</h3>
-                        <p>Your VM <strong>${escapeHtml(vmName)}</strong> has been created with this password:</p>
-
-                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center;">
-                            <code style="font-size: 1.5em; color: #10b981; letter-spacing: 1px;" id="password-display">${escapeHtml(password)}</code>
-                        </div>
-                
-                        <div style="background: #2d1f1f; border: 1px solid #7f1d1d; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                            <p style="color: #fca5a5; margin: 0;">
-                                <strong>⚠️ Important:</strong> This password will be encrypted with your wallet and stored securely. 
-                                You can always retrieve it by signing with your wallet, but <strong>save it now</strong> as a backup.
-                            </p>
-                        </div>
-                
-                        <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
-                            <button data-action="copy" class="btn btn-secondary">
-                                📋 Copy Password
-                            </button>
-                            <button data-action="secure" class="btn btn-primary">
-                                🔒 Secure & Continue
-                            </button>
-                        </div>
-                    </div>
-                `;
-        document.body.appendChild(modal);
-
-        const doSecureAndClose = async (vmId, password) => {
-            try {
-                // Encrypt password (key derived from wallet internally)
-                const encryptedPassword = await encryptPassword(password);
-
-                // Store encrypted password on server
-                await api(`/api/vms/${vmId}/secure-password`, {
-                    method: 'POST',
-                    body: JSON.stringify({ encryptedPassword })
-                });
-
-                showToast('Password secured with your wallet!', 'success');
-                modal.remove();
-                resolve();
-            } catch (error) {
-                console.error('Failed to secure password:', error);
-                showToast('Failed to encrypt - please save password manually!', 'error');
-            }
-        };
-
-        modal.querySelector('[data-action="copy"]').addEventListener('click', () => copyToClipboard(password));
-        modal.querySelector('[data-action="secure"]').addEventListener('click', () => doSecureAndClose(vmId, password));
-    });
-}
-
-/**
- * Reveal password for a VM (requires wallet signature)
- */
-async function revealPassword(vmId, vmName) {
-    try {
-        // Get encrypted password from server
-        const response = await api(`/api/vms/${vmId}/encrypted-password`);
-        const data = await response.json();
-
-        if (!data.success || !data.data || !data.data.encryptedPassword) {
-            showToast('Password not available', 'error');
-            return;
-        }
-
-        // Decrypt (key derived from wallet internally)
-        const password = await decryptPassword(data.data.encryptedPassword);
-
-        // Show in modal
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay active';
-        modal.innerHTML = `
-                    <div class="modal-content" style="max-width: 450px;">
-                        <h3>🔑 VM Password</h3>
-                        <p>Password for <strong>${escapeHtml(vmName)}</strong>:</p>
-
-                        <div style="background: #1a1b26; padding: 20px; border-radius: 8px; margin: 15px 0; text-align: center;">
-                            <code style="font-size: 1.4em; color: #10b981;" id="revealed-password">${escapeHtml(password)}</code>
-                        </div>
-
-                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                            <button class="btn btn-secondary" id="copy-revealed-pw-btn">
-                                📋 Copy
-                            </button>
-                            <button onclick="this.closest('.modal-overlay').remove()" class="btn btn-primary">
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                `;
-        document.body.appendChild(modal);
-        modal.querySelector('#copy-revealed-pw-btn')?.addEventListener('click', () => copyToClipboard(password));
-        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-
-    } catch (error) {
-        console.error('Failed to reveal password:', error);
-        showToast('Failed to decrypt password. Make sure you\'re using the same wallet.', 'error');
-    }
-}
 
 // ============================================
 // SSH KEYS
 // ============================================
 
 function openAddSSHKeyModal() {
-    document.getElementById('add-ssh-key-modal').classList.add('active');
+    openStaticModal(document.getElementById('add-ssh-key-modal'));
 }
 
 async function addSSHKey() {
@@ -2291,403 +2076,6 @@ async function deleteSSHKey(keyId, keyName) {
     }
 }
 
-// ============================================
-// FILE BROWSER INTEGRATION
-// ============================================
-
-/**
-* Open file browser for VM
-* @param {string} vmId - VM ID
-* @param {string} nodeAgentHost - Node Agent host (from networkConfig)
-* @param {number} nodeAgentPort - Node Agent port (from networkConfig)
-* @param {string} vmIp - VM private IP
-*/
-function openFileBrowser(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp) {
-    // Build file browser URL with connection parameters
-    const params = new URLSearchParams({
-        vmId: vmId,
-        vmName: vmName,
-        nodeIp: nodeAgentHost,
-        nodePort: nodeAgentPort,
-        vmIp: vmIp
-    });
-
-    window.open(`/file-browser.html?${params.toString()}`, '_blank');
-}
-
-// ============================================
-// TERMINAL & CONNECT INFO
-// ============================================
-
-/**
- * Open web terminal for VM
- * @param {string} vmId - VM ID
- * @param {string} nodeAgentHost - Node Agent host (from networkConfig)
- * @param {number} nodeAgentPort - Node Agent port (from networkConfig)
- * @param {string} vmIp - VM private IP
- */
-function openTerminal(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp) {
-    // Build terminal URL with connection parameters
-    const params = new URLSearchParams({
-        vmId: vmId,
-        vmName: vmName,
-        nodeIp: nodeAgentHost,
-        nodePort: nodeAgentPort,
-        vmIp: vmIp,
-        //autoConnect: 'true'
-    });
-
-    window.open(`/terminal.html?${params.toString()}`, '_blank');
-}
-
-/**
-    * Display SSH connection information modal (UPDATED WITH FILE BROWSER)
-    * @param {string} sshJumpHost - Node's public IP for SSH jump host
-    * @param {number} sshJumpPort - SSH port on node (typically 22)
-    * @param {string} vmIp - VM's private IP address
-    * @param {string} vmName - VM's display name
-    * @param {string} nodeAgentHost - Node Agent API host (for web terminal)
-    * @param {number} nodeAgentPort - Node Agent API port (for web terminal)
-    */
-function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort) {
-    // Remove existing modal
-    const existing = document.getElementById('connect-info-modal');
-    if (existing) existing.remove();
-
-    const modal = document.createElement('div');
-    modal.id = 'connect-info-modal';
-    modal.style.cssText = `
-        position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-        display: flex; align-items: center; justify-content: center; z-index: 1000;
-    `;
-
-    modal.innerHTML = `
-        <div style="background: #1a1d26; border: 1px solid #2a2d36; border-radius: 12px; padding: 28px; width: 520px; max-width: 90vw; color: #f0f2f5;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 id="connect-info-title" style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to </h3>
-                <button data-action="close" style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 1.5rem;">&times;</button>
-            </div>
-
-            <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-                <div style="color: #10b981; font-weight: 600; margin-bottom: 12px;">⚡ Quick Actions</div>
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-sm btn-primary" data-action="ssh" style="padding: 8px 16px; font-size: 0.9rem;">🖥️ Ssh Instructions</button>
-                    <button class="btn btn-sm btn-primary" data-action="terminal" style="padding: 8px 16px; font-size: 0.9rem;">🖥️ Open Terminal</button>
-                    <button class="btn btn-sm btn-secondary" data-action="file-browser" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">📁 File Browser</button>
-                </div>
-            </div>
-
-            <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
-                <div style="color: #93c5fd; font-weight: 600; margin-bottom: 12px;">🔐 SSH Connection</div>
-                <table style="width: 100%; font-size: 0.9rem;">
-                    <tr>
-                        <td style="padding: 6px 0; color: #9ca3af; width: 120px;">Bastion Host:</td>
-                        <td style="padding: 6px 0;"><code id="connect-info-bastion" style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;"></code></td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 6px 0; color: #9ca3af;">VM IP:</td>
-                        <td style="padding: 6px 0;"><code id="connect-info-vmip" style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;"></code></td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 6px 0; color: #9ca3af;">Username:</td>
-                        <td style="padding: 6px 0;"><code style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">root</code></td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 6px 0; color: #9ca3af;">Auth:</td>
-                        <td style="padding: 6px 0;"><span style="color: #10b981;">✓ SSH Certificate (wallet-derived)</span></td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
-                <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
-                <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
-                    <li>All file transfers use SFTP (encrypted over SSH)</li>
-                    <li>Certificates are valid for 1 hour and can be renewed anytime</li>
-                    <li>Multi-tenant isolation: Your access only works for your VMs</li>
-                </ul>
-            </div>
-        </div>
-    `;
-
-    modal.querySelector('#connect-info-title').textContent = `🔗 Connect to ${vmName}`;
-    modal.querySelector('#connect-info-bastion').textContent = `${sshJumpHost}:${sshJumpPort}`;
-    modal.querySelector('#connect-info-vmip').textContent = vmIp;
-
-    document.body.appendChild(modal);
-
-    modal.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (e.target === modal || (btn && btn.dataset.action === 'close')) {
-            modal.remove();
-            return;
-        }
-        if (!btn) return;
-        switch (btn.dataset.action) {
-            case 'ssh':
-                showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort);
-                break;
-            case 'terminal':
-                openTerminal(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp);
-                break;
-            case 'file-browser':
-                openFileBrowser(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp);
-                break;
-        }
-    });
-}
-
-/**
- * Show the VM message queue in a modal timeline.
- * Fetches the latest VM record so messages are always current.
- */
-async function showVmMessages(vmId, vmName) {
-    const modal = document.getElementById('vm-messages-modal');
-    const body = document.getElementById('vm-messages-body');
-    const title = document.getElementById('vm-messages-title');
-    const sub = document.getElementById('vm-messages-subtitle');
-
-    title.textContent = `${vmName} — Events`;
-    sub.textContent = '';
-    body.innerHTML = '<div class="loading-spinner">Loading messages...</div>';
-    modal.classList.add('active');
-
-    try {
-        const res = await api(`/api/vms/${vmId}`);
-        const data = await res.json();
-        const vm = data?.data?.vm ?? data?.data ?? data;
-        const msgs = Array.isArray(vm?.messages) ? vm.messages : [];
-
-        sub.textContent = msgs.length
-            ? `${msgs.length} event${msgs.length !== 1 ? 's' : ''} — newest first`
-            : 'No events recorded yet';
-
-        if (msgs.length === 0) {
-            body.innerHTML = `
-                <div style="text-align:center;padding:48px 24px;color:var(--text-muted);">
-                    <div style="font-size:32px;margin-bottom:12px;">📋</div>
-                    <div style="font-size:14px;">No events recorded yet.</div>
-                    <div style="font-size:12px;margin-top:6px;">Events appear here as the VM changes state.</div>
-                </div>`;
-            return;
-        }
-
-        // Render newest first
-        const reversed = [...msgs].reverse();
-        body.innerHTML = `<div class="vm-msg-timeline">${reversed.map(renderVmMessage).join('')}</div>`;
-
-    } catch (err) {
-        console.error('[VM Messages] Failed to load:', err);
-        body.innerHTML = `<div style="padding:24px;color:var(--accent-danger);text-align:center;">Failed to load events.</div>`;
-    }
-}
-
-function renderVmMessage(msg) {
-    const level = (msg.level ?? 0); // 0=Info, 1=Warning, 2=Error
-    const dotCls = level === 2 ? 'msg-dot-error' : level === 1 ? 'msg-dot-warn' : 'msg-dot-info';
-    const ts = new Date(msg.timestamp);
-    const abs = ts.toLocaleString();
-    const rel = formatMsgAge(ts);
-    const src = escapeHtml(msg.source ?? 'system');
-    const text = escapeHtml(msg.text ?? '');
-
-    return `
-        <div class="vm-msg-row">
-            <div class="vm-msg-left">
-                <div class="vm-msg-dot ${dotCls}"></div>
-                <div class="vm-msg-line"></div>
-            </div>
-            <div class="vm-msg-content">
-                <div class="vm-msg-meta">
-                    <span class="vm-msg-source">${src}</span>
-                    <span class="vm-msg-time" title="${abs}">${rel}</span>
-                </div>
-                <div class="vm-msg-text">${text}</div>
-            </div>
-        </div>`;
-}
-
-function formatMsgAge(date) {
-    const secs = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (secs < 60) return `${secs}s ago`;
-    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-    return `${Math.floor(secs / 86400)}d ago`;
-}
-
-function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort) {
-    // ========================================================================
-    // SECURITY VALIDATION: Input Sanitization
-    // ========================================================================
-
-    if (!isValidIp(sshJumpHost) || !isValidIp(vmIp)) {
-        showToast('Invalid IP address format', 'error');
-        return;
-    }
-
-    if (!isValidIp(nodeAgentHost)) {
-        showToast('Invalid Node Agent host format', 'error');
-        return;
-    }
-
-    if (sshJumpPort < 1 || sshJumpPort > 65535 || nodeAgentPort < 1 || nodeAgentPort > 65535) {
-        showToast('Invalid port number', 'error');
-        return;
-    }
-
-    // Build SSH commands using SSH config (recommended approach)
-    const sshConfigCommand = `ssh ${escapeHtml(vmIp)}`;
-
-    // Build direct ProxyJump command (alternative)
-    const proxyJumpCommand = `
-        ssh -p ${sshJumpPort} -i ~/.ssh/decloud-wallet.pem \\
-        -o CertificateFile=~/.ssh/decloud-XXXXX-cert.pub \\
-        -J decloud@${escapeHtml(sshJumpHost)}:${sshJumpPort} \\
-        root@${escapeHtml(vmIp)}`;
-
-    // Build SSH config file content
-    const sshConfigContent = `
-    # DeCloud SSH Configuration
-    # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
-    Host decloud-bastion
-    HostName ${sshJumpHost}
-    Port ${sshJumpPort}
-    User decloud
-    IdentityFile ~/.ssh/decloud-wallet.pem
-    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
-    
-    Host ${vmIp}
-    User root
-    ProxyJump decloud-bastion
-    IdentityFile ~/.ssh/decloud-wallet.pem
-    CertificateFile ~/.ssh/decloud-XXXXX-cert.pub`;
-
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay active';
-    modal.innerHTML = `
-        <div class="modal" style="max-width: 850px;">
-            <div class="modal-header">
-                <h2 class="modal-title" id="ssh-modal-title">🔗 Connect to </h2>
-                <button class="modal-close" data-action="close">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body connect-info">
-                <div class="connect-section" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-                    <div class="connect-section-title" style="color: white; font-size: 1.1rem; font-weight: 600;">
-                        ✨ Recommended: One-Time SSH Config Setup
-                    </div>
-                    <p style="color: rgba(255,255,255,0.9); font-size: 0.9rem; margin: 12px 0;">Set up SSH config once, then connect with a single command!</p>
-
-                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">📝 Step 1: Add to ~/.ssh/config</div>
-                        <div class="connect-code" style="background: #1f2937; margin: 0;">
-                            <pre id="ssh-config-pre" style="margin: 0; color: #e5e7eb; font-size: 0.85rem; overflow-x: auto;"></pre>
-                            <button class="connect-code-copy" data-action="copy-config" style="background: #10b981;">Copy Config</button>
-                        </div>
-                        <button class="btn btn-secondary" data-action="download-config" style="margin-top: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">💾 Download config file</button>
-                    </div>
-
-                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
-                        <div style="color: white; font-weight: 600; margin-bottom: 8px;">🚀 Step 2: Connect with Simple Command</div>
-                        <div class="connect-code" style="background: #1f2937; margin: 0;">
-                            <pre id="ssh-config-cmd" style="margin: 0; color: #e5e7eb; font-size: 0.9rem;"></pre>
-                            <button class="connect-code-copy" data-action="copy-cmd" style="background: #10b981;">Copy</button>
-                        </div>
-                        <p style="color: rgba(255,255,255,0.8); font-size: 0.85rem; margin: 8px 0 0 0;">
-                            ✅ That's it! Just <code id="ssh-config-cmd-inline" style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;"></code> from now on
-                        </p>
-                    </div>
-                </div>
-
-                <div class="connect-section">
-                    <div class="connect-section-title">Alternative: Direct ProxyJump Command</div>
-                    <div class="connect-code">
-                        <pre id="ssh-proxyjump-pre" style="margin: 0; font-size: 0.85rem;"></pre>
-                        <button class="connect-code-copy" data-action="copy-proxyjump">Copy</button>
-                    </div>
-                    <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
-                        ⚠️ Don't forget to replace <code>XXXXX</code> with your certificate ID!
-                    </p>
-                </div>
-
-                <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
-                    <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
-                    <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
-                        <li>Certificates are valid for 1 hour and can be renewed anytime</li>
-                        <li>Your private key (~/.ssh/decloud-wallet.pem) is derived from your wallet and never changes</li>
-                        <li>Multi-tenant isolation: Your certificate only works for your VMs</li>
-                        <li>Port ${sshJumpPort} is used to bypass common ISP restrictions</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    `;
-
-    modal.querySelector('#ssh-modal-title').textContent = `🔗 Connect to ${vmName}`;
-    modal.querySelector('#ssh-config-pre').textContent = sshConfigContent;
-    modal.querySelector('#ssh-config-cmd').textContent = sshConfigCommand;
-    modal.querySelector('#ssh-config-cmd-inline').textContent = `ssh ${vmIp}`;
-    modal.querySelector('#ssh-proxyjump-pre').textContent = proxyJumpCommand;
-
-    document.body.appendChild(modal);
-
-    modal.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (e.target === modal || (btn && btn.dataset.action === 'close')) {
-            modal.remove();
-            return;
-        }
-        if (!btn) return;
-        switch (btn.dataset.action) {
-            case 'copy-config': copyToClipboard(sshConfigContent); break;
-            case 'copy-cmd': copyToClipboard(sshConfigCommand); break;
-            case 'copy-proxyjump': copyToClipboard(proxyJumpCommand); break;
-            case 'download-config': downloadSSHConfig(vmIp, sshJumpHost, sshJumpPort); break;
-        }
-    });
-}
-
-
-/**
- * Download SSH config file
- */
-function downloadSSHConfig(vmIp, bastionHost, bastionPort) {
-    const config = `
-        # DeCloud SSH Configuration
-        # Add this to ~/.ssh/config (or C:\\\\Users\\\\USERNAME\\\\.ssh\\\\config on Windows)
-
-        Host decloud-bastion
-            HostName ${bastionHost}
-            Port ${bastionPort}
-            User decloud
-            IdentityFile ~/.ssh/decloud-wallet.pem
-            CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
-
-        Host ${vmIp}
-            User root
-            ProxyJump decloud-bastion
-            IdentityFile ~/.ssh/decloud-wallet.pem
-            CertificateFile ~/.ssh/decloud-XXXXX-cert.pub
-
-        # Remember to replace XXXXX with your actual certificate ID!
-        # Get your certificate from the VM dashboard.
-        `;
-
-    const blob = new Blob([config], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'decloud-ssh-config';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    showToast('SSH config downloaded! Add it to ~/.ssh/config', 'success');
-}
 
 // ============================================
 // SETTINGS
@@ -2757,164 +2145,9 @@ async function copyToClipboard(text) {
     }
 }
 
-/**
- * Escape HTML to prevent XSS. Safe for both element text and HTML attributes
- * (escapes quotes and backticks in addition to <>&).
- */
-const _HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
-function escapeHtml(text) {
-    if (text === null || text === undefined) return '';
-    return String(text).replace(/[&<>"'`]/g, ch => _HTML_ESCAPE_MAP[ch]);
-}
+// escapeHtml moved to utils.js.
 
-/**
- * Sanitize a URL for safe use in href/src. Returns '#' for disallowed schemes.
- */
-function sanitizeUrl(url) {
-    if (!url || typeof url !== 'string') return '#';
-    const trimmed = url.trim();
-    if (!trimmed) return '#';
-    if (/^[/.?#]/.test(trimmed)) return trimmed;
-    const cleaned = trimmed.replace(/[ -- ]/g, '');
-    if (/^(https?:|mailto:)/i.test(cleaned)) return cleaned;
-    return '#';
-}
 
-/**
- * Validate IPv4 address format
- */
-function isValidIp(ip) {
-    if (!ip || typeof ip !== 'string') return false;
-
-    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-    if (!ipv4Regex.test(ip)) return false;
-
-    const octets = ip.split('.');
-    return octets.every(octet => {
-        const num = parseInt(octet, 10);
-        return num >= 0 && num <= 255;
-    });
-}
-
-/**
- * Get CSS class for VM status
- */
-function getStatusClass(status) {
-    const statusMap = {
-        0: 'pending', 1: 'scheduling', 2: 'provisioning',
-        3: 'running', 4: 'stopping', 5: 'stopped',
-        6: 'deleting', 7: 'migrating', 8: 'error', 9: 'deleted'
-    };
-    return statusMap[status] || 'unknown';
-}
-
-/**
- * Get human-readable status text
- */
-function getStatusText(status) {
-    const statusMap = {
-        0: 'Pending', 1: 'Scheduling', 2: 'Provisioning',
-        3: 'Running', 4: 'Stopping', 5: 'Stopped',
-        6: 'Deleting', 7: 'Migrating', 8: 'Error', 9: 'Deleted'
-    };
-    return statusMap[status] || 'Unknown';
-}
-
-/**
- * Normalize service readiness status (handles both integer enum and string)
- * API may return integer (0-4) or string ("Pending", "Ready", etc.)
- */
-function normalizeServiceStatus(status) {
-    if (status == null) return 'pending';
-    if (typeof status === 'number') {
-        const map = { 0: 'pending', 1: 'checking', 2: 'ready', 3: 'timedout', 4: 'failed' };
-        return map[status] || 'pending';
-    }
-    return String(status).toLowerCase();
-}
-
-/**
- * Get CSS class for service readiness status
- */
-function getServiceStatusClass(status) {
-    switch (normalizeServiceStatus(status)) {
-        case 'ready': return 'svc-ready';
-        case 'checking': return 'svc-checking';
-        case 'pending': return 'svc-pending';
-        case 'timedout': return 'svc-timedout';
-        case 'failed': return 'svc-failed';
-        default: return 'svc-pending';
-    }
-}
-
-/**
- * Get icon for service readiness status
- */
-function getServiceStatusIcon(status) {
-    switch (normalizeServiceStatus(status)) {
-        case 'ready': return '<span class="svc-icon svc-ready">&#x2713;</span>';
-        case 'checking': return '<span class="svc-icon svc-checking">&#x25CF;</span>';
-        case 'pending': return '<span class="svc-icon svc-pending">&#x25CB;</span>';
-        case 'timedout': return '<span class="svc-icon svc-timedout">&#x26A0;</span>';
-        case 'failed': return '<span class="svc-icon svc-failed">&#x2717;</span>';
-        default: return '<span class="svc-icon svc-pending">&#x25CB;</span>';
-    }
-}
-
-/**
- * Render per-service readiness indicators for a VM
- */
-function renderServiceReadiness(services, vmStatus) {
-    if (!services || services.length === 0 || vmStatus !== 3) return '';
-
-    const readyCount = services.filter(s => normalizeServiceStatus(s.status) === 'ready').length;
-    const total = services.length;
-    const allReady = readyCount === total;
-
-    const summaryClass = allReady ? 'svc-summary-ready' : 'svc-summary-partial';
-    const summaryText = allReady ? 'All services ready' : `${readyCount}/${total} ready`;
-
-    const serviceItems = services.map(s => {
-        const name = s.name || 'Unknown';
-        const port = s.port ? `:${s.port}` : '';
-        const label = name === 'System' ? 'System' : `${name}${port}`;
-        const statusClass = getServiceStatusClass(s.status);
-        const icon = getServiceStatusIcon(s.status);
-        const statusText = normalizeServiceStatus(s.status);
-        const tooltip = s.statusMessage
-            ? `${label}: ${statusText} — ${s.statusMessage}`
-            : `${label}: ${statusText}`;
-
-        return `<div class="svc-item ${statusClass}" title="${escapeHtml(tooltip)}">
-            ${icon}
-            <span class="svc-label">${escapeHtml(label)}</span>
-        </div>`;
-    }).join('');
-
-    return `<div class="svc-readiness">
-        <div class="svc-summary ${summaryClass}">${summaryText}</div>
-        <div class="svc-list">${serviceItems}</div>
-    </div>`;
-}
-
-/**
- * Render compact service readiness badge for VM table row
- */
-function renderServiceBadge(services, vmStatus) {
-    if (!services || services.length === 0 || vmStatus !== 3) return '';
-
-    const readyCount = services.filter(s => normalizeServiceStatus(s.status) === 'ready').length;
-    const total = services.length;
-    const allReady = readyCount === total;
-    const hasFailure = services.some(s => {
-        const st = normalizeServiceStatus(s.status);
-        return st === 'failed' || st === 'timedout';
-    });
-
-    const badgeClass = allReady ? 'svc-badge-ready' : hasFailure ? 'svc-badge-warn' : 'svc-badge-progress';
-
-    return `<span class="svc-badge ${badgeClass}" title="${readyCount}/${total} services ready">${readyCount}/${total}</span>`;
-}
 
 // ============================================
 // EXPOSE FUNCTIONS TO WINDOW (for onclick handlers)
@@ -2960,269 +2193,8 @@ window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;
 window.clearNodeFilters = clearNodeFilters;
 
-// ============================================
-// CUSTOM DOMAINS
-// ============================================
-
-const DOMAIN_STATUS_LABELS = {
-    PendingDns: { text: 'DNS Pending', class: 'status-pending' },
-    Active: { text: 'Active', class: 'status-running' },
-    Paused: { text: 'Paused', class: 'status-stopped' },
-    Error: { text: 'Error', class: 'status-error' }
-};
-
-async function openCustomDomainsModal(vmId, vmName) {
-    const modal = document.getElementById('custom-domains-modal');
-    const title = document.getElementById('custom-domains-modal-title');
-    const listContainer = document.getElementById('custom-domains-list');
-    const addContainer = document.getElementById('custom-domains-add');
-    const loadingEl = document.getElementById('custom-domains-loading');
-
-    if (!modal) return;
-
-    modal.dataset.vmId = vmId;
-    title.textContent = `Custom Domains - ${vmName}`;
-
-    modal.style.display = 'flex';
-    loadingEl.style.display = 'block';
-    listContainer.style.display = 'none';
-    addContainer.style.display = 'none';
-
-    try {
-        const response = await api(`/api/central-ingress/vm/${vmId}/domains`);
-        const result = await response.json();
-
-        if (!result.success) {
-            throw new Error(result.error || 'Failed to load domains');
-        }
-
-        const domains = result.data || [];
-
-        renderCustomDomainsList(domains, vmId);
-        renderCustomDomainsAddForm(vmId);
-
-        loadingEl.style.display = 'none';
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    } catch (error) {
-        loadingEl.style.display = 'none';
-        listContainer.innerHTML = `<p class="text-muted" style="text-align: center; padding: 20px;">Failed to load domains: ${escapeHtml(error.message)}</p>`;
-        listContainer.style.display = 'block';
-        renderCustomDomainsAddForm(vmId);
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-function closeCustomDomainsModal() {
-    const modal = document.getElementById('custom-domains-modal');
-    if (modal) {
-        modal.classList.remove('active');
-        document.body.style.overflow = '';
-    }
-}
-
-function renderCustomDomainsList(domains, vmId) {
-    const container = document.getElementById('custom-domains-list');
-
-    if (!domains || domains.length === 0) {
-        container.innerHTML = `
-            <div class="direct-access-empty">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="2" y1="12" x2="22" y2="12"/>
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                </svg>
-                <h3>No Custom Domains</h3>
-                <p>Add a custom domain below to route your own domain to this VM.</p>
-            </div>
-        `;
-        container.style.display = 'block';
-        return;
-    }
-
-    const html = `
-        <table class="ports-table">
-            <thead>
-                <tr>
-                    <th>Domain</th>
-                    <th>Port</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${domains.map(d => {
-        const statusInfo = DOMAIN_STATUS_LABELS[d.status] || DOMAIN_STATUS_LABELS.Error;
-        return `
-                    <tr>
-                        <td>
-                            ${d.status === 'Active' && d.publicUrl
-                ? `<a href="${escapeHtml(sanitizeUrl(d.publicUrl))}" target="_blank" rel="noopener noreferrer" class="domain-link">${escapeHtml(d.domain)}</a>`
-                : `<code>${escapeHtml(d.domain)}</code>`
-            }
-                        </td>
-                        <td><code>${d.targetPort}</code></td>
-                        <td><span class="status-badge ${statusInfo.class}">${statusInfo.text}</span></td>
-                        <td>
-                            <div class="table-actions">
-                                ${d.status === 'PendingDns' || d.status === 'Error' ? `
-                                    <button class="btn btn-sm btn-primary" onclick="window.verifyCustomDomain('${escapeHtml(vmId)}', '${escapeHtml(d.id)}')" title="Verify DNS">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                            <polyline points="22 4 12 14.01 9 11.01"/>
-                                        </svg>
-                                        Verify
-                                    </button>
-                                ` : ''}
-                                <button class="btn btn-sm btn-danger" onclick="window.removeCustomDomain('${escapeHtml(vmId)}', '${escapeHtml(d.id)}', '${escapeHtml(d.domain)}')" title="Remove">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <line x1="18" y1="6" x2="6" y2="18"/>
-                                        <line x1="6" y1="6" x2="18" y2="18"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                    ${d.status === 'PendingDns' || d.status === 'Error' ? `
-                    <tr>
-                        <td colspan="4">
-                            <div class="dns-instructions">
-                                <span class="dns-instructions-label">DNS Setup:</span>
-                                <code>CNAME ${escapeHtml(d.domain)} &rarr; ${escapeHtml(d.dnsTarget || '')}</code>
-                                <button class="btn-icon" onclick="copyToClipboard('${escapeHtml(d.dnsTarget || '')}')" title="Copy DNS target">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                    ` : ''}
-                    `;
-    }).join('')}
-            </tbody>
-        </table>
-    `;
-
-    container.innerHTML = html;
-    container.style.display = 'block';
-}
-
-function renderCustomDomainsAddForm(vmId) {
-    const container = document.getElementById('custom-domains-add');
-
-    container.innerHTML = `
-        <div class="custom-port-section">
-            <h4>Add Custom Domain</h4>
-            <div class="custom-port-form">
-                <input type="text" id="custom-domain-input" placeholder="my.awesome.app" style="flex: 2;" />
-                <input type="number" id="custom-domain-port" placeholder="Port (80)" min="1" max="65535" value="80" style="flex: 0.5;" />
-                <button class="btn btn-primary" onclick="window.addCustomDomain('${escapeHtml(vmId)}')">
-                    Add Domain
-                </button>
-            </div>
-        </div>
-    `;
-
-    container.style.display = 'block';
-}
-
-window.addCustomDomain = async function (vmId) {
-    const domainInput = document.getElementById('custom-domain-input');
-    const portInput = document.getElementById('custom-domain-port');
-
-    const domain = domainInput.value.trim();
-    const targetPort = parseInt(portInput.value) || 80;
-
-    if (!domain) {
-        showToast('Please enter a domain name', 'error');
-        return;
-    }
-
-    try {
-        showToast('Adding custom domain...', 'info');
-
-        const response = await api(`/api/central-ingress/vm/${vmId}/domains`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domain, targetPort })
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-            throw new Error(result.error || 'Failed to add domain');
-        }
-
-        showToast(`Domain ${domain} added! Configure DNS and click Verify.`, 'success');
-        domainInput.value = '';
-
-        // Refresh modal
-        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
-        await openCustomDomainsModal(vmId, vmName);
-    } catch (error) {
-        showToast('Failed to add domain: ' + error.message, 'error');
-    }
-};
-
-window.verifyCustomDomain = async function (vmId, domainId) {
-    try {
-        showToast('Verifying DNS...', 'info');
-
-        const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}/verify`, {
-            method: 'POST'
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-            throw new Error(result.error || 'Verification failed');
-        }
-
-        const domain = result.data;
-        if (domain.status === 'Active') {
-            showToast(`Domain ${domain.domain} verified and active!`, 'success');
-        } else {
-            showToast(`DNS verification failed for ${domain.domain}. Check your CNAME record.`, 'error');
-        }
-
-        // Refresh modal
-        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
-        await openCustomDomainsModal(vmId, vmName);
-    } catch (error) {
-        showToast('DNS verification failed: ' + error.message, 'error');
-    }
-};
-
-window.removeCustomDomain = async function (vmId, domainId, domainName) {
-    if (!confirm(`Remove custom domain ${domainName}?`)) {
-        return;
-    }
-
-    try {
-        showToast('Removing domain...', 'info');
-
-        const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}`, {
-            method: 'DELETE'
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-            throw new Error(result.error || 'Failed to remove');
-        }
-
-        showToast(`Domain ${domainName} removed`, 'success');
-
-        // Refresh modal
-        const vmName = document.getElementById('custom-domains-modal-title').textContent.replace('Custom Domains - ', '');
-        await openCustomDomainsModal(vmId, vmName);
-    } catch (error) {
-        showToast('Failed to remove domain: ' + error.message, 'error');
-    }
-};
-
+// Custom-domain helpers — implemented in custom-domains.js but referenced
+// from inline VM actions, so we re-expose them here.
 window.openCustomDomainsModal = openCustomDomainsModal;
 window.closeCustomDomainsModal = closeCustomDomainsModal;
+

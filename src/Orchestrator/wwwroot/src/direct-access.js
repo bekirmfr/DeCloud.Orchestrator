@@ -209,7 +209,8 @@ export async function openDirectAccessModal(vmId, vmName) {
         renderQuickAddButtons(vmId);
 
         loadingEl.style.display = 'none';
-        modal.classList.add('active');
+        if (window.openStaticModal) window.openStaticModal(modal);
+        else modal.classList.add('active');
         document.body.style.overflow = 'hidden';
     } catch (error) {
         loadingEl.style.display = 'none';
@@ -223,7 +224,7 @@ export async function openDirectAccessModal(vmId, vmName) {
 export function closeDirectAccessModal() {
     const modal = document.getElementById('direct-access-modal');
     if (modal) {
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
         document.body.style.overflow = '';
     }
 }

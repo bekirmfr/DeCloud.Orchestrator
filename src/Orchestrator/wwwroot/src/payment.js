@@ -546,8 +546,8 @@ export function showDepositModal() {
     document.getElementById('deposit-result').classList.add('hidden');
     document.getElementById('deposit-btn').disabled = false;
 
-    modal.classList.add('active');
-    //modal.classList.remove('hidden');
+    if (window.openStaticModal) window.openStaticModal(modal);
+    else modal.classList.add('active');
 }
 
 /**
@@ -557,7 +557,7 @@ export function hideDepositModal() {
     const modal = document.getElementById('deposit-modal');
     if (modal) {
         //modal.classList.add('hidden');
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
     }
 }
 
@@ -826,7 +826,8 @@ export async function showBalanceModal() {
         modal = document.getElementById('balance-modal');
     }
 
-    modal.classList.add('active');
+    if (window.openStaticModal) window.openStaticModal(modal);
+    else modal.classList.add('active');
     await loadBalanceModalData();
 }
 
@@ -836,7 +837,7 @@ export async function showBalanceModal() {
 export function hideBalanceModal() {
     const modal = document.getElementById('balance-modal');
     if (modal) {
-        modal.classList.remove('active');
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
     }
 }
 
