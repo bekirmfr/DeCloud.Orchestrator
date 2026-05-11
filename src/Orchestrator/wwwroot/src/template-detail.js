@@ -3,6 +3,8 @@
 // View template details and deploy
 // ============================================================================
 
+import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing } from './utils.js';
+
 let currentTemplate = null;
 
 // ============================================
@@ -104,7 +106,7 @@ function renderTemplateDetail(template) {
             <div class="template-detail-title-group">
                 <h2 class="template-detail-title">${escapeHtml(template.name)}</h2>
                 <div class="template-detail-meta">
-                    <span class="template-version">v${template.version}</span>
+                    <span class="template-version">v${escapeHtml(template.version)}</span>
                     <span class="template-author">by ${escapeHtml(template.authorName || 'DeCloud')}</span>
                     ${template.isFeatured ? '<span class="badge-featured">⭐ Featured</span>' : ''}
                     ${template.requiresGpu ? '<span class="badge-gpu">🎮 Requires GPU</span>' : ''}
@@ -238,7 +240,7 @@ function renderTemplateDetail(template) {
         </div>
 
         <!-- Template Price -->
-        ${template.pricingModel === 'PerDeploy' && template.templatePrice > 0 ? `
+        ${isPerDeployPricing(template.pricingModel) && template.templatePrice > 0 ? `
         <div class="detail-section">
             <h3 class="detail-section-title">💳 Template Fee</h3>
             <div class="template-fee-info">
@@ -256,8 +258,8 @@ function renderTemplateDetail(template) {
             </div>
             <div id="template-review-form" style="margin-top: 16px; display: none;">
                 <h4 style="margin-bottom: 8px;">Write a Review</h4>
-                <div class="review-stars-input" id="review-stars-input">
-                    ${[1,2,3,4,5].map(i => `<span class="review-star" data-value="${i}" onclick="window.templateDetail.setReviewRating(${i})">☆</span>`).join('')}
+                <div class="review-stars-input" id="review-stars-input" role="radiogroup" aria-label="Star rating">
+                    ${[1,2,3,4,5].map(i => `<button type="button" class="review-star" data-value="${i}" role="radio" aria-checked="false" aria-label="${i} star${i === 1 ? '' : 's'}" onclick="window.templateDetail.setReviewRating(${i})">☆</button>`).join('')}
                 </div>
                 <textarea class="form-input" id="review-comment" rows="3" placeholder="Share your experience with this template..." style="margin-top: 8px;"></textarea>
                 <button class="btn btn-sm btn-primary" onclick="window.templateDetail.submitReview()" style="margin-top: 8px;">
@@ -270,7 +272,7 @@ function renderTemplateDetail(template) {
             <div class="detail-section">
                 <h3 class="detail-section-title">🔗 Links</h3>
                 <div class="template-links">
-                    <a href="${template.sourceUrl}" target="_blank" class="template-link">
+                    <a href="${escapeHtml(sanitizeUrl(template.sourceUrl))}" target="_blank" rel="noopener noreferrer" class="template-link">
                         📄 Source Code / Documentation
                     </a>
                 </div>
@@ -818,23 +820,12 @@ export async function submitReview() {
     }
 }
 
-/**
- * Helper: Escape HTML
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-/**
- * Helper: Show toast notification
- */
-function showToast(type, message) {
-    if (window.showToast) {
-        window.showToast(message, type);
+// Tolerate legacy reversed-arg call sites that pass (type, message)
+function showToast(typeOrMessage, messageOrType) {
+    if (['info', 'success', 'error', 'warning'].includes(typeOrMessage)) {
+        sharedShowToast(messageOrType, typeOrMessage);
     } else {
-        console.log(`[Toast] ${type}: ${message}`);
+        sharedShowToast(typeOrMessage, messageOrType);
     }
 }
 

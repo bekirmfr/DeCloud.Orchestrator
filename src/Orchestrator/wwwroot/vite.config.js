@@ -41,7 +41,10 @@ export default defineConfig({
         minify: 'terser',
         terserOptions: {
             compress: {
-                drop_console: false, // Keep console logs for production debugging
+                // Strip noisy console methods in prod (keep console.error/warn for
+                // observability). Leaking VM/node IDs and addresses in console.log
+                // was a known issue prior to this change.
+                pure_funcs: ['console.log', 'console.info', 'console.debug', 'console.trace'],
                 drop_debugger: true
             }
         }

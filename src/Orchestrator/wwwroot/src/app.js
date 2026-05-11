@@ -582,6 +582,9 @@ async function restoreSession() {
                 // Initialize AppKit in background (non-blocking)
                 initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
 
+                // Schedule periodic refresh so long-lived tabs don't fall back to lazy refresh
+                setupTokenRefresh();
+
                 showDashboard();
                 refreshData();
                 return true;
@@ -1116,26 +1119,19 @@ function renderVMsTable(vms) {
         return;
     }
 
+    // Cache the most recent VM list so delegated handlers can resolve full objects by id.
+    vmCache = {};
+    for (const vm of vms) vmCache[vm.id] = vm;
+
     tbody.innerHTML = vms.map(vm => {
         const networkConfig = vm.networkConfig || {};
-
-        // VM network details
         const vmIp = networkConfig.isIpAssigned ? networkConfig.privateIp : 'pending';
-        const hostname = networkConfig.hostname || vm.name;
-
-        // Node connection details (for SSH and web terminal)
         const sshJumpHost = networkConfig.sshJumpHost || 'pending';
         const sshJumpPort = networkConfig.sshJumpPort || 2222;
         const nodeAgentHost = networkConfig.nodeAgentHost || 'pending';
         const nodeAgentPort = networkConfig.nodeAgentPort || 5100;
 
-        // Display node name from cache
         const nodeName = vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId.substring(0, 8)) : 'None';
-
-        // Only enable connect button if VM is running and has connection details
-        const canConnect = vm.status === 3 &&
-            sshJumpHost !== 'pending' &&
-            vmIp !== 'pending';
 
         const tierBadges = {
             0: '<span class="tier-badge tier-guaranteed">Guaranteed</span>',
@@ -1143,19 +1139,22 @@ function renderVMsTable(vms) {
             2: '<span class="tier-badge tier-balanced">Balanced</span>',
             3: '<span class="tier-badge tier-burstable">Burstable</span>',
         };
-
         const tierBadge = tierBadges[vm.spec.qualityTier] || '';
 
         const constraintCount = vm.spec?.constraints?.length ?? 0;
         const constraintChip = constraintCount > 0
-            ? `<span class="cb-chip" title="${constraintCount} scheduling constraint(s)">⚙ ${constraintCount}</span>`
+            ? `<span class="cb-chip" title="${escapeHtml(constraintCount + ' scheduling constraint(s)')}">⚙ ${constraintCount}</span>`
             : '';
 
+        const messagesCount = vm.messages?.length ?? 0;
+        const memoryMb = Math.round((vm.spec?.memoryBytes || 0) / (1024 * 1024));
+        const diskGb = ((vm.spec?.diskBytes || 0) / (1024 * 1024 * 1024)).toFixed(2);
+
         return `
-        <tr data-status="${getStatusClass(vm.status)}">
+        <tr data-status="${escapeHtml(getStatusClass(vm.status))}" data-vm-id="${escapeHtml(vm.id)}">
             <td>
                 <div class="vm-name">
-                    <div class="vm-status ${getStatusClass(vm.status)}"></div>
+                    <div class="vm-status ${escapeHtml(getStatusClass(vm.status))}"></div>
                     ${escapeHtml(vm.name)}
                     ${tierBadge}
                 </div>
@@ -1163,12 +1162,12 @@ function renderVMsTable(vms) {
             </td>
             <td>${escapeHtml(nodeName)}</td>
             <td>${vm.spec?.virtualCpuCores || 0} cores</td>
-            <td>${vm.spec?.memoryBytes / (1024 * 1024) || 0} MB</td>
-            <td>${vm.spec?.diskBytes / (1024 * 1024 * 1024) || 0} GB</td>
+            <td>${memoryMb} MB</td>
+            <td>${diskGb} GB</td>
             <td>
                 <div class="vm-status-cell">
-                    <span class="status-badge status-${getStatusClass(vm.status)}">
-                        ${getStatusText(vm.status)}
+                    <span class="status-badge status-${escapeHtml(getStatusClass(vm.status))}">
+                        ${escapeHtml(getStatusText(vm.status))}
                     </span>
                     ${renderServiceBadge(vm.services, vm.status)}
                 </div>
@@ -1176,30 +1175,24 @@ function renderVMsTable(vms) {
             </td>
             <td>
                 <div class="table-actions">
-                    <!-- Connect Info -->
-                    <button class="btn btn-sm btn-primary"
-                            onclick="showConnectInfo('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort})"
-                            title="Connection Info">
+                    <button class="btn btn-sm btn-primary" data-vm-action="connect-info"
+                            data-ssh-host="${escapeHtml(sshJumpHost)}" data-ssh-port="${sshJumpPort}"
+                            data-vm-ip="${escapeHtml(vmIp)}" data-node-host="${escapeHtml(nodeAgentHost)}"
+                            data-node-port="${nodeAgentPort}" title="Connection Info">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
                         </svg>
                     </button>
 
-                    <!-- Direct Access (Smart Port Allocation) -->
-                    <button class="btn btn-sm btn-secondary"
-                            onclick="window.openDirectAccessModal('${vm.id}', '${vm.name}')"
-                            title="Direct Access (TCP/UDP Ports)">
+                    <button class="btn btn-sm btn-secondary" data-vm-action="direct-access" title="Direct Access (TCP/UDP Ports)">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"/>
                             <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>
                         </svg>
                     </button>
 
-                    <!-- Custom Domains -->
-                    <button class="btn btn-sm btn-secondary"
-                            onclick="window.openCustomDomainsModal('${vm.id}', '${vm.name}')"
-                            title="Custom Domains">
+                    <button class="btn btn-sm btn-secondary" data-vm-action="custom-domains" title="Custom Domains">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="2" y1="12" x2="22" y2="12"/>
@@ -1207,67 +1200,56 @@ function renderVMsTable(vms) {
                         </svg>
                     </button>
 
-                    <!-- Terminal -->
-                    <button class="btn btn-sm" 
-                            onclick="openTerminal('${vm.id}', '${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
-                            title="Open Terminal">
+                    <button class="btn btn-sm" data-vm-action="terminal"
+                            data-node-host="${escapeHtml(nodeAgentHost)}" data-node-port="${nodeAgentPort}"
+                            data-vm-ip="${escapeHtml(vmIp)}" title="Open Terminal">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="4 17 10 11 4 5"/>
                             <line x1="12" y1="19" x2="20" y2="19"/>
                         </svg>
                     </button>
 
-                    <!-- File Browser -->
-                    <button class="btn btn-sm" 
-                            onclick="openFileBrowser('${vm.id}','${vm.name}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" 
-                            title="File Browser">
+                    <button class="btn btn-sm" data-vm-action="file-browser"
+                            data-node-host="${escapeHtml(nodeAgentHost)}" data-node-port="${nodeAgentPort}"
+                            data-vm-ip="${escapeHtml(vmIp)}" title="File Browser">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                         </svg>
                     </button>
 
-                    <!-- Reveal Password -->
-                    <button class="btn-icon" 
-                            onclick="window.revealPassword('${vm.id}')" 
-                            title="Show Password">
+                    <button class="btn-icon" data-vm-action="reveal-password" title="Show Password">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
                     </button>
 
-                    <!-- Start/Stop -->
                     ${vm.status === 3
-                ? `<button class="btn btn-sm btn-warning" onclick="stopVM('${vm.id}')" title="Stop">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        ? `<button class="btn btn-sm btn-warning" data-vm-action="stop" title="Stop">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                            </button>`
-                : `<button class="btn btn-sm btn-success" onclick="startVM('${vm.id}')" title="Start">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        : `<button class="btn btn-sm btn-success" data-vm-action="start" title="Start">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                            </button>`
-            }
+                    }
 
-                    <!-- Messages -->
-                    <button class="btn btn-sm btn-secondary" onclick="showVmMessages('${vm.id}', '${escapeHtml(vm.name)}')" title="View events"
-                        style="${(vm.messages?.length ?? 0) === 0 ? 'opacity:0.45' : ''}">
+                    <button class="btn btn-sm btn-secondary" data-vm-action="messages" title="View events"
+                        style="${messagesCount === 0 ? 'opacity:0.45' : ''}">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                         </svg>
-                        ${(vm.messages?.length ?? 0) > 0 ? `<span style="font-size:10px;font-weight:700;">${vm.messages.length}</span>` : ''}
+                        ${messagesCount > 0 ? `<span style="font-size:10px;font-weight:700;">${messagesCount}</span>` : ''}
                     </button>
 
-                    <!-- Delete -->
-                    <button class="btn btn-sm btn-danger" onclick="deleteVM('${vm.id}', '${vm.name}')" title="Delete">
+                    <button class="btn btn-sm btn-danger" data-vm-action="delete" title="Delete">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                         </svg>
                     </button>
 
-                    <!-- Update Constraints (visible on Error state) -->
                     ${vm.status === 8 ? `
-                    <button class="btn btn-sm btn-secondary"
-                            onclick="openUpdateConstraintsModal('${vm.id}', ${JSON.stringify(JSON.stringify(vm.spec?.constraints ?? []))})"
-                            title="Update Scheduling Constraints">
+                    <button class="btn btn-sm btn-secondary" data-vm-action="update-constraints" title="Update Scheduling Constraints">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
                         </svg>
@@ -1276,6 +1258,65 @@ function renderVMsTable(vms) {
             </td>
         </tr>
     `}).join('');
+
+    attachVmsTableDelegation(tbody);
+}
+
+let vmsTableDelegated = false;
+let vmCache = {};
+function attachVmsTableDelegation(tbody) {
+    if (vmsTableDelegated) return;
+    vmsTableDelegated = true;
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-vm-action]');
+        if (!btn) return;
+        const row = btn.closest('tr[data-vm-id]');
+        if (!row) return;
+        const vmId = row.dataset.vmId;
+        const vm = vmCache[vmId];
+        if (!vm) return;
+        const action = btn.dataset.vmAction;
+        const vmName = vm.name;
+        switch (action) {
+            case 'connect-info':
+                window.showConnectInfo(
+                    btn.dataset.sshHost, parseInt(btn.dataset.sshPort, 10),
+                    btn.dataset.vmIp, vmId, vmName,
+                    btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10)
+                );
+                break;
+            case 'direct-access':
+                window.openDirectAccessModal(vmId, vmName);
+                break;
+            case 'custom-domains':
+                window.openCustomDomainsModal(vmId, vmName);
+                break;
+            case 'terminal':
+                window.openTerminal(vmId, vmName, btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10), btn.dataset.vmIp);
+                break;
+            case 'file-browser':
+                window.openFileBrowser(vmId, vmName, btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10), btn.dataset.vmIp);
+                break;
+            case 'reveal-password':
+                window.revealPassword(vmId);
+                break;
+            case 'start':
+                window.startVM(vmId);
+                break;
+            case 'stop':
+                window.stopVM(vmId);
+                break;
+            case 'messages':
+                window.showVmMessages(vmId, vmName);
+                break;
+            case 'delete':
+                window.deleteVM(vmId, vmName);
+                break;
+            case 'update-constraints':
+                window.openUpdateConstraintsModal(vmId, JSON.stringify(vm.spec?.constraints ?? []));
+                break;
+        }
+    });
 }
 
 function renderDashboardVMs(vms) {
@@ -1354,18 +1395,21 @@ function renderSSHKeysTable(keys) {
         return;
     }
 
+    sshKeyCache = {};
+    for (const k of keys) sshKeyCache[k.id] = k;
+
     tbody.innerHTML = keys.map(key => {
         const added = new Date(key.createdAt).toLocaleDateString();
         const fingerprint = key.fingerprint || 'N/A';
 
         return `
-        <tr>
+        <tr data-key-id="${escapeHtml(key.id)}">
             <td>${escapeHtml(key.name)}</td>
             <td><code style="font-size: 12px; color: #9ca3af;">${escapeHtml(fingerprint)}</code></td>
-            <td>${added}</td>
+            <td>${escapeHtml(added)}</td>
             <td>
                 <div class="table-actions">
-                    <button class="btn-icon btn-icon-danger" onclick="window.deleteSSHKey('${key.id}', '${key.name}')" title="Delete">
+                    <button class="btn-icon btn-icon-danger" data-key-action="delete" title="Delete">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                         </svg>
@@ -1374,6 +1418,27 @@ function renderSSHKeysTable(keys) {
             </td>
         </tr>
     `}).join('');
+
+    attachSshKeysTableDelegation(tbody);
+}
+
+let sshKeysTableDelegated = false;
+let sshKeyCache = {};
+function attachSshKeysTableDelegation(tbody) {
+    if (sshKeysTableDelegated) return;
+    sshKeysTableDelegated = true;
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-key-action]');
+        if (!btn) return;
+        const row = btn.closest('tr[data-key-id]');
+        if (!row) return;
+        const keyId = row.dataset.keyId;
+        const key = sshKeyCache[keyId];
+        if (!key) return;
+        if (btn.dataset.keyAction === 'delete') {
+            window.deleteSSHKey(keyId, key.name);
+        }
+    });
 }
 
 // ============================================
@@ -1545,7 +1610,7 @@ async function startVM(vmId) {
     }
 
     try {
-        const response = await api(`/api/${vmId}/action`, {
+        const response = await api(`/api/vms/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1574,7 +1639,7 @@ async function stopVM(vmId) {
     }
 
     try {
-        const response = await api(`/api/${vmId}/action`, {
+        const response = await api(`/api/vms/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1603,7 +1668,7 @@ async function restartVM(vmId) {
     }
 
     try {
-        const response = await api(`/api/${vmId}/action`, {
+        const response = await api(`/api/vms/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1632,7 +1697,7 @@ async function forceStopVM(vmId) {
     }
 
     try {
-        const response = await api(`/api/${vmId}/action`, {
+        const response = await api(`/api/vms/${vmId}/action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2076,10 +2141,10 @@ async function showPasswordModal(vmId, vmName, password) {
                         </div>
                 
                         <div style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
-                            <button onclick="copyToClipboard('${password}')" class="btn btn-secondary">
+                            <button data-action="copy" class="btn btn-secondary">
                                 📋 Copy Password
                             </button>
-                            <button onclick="secureAndClose('${vmId}', '${password}')" class="btn btn-primary">
+                            <button data-action="secure" class="btn btn-primary">
                                 🔒 Secure & Continue
                             </button>
                         </div>
@@ -2087,7 +2152,7 @@ async function showPasswordModal(vmId, vmName, password) {
                 `;
         document.body.appendChild(modal);
 
-        window.secureAndClose = async (vmId, password) => {
+        const doSecureAndClose = async (vmId, password) => {
             try {
                 // Encrypt password (key derived from wallet internally)
                 const encryptedPassword = await encryptPassword(password);
@@ -2106,6 +2171,9 @@ async function showPasswordModal(vmId, vmName, password) {
                 showToast('Failed to encrypt - please save password manually!', 'error');
             }
         };
+
+        modal.querySelector('[data-action="copy"]').addEventListener('click', () => copyToClipboard(password));
+        modal.querySelector('[data-action="secure"]').addEventListener('click', () => doSecureAndClose(vmId, password));
     });
 }
 
@@ -2296,37 +2364,29 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
     modal.innerHTML = `
         <div style="background: #1a1d26; border: 1px solid #2a2d36; border-radius: 12px; padding: 28px; width: 520px; max-width: 90vw; color: #f0f2f5;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h3 style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to ${escapeHtml(vmName)}</h3>
-                <button onclick="this.closest('#connect-info-modal').remove()" style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 1.5rem;">&times;</button>
+                <h3 id="connect-info-title" style="margin: 0; font-size: 1.25rem; color: #00d4aa;">🔗 Connect to </h3>
+                <button data-action="close" style="background: none; border: none; color: #6b7280; cursor: pointer; font-size: 1.5rem;">&times;</button>
             </div>
 
-            <!-- Quick Actions -->
             <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
                 <div style="color: #10b981; font-weight: 600; margin-bottom: 12px;">⚡ Quick Actions</div>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-sm btn-primary" onclick="showSshInstructions('${sshJumpHost}', ${sshJumpPort}, '${vmIp}', '${vmId}', '${vmName}', '${nodeAgentHost}', ${nodeAgentPort})" style="padding: 8px 16px; font-size: 0.9rem;">
-                        🖥️ Ssh Instructions
-                    </button>
-                    <button class="btn btn-sm btn-primary" onclick="openTerminal('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem;">
-                        🖥️ Open Terminal
-                    </button>
-                    <button class="btn btn-sm btn-secondary" onclick="openFileBrowser('${vmId}','${vmName}', '${nodeAgentHost}', ${nodeAgentPort}, '${vmIp}')" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">
-                        📁 File Browser
-                    </button>
+                    <button class="btn btn-sm btn-primary" data-action="ssh" style="padding: 8px 16px; font-size: 0.9rem;">🖥️ Ssh Instructions</button>
+                    <button class="btn btn-sm btn-primary" data-action="terminal" style="padding: 8px 16px; font-size: 0.9rem;">🖥️ Open Terminal</button>
+                    <button class="btn btn-sm btn-secondary" data-action="file-browser" style="padding: 8px 16px; font-size: 0.9rem; background: #1e3a8a; border-color: #3b82f6;">📁 File Browser</button>
                 </div>
             </div>
 
-            <!-- SSH Connection Details -->
             <div class="connect-section" style="background: #12141a; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
                 <div style="color: #93c5fd; font-weight: 600; margin-bottom: 12px;">🔐 SSH Connection</div>
                 <table style="width: 100%; font-size: 0.9rem;">
                     <tr>
                         <td style="padding: 6px 0; color: #9ca3af; width: 120px;">Bastion Host:</td>
-                        <td style="padding: 6px 0;"><code style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">${sshJumpHost}:${sshJumpPort}</code></td>
+                        <td style="padding: 6px 0;"><code id="connect-info-bastion" style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;"></code></td>
                     </tr>
                     <tr>
                         <td style="padding: 6px 0; color: #9ca3af;">VM IP:</td>
-                        <td style="padding: 6px 0;"><code style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">${vmIp}</code></td>
+                        <td style="padding: 6px 0;"><code id="connect-info-vmip" style="background: #1a1d26; padding: 4px 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace;"></code></td>
                     </tr>
                     <tr>
                         <td style="padding: 6px 0; color: #9ca3af;">Username:</td>
@@ -2339,7 +2399,6 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
                 </table>
             </div>
 
-            <!-- Security Info -->
             <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
                 <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
                 <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
@@ -2351,8 +2410,31 @@ function showConnectInfo(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgent
         </div>
     `;
 
+    modal.querySelector('#connect-info-title').textContent = `🔗 Connect to ${vmName}`;
+    modal.querySelector('#connect-info-bastion').textContent = `${sshJumpHost}:${sshJumpPort}`;
+    modal.querySelector('#connect-info-vmip').textContent = vmIp;
+
     document.body.appendChild(modal);
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+    modal.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (e.target === modal || (btn && btn.dataset.action === 'close')) {
+            modal.remove();
+            return;
+        }
+        if (!btn) return;
+        switch (btn.dataset.action) {
+            case 'ssh':
+                showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeAgentHost, nodeAgentPort);
+                break;
+            case 'terminal':
+                openTerminal(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp);
+                break;
+            case 'file-browser':
+                openFileBrowser(vmId, vmName, nodeAgentHost, nodeAgentPort, vmIp);
+                break;
+        }
+    });
 }
 
 /**
@@ -2485,78 +2567,52 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
     modal.innerHTML = `
         <div class="modal" style="max-width: 850px;">
             <div class="modal-header">
-                <h2 class="modal-title">🔗 Connect to ${escapeHtml(vmName)}</h2>
-                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+                <h2 class="modal-title" id="ssh-modal-title">🔗 Connect to </h2>
+                <button class="modal-close" data-action="close">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
                 </button>
             </div>
             <div class="modal-body connect-info">
-
-                <!-- Recommended: SSH Config Method -->
                 <div class="connect-section" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                     <div class="connect-section-title" style="color: white; font-size: 1.1rem; font-weight: 600;">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
-                            <path d="M9 11l3 3L22 4"/>
-                            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-                        </svg>
                         ✨ Recommended: One-Time SSH Config Setup
                     </div>
-                    <p style="color: rgba(255,255,255,0.9); font-size: 0.9rem; margin: 12px 0;">
-                        Set up SSH config once, then connect with a single command!
-                    </p>
+                    <p style="color: rgba(255,255,255,0.9); font-size: 0.9rem; margin: 12px 0;">Set up SSH config once, then connect with a single command!</p>
 
-                    <!-- Step 1: Setup SSH Config -->
                     <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; margin: 15px 0;">
                         <div style="color: white; font-weight: 600; margin-bottom: 8px;">📝 Step 1: Add to ~/.ssh/config</div>
                         <div class="connect-code" style="background: #1f2937; margin: 0;">
-                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.85rem; overflow-x: auto;">${escapeHtml(sshConfigContent)}</pre>
-                            <button class="connect-code-copy" onclick="copyToClipboard(\`${sshConfigContent.replace(/`/g, '\\`')}\`)" style="background: #10b981;">
-                                Copy Config
-                            </button>
+                            <pre id="ssh-config-pre" style="margin: 0; color: #e5e7eb; font-size: 0.85rem; overflow-x: auto;"></pre>
+                            <button class="connect-code-copy" data-action="copy-config" style="background: #10b981;">Copy Config</button>
                         </div>
-                        <button class="btn btn-secondary" onclick="downloadSSHConfig('${escapeHtml(vmIp)}', '${sshJumpHost}', ${sshJumpPort})" style="margin-top: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
-                            💾 Download config file
-                        </button>
+                        <button class="btn btn-secondary" data-action="download-config" style="margin-top: 10px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">💾 Download config file</button>
                     </div>
 
-                    <!-- Step 2: Connect -->
                     <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px;">
                         <div style="color: white; font-weight: 600; margin-bottom: 8px;">🚀 Step 2: Connect with Simple Command</div>
                         <div class="connect-code" style="background: #1f2937; margin: 0;">
-                            <pre style="margin: 0; color: #e5e7eb; font-size: 0.9rem;">${escapeHtml(sshConfigCommand)}</pre>
-                            <button class="connect-code-copy" onclick="copyToClipboard('${sshConfigCommand}')" style="background: #10b981;">
-                                Copy
-                            </button>
+                            <pre id="ssh-config-cmd" style="margin: 0; color: #e5e7eb; font-size: 0.9rem;"></pre>
+                            <button class="connect-code-copy" data-action="copy-cmd" style="background: #10b981;">Copy</button>
                         </div>
                         <p style="color: rgba(255,255,255,0.8); font-size: 0.85rem; margin: 8px 0 0 0;">
-                            ✅ That's it! Just <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">ssh ${escapeHtml(vmIp)}</code> from now on
+                            ✅ That's it! Just <code id="ssh-config-cmd-inline" style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;"></code> from now on
                         </p>
                     </div>
                 </div>
 
-                <!-- Alternative: Direct ProxyJump Command -->
                 <div class="connect-section">
-                    <div class="connect-section-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline; margin-right: 8px;">
-                            <rect x="2" y="2" width="20" height="20" rx="2" ry="2"/>
-                            <line x1="7" y1="7" x2="7" y2="7"/>
-                            <line x1="7" y1="12" x2="17" y2="12"/>
-                            <line x1="7" y1="17" x2="17" y2="17"/>
-                        </svg>
-                        Alternative: Direct ProxyJump Command
-                    </div>
+                    <div class="connect-section-title">Alternative: Direct ProxyJump Command</div>
                     <div class="connect-code">
-                        <pre style="margin: 0; font-size: 0.85rem;">${escapeHtml(proxyJumpCommand)}</pre>
-                        <button class="connect-code-copy" onclick="copyToClipboard(\`${proxyJumpCommand.replace(/`/g, '\\`')}\`)">Copy</button>
+                        <pre id="ssh-proxyjump-pre" style="margin: 0; font-size: 0.85rem;"></pre>
+                        <button class="connect-code-copy" data-action="copy-proxyjump">Copy</button>
                     </div>
                     <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 8px;">
                         ⚠️ Don't forget to replace <code>XXXXX</code> with your certificate ID!
                     </p>
                 </div>
 
-                <!-- Security Info -->
                 <div class="connect-section" style="background: #1e3a8a; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px;">
                     <div style="color: #93c5fd; font-weight: 600; margin-bottom: 8px;">🔒 Security</div>
                     <ul style="color: #bfdbfe; font-size: 0.875rem; margin: 0; padding-left: 20px;">
@@ -2565,13 +2621,33 @@ function showSshInstructions(sshJumpHost, sshJumpPort, vmIp, vmId, vmName, nodeA
                         <li>Multi-tenant isolation: Your certificate only works for your VMs</li>
                         <li>Port ${sshJumpPort} is used to bypass common ISP restrictions</li>
                     </ul>
-                </div
+                </div>
             </div>
         </div>
     `;
 
+    modal.querySelector('#ssh-modal-title').textContent = `🔗 Connect to ${vmName}`;
+    modal.querySelector('#ssh-config-pre').textContent = sshConfigContent;
+    modal.querySelector('#ssh-config-cmd').textContent = sshConfigCommand;
+    modal.querySelector('#ssh-config-cmd-inline').textContent = `ssh ${vmIp}`;
+    modal.querySelector('#ssh-proxyjump-pre').textContent = proxyJumpCommand;
+
     document.body.appendChild(modal);
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+    modal.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (e.target === modal || (btn && btn.dataset.action === 'close')) {
+            modal.remove();
+            return;
+        }
+        if (!btn) return;
+        switch (btn.dataset.action) {
+            case 'copy-config': copyToClipboard(sshConfigContent); break;
+            case 'copy-cmd': copyToClipboard(sshConfigCommand); break;
+            case 'copy-proxyjump': copyToClipboard(proxyJumpCommand); break;
+            case 'download-config': downloadSSHConfig(vmIp, sshJumpHost, sshJumpPort); break;
+        }
+    });
 }
 
 
@@ -2682,12 +2758,26 @@ async function copyToClipboard(text) {
 }
 
 /**
- * Escape HTML to prevent XSS
+ * Escape HTML to prevent XSS. Safe for both element text and HTML attributes
+ * (escapes quotes and backticks in addition to <>&).
  */
+const _HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    return String(text).replace(/[&<>"'`]/g, ch => _HTML_ESCAPE_MAP[ch]);
+}
+
+/**
+ * Sanitize a URL for safe use in href/src. Returns '#' for disallowed schemes.
+ */
+function sanitizeUrl(url) {
+    if (!url || typeof url !== 'string') return '#';
+    const trimmed = url.trim();
+    if (!trimmed) return '#';
+    if (/^[/.?#]/.test(trimmed)) return trimmed;
+    const cleaned = trimmed.replace(/[ -- ]/g, '');
+    if (/^(https?:|mailto:)/i.test(cleaned)) return cleaned;
+    return '#';
 }
 
 /**
@@ -2968,7 +3058,7 @@ function renderCustomDomainsList(domains, vmId) {
                     <tr>
                         <td>
                             ${d.status === 'Active' && d.publicUrl
-                ? `<a href="${escapeHtml(d.publicUrl)}" target="_blank" class="domain-link">${escapeHtml(d.domain)}</a>`
+                ? `<a href="${escapeHtml(sanitizeUrl(d.publicUrl))}" target="_blank" rel="noopener noreferrer" class="domain-link">${escapeHtml(d.domain)}</a>`
                 : `<code>${escapeHtml(d.domain)}</code>`
             }
                         </td>
@@ -2977,7 +3067,7 @@ function renderCustomDomainsList(domains, vmId) {
                         <td>
                             <div class="table-actions">
                                 ${d.status === 'PendingDns' || d.status === 'Error' ? `
-                                    <button class="btn btn-sm btn-primary" onclick="window.verifyCustomDomain('${vmId}', '${d.id}')" title="Verify DNS">
+                                    <button class="btn btn-sm btn-primary" onclick="window.verifyCustomDomain('${escapeHtml(vmId)}', '${escapeHtml(d.id)}')" title="Verify DNS">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                                             <polyline points="22 4 12 14.01 9 11.01"/>
@@ -2985,7 +3075,7 @@ function renderCustomDomainsList(domains, vmId) {
                                         Verify
                                     </button>
                                 ` : ''}
-                                <button class="btn btn-sm btn-danger" onclick="window.removeCustomDomain('${vmId}', '${d.id}', '${escapeHtml(d.domain)}')" title="Remove">
+                                <button class="btn btn-sm btn-danger" onclick="window.removeCustomDomain('${escapeHtml(vmId)}', '${escapeHtml(d.id)}', '${escapeHtml(d.domain)}')" title="Remove">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <line x1="18" y1="6" x2="6" y2="18"/>
                                         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -3029,7 +3119,7 @@ function renderCustomDomainsAddForm(vmId) {
             <div class="custom-port-form">
                 <input type="text" id="custom-domain-input" placeholder="my.awesome.app" style="flex: 2;" />
                 <input type="number" id="custom-domain-port" placeholder="Port (80)" min="1" max="65535" value="80" style="flex: 0.5;" />
-                <button class="btn btn-primary" onclick="window.addCustomDomain('${vmId}')">
+                <button class="btn btn-primary" onclick="window.addCustomDomain('${escapeHtml(vmId)}')">
                     Add Domain
                 </button>
             </div>

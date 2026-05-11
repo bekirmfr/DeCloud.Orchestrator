@@ -1105,7 +1105,9 @@ function connect() {
     }
     const wsUrl = `${wsProtocol}//${window.location.host}/api/sftp-proxy/${vmId}?user=${user}&password=${encodeURIComponent(password)}&token=${encodeURIComponent(token)}`;
 
-    console.log('[SFTP] Connecting to:', wsUrl.replace(password, '***'));
+    // Note: JWT and password ride in the query string here. Avoid logging them.
+    // TODO: switch to Sec-WebSocket-Protocol or a short-lived ticket once backend supports it.
+    console.log('[SFTP] Connecting to vm:', vmId);
 
     // Close existing connection
     if (socket) {
