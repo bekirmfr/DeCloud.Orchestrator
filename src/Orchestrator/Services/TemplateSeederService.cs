@@ -3383,8 +3383,8 @@ package_upgrade: true
 write_files:
  
   # ── server.properties ──────────────────────────────────────────────────
-  # __VARNAME__ placeholders are substituted by CloudInitRenderer at deploy
-  # time. RCON password is replaced in runcmd (generated at runtime).
+  # Render-time variables are substituted before deploy.
+  # The RCON password is generated at runtime and patched by setup.sh.
   - path: /opt/minecraft/server.properties
     owner: root:root
     permissions: '0640'
