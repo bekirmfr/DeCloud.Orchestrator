@@ -2,6 +2,7 @@
 // Payment handling for DeCloud frontend
 
 import { ethers } from 'ethers';
+import { escapeHtml, showToast as sharedShowToast } from './utils.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -586,9 +587,9 @@ function createDepositModal() {
                 
             <div class="modal-body">
                 <div class="deposit-info">
-                    <p>Network: <strong>${chainName}</strong></p>
-                    <p>Contract: <code>${escrowAddr.slice(0, 10)}...${escrowAddr.slice(-8)}</code></p>
-                    <p>Min Deposit: <strong>${minDeposit} USDC</strong></p>
+                    <p>Network: <strong>${escapeHtml(chainName)}</strong></p>
+                    <p>Contract: <code>${escapeHtml(escrowAddr.slice(0, 10))}...${escapeHtml(escrowAddr.slice(-8))}</code></p>
+                    <p>Min Deposit: <strong>${escapeHtml(minDeposit)} USDC</strong></p>
                 </div>
                     
                 <div class="deposit-form">
@@ -643,7 +644,7 @@ window.handleDeposit = async function () {
 
             // Show tx hash if available
             if (progress.txHash) {
-                statusP.innerHTML = `${progress.message}<br><small>Tx: ${progress.txHash.slice(0, 16)}...</small>`;
+                statusP.innerHTML = `${escapeHtml(progress.message)}<br><small>Tx: ${escapeHtml(progress.txHash.slice(0, 16))}...</small>`;
             }
         });
 
@@ -681,12 +682,12 @@ window.handleDeposit = async function () {
                     </div>
                     
                     <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-                        <p style="margin: 4px 0;"><strong>Current:</strong> ${currentName}</p>
-                        <p style="margin: 4px 0;"><strong>Required:</strong> ${expectedName}</p>
+                        <p style="margin: 4px 0;"><strong>Current:</strong> ${escapeHtml(currentName)}</p>
+                        <p style="margin: 4px 0;"><strong>Required:</strong> ${escapeHtml(expectedName)}</p>
                     </div>
                     
                     <p style="font-size: 14px; margin-bottom: 12px;">
-                        Please switch to <strong>${expectedName}</strong> in your wallet.
+                        Please switch to <strong>${escapeHtml(expectedName)}</strong> in your wallet.
                     </p>
                     
                     <button 
@@ -725,7 +726,7 @@ window.handleDeposit = async function () {
                                 </div>
                             </li>
                             <li>Click <strong>"Save"</strong> or <strong>"Add"</strong></li>
-                            <li>Switch to <strong>${expectedName}</strong></li>
+                            <li>Switch to <strong>${escapeHtml(expectedName)}</strong></li>
                             <li>Try depositing again</li>
                         </ol>
                     </div>
@@ -733,9 +734,9 @@ window.handleDeposit = async function () {
             `;
         } else if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             errorMessage = 'Transaction rejected by user';
-            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${errorMessage}</span>`;
+            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${escapeHtml(errorMessage)}</span>`;
         } else {
-            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${errorMessage}</span>`;
+            statusP.innerHTML = `<span style="color: #ef4444;">❌ ${escapeHtml(errorMessage)}</span>`;
         }
 
         console.error('[Payment] Deposit error:', error);
@@ -1028,12 +1029,14 @@ async function loadEarningsSection() {
         }
 
         // Get deposit config for contract address
-        const configResponse = await fetch('/api/payment/deposit-info', {
-            headers: {
-                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        const configResponse = window.api
+            ? await window.api('/api/payment/deposit-info')
+            : await fetch('/api/payment/deposit-info', {
+                headers: {
+                    'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
+                    'Content-Type': 'application/json'
+                }
+            });
 
         if (!configResponse.ok) {
             container.innerHTML = '<span class="bm-earnings-note">Unavailable</span>';
@@ -1091,12 +1094,14 @@ window.withdrawFromBalanceModal = async function () {
             return;
         }
 
-        const configResponse = await fetch('/api/payment/deposit-info', {
-            headers: {
-                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        const configResponse = window.api
+            ? await window.api('/api/payment/deposit-info')
+            : await fetch('/api/payment/deposit-info', {
+                headers: {
+                    'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
+                    'Content-Type': 'application/json'
+                }
+            });
         const configResult = await configResponse.json();
         const config = configResult.data || configResult;
 
@@ -1136,13 +1141,9 @@ window.withdrawFromBalanceModal = async function () {
     }
 };
 
-// Helper to safely call showToast (may come from app.js)
+// payment.js callers pass (type, message); the shared util tolerates either order.
 function showToast(type, message) {
-    if (window.showToast) {
-        window.showToast(message, type);
-    } else {
-        console.log(`[Toast ${type}] ${message}`);
-    }
+    sharedShowToast(message, type);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

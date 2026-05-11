@@ -3,6 +3,8 @@
 // Browse and deploy VM templates from the marketplace
 // ============================================================================
 
+import { escapeHtml, isPerDeployPricing, showToast } from './utils.js';
+
 let currentCategory = null;
 let currentSearch = '';
 let allTemplates = [];
@@ -99,16 +101,27 @@ function renderCategories() {
         ...allCategories
     ];
     
-    container.innerHTML = categories.map(cat => `
-        <button 
+    container.innerHTML = categories.map(cat => {
+        const slug = cat.slug || '';
+        return `
+        <button
             class="category-tab ${currentCategory === cat.slug ? 'active' : ''}"
-            data-category="${cat.slug || ''}"
-            onclick="window.marketplaceTemplates.selectCategory('${cat.slug || ''}')"
+            data-category="${escapeHtml(slug)}"
+            data-action="select-category"
         >
-            <span class="category-icon">${cat.iconEmoji}</span>
-            <span class="category-name">${cat.name}</span>
-        </button>
-    `).join('');
+            <span class="category-icon">${escapeHtml(cat.iconEmoji || '')}</span>
+            <span class="category-name">${escapeHtml(cat.name || '')}</span>
+        </button>`;
+    }).join('');
+
+    if (!container.dataset.delegated) {
+        container.dataset.delegated = '1';
+        container.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action="select-category"]');
+            if (!btn) return;
+            selectCategory(btn.dataset.category || null);
+        });
+    }
 }
 
 /**
@@ -141,7 +154,7 @@ function createTemplateCard(template) {
     const categoryIcon = category?.iconEmoji || '📦';
 
     // Template price badge
-    const isPaid = template.pricingModel === 'PerDeploy' && template.templatePrice > 0;
+    const isPaid = isPerDeployPricing(template.pricingModel) && template.templatePrice > 0;
     const priceText = isPaid ? `${template.templatePrice} USDC` : 'Free';
 
     // Deployment count
@@ -157,18 +170,18 @@ function createTemplateCard(template) {
     const communityBadge = template.isCommunity ? '<span class="community-badge">Community</span>' : '';
 
     return `
-        <div class="template-card" data-template-id="${template.id}">
+        <div class="template-card" data-template-id="${escapeHtml(template.id)}">
             <div class="template-card-header">
                 ${template.isFeatured ? '<span class="featured-badge">⭐ Featured</span>' : ''}
                 ${template.requiresGpu ? '<span class="gpu-badge">🎮 GPU</span>' : ''}
                 ${communityBadge}
-                <span class="price-badge ${isPaid ? 'price-paid' : 'price-free'}">${priceText}</span>
+                <span class="price-badge ${isPaid ? 'price-paid' : 'price-free'}">${escapeHtml(priceText)}</span>
             </div>
 
             <div class="template-card-body">
-                <div class="template-icon">${categoryIcon}</div>
+                <div class="template-icon">${escapeHtml(categoryIcon)}</div>
                 <h3 class="template-name">${escapeHtml(template.name)}</h3>
-                <div class="template-category">${categoryIcon} ${categoryName}</div>
+                <div class="template-category">${escapeHtml(categoryIcon)} ${escapeHtml(categoryName)}</div>
                 <p class="template-description">${escapeHtml(template.description)}</p>
 
                 <div class="template-rating">
@@ -188,7 +201,7 @@ function createTemplateCard(template) {
                 <div class="template-stats">
                     <span class="stat">
                         <span class="stat-icon">🚀</span>
-                        <span class="stat-value">${deploymentsText}</span>
+                        <span class="stat-value">${escapeHtml(deploymentsText)}</span>
                     </span>
                     <span class="stat">
                         <span class="stat-icon">👤</span>
@@ -196,18 +209,8 @@ function createTemplateCard(template) {
                     </span>
                 </div>
                 <div class="template-actions">
-                    <button
-                        class="btn-secondary btn-sm"
-                        onclick="window.marketplaceTemplates.viewTemplate('${template.id}')"
-                    >
-                        Details
-                    </button>
-                    <button
-                        class="btn-primary btn-sm"
-                        onclick="window.marketplaceTemplates.deployTemplate('${template.id}')"
-                    >
-                        Deploy
-                    </button>
+                    <button class="btn-secondary btn-sm" data-action="view-template">Details</button>
+                    <button class="btn-primary btn-sm" data-action="deploy-template">Deploy</button>
                 </div>
             </div>
         </div>
@@ -225,10 +228,13 @@ function renderStarsHtml(rating) {
 }
 
 /**
- * Setup event listeners
+ * Setup event listeners (guarded against re-entry)
  */
+let _eventListenersWired = false;
 function setupEventListeners() {
-    // Search input
+    if (_eventListenersWired) return;
+    _eventListenersWired = true;
+
     const searchInput = document.getElementById('template-search');
     if (searchInput) {
         let searchTimeout;
@@ -240,21 +246,33 @@ function setupEventListeners() {
             }, 300);
         });
     }
-    
-    // Sort dropdown
+
     const sortSelect = document.getElementById('template-sort');
     if (sortSelect) {
         sortSelect.addEventListener('change', (e) => {
             filterTemplates({ sortBy: e.target.value });
         });
     }
-    
-    // GPU filter
+
     const gpuFilter = document.getElementById('filter-gpu');
     if (gpuFilter) {
         gpuFilter.addEventListener('change', (e) => {
             const requiresGpu = e.target.checked ? true : undefined;
             filterTemplates({ requiresGpu });
+        });
+    }
+
+    // Delegated handlers for template cards (rebuilt on every render).
+    const grid = document.getElementById('templates-grid');
+    if (grid) {
+        grid.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const card = btn.closest('[data-template-id]');
+            if (!card) return;
+            const templateId = card.dataset.templateId;
+            if (btn.dataset.action === 'view-template') viewTemplate(templateId);
+            else if (btn.dataset.action === 'deploy-template') deployTemplate(templateId);
         });
     }
 }
@@ -330,15 +348,6 @@ export function deployTemplate(templateId) {
     } else {
         console.error('[Marketplace Templates] Template detail module not loaded');
     }
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // Export functions for global access

@@ -3,6 +3,8 @@
 // Create, manage, and publish user-owned VM templates
 // ============================================================================
 
+import { escapeHtml as sharedEscapeHtml, showToast as sharedShowToast } from './utils.js';
+
 let myTemplates = [];
 
 // ── Enum mappings (C# enums serialize as integers) ──────────────────────
@@ -34,16 +36,11 @@ function api(endpoint, options = {}) {
     return window.api(endpoint, options);
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+const escapeHtml = sharedEscapeHtml;
 
+// Legacy callers in this file pass (type, message); the util tolerates either order.
 function showToast(type, message) {
-    if (window.showToast) window.showToast(type, message);
-    else console.log(`[Toast] ${type}: ${message}`);
+    sharedShowToast(message, type);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

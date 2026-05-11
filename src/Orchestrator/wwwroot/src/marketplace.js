@@ -113,6 +113,9 @@ export async function searchNodes() {
     const onlineOnly = document.getElementById('mp-filter-online').checked;
     params.set('onlineOnly', onlineOnly.toString());
 
+    const schedulingReady = document.getElementById('mp-filter-scheduling-ready')?.checked;
+    if (schedulingReady !== undefined) params.set('schedulingReadyOnly', schedulingReady.toString());
+
     params.set('sortDescending', 'true');
 
     // Show results section
@@ -155,6 +158,8 @@ export function clearNodeFilters() {
     document.getElementById('mp-filter-capacity').value = '';
     document.getElementById('mp-filter-gpu').checked = false;
     document.getElementById('mp-filter-online').checked = true;
+    const srBox = document.getElementById('mp-filter-scheduling-ready');
+    if (srBox) srBox.checked = true;
 
     // Hide search results, show featured
     document.getElementById('mp-results-section').style.display = 'none';

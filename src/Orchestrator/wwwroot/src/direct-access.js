@@ -3,8 +3,17 @@
  * Manages TCP/UDP port forwarding for direct VM access
  */
 
-// API Base URL
-const API_BASE = window.location.origin;
+import { escapeHtml, showToast as sharedShowToast } from './utils.js';
+
+// Wrapper that delegates to window.api when present so 401-refresh logic and
+// the configurable orchestrator URL are respected.
+async function authFetch(path, options = {}) {
+    if (window.api) return window.api(path, options);
+    const token = localStorage.getItem('authToken');
+    const headers = { ...(options.headers || {}) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return fetch(path, { ...options, headers });
+}
 
 // Common service templates
 const COMMON_SERVICES = {
@@ -26,11 +35,7 @@ const COMMON_SERVICES = {
  */
 export async function getDirectAccessInfo(vmId) {
     try {
-        const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access`, {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-            }
-        });
+        const response = await authFetch(`/api/vms/${vmId}/direct-access`);
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -51,12 +56,9 @@ export async function getDirectAccessInfo(vmId) {
  */
 export async function allocatePort(vmId, vmPort, protocol = 1, label = null) {
     try {
-        const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/ports`, {
+        const response = await authFetch(`/api/vms/${vmId}/direct-access/ports`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ vmPort, protocol, label })
         });
 
@@ -78,11 +80,8 @@ export async function allocatePort(vmId, vmPort, protocol = 1, label = null) {
  */
 export async function removePort(vmId, vmPort) {
     try {
-        const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/ports/${vmPort}`, {
-            method: 'DELETE',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-            }
+        const response = await authFetch(`/api/vms/${vmId}/direct-access/ports/${vmPort}`, {
+            method: 'DELETE'
         });
 
         if (!response.ok && response.status !== 204) {
@@ -101,12 +100,9 @@ export async function removePort(vmId, vmPort) {
  */
 export async function quickAddService(vmId, serviceName) {
     try {
-        const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/quick-add`, {
+        const response = await authFetch(`/api/vms/${vmId}/direct-access/quick-add`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ serviceName })
         });
 
@@ -128,11 +124,7 @@ export async function quickAddService(vmId, serviceName) {
  */
 export async function getAvailableServices(vmId) {
     try {
-        const response = await fetch(`${API_BASE}/api/vms/${vmId}/direct-access/services`, {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-            }
-        });
+        const response = await authFetch(`/api/vms/${vmId}/direct-access/services`);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -170,10 +162,10 @@ export async function openDirectAccessModal(vmId, vmName) {
 
     if (!modal) return;
 
-    // Store current VM ID
+    // Store current VM ID and name (so we don't recover vmName from title text)
     modal.dataset.vmId = vmId;
+    modal.dataset.vmName = vmName;
 
-    // Set title
     title.textContent = `Direct Access - ${vmName}`;
 
     // Show modal
@@ -245,8 +237,8 @@ function renderDnsInfo(dnsName) {
         <div class="direct-access-dns">
             <div class="dns-label">Public DNS:</div>
             <div class="dns-value">
-                <code>${dnsName}</code>
-                <button class="btn-icon" onclick="copyToClipboard('${dnsName}')" title="Copy DNS">
+                <code id="dns-name-code"></code>
+                <button class="btn-icon" data-action="copy-dns" title="Copy DNS">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -255,7 +247,14 @@ function renderDnsInfo(dnsName) {
             </div>
         </div>
     `;
+    dnsInfo.querySelector('#dns-name-code').textContent = dnsName;
+    dnsInfo.querySelector('[data-action="copy-dns"]').addEventListener('click', () => copyToClipboardSafe(dnsName));
     dnsInfo.style.display = 'block';
+}
+
+function copyToClipboardSafe(text) {
+    if (window.copyToClipboard) window.copyToClipboard(text);
+    else navigator.clipboard?.writeText(text);
 }
 
 /**
@@ -284,16 +283,16 @@ function renderPortMappings(mappings) {
             </thead>
             <tbody>
                 ${mappings.map(mapping => `
-                    <tr>
+                    <tr data-vm-port="${escapeHtml(mapping.vmPort)}" data-connection="${escapeHtml(mapping.connectionExample || '')}">
                         <td>
                             <strong>${escapeHtml(mapping.label || 'Custom')}</strong>
                         </td>
-                        <td><code>${mapping.vmPort}</code></td>
-                        <td><code>${mapping.publicPort}</code></td>
-                        <td><span class="protocol-badge">${protocolToString(mapping.protocol)}</span></td>
+                        <td><code>${escapeHtml(mapping.vmPort)}</code></td>
+                        <td><code>${escapeHtml(mapping.publicPort)}</code></td>
+                        <td><span class="protocol-badge">${escapeHtml(protocolToString(mapping.protocol))}</span></td>
                         <td>
                             <code class="connection-string">${escapeHtml(mapping.connectionExample)}</code>
-                            <button class="btn-icon" onclick="copyToClipboard(\`${escapeHtml(mapping.connectionExample)}\`)" title="Copy">
+                            <button class="btn-icon" data-action="copy-connection" title="Copy">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -301,7 +300,7 @@ function renderPortMappings(mappings) {
                             </button>
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-danger" onclick="window.removeDirectAccessPort('${mapping.vmPort}')" title="Remove">
+                            <button class="btn btn-sm btn-danger" data-action="remove-port" title="Remove">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="18" y1="6" x2="6" y2="18"/>
                                     <line x1="6" y1="6" x2="18" y2="18"/>
@@ -315,7 +314,20 @@ function renderPortMappings(mappings) {
     `;
 
     container.innerHTML = html;
+    container.addEventListener('click', portsTableClickHandler);
     container.style.display = 'block';
+}
+
+function portsTableClickHandler(e) {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const row = btn.closest('[data-vm-port]');
+    if (!row) return;
+    if (btn.dataset.action === 'copy-connection') {
+        copyToClipboardSafe(row.dataset.connection || '');
+    } else if (btn.dataset.action === 'remove-port') {
+        window.removeDirectAccessPort(row.dataset.vmPort);
+    }
 }
 
 /**
@@ -333,9 +345,9 @@ function renderQuickAddButtons(vmId) {
                 ${popularServices.map(service => {
                     const config = COMMON_SERVICES[service];
                     return `
-                        <button class="quick-add-btn" onclick="window.quickAddDirectAccessService('${vmId}', '${service}')" title="${config.label} - Port ${config.port}">
-                            <span class="service-icon">${config.icon}</span>
-                            <span class="service-name">${config.label}</span>
+                        <button class="quick-add-btn" data-action="quick-add" data-service="${escapeHtml(service)}" title="${escapeHtml(config.label)} - Port ${config.port}">
+                            <span class="service-icon">${escapeHtml(config.icon)}</span>
+                            <span class="service-name">${escapeHtml(config.label)}</span>
                             <span class="service-port">${config.port}</span>
                         </button>
                     `;
@@ -353,14 +365,21 @@ function renderQuickAddButtons(vmId) {
                     <option value="3">Both</option>
                 </select>
                 <input type="text" id="custom-label" placeholder="Label (optional)" />
-                <button class="btn btn-primary" onclick="window.addCustomDirectAccessPort('${vmId}')">
-                    Add Port
-                </button>
+                <button class="btn btn-primary" data-action="add-custom">Add Port</button>
             </div>
         </div>
     `;
 
     container.innerHTML = html;
+    container.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        if (btn.dataset.action === 'quick-add') {
+            window.quickAddDirectAccessService(vmId, btn.dataset.service);
+        } else if (btn.dataset.action === 'add-custom') {
+            window.addCustomDirectAccessPort(vmId);
+        }
+    });
     container.style.display = 'block';
 }
 
@@ -377,7 +396,7 @@ window.quickAddDirectAccessService = async function(vmId, serviceName) {
 
         // Refresh modal
         const modal = document.getElementById('direct-access-modal');
-        const vmName = document.getElementById('direct-access-modal-title').textContent.replace('Direct Access - ', '');
+        const vmName = modal?.dataset?.vmName || '';
         await openDirectAccessModal(vmId, vmName);
     } catch (error) {
         showToast('Failed to add service: ' + error.message, 'error');
@@ -414,7 +433,7 @@ window.addCustomDirectAccessPort = async function(vmId) {
 
         // Refresh modal
         const modal = document.getElementById('direct-access-modal');
-        const vmName = document.getElementById('direct-access-modal-title').textContent.replace('Direct Access - ', '');
+        const vmName = modal?.dataset?.vmName || '';
         await openDirectAccessModal(vmId, vmName);
     } catch (error) {
         showToast('Failed to add port: ' + error.message, 'error');
@@ -459,30 +478,7 @@ window.copyToClipboard = function(text) {
     });
 };
 
-/**
- * Escape HTML utility
- */
-function escapeHtml(text) {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, m => map[m]);
-}
-
-/**
- * Show toast notification (assuming it exists in app.js)
- */
-function showToast(message, type = 'info') {
-    if (window.showToast) {
-        window.showToast(message, type);
-    } else {
-        console.log(`[${type}] ${message}`);
-    }
-}
+const showToast = sharedShowToast;
 
 // Export functions to window for onclick handlers
 window.openDirectAccessModal = openDirectAccessModal;
