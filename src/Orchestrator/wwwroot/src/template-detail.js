@@ -42,7 +42,7 @@ const PLATFORM_VARIABLE_NAMES = new Set([
 function getUserVariables(template) {
     if (!Array.isArray(template.variables)) return [];
     return template.variables.filter(v =>
-        v.kind === 0 &&                              // Static only
+        (v.kind === 0 || v.kind === 'Static') &&     // Static only (int or string enum)
         !PLATFORM_VARIABLE_NAMES.has(v.name)         // not platform-resolved
     );
 }
