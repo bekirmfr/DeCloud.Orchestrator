@@ -200,7 +200,7 @@ public class TemplateService : ITemplateService
         }
     }
 
-    public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template)
+    public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false)
     {
         try
         {
@@ -217,15 +217,20 @@ public class TemplateService : ITemplateService
             {
                 // Preserve immutable fields
                 template.AuthorId = existing.AuthorId;
-                template.IsCommunity = existing.IsCommunity;
-                template.IsVerified = existing.IsVerified;
-                template.IsFeatured = existing.IsFeatured;
                 template.DeploymentCount = existing.DeploymentCount;
                 template.LastDeployedAt = existing.LastDeployedAt;
                 template.CreatedAt = existing.CreatedAt;
                 template.AverageRating = existing.AverageRating;
                 template.TotalReviews = existing.TotalReviews;
                 template.RatingDistribution = existing.RatingDistribution;
+
+                // Admin can change classification flags; regular users cannot
+                if (!isAdmin)
+                {
+                    template.IsCommunity = existing.IsCommunity;
+                    template.IsVerified = existing.IsVerified;
+                    template.IsFeatured = existing.IsFeatured;
+                }
             }
 
             template.UpdatedAt = DateTime.UtcNow;

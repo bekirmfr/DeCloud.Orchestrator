@@ -179,6 +179,8 @@ public class MarketplaceController : ControllerBase
             if (userId == null)
                 return Unauthorized(new { error = "Authentication required" });
 
+            var isAdmin = User.IsInRole("Admin");
+
             var template = new VmTemplate
             {
                 Name = request.Name,
@@ -214,11 +216,12 @@ public class MarketplaceController : ControllerBase
                 DefaultBandwidthTier = request.DefaultBandwidthTier,
                 EstimatedCostPerHour = request.EstimatedCostPerHour,
 
-                // Community template defaults
+                // Admin creates platform templates; regular users create community
                 Status = TemplateStatus.Draft,
-                IsCommunity = true,
+                IsCommunity = !isAdmin,
                 IsVerified = false,
                 IsFeatured = false,
+
             };
 
             var validation = await _templateService.ValidateTemplateAsync(template);
@@ -286,8 +289,10 @@ public class MarketplaceController : ControllerBase
                 });
             }
 
-            var updated = await _templateService.UpdateTemplateAsync(template);
+            var isAdmin = User.IsInRole("Admin");
+            var updated = await _templateService.UpdateTemplateAsync(template, isAdmin);
             return Ok(updated);
+
         }
         catch (ArgumentException ex)
         {
@@ -602,7 +607,9 @@ public class MarketplaceController : ControllerBase
         }
 
         template.Artifacts.Add(artifact);
-        await _templateService.UpdateTemplateAsync(template);
+        var isAdmin = User.IsInRole("Admin");
+        await _templateService.UpdateTemplateAsync(template, isAdmin);
+
 
         return Ok(artifact);
     }
@@ -624,8 +631,10 @@ public class MarketplaceController : ControllerBase
         var removed = template.Artifacts.RemoveAll(a => a.Id == artifactId);
         if (removed == 0) return NotFound();
 
-        await _templateService.UpdateTemplateAsync(template);
+        var isAdmin = User.IsInRole("Admin");
+        await _templateService.UpdateTemplateAsync(template, isAdmin);
         return NoContent();
+
     }
 
 
