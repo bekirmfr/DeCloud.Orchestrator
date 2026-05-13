@@ -608,8 +608,7 @@ public class MarketplaceController : ControllerBase
 
         template.Artifacts.Add(artifact);
         var isAdmin = User.IsInRole("Admin");
-        await _templateService.UpdateTemplateAsync(template, isAdmin);
-
+        await _templateService.SaveTemplateDirectAsync(template);
 
         return Ok(artifact);
     }
@@ -632,7 +631,7 @@ public class MarketplaceController : ControllerBase
         if (removed == 0) return NotFound();
 
         var isAdmin = User.IsInRole("Admin");
-        await _templateService.UpdateTemplateAsync(template, isAdmin);
+        await _templateService.SaveTemplateDirectAsync(template);
         return NoContent();
 
     }

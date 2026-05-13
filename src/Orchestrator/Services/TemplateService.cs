@@ -223,13 +223,7 @@ public class TemplateService : ITemplateService
                 template.AverageRating = existing.AverageRating;
                 template.TotalReviews = existing.TotalReviews;
                 template.RatingDistribution = existing.RatingDistribution;
-                // Artifacts are managed via AddArtifact / RemoveArtifact endpoints.
-                // Preserve from existing only if the caller didn't provide any
-                // (i.e., the general update from the frontend).
-                if (template.Artifacts == null || template.Artifacts.Count == 0)
-                {
-                    template.Artifacts = existing.Artifacts;
-                }
+                template.Artifacts = existing.Artifacts;
 
                 // Admin can change classification flags; regular users cannot
                 if (!isAdmin)
@@ -255,6 +249,13 @@ public class TemplateService : ITemplateService
             _logger.LogError(ex, "Failed to update template: {TemplateId}", template.Id);
             throw;
         }
+    }
+
+    public async Task SaveTemplateDirectAsync(VmTemplate template)
+    {
+        template.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveTemplateAsync(template);
+        _logger.LogInformation("Saved template: {Name} ({Id})", template.Name, template.Id);
     }
 
     public async Task<bool> DeleteTemplateAsync(string templateId, string requesterId)
