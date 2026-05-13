@@ -82,8 +82,16 @@ public sealed class CloudInitRenderer : ICloudInitRenderer
             rendered = rendered.Replace(placeholder, value, StringComparison.Ordinal);
         }
 
+        // ── Pass 1b: platform variables (${VARNAME} marketplace compat) ──
+        // Marketplace templates use ${DECLOUD_PASSWORD}, ${DECLOUD_DOMAIN}
+        // etc. without declaring them as formal TemplateVariables.
+        // UserSuppliedStatics carries these values — substitute any that
+        // weren't already handled by declared Variables in Pass 1.
+        rendered = SubstitutePlatformVariables(rendered, ctx.UserSuppliedStatics);
+
         // ── Pass 2: artifacts ─────────────────────────────────────────────
         rendered = SubstituteArtifacts(rendered, template.Artifacts, ctx.TargetArchitecture);
+
 
         // ── Pass 3: validation ────────────────────────────────────────────
         // F4: skipped when strictValidation == false (transitional system VM
@@ -152,6 +160,8 @@ public sealed class CloudInitRenderer : ICloudInitRenderer
             }
 
             substitutions[$"__{v.Name}__"] = value;
+            //legacy placeholder format
+            substitutions[$"${{{v.Name}}}"] = value;
         }
 
         return substitutions;
@@ -193,4 +203,40 @@ public sealed class CloudInitRenderer : ICloudInitRenderer
 
         return result;
     }
+
+    /// <summary>
+    /// Substitute <c>${VARNAME}</c> placeholders from
+    /// <see cref="ResolutionContext.UserSuppliedStatics"/>.
+    ///
+    /// <para>
+    /// Marketplace templates predate the <c>__VARNAME__</c> convention and
+    /// use <c>${DECLOUD_PASSWORD}</c>, <c>${DECLOUD_DOMAIN}</c>, etc.
+    /// directly. These names come from
+    /// <c>TemplateService.GetAvailableVariables</c> and carry the
+    /// <c>DECLOUD_</c> prefix, so collisions with legitimate bash variables
+    /// (<c>${HOME}</c>, <c>${PATH}</c>) do not occur in practice.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Order:</b> runs after Pass 1 (declared statics). If a variable is
+    /// both declared (and resolved in Pass 1) and present in
+    /// UserSuppliedStatics, the Pass 1 substitution wins because the
+    /// placeholder is already gone by the time this method sees the string.
+    /// </para>
+    /// </summary>
+    private static string SubstitutePlatformVariables(
+        string cloudInit,
+        IReadOnlyDictionary<string, string>? statics)
+    {
+        if (statics is null || statics.Count == 0) return cloudInit;
+
+        var result = cloudInit;
+        foreach (var (key, value) in statics)
+        {
+            var placeholder = $"${{{key}}}";
+            result = result.Replace(placeholder, value, StringComparison.Ordinal);
+        }
+        return result;
+    }
+
 }

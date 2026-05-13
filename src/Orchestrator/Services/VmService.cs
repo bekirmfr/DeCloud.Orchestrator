@@ -882,237 +882,132 @@ public class VmService : IVmService
         string? imageUrl = GetImageUrl(vm.Spec.ImageId);
 
         // ════════════════════════════════════════════════════════════════════════
-        // STEP 6.5: Render cloud-init (P2.4)
+        // STEP 6.5: Render cloud-init (unified pipeline)
         // ════════════════════════════════════════════════════════════════════════
-        // New pipeline (template.Variables declared) calls CloudInitRenderer.
-        // Legacy compatibility (no declared Variables) keeps the previous
-        // SubstituteCloudInitVariables path. Both produce a fully-substituted
-        // UserData string for the CreateVm command.
+        // Single pipeline for all templates. The renderer handles:
+        //   Pass 1:  declared __VARNAME__ statics via resolver registry
+        //   Pass 1b: ${VARNAME} platform variables from UserSuppliedStatics
+        //   Pass 2:  ${ARTIFACT_URL:name} / ${ARTIFACT_SHA256:name} from Artifacts
+        //   Pass 3:  validation (if strictValidation enabled)
         //
-        // Branch predicate is template.Variables.Count > 0 — declaring Variables is
-        // the explicit opt-in to the new pipeline. Marketplace templates without
-        // declarations stay on the legacy path until they migrate (Phase 4 cleanup
-        // removes the legacy path entirely).
+        // Legacy ${VARNAME} marketplace templates (no declared Variables) work
+        // because Pass 1b substitutes from UserSuppliedStatics, and Pass 2
+        // handles artifacts. No separate code path needed.
 
         string? processedUserData = vm.Spec.UserData;
 
-        // Fetch the template once up front — both branches need it for different
-        // reasons (new pipeline: full template + Variables; legacy: artifact filter).
         VmTemplate? template = !string.IsNullOrEmpty(vm.TemplateId)
             ? await _templateService.GetTemplateByIdAsync(vm.TemplateId)
             : null;
 
         if (!string.IsNullOrEmpty(vm.Spec.UserData))
         {
-            bool useNewPipeline = template is { Variables.Count: > 0 };
-
-            if (useNewPipeline)
+            try
             {
-                // ── New pipeline (P2.4) ────────────────────────────────────────────
-                // Build ResolutionContext + call renderer. Pass 1 substitutes
-                // declared __VARNAME__ statics via the resolver registry; Pass 2
-                // substitutes ${ARTIFACT_URL/SHA256:name} from template.Artifacts;
-                // Pass 3 (validator, if registered) catches drift between declared
-                // Variables and actual placeholders.
-                try
+                var rawArch = selectedNode.HardwareInventory?.Cpu?.Architecture;
+                var archTag = rawArch?.ToLowerInvariant() switch
                 {
-                    // Architecture tag — needed by Pass 2 to filter dual-arch artifacts
-                    // (decloud-agent ships separate amd64/arm64 binaries).
-                    var rawArch = selectedNode.HardwareInventory?.Cpu?.Architecture;
-                    var archTag = rawArch?.ToLowerInvariant() switch
-                    {
-                        "arm64" or "aarch64" => "arm64",
-                        "x86_64" or "amd64" => "amd64",
-                        _ => "amd64",  // safe default — x86-64 dominant
-                    };
+                    "arm64" or "aarch64" => "arm64",
+                    "x86_64" or "amd64" => "amd64",
+                    _ => "amd64",
+                };
 
-                    // OrchestratorUrl from configuration. The resolver throws on empty
-                    // (loud-fail per design §11 Q1) — surface that as a deploy failure
-                    // rather than letting an unusable cloud-init reach the VM.
-                    var orchestratorUrl = _configuration["OrchestratorClient:BaseUrl"];
-                    if (string.IsNullOrWhiteSpace(orchestratorUrl))
-                    {
-                        throw new InvalidOperationException(
-                            "Configuration 'OrchestratorClient:BaseUrl' is not set. " +
-                            "Required for cloud-init rendering — refusing to deploy " +
-                            "a VM with an unusable orchestrator URL.");
-                    }
-
-                    // UserSuppliedStatics: layered, in order of increasing priority.
-                    //   Layer 1: template.DefaultEnvironmentVariables (template author's defaults)
-                    //   Layer 2: per-VM env vars from vm.Labels (set at CreateVm time)
-                    //   Layer 3: platform-injected secrets (password, SSH keys merged from owner)
-                    // Resolvers consult UserSuppliedStatics by convention:
-                    //   ADMIN_PASSWORD  → AdminPasswordResolver, PasswordConfigBlockResolver, SshPasswordAuthResolver
-                    //   SSH_PUBLIC_KEYS → SshAuthorizedKeysBlockResolver (fallback when ctx.Vm.Spec.SshPublicKey is null)
-                    var userSupplied = new Dictionary<string, string>(StringComparer.Ordinal);
-
-                    // Layer 1
-                    if (template.DefaultEnvironmentVariables is { Count: > 0 })
-                    {
-                        foreach (var kvp in template.DefaultEnvironmentVariables)
-                            userSupplied[kvp.Key] = kvp.Value;
-                    }
-
-                    // Layer 2 — same priority logic as the legacy path
-                    // (custom > template), preserved for behavioural parity.
-                    string? envVarsLabel = null;
-                    if (vm.Labels.TryGetValue("custom:cloud-init-vars", out var customVars))
-                    {
-                        envVarsLabel = customVars;
-                    }
-                    else if (vm.Labels.TryGetValue("template:cloud-init-vars", out var templateVars))
-                    {
-                        envVarsLabel = templateVars;
-                    }
-                    if (!string.IsNullOrEmpty(envVarsLabel))
-                    {
-                        try
-                        {
-                            var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsLabel);
-                            if (envVars is not null)
-                            {
-                                foreach (var kvp in envVars)
-                                    userSupplied[kvp.Key] = kvp.Value;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex,
-                                "VM {VmId}: failed to parse cloud-init env vars from labels — proceeding without",
-                                vm.Id);
-                        }
-                    }
-
-                    // Layer 3 — platform secrets win over template/user values for
-                    // safety-critical keys (don't let a template default override the
-                    // password the platform generated).
-                    if (!string.IsNullOrEmpty(password))
-                        userSupplied["ADMIN_PASSWORD"] = password;
-                    if (!string.IsNullOrEmpty(sshPublicKey))
-                        userSupplied["SSH_PUBLIC_KEYS"] = sshPublicKey;
-
-                    var ctx = new ResolutionContext(
-                        Node: selectedNode,
-                        Obligation: null,        // tenant flow — no obligation
-                        Vm: vm,
-                        Template: template,
-                        OrchestratorUrl: orchestratorUrl,
-                        TargetArchitecture: archTag,
-                        UserSuppliedStatics: userSupplied);
-
-                    processedUserData = await _cloudInitRenderer.RenderAsync(template, ctx, ct: default);
-
-                    _logger.LogInformation(
-                        "VM {VmId}: cloud-init rendered via P2.4 pipeline " +
-                        "(template={Slug} r{Rev}, {VarCount} vars, {ArtCount} artifacts, " +
-                        "arch={Arch}, {Bytes} bytes)",
-                        vm.Id, template.Slug, template.Revision,
-                        template.Variables.Count, template.Artifacts.Count,
-                        archTag, processedUserData.Length);
-                }
-                catch (Exception ex)
+                var orchestratorUrl = _configuration["OrchestratorClient:BaseUrl"];
+                if (string.IsNullOrWhiteSpace(orchestratorUrl))
                 {
-                    // Renderer/validator throw — log loudly and surface as deploy
-                    // failure. Don't fall back to legacy: the validator's three-bucket
-                    // error message (unresolved statics / undeclared placeholders /
-                    // dynamics-in-wrong-form) points at the specific gap. Silent
-                    // fallback would mask template/resolver drift indefinitely.
-                    //
-                    // The exception propagates out of TryScheduleVmAsync; the VM
-                    // status remains Pending, status message reflects the failure,
-                    // and the operator can fix the drift and redeploy.
-                    _logger.LogError(ex,
-                        "VM {VmId}: cloud-init rendering failed for template {Slug}. " +
-                        "This indicates a Variables-vs-cloud-init drift or a missing " +
-                        "resolver — see exception detail.",
-                        vm.Id, template.Slug);
-                    throw;
+                    throw new InvalidOperationException(
+                        "Configuration 'OrchestratorClient:BaseUrl' is not set. " +
+                        "Required for cloud-init rendering.");
                 }
+
+                // ── Build UserSuppliedStatics ──────────────────────────────
+                // Three-layer merge (increasing priority):
+                //   Layer 1: template.DefaultEnvironmentVariables
+                //   Layer 2: custom/template env vars from VM labels
+                //   Layer 3: platform variables from GetAvailableVariables
+                //            + password + SSH keys
+
+                var userSupplied = new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+                // Layer 1: template defaults
+                if (template?.DefaultEnvironmentVariables != null)
+                {
+                    foreach (var (k, v) in template.DefaultEnvironmentVariables)
+                        userSupplied[k] = v;
+                }
+
+                // Layer 2: label overrides
+                string? envVarsLabel = null;
+                if (vm.Labels.TryGetValue("custom:cloud-init-vars", out var customVars))
+                    envVarsLabel = customVars;
+                else if (vm.Labels.TryGetValue("template:cloud-init-vars", out var templateVars))
+                    envVarsLabel = templateVars;
+
+                if (!string.IsNullOrEmpty(envVarsLabel))
+                {
+                    try
+                    {
+                        var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                            envVarsLabel);
+                        if (envVars != null)
+                            foreach (var (k, v) in envVars)
+                                userSupplied[k] = v;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "VM {VmId}: failed to parse cloud-init env vars from labels",
+                            vm.Id);
+                    }
+                }
+
+                // Layer 3: platform variables (highest priority)
+                var platformVars = _templateService.GetAvailableVariables(vm, selectedNode);
+                foreach (var (k, v) in platformVars)
+                    userSupplied[k] = v;
+
+                if (!string.IsNullOrEmpty(password))
+                    userSupplied["DECLOUD_PASSWORD"] = password;
+
+                // Platform secrets
+                userSupplied["ADMIN_PASSWORD"] = password ?? "";
+                userSupplied["SSH_PUBLIC_KEYS"] = sshPublicKey ?? "";
+
+                // ── Build ResolutionContext ────────────────────────────────
+                var ctx = new ResolutionContext(
+                    Node: selectedNode,
+                    Obligation: null,
+                    Vm: vm,
+                    Template: template ?? new VmTemplate { Slug = "custom" },
+                    OrchestratorUrl: orchestratorUrl,
+                    TargetArchitecture: archTag,
+                    UserSuppliedStatics: userSupplied);
+
+                // Marketplace templates typically have no declared Variables,
+                // so skip strict validation (it would flag ${VARNAME}
+                // patterns as undeclared __VARNAME__ leaks). Templates WITH
+                // declared Variables get full validation.
+                bool strict = template is { Variables.Count: > 0 };
+
+                processedUserData = await _cloudInitRenderer.RenderAsync(
+                    template ?? new VmTemplate
+                    {
+                        Slug = "custom",
+                        CloudInitTemplate = vm.Spec.UserData!,
+                        Variables = new(),
+                        Artifacts = new(),
+                    },
+                    ctx, CancellationToken.None, strictValidation: strict);
             }
-            else
+            catch (Exception ex)
             {
-                // ── Legacy compatibility path ──────────────────────────────────────
-                // Templates without declared Variables continue through the existing
-                // ${VARNAME} substitution. This is the path for marketplace templates
-                // created before Phase 2 — they don't carry a Variables list.
-                // Removed in Phase 4 cleanup.
-                try
-                {
-                    var variables = _templateService.GetAvailableVariables(vm, selectedNode);
-
-                    if (!string.IsNullOrEmpty(password))
-                        variables["DECLOUD_PASSWORD"] = password;
-
-                    string? envVarsLabel = null;
-                    if (vm.Labels.TryGetValue("custom:cloud-init-vars", out var customVars))
-                        envVarsLabel = customVars;
-                    else if (vm.Labels.TryGetValue("template:cloud-init-vars", out var templateVars))
-                        envVarsLabel = templateVars;
-
-                    if (!string.IsNullOrEmpty(envVarsLabel))
-                    {
-                        try
-                        {
-                            var envVars = JsonSerializer.Deserialize<Dictionary<string, string>>(envVarsLabel);
-                            if (envVars != null)
-                            {
-                                foreach (var kvp in envVars)
-                                    variables[kvp.Key] = kvp.Value;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex,
-                                "VM {VmId}: failed to parse legacy cloud-init env vars",
-                                vm.Id);
-                        }
-                    }
-
-                    // Architecture-specific artifact injection (legacy syntax — note
-                    // that the legacy regex `[A-Z_]+` doesn't match the colon, so
-                    // these substitutions are effectively dead today; preserved for
-                    // parity until Phase 4 cleanup).
-                    if (template is { Artifacts.Count: > 0 })
-                    {
-                        var rawArch = selectedNode.HardwareInventory?.Cpu?.Architecture;
-                        var archTag = rawArch?.ToLowerInvariant() switch
-                        {
-                            "arm64" or "aarch64" => "arm64",
-                            "x86_64" or "amd64" => "amd64",
-                            _ => "amd64"
-                        };
-                        foreach (var artifact in template.Artifacts)
-                        {
-                            if (artifact.Architecture is not null &&
-                                !string.Equals(artifact.Architecture, archTag, StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            variables.TryAdd(
-                                $"ARTIFACT_URL:{artifact.Name}",
-                                $"http://192.168.122.1:5100/api/artifacts/{artifact.Sha256}");
-                            variables.TryAdd(
-                                $"ARTIFACT_SHA256:{artifact.Name}",
-                                artifact.Sha256);
-                        }
-                    }
-
-                    processedUserData = _templateService.SubstituteCloudInitVariables(
-                        vm.Spec.UserData, variables);
-
-                    var source = !string.IsNullOrEmpty(vm.TemplateId) ? "template" : "custom";
-                    _logger.LogInformation(
-                        "VM {VmId}: cloud-init substituted via legacy path " +
-                        "({Count} vars, source={Source})",
-                        vm.Id, variables.Count, source);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex,
-                        "VM {VmId}: legacy cloud-init substitution failed — " +
-                        "using raw template",
-                        vm.Id);
-                    // processedUserData already = vm.Spec.UserData; carry on raw.
-                }
+                _logger.LogError(ex,
+                    "VM {VmId}: cloud-init rendering failed for template {Slug}. " +
+                    "Check Variables declarations, resolver registry, and " +
+                    "UserSuppliedStatics population.",
+                    vm.Id, template?.Slug ?? "custom");
+                throw;
             }
         }
 
