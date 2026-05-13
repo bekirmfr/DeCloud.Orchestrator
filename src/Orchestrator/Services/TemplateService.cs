@@ -223,6 +223,13 @@ public class TemplateService : ITemplateService
                 template.AverageRating = existing.AverageRating;
                 template.TotalReviews = existing.TotalReviews;
                 template.RatingDistribution = existing.RatingDistribution;
+                // Artifacts are managed via AddArtifact / RemoveArtifact endpoints.
+                // Preserve from existing only if the caller didn't provide any
+                // (i.e., the general update from the frontend).
+                if (template.Artifacts == null || template.Artifacts.Count == 0)
+                {
+                    template.Artifacts = existing.Artifacts;
+                }
 
                 // Admin can change classification flags; regular users cannot
                 if (!isAdmin)
