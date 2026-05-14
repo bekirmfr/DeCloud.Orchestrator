@@ -15,6 +15,12 @@ let pendingArtifacts = [];
 // Active mode for the new-artifact form: 'upload' | 'paste' | 'url'.
 let artifactMode = 'upload';
 
+// What the artifact form is editing right now:
+//   null                                     — adding a brand-new artifact
+//   { kind: 'pending', index }               — editing a client-staged entry
+//   { kind: 'existing', templateId, id }     — editing one persisted on the server
+let editingArtifactTarget = null;
+
 // ── Enum mappings (C# enums serialize as integers) ──────────────────────
 const VISIBILITY_TO_INT = { 'Public': 0, 'Private': 1 };
 const VISIBILITY_TO_STR = { 0: 'Public', 1: 'Private', 'Public': 'Public', 'Private': 'Private' };
@@ -952,14 +958,12 @@ export async function editTemplate(templateId) {
         row.querySelector('[data-env-field="value"]').value = value;
     });
 
-    // Variables — populate rows from the loaded template
+    // Variables — populate rows from the loaded template (view mode by default)
     const varsList = document.getElementById('ct-variables-list');
     varsList.innerHTML = '';
     const templateVars = template.variables || [];
     templateVars.forEach(v => {
-        addVariable();
-        const rows = varsList.querySelectorAll('.variable-row');
-        const row = rows[rows.length - 1];
+        const row = addVariable(false);
         row.querySelector('[data-var-field="name"]').value = v.name || '';
         row.querySelector('[data-var-field="kind"]').value = (typeof v.kind === 'number')
             ? String(v.kind)
@@ -968,6 +972,7 @@ export async function editTemplate(templateId) {
         row.querySelector('[data-var-field="required"]').checked = !!v.required;
         row.querySelector('[data-var-field="resolverKey"]').value = v.resolverKey || '';
         onVariableKindChange(row.querySelector('[data-var-field="kind"]'));
+        setVariableRowMode(row, 'view');
     });
     if (templateVars.length > 0) {
         document.getElementById('ct-variables-body').style.display = '';
@@ -1046,11 +1051,14 @@ function renderCombinedArtifactsList(existingArtifacts, templateId) {
                     ${a.description ? `<span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">— ${escapeHtml(a.description)}</span>` : ''}
                 </div>
                 <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-muted,#6b7280); flex-shrink:0;">${escapeHtml((a.sha256 || '').slice(0, 12))}…</span>
-                ${templateId
-                    ? `<button class="btn btn-sm btn-danger"
-                          onclick="window.myTemplates.removeArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
-                          type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>`
-                    : ''}
+                ${templateId ? `
+                    <button class="btn btn-sm btn-secondary"
+                        onclick="window.myTemplates.editArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
+                        type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
+                    <button class="btn btn-sm btn-danger"
+                        onclick="window.myTemplates.removeArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
+                        type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
+                ` : ''}
             </div>
         `);
     });
@@ -1063,6 +1071,9 @@ function renderCombinedArtifactsList(existingArtifacts, templateId) {
                     <span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? String(a.type))}${a.architecture ? ' · ' + escapeHtml(a.architecture) : ''}</span>
                     <span style="color:var(--accent, #00d9ff); font-size:11px; margin-left:6px;">(pending)</span>
                 </div>
+                <button class="btn btn-sm btn-secondary"
+                    onclick="window.myTemplates.editPendingArtifact(${idx})"
+                    type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
                 <button class="btn btn-sm btn-danger"
                     onclick="window.myTemplates.removePendingArtifact(${idx})"
                     type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
@@ -1076,6 +1087,90 @@ function renderCombinedArtifactsList(existingArtifacts, templateId) {
     }
 
     list.innerHTML = rows.join('');
+}
+
+// Decode a `data:` URI into its media type and UTF-8 text payload. Used when
+// switching an existing inline artifact into the form's paste-mode panel.
+function decodeDataUri(dataUri) {
+    const commaIdx = dataUri.indexOf(',');
+    if (commaIdx < 0) return { mediaType: 'text/plain', text: '' };
+    const header = dataUri.slice(5, commaIdx); // strip 'data:'
+    const mediaType = header.split(';')[0] || 'text/plain';
+    const payload = dataUri.slice(commaIdx + 1);
+    if (header.includes(';base64')) {
+        try {
+            const binary = atob(payload);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return { mediaType, text: new TextDecoder().decode(bytes) };
+        } catch {
+            return { mediaType, text: '' };
+        }
+    }
+    try {
+        return { mediaType, text: decodeURIComponent(payload) };
+    } catch {
+        return { mediaType, text: '' };
+    }
+}
+
+// Open the artifact form pre-populated with the given artifact's values.
+// `art` may be a pending entry (with `content`/`contentType` for paste-mode
+// drafts) or an existing server artifact (only `sourceUrl` is set).
+function populateArtifactForm(art) {
+    showArtifactRow();   // resets + reveals the form
+
+    document.getElementById('ct-art-name').value = art.name || '';
+    document.getElementById('ct-art-description').value = art.description || '';
+    document.getElementById('ct-art-type').value = String(art.type ?? 1);
+    document.getElementById('ct-art-arch').value = art.architecture || '';
+
+    if (typeof art.content === 'string' && art.content.length > 0) {
+        // Pending paste-mode entry — restore content directly.
+        document.getElementById('ct-art-content').value = art.content;
+        if (art.contentType) {
+            document.getElementById('ct-art-content-type').value = art.contentType;
+        }
+        switchArtifactMode('paste');
+    } else if (typeof art.sourceUrl === 'string' && art.sourceUrl.startsWith('data:')) {
+        const { mediaType, text } = decodeDataUri(art.sourceUrl);
+        document.getElementById('ct-art-content').value = text;
+        const ctSelect = document.getElementById('ct-art-content-type');
+        if ([...ctSelect.options].some(o => o.value === mediaType)) {
+            ctSelect.value = mediaType;
+        }
+        switchArtifactMode('paste');
+    } else if (typeof art.sourceUrl === 'string' && art.sourceUrl.length > 0) {
+        document.getElementById('ct-art-url').value = art.sourceUrl;
+        document.getElementById('ct-art-sha256').value = art.sha256 || '';
+        switchArtifactMode('url');
+    } else {
+        switchArtifactMode('upload');
+    }
+}
+
+export function editPendingArtifact(index) {
+    const art = pendingArtifacts[index];
+    if (!art) return;
+    editingArtifactTarget = { kind: 'pending', index };
+    populateArtifactForm(art);
+    setArtifactSaveButtonLabel('Save Changes');
+}
+
+export function editArtifact(templateId, artifactId) {
+    const template = myTemplates.find(t => t.id === templateId);
+    if (!template) return;
+    const art = (template.artifacts || []).find(a => a.id === artifactId);
+    if (!art) return;
+    editingArtifactTarget = { kind: 'existing', templateId, id: artifactId };
+    populateArtifactForm(art);
+    setArtifactSaveButtonLabel('Save Changes');
+}
+
+function setArtifactSaveButtonLabel(label) {
+    const btn = document.querySelector(
+        '#ct-artifact-new-row button.btn-primary[onclick*="saveArtifact"]');
+    if (btn) btn.textContent = label;
 }
 
 export function showArtifactRow() {
@@ -1097,6 +1192,9 @@ export function showArtifactRow() {
     delete newRow.dataset.dataUri;
     delete newRow.dataset.fileName;
 
+    editingArtifactTarget = null;
+    setArtifactSaveButtonLabel('Add Artifact');
+
     artifactMode = 'upload';
     switchArtifactMode('upload');
     bindArtifactDropZone();
@@ -1105,6 +1203,8 @@ export function showArtifactRow() {
 export function cancelArtifact() {
     document.getElementById('ct-artifact-new-row').style.display = 'none';
     document.getElementById('ct-add-artifact-btn').style.display = '';
+    editingArtifactTarget = null;
+    setArtifactSaveButtonLabel('Add Artifact');
 }
 
 export function switchArtifactMode(mode) {
@@ -1180,7 +1280,7 @@ function readArtifactFile(file) {
 
 export async function saveArtifact() {
     const templateId = document.getElementById('ct-template-id').value;
-    const isEdit = !!templateId;
+    const isTemplateEdit = !!templateId;
 
     const name = document.getElementById('ct-art-name').value.trim();
     if (!name) { showToast('error', 'Artifact name is required'); return; }
@@ -1219,9 +1319,47 @@ export async function saveArtifact() {
         payload.sha256 = sha256;
     }
 
-    // Editing an existing template: POST to the artifact endpoint immediately
-    // so the new artifact persists alongside existing ones.
-    if (isEdit) {
+    // ── Editing an existing server-side artifact ───────────────────────────
+    if (editingArtifactTarget?.kind === 'existing') {
+        const { templateId: tid, id: aid } = editingArtifactTarget;
+        try {
+            const response = await api(`/api/marketplace/templates/${tid}/artifacts/${aid}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to update artifact');
+            }
+
+            showToast('success', `Artifact '${name}' updated`);
+            cancelArtifact();
+
+            await loadMyTemplates();
+            const updated = myTemplates.find(t => t.id === tid);
+            if (updated) renderCombinedArtifactsList(updated.artifacts || [], tid);
+        } catch (error) {
+            showToast('error', error.message);
+        }
+        return;
+    }
+
+    // ── Editing a client-staged (pending) artifact ─────────────────────────
+    if (editingArtifactTarget?.kind === 'pending') {
+        pendingArtifacts[editingArtifactTarget.index] = payload;
+        showToast('success', `Artifact '${name}' updated`);
+        cancelArtifact();
+        const tid = document.getElementById('ct-template-id').value;
+        const existing = tid
+            ? (myTemplates.find(t => t.id === tid)?.artifacts || [])
+            : [];
+        renderCombinedArtifactsList(existing, tid || null);
+        return;
+    }
+
+    // ── Adding new during a template edit: POST immediately ────────────────
+    if (isTemplateEdit) {
         try {
             const response = await api(`/api/marketplace/templates/${templateId}/artifacts`, {
                 method: 'POST',
@@ -1245,8 +1383,7 @@ export async function saveArtifact() {
         return;
     }
 
-    // Creating: stage the artifact locally; it is submitted with the
-    // POST /create payload when the user clicks "Create as Draft".
+    // ── Adding new during template create: stage locally ───────────────────
     pendingArtifacts.push(payload);
     showToast('success', `Artifact '${name}' staged (submitted on Create)`);
     cancelArtifact();
@@ -1301,7 +1438,11 @@ export function toggleVariablesSection() {
     icon.textContent = isHidden ? '▼' : '▶';
 }
 
-export function addVariable() {
+// Add a variable row. When `startInView` is true (used when populating from a
+// loaded template), the row renders read-only with Edit/Delete buttons. When
+// false (used by the "+ Add Variable" button), the row opens directly into
+// edit mode so the user can fill in values.
+export function addVariable(startInView = false) {
     const list = document.getElementById('ct-variables-list');
     const row = document.createElement('div');
     row.className = 'variable-row';
@@ -1310,44 +1451,112 @@ export function addVariable() {
     row.style.border = '1px solid var(--border-color, #333)';
     row.style.borderRadius = '6px';
     row.innerHTML = `
-        <div class="form-row" style="margin-bottom:6px;">
-            <div class="form-group" style="flex:2">
-                <label class="form-label" style="font-size:11px;">Name *</label>
-                <input type="text" class="form-input" data-var-field="name"
-                    placeholder="DECLOUD_PASSWORD" style="font-family:var(--font-mono); font-size:12px;">
+        <div class="variable-view" style="display:none; align-items:center; gap:8px;">
+            <div style="flex:1; min-width:0;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="variable-view-name" style="font-weight:600; font-family:var(--font-mono); font-size:13px;"></span>
+                    <span class="variable-view-kind" style="font-size:11px; padding:2px 6px; border-radius:3px; background:var(--bg-tertiary,#222);"></span>
+                    <span class="variable-view-required" style="font-size:11px; color:var(--accent,#00d9ff); display:none;">required</span>
+                </div>
+                <div class="variable-view-meta" style="font-size:11px; color:var(--text-muted,#6b7280); margin-top:2px; font-family:var(--font-mono);"></div>
             </div>
-            <div class="form-group" style="flex:1">
-                <label class="form-label" style="font-size:11px;">Kind</label>
-                <select class="form-input" data-var-field="kind"
-                    onchange="window.myTemplates.onVariableKindChange(this)">
-                    <option value="0">Static</option>
-                    <option value="1">Dynamic</option>
-                </select>
-            </div>
+            <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.editVariableRow(this)"
+                type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
             <button class="btn btn-sm btn-danger" onclick="window.myTemplates.removeVariableRow(this)"
-                type="button" style="align-self:flex-end; margin-bottom:4px;">✕</button>
+                type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
         </div>
-        <div class="form-row variable-static-fields" style="margin-bottom:0;">
-            <div class="form-group" style="flex:2">
-                <label class="form-label" style="font-size:11px;">Default Value</label>
-                <input type="text" class="form-input" data-var-field="defaultValue"
-                    placeholder="Optional default" style="font-family:var(--font-mono); font-size:12px;">
+        <div class="variable-edit">
+            <div class="form-row" style="margin-bottom:6px;">
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Name *</label>
+                    <input type="text" class="form-input" data-var-field="name"
+                        placeholder="DECLOUD_PASSWORD" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label" style="font-size:11px;">Kind</label>
+                    <select class="form-input" data-var-field="kind"
+                        onchange="window.myTemplates.onVariableKindChange(this)">
+                        <option value="0">Static</option>
+                        <option value="1">Dynamic</option>
+                    </select>
+                </div>
             </div>
-            <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; padding-top:20px;">
-                <label class="filter-label">
-                    <input type="checkbox" data-var-field="required">
-                    <span style="font-size:12px;">Required</span>
-                </label>
+            <div class="form-row variable-static-fields" style="margin-bottom:6px;">
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Default Value</label>
+                    <input type="text" class="form-input" data-var-field="defaultValue"
+                        placeholder="Optional default" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
+                <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; padding-top:20px;">
+                    <label class="filter-label">
+                        <input type="checkbox" data-var-field="required">
+                        <span style="font-size:12px;">Required</span>
+                    </label>
+                </div>
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Resolver Key (advanced)</label>
+                    <input type="text" class="form-input" data-var-field="resolverKey"
+                        placeholder="Defaults to Name" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
             </div>
-            <div class="form-group" style="flex:2">
-                <label class="form-label" style="font-size:11px;">Resolver Key (advanced)</label>
-                <input type="text" class="form-input" data-var-field="resolverKey"
-                    placeholder="Defaults to Name" style="font-family:var(--font-mono); font-size:12px;">
+            <div style="display:flex; gap:6px;">
+                <button class="btn btn-sm btn-primary" onclick="window.myTemplates.doneVariableRow(this)"
+                    type="button">Done</button>
+                <button class="btn btn-sm btn-danger" onclick="window.myTemplates.removeVariableRow(this)"
+                    type="button">✕</button>
             </div>
         </div>
     `;
     list.appendChild(row);
+    if (startInView) setVariableRowMode(row, 'view');
     updateVariablesCount();
+    return row;
+}
+
+function setVariableRowMode(row, mode) {
+    const viewEl = row.querySelector('.variable-view');
+    const editEl = row.querySelector('.variable-edit');
+    if (mode === 'view') {
+        refreshVariableViewText(row);
+        viewEl.style.display = 'flex';
+        editEl.style.display = 'none';
+    } else {
+        viewEl.style.display = 'none';
+        editEl.style.display = '';
+    }
+}
+
+function refreshVariableViewText(row) {
+    const name = row.querySelector('[data-var-field="name"]').value.trim();
+    const kind = row.querySelector('[data-var-field="kind"]').value;
+    const defaultValue = row.querySelector('[data-var-field="defaultValue"]').value;
+    const required = row.querySelector('[data-var-field="required"]').checked;
+    const resolverKey = row.querySelector('[data-var-field="resolverKey"]').value.trim();
+
+    row.querySelector('.variable-view-name').textContent = name || '(unnamed)';
+    row.querySelector('.variable-view-kind').textContent = kind === '1' ? 'Dynamic' : 'Static';
+    row.querySelector('.variable-view-required').style.display =
+        (kind === '0' && required) ? '' : 'none';
+
+    const parts = [];
+    if (kind === '0' && defaultValue) parts.push(`default = ${defaultValue}`);
+    if (resolverKey) parts.push(`resolver = ${resolverKey}`);
+    row.querySelector('.variable-view-meta').textContent = parts.join('  ·  ');
+}
+
+export function editVariableRow(btn) {
+    const row = btn.closest('.variable-row');
+    setVariableRowMode(row, 'edit');
+}
+
+export function doneVariableRow(btn) {
+    const row = btn.closest('.variable-row');
+    const name = row.querySelector('[data-var-field="name"]').value.trim();
+    if (!name) {
+        showToast('error', 'Variable name is required');
+        return;
+    }
+    setVariableRowMode(row, 'view');
 }
 
 export function removeVariableRow(btn) {
@@ -1414,8 +1623,12 @@ window.myTemplates = {
     switchArtifactMode,
     onArtifactFileSelected,
     removePendingArtifact,
+    editPendingArtifact,
+    editArtifact,
     addVariable,
     removeVariableRow,
+    editVariableRow,
+    doneVariableRow,
     onVariableKindChange,
     toggleVariablesSection
 };
