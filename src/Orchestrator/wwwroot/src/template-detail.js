@@ -3,7 +3,7 @@
 // View template details and deploy
 // ============================================================================
 
-import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing } from './utils.js';
+import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing, renderMarkdown } from './utils.js';
 
 let currentTemplate = null;
 

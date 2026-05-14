@@ -170,7 +170,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/create")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> CreateCommunityTemplate(
+    public async Task<IActionResult> CreateCommunityTemplate(
         [FromBody] CreateTemplateRequest request)
     {
         try
@@ -282,7 +282,7 @@ public class MarketplaceController : ControllerBase
             return CreatedAtAction(
                 nameof(GetTemplate),
                 new { slugOrId = created.Slug },
-                created);
+                new { template = created, warnings = validation.Warnings });
         }
         catch (ArgumentException ex)
         {
@@ -300,7 +300,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPut("templates/{templateId}")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> UpdateTemplate(
+    public async Task<IActionResult> UpdateTemplate(
         string templateId,
         [FromBody] VmTemplate template)
     {
@@ -331,10 +331,8 @@ public class MarketplaceController : ControllerBase
                 });
             }
 
-            var isAdmin = User.IsInRole("Admin");
-            var updated = await _templateService.UpdateTemplateAsync(template, isAdmin);
-            return Ok(updated);
-
+            var updated = await _templateService.UpdateTemplateAsync(template);
+            return Ok(new { template = updated, warnings = validation.Warnings });
         }
         catch (ArgumentException ex)
         {
