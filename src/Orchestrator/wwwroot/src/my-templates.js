@@ -298,11 +298,11 @@ function createTemplateModal() {
                         </div>
                         <div class="form-group">
                             <label class="form-label">Memory (MB)</label>
-                            <input type="number" class="form-input" id="ct-min-memory" value="512" min="256" step="256">
+                            <input type="number" class="form-input" id="ct-min-memory" value="512" min="256" step="128">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Disk (GB)</label>
-                            <input type="number" class="form-input" id="ct-min-disk" value="10" min="5">
+                            <input type="number" class="form-input" id="ct-min-disk" value="10" min="1">
                         </div>
                     </div>
                     <div class="form-row">

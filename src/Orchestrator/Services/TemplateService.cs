@@ -408,11 +408,11 @@ public class TemplateService : ITemplateService
             if (template.MinimumSpec.VirtualCpuCores < 1 || template.MinimumSpec.VirtualCpuCores > 32)
                 errors.Add("Minimum CPU cores must be between 1 and 32");
 
-            if (template.MinimumSpec.MemoryBytes < 512 * 1024 * 1024) // 512 MB
-                errors.Add("Minimum memory must be at least 512 MB");
+            if (template.MinimumSpec.MemoryBytes < 256L * 1024 * 1024) // 256 MB
+                errors.Add("Minimum memory must be at least 256 MB");
 
-            if (template.MinimumSpec.DiskBytes < 10L * 1024 * 1024 * 1024) // 10 GB
-                errors.Add("Minimum disk must be at least 10 GB");
+            if (template.MinimumSpec.DiskBytes < 1L * 1024 * 1024 * 1024) // 1 GB
+                errors.Add("Minimum disk must be at least 1 GB");
         }
 
         if (template.RecommendedSpec == null)
@@ -424,8 +424,8 @@ public class TemplateService : ITemplateService
             if (template.RecommendedSpec.VirtualCpuCores < 1 || template.RecommendedSpec.VirtualCpuCores > 32)
                 errors.Add("Recommended CPU cores must be between 1 and 32");
 
-            if (template.RecommendedSpec.MemoryBytes < 512 * 1024 * 1024)
-                errors.Add("Recommended memory must be at least 512 MB");
+            if (template.RecommendedSpec.MemoryBytes < 256L * 1024 * 1024)
+                errors.Add("Recommended memory must be at least 256 MB");
 
             // Recommended should be >= minimum
             if (template.MinimumSpec != null)
