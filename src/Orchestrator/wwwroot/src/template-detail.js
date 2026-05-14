@@ -3,7 +3,7 @@
 // View template details and deploy
 // ============================================================================
 
-import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing } from './utils.js';
+import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing, renderMarkdown } from './utils.js';
 
 let currentTemplate = null;
 
@@ -675,33 +675,8 @@ function formatDate(dateString) {
 }
 
 /**
- * Helper: Render markdown (simplified)
+ * Helper: Render markdown — imported from utils.js
  */
-function renderMarkdown(markdown) {
-    if (!markdown) return '';
-    
-    // Simple markdown rendering (for full support, use marked.js)
-    let html = escapeHtml(markdown);
-    
-    // Headers
-    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-    
-    // Bold
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    
-    // Code blocks
-    html = html.replace(/```([\s\S]+?)```/g, '<pre><code>$1</code></pre>');
-    
-    // Inline code
-    html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-    
-    // Line breaks
-    html = html.replace(/\n/g, '<br>');
-    
-    return html;
-}
 
 /**
  * Helper: Render stars for detail view

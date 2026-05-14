@@ -237,7 +237,7 @@ public class MarketplaceController : ControllerBase
             return CreatedAtAction(
                 nameof(GetTemplate),
                 new { slugOrId = created.Slug },
-                created);
+                new { template = created, warnings = validation.Warnings });
         }
         catch (ArgumentException ex)
         {
@@ -287,7 +287,7 @@ public class MarketplaceController : ControllerBase
             }
 
             var updated = await _templateService.UpdateTemplateAsync(template);
-            return Ok(updated);
+            return Ok(new { template = updated, warnings = validation.Warnings });
         }
         catch (ArgumentException ex)
         {

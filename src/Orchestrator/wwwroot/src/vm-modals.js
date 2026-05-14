@@ -428,7 +428,16 @@ export async function showVmMessages(vmId, vmName) {
         }
 
         const reversed = [...msgs].reverse();
-        body.innerHTML = `<div class="vm-msg-timeline">${reversed.map(renderVmMessage).join('')}</div>`;
+        body.innerHTML = `
+            <div class="vm-msg-timeline">${reversed.map(renderVmMessage).join('')}</div>
+            <details style="margin-top:16px; padding:12px; border:1px solid var(--border-color,#333); border-radius:6px; font-size:12px;">
+                <summary style="cursor:pointer; color:var(--text-muted,#9ca3af); user-select:none;">Debug: read cloud-init &amp; setup logs on the VM</summary>
+                <div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">
+                    <p style="margin:0 0 6px; color:var(--text-muted,#9ca3af);">SSH into the VM and run:</p>
+                    ${['cat /var/log/cloud-init-output.log', 'cat /var/log/setup.log', 'systemctl status cloud-final.service'].map(cmd => `
+                    <code style="display:block; padding:6px 10px; background:var(--bg-primary,#0f0f1a); border-radius:4px; font-family:var(--font-mono); white-space:pre-wrap; word-break:break-all;">${escapeHtml(cmd)}</code>`).join('')}
+                </div>
+            </details>`;
     } catch (err) {
         console.error('[VM Messages] Failed to load:', err);
         body.innerHTML = `<div style="padding:24px;color:var(--accent-danger);text-align:center;">Failed to load events.</div>`;

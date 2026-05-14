@@ -3,7 +3,7 @@
 // Create, manage, and publish user-owned VM templates
 // ============================================================================
 
-import { escapeHtml as sharedEscapeHtml, escapeJs, showToast as sharedShowToast } from './utils.js';
+import { escapeHtml as sharedEscapeHtml, escapeJs, showToast as sharedShowToast, renderMarkdown } from './utils.js';
 
 let myTemplates = [];
 
@@ -30,6 +30,33 @@ const BANDWIDTH_TIER_TO_STR = {
     0: 'Basic', 1: 'Standard', 2: 'Performance', 3: 'Unmetered',
     'Basic': 'Basic', 'Standard': 'Standard', 'Performance': 'Performance', 'Unmetered': 'Unmetered'
 };
+
+// Platform variables substituted by the orchestrator before cloud-init runs.
+// Static statics use __DOUBLE_UNDERSCORE__ form; dynamic boot-time vars use ${DOLLAR_BRACE} form.
+const PLATFORM_STATIC_VARS = new Set([
+    '__VM_ID__', '__HOSTNAME__', '__CA_PUBLIC_KEY__',
+    '__SSH_AUTHORIZED_KEYS_BLOCK__', '__ORCHESTRATOR_URL__'
+]);
+const PLATFORM_DYNAMIC_VARS = new Set([
+    'DECLOUD_PASSWORD', 'DECLOUD_DOMAIN'
+]);
+
+const CLOUD_INIT_STARTER = `#cloud-config
+package_update: true
+packages: []
+
+write_files: []
+
+runcmd:
+  - |
+    set -euo pipefail
+    exec >> /var/log/setup.log 2>&1
+    echo "=== Setup started $(date) ==="
+
+    # --- your setup commands here ---
+
+    echo "=== Setup complete $(date) ==="
+`;
 
 function api(endpoint, options = {}) {
     if (!window.api) throw new Error('API function not available');
@@ -212,8 +239,19 @@ function createTemplateModal() {
                         <textarea class="form-input" id="ct-description" rows="2" placeholder="Brief description of what this template does"></textarea>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Long Description</label>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                            <label class="form-label" style="margin-bottom:0;">Long Description</label>
+                            <div style="display:flex; gap:2px; margin-left:auto;">
+                                <button type="button" id="ct-ld-write-btn"
+                                    onclick="window.myTemplates.setLdTab('write')"
+                                    style="font-size:11px; padding:2px 8px; border:1px solid var(--border-color,#333); border-radius:4px 0 0 4px; background:var(--accent-primary,#7c3aed); color:#fff; cursor:pointer;">Write</button>
+                                <button type="button" id="ct-ld-preview-btn"
+                                    onclick="window.myTemplates.setLdTab('preview')"
+                                    style="font-size:11px; padding:2px 8px; border:1px solid var(--border-color,#333); border-left:none; border-radius:0 4px 4px 0; background:transparent; color:var(--text-muted,#9ca3af); cursor:pointer;">Preview</button>
+                            </div>
+                        </div>
                         <textarea class="form-input" id="ct-long-description" rows="4" placeholder="Detailed description (supports markdown)"></textarea>
+                        <div id="ct-ld-preview" style="display:none; min-height:80px; padding:10px 12px; border:1px solid var(--border-color,#333); border-radius:6px; font-size:13px; line-height:1.6; background:var(--bg-secondary,#1a1a2e); color:var(--text-primary,#e2e8f0);"></div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -260,8 +298,16 @@ function createTemplateModal() {
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Cloud-Init Script *</label>
-                        <textarea class="form-input" id="ct-cloudinit" rows="10" placeholder="#cloud-config&#10;package_update: true&#10;packages:&#10;  - nginx" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                            <label class="form-label" style="margin-bottom:0;">Cloud-Init Script *</label>
+                            <button type="button" onclick="window.myTemplates.insertCloudInitStarter()"
+                                style="font-size:11px; padding:2px 8px; border:1px solid var(--border-color,#333); border-radius:4px; background:transparent; color:var(--text-muted,#9ca3af); cursor:pointer; margin-left:auto;">↓ Starter</button>
+                        </div>
+                        <textarea class="form-input" id="ct-cloudinit" rows="10"
+                            placeholder="#cloud-config&#10;package_update: true&#10;packages:&#10;  - nginx"
+                            style="font-family: var(--font-mono); font-size: 12px;"
+                            oninput="window.myTemplates.updateSubstitutionPreview()"></textarea>
+                        <div id="ct-substitution-preview" style="margin-top:6px; min-height:24px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;"></div>
                         <p class="form-help">
                             Cloud-init YAML. Render-time statics (substituted by orchestrator before deploy):
                             <code>__VM_ID__</code> <code>__HOSTNAME__</code> <code>__CA_PUBLIC_KEY__</code>
@@ -494,6 +540,92 @@ function createTemplateModal() {
     document.body.appendChild(modal);
 }
 
+// ── F4: Long Description Write/Preview tabs ─────────────────────────────────
+
+export function setLdTab(tab) {
+    const textarea = document.getElementById('ct-long-description');
+    const preview  = document.getElementById('ct-ld-preview');
+    const writeBtn = document.getElementById('ct-ld-write-btn');
+    const prevBtn  = document.getElementById('ct-ld-preview-btn');
+    if (!textarea || !preview) return;
+
+    const activeStyle   = 'background:var(--accent-primary,#7c3aed); color:#fff;';
+    const inactiveStyle = 'background:transparent; color:var(--text-muted,#9ca3af);';
+
+    if (tab === 'preview') {
+        textarea.style.display = 'none';
+        preview.style.display  = '';
+        preview.innerHTML = renderMarkdown(textarea.value) || '<span style="color:var(--text-muted,#9ca3af); font-style:italic;">Nothing to preview yet.</span>';
+        if (writeBtn) writeBtn.style.cssText += inactiveStyle;
+        if (prevBtn)  prevBtn.style.cssText  += activeStyle;
+    } else {
+        textarea.style.display = '';
+        preview.style.display  = 'none';
+        if (writeBtn) writeBtn.style.cssText += activeStyle;
+        if (prevBtn)  prevBtn.style.cssText  += inactiveStyle;
+    }
+}
+
+// ── F6: Cloud-init starter snippet ─────────────────────────────────────────
+
+export function insertCloudInitStarter() {
+    const ta = document.getElementById('ct-cloudinit');
+    if (!ta) return;
+    if (ta.value.trim() && !confirm('Replace current cloud-init content with the starter template?')) return;
+    ta.value = CLOUD_INIT_STARTER;
+    updateSubstitutionPreview();
+}
+
+// ── F1: Variable substitution preview ──────────────────────────────────────
+
+export function updateSubstitutionPreview() {
+    const container = document.getElementById('ct-substitution-preview');
+    if (!container) return;
+    const text = document.getElementById('ct-cloudinit')?.value || '';
+
+    // Collect all ${VAR} and __VAR__ references
+    const found = new Map(); // name -> kind: 'static' | 'dynamic' | 'artifact' | 'unknown'
+
+    // __STATIC__ vars
+    for (const m of text.matchAll(/__([A-Z0-9_]+)__/g)) {
+        const raw = `__${m[1]}__`;
+        if (!found.has(raw)) {
+            found.set(raw, PLATFORM_STATIC_VARS.has(raw) ? 'static' : 'unknown');
+        }
+    }
+
+    // ${DYNAMIC} and ${ARTIFACT_URL:name} vars
+    for (const m of text.matchAll(/\$\{([^}]+)\}/g)) {
+        const inner = m[1];
+        const raw = `\${${inner}}`;
+        if (found.has(raw)) continue;
+        if (inner.startsWith('ARTIFACT_URL:') || inner.startsWith('ARTIFACT_SHA256:')) {
+            found.set(raw, 'artifact');
+        } else if (PLATFORM_DYNAMIC_VARS.has(inner)) {
+            found.set(raw, 'dynamic');
+        } else {
+            found.set(raw, 'unknown');
+        }
+    }
+
+    if (found.size === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const COLOR = {
+        static:   { bg: '#14532d', border: '#16a34a', text: '#86efac', label: 'orchestrator' },
+        dynamic:  { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd', label: 'env var' },
+        artifact: { bg: '#3b1f5e', border: '#8b5cf6', text: '#c4b5fd', label: 'artifact' },
+        unknown:  { bg: '#292524', border: '#78716c', text: '#a8a29e', label: 'shell/literal' }
+    };
+
+    container.innerHTML = [...found.entries()].map(([name, kind]) => {
+        const c = COLOR[kind] || COLOR.unknown;
+        return `<span title="${escapeHtml(c.label)}" style="font-family:var(--font-mono); font-size:10px; padding:2px 6px; border-radius:4px; border:1px solid ${c.border}; background:${c.bg}; color:${c.text}; white-space:nowrap;">${escapeHtml(name)}</span>`;
+    }).join('');
+}
+
 function resetCreateForm() {
     const fields = ['ct-template-id', 'ct-name', 'ct-slug', 'ct-description',
         'ct-long-description', 'ct-tags', 'ct-cloudinit', 'ct-source-url',
@@ -527,6 +659,14 @@ function resetCreateForm() {
     document.getElementById('ct-artifact-new-row').style.display = 'none';
     document.getElementById('ct-artifacts-save-first').style.display = '';
     document.getElementById('ct-add-artifact-btn').style.display = 'none';
+    // Reset Long Description to Write tab
+    const ldTextarea = document.getElementById('ct-long-description');
+    const ldPreview  = document.getElementById('ct-ld-preview');
+    if (ldTextarea) ldTextarea.style.display = '';
+    if (ldPreview)  ldPreview.style.display = 'none';
+    // Reset substitution preview
+    const subPreview = document.getElementById('ct-substitution-preview');
+    if (subPreview) subPreview.innerHTML = '';
 }
 
 export function onGpuToggle() {
@@ -730,6 +870,15 @@ export async function submitTemplate() {
         return;
     }
 
+    // F3: client-side cloud-init lint
+    const ci = payload.cloudInitTemplate || '';
+    if (!ci.trimStart().startsWith('#cloud-config')) {
+        showToast('warning', 'Cloud-init does not start with #cloud-config — deploy may fail');
+    }
+    if (ci.includes('runcmd') && !ci.includes('set -e')) {
+        showToast('warning', 'runcmd detected but no "set -e" — errors in runcmd will be silently ignored');
+    }
+
     btn.disabled = true;
     btn.textContent = isEdit ? 'Saving...' : 'Creating...';
 
@@ -751,6 +900,11 @@ export async function submitTemplate() {
             const err = await response.json();
             throw new Error(err.error || 'Failed to save template');
         }
+
+        const result = await response.json().catch(() => null);
+        // F3: surface server-side warnings
+        const warnings = result?.warnings ?? [];
+        warnings.forEach(w => showToast('warning', w));
 
         showToast('success', isEdit ? 'Template updated!' : 'Template created as draft!');
         closeCreateModal();
@@ -1037,5 +1191,8 @@ window.myTemplates = {
     showArtifactRow,
     cancelArtifact,
     saveArtifact,
-    removeArtifact
+    removeArtifact,
+    setLdTab,
+    insertCloudInitStarter,
+    updateSubstitutionPreview
 };
