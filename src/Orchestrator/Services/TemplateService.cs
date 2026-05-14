@@ -200,7 +200,7 @@ public class TemplateService : ITemplateService
         }
     }
 
-    public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template)
+    public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false)
     {
         try
         {
@@ -217,15 +217,21 @@ public class TemplateService : ITemplateService
             {
                 // Preserve immutable fields
                 template.AuthorId = existing.AuthorId;
-                template.IsCommunity = existing.IsCommunity;
-                template.IsVerified = existing.IsVerified;
-                template.IsFeatured = existing.IsFeatured;
                 template.DeploymentCount = existing.DeploymentCount;
                 template.LastDeployedAt = existing.LastDeployedAt;
                 template.CreatedAt = existing.CreatedAt;
                 template.AverageRating = existing.AverageRating;
                 template.TotalReviews = existing.TotalReviews;
                 template.RatingDistribution = existing.RatingDistribution;
+                template.Artifacts = existing.Artifacts;
+
+                // Admin can change classification flags; regular users cannot
+                if (!isAdmin)
+                {
+                    template.IsCommunity = existing.IsCommunity;
+                    template.IsVerified = existing.IsVerified;
+                    template.IsFeatured = existing.IsFeatured;
+                }
             }
 
             template.UpdatedAt = DateTime.UtcNow;
@@ -243,6 +249,13 @@ public class TemplateService : ITemplateService
             _logger.LogError(ex, "Failed to update template: {TemplateId}", template.Id);
             throw;
         }
+    }
+
+    public async Task SaveTemplateDirectAsync(VmTemplate template)
+    {
+        template.UpdatedAt = DateTime.UtcNow;
+        await _dataStore.SaveTemplateAsync(template);
+        _logger.LogInformation("Saved template: {Name} ({Id})", template.Name, template.Id);
     }
 
     public async Task<bool> DeleteTemplateAsync(string templateId, string requesterId)
@@ -395,11 +408,11 @@ public class TemplateService : ITemplateService
             if (template.MinimumSpec.VirtualCpuCores < 1 || template.MinimumSpec.VirtualCpuCores > 32)
                 errors.Add("Minimum CPU cores must be between 1 and 32");
 
-            if (template.MinimumSpec.MemoryBytes < 512 * 1024 * 1024) // 512 MB
-                errors.Add("Minimum memory must be at least 512 MB");
+            if (template.MinimumSpec.MemoryBytes < 256L * 1024 * 1024) // 256 MB
+                errors.Add("Minimum memory must be at least 256 MB");
 
-            if (template.MinimumSpec.DiskBytes < 10L * 1024 * 1024 * 1024) // 10 GB
-                errors.Add("Minimum disk must be at least 10 GB");
+            if (template.MinimumSpec.DiskBytes < 1L * 1024 * 1024 * 1024) // 1 GB
+                errors.Add("Minimum disk must be at least 1 GB");
         }
 
         if (template.RecommendedSpec == null)
@@ -411,8 +424,8 @@ public class TemplateService : ITemplateService
             if (template.RecommendedSpec.VirtualCpuCores < 1 || template.RecommendedSpec.VirtualCpuCores > 32)
                 errors.Add("Recommended CPU cores must be between 1 and 32");
 
-            if (template.RecommendedSpec.MemoryBytes < 512 * 1024 * 1024)
-                errors.Add("Recommended memory must be at least 512 MB");
+            if (template.RecommendedSpec.MemoryBytes < 256L * 1024 * 1024)
+                errors.Add("Recommended memory must be at least 256 MB");
 
             // Recommended should be >= minimum
             if (template.MinimumSpec != null)
@@ -512,6 +525,26 @@ public class TemplateService : ITemplateService
 
         if (template.EstimatedCostPerHour == 0)
             warnings.Add("Estimated cost per hour is not set");
+
+        // Validate variables: names must be non-empty and unique within the
+        // template. Same check applied to both create and update paths.
+        if (template.Variables.Count > 0)
+        {
+            var seenVarNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var v in template.Variables)
+            {
+                if (string.IsNullOrWhiteSpace(v.Name))
+                {
+                    errors.Add("Variable name is required");
+                    continue;
+                }
+
+                if (!seenVarNames.Add(v.Name))
+                    errors.Add(
+                        $"Duplicate variable name '{v.Name}'. " +
+                        "Variable names must be unique within a template.");
+            }
+        }
 
         return new TemplateValidationResult
         {

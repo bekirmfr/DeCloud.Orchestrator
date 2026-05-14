@@ -7,6 +7,20 @@ import { escapeHtml as sharedEscapeHtml, escapeJs, showToast as sharedShowToast,
 
 let myTemplates = [];
 
+// Artifacts staged in-memory during a create/edit session. In create mode they
+// are submitted as part of the POST /create payload. In edit mode they are
+// posted one-by-one to POST /{id}/artifacts when the user clicks "Add".
+let pendingArtifacts = [];
+
+// Active mode for the new-artifact form: 'upload' | 'paste' | 'url'.
+let artifactMode = 'upload';
+
+// What the artifact form is editing right now:
+//   null                                     — adding a brand-new artifact
+//   { kind: 'pending', index }               — editing a client-staged entry
+//   { kind: 'existing', templateId, id }     — editing one persisted on the server
+let editingArtifactTarget = null;
+
 // ── Enum mappings (C# enums serialize as integers) ──────────────────────
 const VISIBILITY_TO_INT = { 'Public': 0, 'Private': 1 };
 const VISIBILITY_TO_STR = { 0: 'Public', 1: 'Private', 'Public': 'Public', 'Private': 'Private' };
@@ -263,6 +277,7 @@ function createTemplateModal() {
                         <div class="form-group">
                             <label class="form-label">Category</label>
                             <select class="form-input" id="ct-category">
+                                <option value="gaming">Games</option>
                                 <option value="dev-tools">Dev Tools</option>
                                 <option value="ai-ml">AI/ML</option>
                                 <option value="databases">Databases</option>
@@ -335,11 +350,11 @@ function createTemplateModal() {
                         </div>
                         <div class="form-group">
                             <label class="form-label">Memory (MB)</label>
-                            <input type="number" class="form-input" id="ct-min-memory" value="512" min="256" step="256">
+                            <input type="number" class="form-input" id="ct-min-memory" value="512" min="256" step="128">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Disk (GB)</label>
-                            <input type="number" class="form-input" id="ct-min-disk" value="10" min="5">
+                            <input type="number" class="form-input" id="ct-min-disk" value="10" min="1">
                         </div>
                     </div>
                     <div class="form-row">
@@ -427,25 +442,119 @@ function createTemplateModal() {
                     </button>
                 </div>
 
+                <!-- Variables -->
+                <div class="form-section" id="ct-variables-section">
+                    <div style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;"
+                         onclick="window.myTemplates.toggleVariablesSection()">
+                        <h3 class="form-section-title" style="margin-bottom:0;">
+                            <span id="ct-variables-toggle-icon">▶</span> Variables
+                            <span id="ct-variables-count" style="font-weight:normal; color:var(--text-muted,#6b7280); font-size:12px; margin-left:4px;"></span>
+                        </h3>
+                    </div>
+                    <div id="ct-variables-body" style="display:none; margin-top:12px;">
+                        <p class="form-help" style="margin-bottom: 8px;">
+                            Declared variables drive the renderer's full substitution pipeline.
+                            Most templates don't need this — leave empty unless your cloud-init
+                            references <code>__VARNAME__</code> placeholders that should be
+                            resolved by static defaults or dynamic resolvers.
+                        </p>
+                        <div id="ct-variables-list"></div>
+                        <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.addVariable()" type="button" style="margin-top:8px;">
+                            + Add Variable
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Artifacts -->
                 <div class="form-section" id="ct-artifacts-section">
                     <h3 class="form-section-title">Artifacts</h3>
                     <p class="form-help" style="margin-bottom: 8px;">
-                        External files your template fetches at deploy time (binaries, scripts, dashboards).
+                        Files your template fetches at deploy time (binaries, scripts, dashboards).
                         Reference them in cloud-init as <code>$\{ARTIFACT_URL:name}</code> and
                         <code>$\{ARTIFACT_SHA256:name}</code>.
-                        Binary artifacts must use an HTTPS URL (no inline data: URIs).
-                        Scripts and configs may be inline (data: URI, ≤5 MB per artifact, ≤10 MB total).
+                        Upload or paste for inline (≤5 MB per artifact, ≤10 MB total) — the platform computes SHA256 for you.
+                        Use External URL for larger files or Binary type.
                     </p>
                     <div id="ct-artifacts-list"></div>
+
                     <div id="ct-artifact-new-row" style="display:none; margin-top:12px; padding:12px; border:1px solid var(--border-color, #333); border-radius:6px;">
-                        <div class="form-row">
+                        <!-- Mode tabs -->
+                        <div style="display:flex; gap:4px; margin-bottom:12px; border-bottom:1px solid var(--border-color,#333);">
+                            <button type="button" class="btn btn-sm artifact-mode-tab" data-art-mode="upload"
+                                onclick="window.myTemplates.switchArtifactMode('upload')">Upload File</button>
+                            <button type="button" class="btn btn-sm artifact-mode-tab" data-art-mode="paste"
+                                onclick="window.myTemplates.switchArtifactMode('paste')">Paste Script</button>
+                            <button type="button" class="btn btn-sm artifact-mode-tab" data-art-mode="url"
+                                onclick="window.myTemplates.switchArtifactMode('url')">External URL</button>
+                        </div>
+
+                        <!-- Upload mode -->
+                        <div class="artifact-mode-panel" id="ct-art-mode-upload">
                             <div class="form-group">
-                                <label class="form-label" style="font-size:11px;">Name *</label>
-                                <input type="text" class="form-input" id="ct-art-name" placeholder="e.g. my-binary">
-                                <p class="form-help">Referenced as <code>$\{ARTIFACT_URL:my-binary}</code> in cloud-init.</p>
+                                <label class="form-label" style="font-size:11px;">File</label>
+                                <div id="ct-art-drop-zone"
+                                    style="border:2px dashed var(--border-color,#333); border-radius:6px; padding:24px; text-align:center; cursor:pointer; background:var(--bg-secondary, #1a1a1a);">
+                                    <input type="file" id="ct-art-file" style="display:none;"
+                                        onchange="window.myTemplates.onArtifactFileSelected(event)">
+                                    <p id="ct-art-drop-msg" style="margin:0; color:var(--text-muted,#6b7280); font-size:13px;">
+                                        Click to choose a file, or drag-and-drop here
+                                    </p>
+                                    <p id="ct-art-file-meta" style="margin:4px 0 0; font-family:var(--font-mono); font-size:12px; color:var(--text-primary,#fff); display:none;"></p>
+                                </div>
+                                <p class="form-help">≤5 MB. SHA256 is computed server-side from the decoded bytes.</p>
+                            </div>
+                        </div>
+
+                        <!-- Paste mode -->
+                        <div class="artifact-mode-panel" id="ct-art-mode-paste" style="display:none;">
+                            <div class="form-row">
+                                <div class="form-group" style="flex:1">
+                                    <label class="form-label" style="font-size:11px;">Content Type</label>
+                                    <select class="form-input" id="ct-art-content-type">
+                                        <option value="text/x-shellscript">Shell script (text/x-shellscript)</option>
+                                        <option value="text/x-python">Python (text/x-python)</option>
+                                        <option value="application/yaml">YAML (application/yaml)</option>
+                                        <option value="application/json">JSON (application/json)</option>
+                                        <option value="application/javascript">JavaScript (application/javascript)</option>
+                                        <option value="text/x-systemd-unit">systemd unit (text/x-systemd-unit)</option>
+                                        <option value="text/plain">Plain text (text/plain)</option>
+                                    </select>
+                                </div>
                             </div>
                             <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Content</label>
+                                <textarea class="form-input" id="ct-art-content" rows="10"
+                                    style="font-family: var(--font-mono); font-size: 12px;"
+                                    placeholder="#!/usr/bin/env bash&#10;# Paste your script content here..."></textarea>
+                                <p class="form-help">≤5 MB. SHA256 is computed server-side from the bytes.</p>
+                            </div>
+                        </div>
+
+                        <!-- External URL mode -->
+                        <div class="artifact-mode-panel" id="ct-art-mode-url" style="display:none;">
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">Source URL *</label>
+                                <input type="text" class="form-input" id="ct-art-url"
+                                    placeholder="https://github.com/.../releases/download/v1.0/binary-amd64">
+                                <p class="form-help">HTTPS URL — the platform fetches and verifies SHA256 on registration.</p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:11px;">SHA256 *</label>
+                                <input type="text" class="form-input" id="ct-art-sha256"
+                                    placeholder="64-character lowercase hex"
+                                    style="font-family:var(--font-mono); font-size:12px;">
+                                <p class="form-help">Required for external URLs. Run <code>sha256sum file</code> to compute.</p>
+                            </div>
+                        </div>
+
+                        <!-- Common fields -->
+                        <div class="form-row" style="margin-top:12px;">
+                            <div class="form-group" style="flex:2">
+                                <label class="form-label" style="font-size:11px;">Name *</label>
+                                <input type="text" class="form-input" id="ct-art-name" placeholder="e.g. install-script">
+                                <p class="form-help">Referenced as <code>$\{ARTIFACT_URL:name}</code> in cloud-init.</p>
+                            </div>
+                            <div class="form-group" style="flex:1">
                                 <label class="form-label" style="font-size:11px;">Type</label>
                                 <select class="form-input" id="ct-art-type">
                                     <option value="0">Binary</option>
@@ -456,41 +565,28 @@ function createTemplateModal() {
                                     <option value="5">Image</option>
                                 </select>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group" style="flex:1">
                                 <label class="form-label" style="font-size:11px;">Architecture</label>
                                 <select class="form-input" id="ct-art-arch">
-                                    <option value="">Any (universal)</option>
+                                    <option value="">Any</option>
                                     <option value="amd64">amd64</option>
                                     <option value="arm64">arm64</option>
                                 </select>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label class="form-label" style="font-size:11px;">Source URL *</label>
-                            <input type="text" class="form-input" id="ct-art-url"
-                                placeholder="https://github.com/.../releases/download/v1.0/binary-amd64  — or —  data:text/x-sh;base64,…">
-                            <p class="form-help">HTTPS URL (fetched and SHA256-verified by platform immediately on registration) or inline <code>data:;base64,…</code>. Binary type rejects data: URIs.</p>
+                            <label class="form-label" style="font-size:11px;">Description</label>
+                            <input type="text" class="form-input" id="ct-art-description" placeholder="Optional">
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label" style="font-size:11px;">SHA256 *</label>
-                                <input type="text" class="form-input" id="ct-art-sha256" placeholder="64-character lowercase hex">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" style="font-size:11px;">Description</label>
-                                <input type="text" class="form-input" id="ct-art-description" placeholder="Optional">
-                            </div>
-                        </div>
+
                         <div style="display:flex; gap:8px; margin-top:4px;">
                             <button class="btn btn-sm btn-primary" onclick="window.myTemplates.saveArtifact()" type="button">Add Artifact</button>
                             <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.cancelArtifact()" type="button">Cancel</button>
                         </div>
                     </div>
-                    <div id="ct-artifacts-save-first" style="color: var(--text-muted, #6b7280); font-size:13px; margin-top:8px;">
-                        Save the template as a draft first, then reopen it to add artifacts.
-                    </div>
+
                     <button class="btn btn-sm btn-secondary" id="ct-add-artifact-btn"
-                        onclick="window.myTemplates.showArtifactRow()" type="button" style="margin-top:8px; display:none;">
+                        onclick="window.myTemplates.showArtifactRow()" type="button" style="margin-top:8px;">
                         + Add Artifact
                     </button>
                 </div>
@@ -673,6 +769,20 @@ function resetCreateForm() {
     // Reset substitution preview
     const subPreview = document.getElementById('ct-substitution-preview');
     if (subPreview) subPreview.innerHTML = '';
+    document.getElementById('ct-add-artifact-btn').style.display = '';
+
+    // Reset pending artifacts and re-render empty list.
+    pendingArtifacts = [];
+    renderCombinedArtifactsList([], null);
+
+    // Reset variables section.
+    document.getElementById('ct-variables-list').innerHTML = '';
+    document.getElementById('ct-variables-body').style.display = 'none';
+    document.getElementById('ct-variables-toggle-icon').textContent = '▶';
+    updateVariablesCount();
+
+    artifactMode = 'upload';
+    switchArtifactMode('upload');
 }
 
 export function onGpuToggle() {
@@ -861,7 +971,9 @@ function buildTemplatePayload() {
         sourceUrl: document.getElementById('ct-source-url').value.trim() || null,
         iconUrl: document.getElementById('ct-icon-url').value.trim() || null,
         license: document.getElementById('ct-license').value.trim() || null,
-        containerImage: document.getElementById('ct-image').value || null
+        containerImage: document.getElementById('ct-image').value || null,
+        artifacts: pendingArtifacts,
+        variables: collectVariables()
     };
 }
 
@@ -944,7 +1056,7 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-category').value = template.category || 'dev-tools';
     document.getElementById('ct-version').value = template.version || '1.0.0';
     document.getElementById('ct-tags').value = (template.tags || []).join(', ');
-    document.getElementById('ct-image').value = template.imageId || 'ubuntu-22.04';
+    document.getElementById('ct-image').value = template.containerImage || 'ubuntu-22.04';
     document.getElementById('ct-cloudinit').value = template.cloudInitTemplate || '';
     updateSubstitutionPreview();
     document.getElementById('ct-requires-gpu').checked = template.requiresGpu || false;
@@ -1009,10 +1121,31 @@ export async function editTemplate(templateId) {
         row.querySelector('[data-env-field="value"]').value = value;
     });
 
-    // Artifacts — unlock the section now that we have a templateId
-    document.getElementById('ct-artifacts-save-first').style.display = 'none';
-    document.getElementById('ct-add-artifact-btn').style.display = '';
-    renderArtifactsList(template.artifacts || [], template.id);
+    // Variables — populate rows from the loaded template (view mode by default)
+    const varsList = document.getElementById('ct-variables-list');
+    varsList.innerHTML = '';
+    const templateVars = template.variables || [];
+    templateVars.forEach(v => {
+        const row = addVariable(false);
+        row.querySelector('[data-var-field="name"]').value = v.name || '';
+        row.querySelector('[data-var-field="kind"]').value = (typeof v.kind === 'number')
+            ? String(v.kind)
+            : (v.kind === 'Dynamic' ? '1' : '0');
+        row.querySelector('[data-var-field="defaultValue"]').value = v.defaultValue || '';
+        row.querySelector('[data-var-field="required"]').checked = !!v.required;
+        row.querySelector('[data-var-field="resolverKey"]').value = v.resolverKey || '';
+        onVariableKindChange(row.querySelector('[data-var-field="kind"]'));
+        setVariableRowMode(row, 'view');
+    });
+    if (templateVars.length > 0) {
+        document.getElementById('ct-variables-body').style.display = '';
+        document.getElementById('ct-variables-toggle-icon').textContent = '▼';
+    }
+    updateVariablesCount();
+
+    // Artifacts — existing template artifacts plus any pending (new) ones added during this edit session.
+    pendingArtifacts = [];
+    renderCombinedArtifactsList(template.artifacts || [], template.id);
 }
 
 export async function publishTemplate(templateId) {
@@ -1063,94 +1196,373 @@ export async function deleteTemplate(templateId) {
 
 const ARTIFACT_TYPE_LABELS = ['Binary', 'Script', 'Web Asset', 'Config', 'Archive', 'Image'];
 
-function renderArtifactsList(artifacts, templateId) {
+// Render existing template artifacts (from server) plus pending ones (staged
+// client-side). Pending items show "(pending)" and remove client-side; existing
+// items use the DELETE endpoint immediately.
+function renderCombinedArtifactsList(existingArtifacts, templateId) {
     const list = document.getElementById('ct-artifacts-list');
     if (!list) return;
 
-    if (!artifacts.length) {
+    const rows = [];
+
+    existingArtifacts.forEach(a => {
+        rows.push(`
+            <div class="artifact-row" style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color, #333);">
+                <div style="flex:1; min-width:0; overflow:hidden;">
+                    <span style="font-weight:600; font-family:var(--font-mono); font-size:13px;">${escapeHtml(a.name)}</span>
+                    <span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? String(a.type))}${a.architecture ? ' · ' + escapeHtml(a.architecture) : ''}</span>
+                    ${a.description ? `<span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">— ${escapeHtml(a.description)}</span>` : ''}
+                </div>
+                <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-muted,#6b7280); flex-shrink:0;">${escapeHtml((a.sha256 || '').slice(0, 12))}…</span>
+                ${templateId ? `
+                    <button class="btn btn-sm btn-secondary"
+                        onclick="window.myTemplates.editArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
+                        type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
+                    <button class="btn btn-sm btn-danger"
+                        onclick="window.myTemplates.removeArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
+                        type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
+                ` : ''}
+            </div>
+        `);
+    });
+
+    pendingArtifacts.forEach((a, idx) => {
+        rows.push(`
+            <div class="artifact-row" style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color, #333);">
+                <div style="flex:1; min-width:0; overflow:hidden;">
+                    <span style="font-weight:600; font-family:var(--font-mono); font-size:13px;">${escapeHtml(a.name)}</span>
+                    <span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? String(a.type))}${a.architecture ? ' · ' + escapeHtml(a.architecture) : ''}</span>
+                    <span style="color:var(--accent, #00d9ff); font-size:11px; margin-left:6px;">(pending)</span>
+                </div>
+                <button class="btn btn-sm btn-secondary"
+                    onclick="window.myTemplates.editPendingArtifact(${idx})"
+                    type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
+                <button class="btn btn-sm btn-danger"
+                    onclick="window.myTemplates.removePendingArtifact(${idx})"
+                    type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
+            </div>
+        `);
+    });
+
+    if (rows.length === 0) {
         list.innerHTML = '<p style="color: var(--text-muted, #6b7280); font-size:13px; margin-bottom:4px;">No artifacts attached.</p>';
         return;
     }
 
-    // escapeJs is imported from utils.js alongside escapeHtml — use it for onclick attribute values.
-    list.innerHTML = artifacts.map(a => `
-        <div class="artifact-row" style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-color, #333);">
-            <div style="flex:1; min-width:0; overflow:hidden;">
-                <span style="font-weight:600; font-family:var(--font-mono); font-size:13px;">${escapeHtml(a.name)}</span>
-                <span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? String(a.type))}${a.architecture ? ' · ' + escapeHtml(a.architecture) : ''}</span>
-                ${a.description ? `<span style="color:var(--text-muted,#6b7280); font-size:11px; margin-left:6px;">— ${escapeHtml(a.description)}</span>` : ''}
-            </div>
-            <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-muted,#6b7280); flex-shrink:0;">${escapeHtml((a.sha256 || '').slice(0, 12))}…</span>
-            <button class="btn btn-sm btn-danger"
-                onclick="window.myTemplates.removeArtifact('${escapeJs(templateId)}', '${escapeJs(a.id)}')"
-                type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
-        </div>
-    `).join('');
+    list.innerHTML = rows.join('');
+}
+
+// Decode a `data:` URI into its media type and UTF-8 text payload. Used when
+// switching an existing inline artifact into the form's paste-mode panel.
+function decodeDataUri(dataUri) {
+    const commaIdx = dataUri.indexOf(',');
+    if (commaIdx < 0) return { mediaType: 'text/plain', text: '' };
+    const header = dataUri.slice(5, commaIdx); // strip 'data:'
+    const mediaType = header.split(';')[0] || 'text/plain';
+    const payload = dataUri.slice(commaIdx + 1);
+    if (header.includes(';base64')) {
+        try {
+            const binary = atob(payload);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return { mediaType, text: new TextDecoder().decode(bytes) };
+        } catch {
+            return { mediaType, text: '' };
+        }
+    }
+    try {
+        return { mediaType, text: decodeURIComponent(payload) };
+    } catch {
+        return { mediaType, text: '' };
+    }
+}
+
+// Open the artifact form pre-populated with the given artifact's values.
+// `art` may be a pending entry (with `content`/`contentType` for paste-mode
+// drafts) or an existing server artifact (only `sourceUrl` is set).
+function populateArtifactForm(art) {
+    showArtifactRow();   // resets + reveals the form
+
+    document.getElementById('ct-art-name').value = art.name || '';
+    document.getElementById('ct-art-description').value = art.description || '';
+    document.getElementById('ct-art-type').value = String(art.type ?? 1);
+    document.getElementById('ct-art-arch').value = art.architecture || '';
+
+    if (typeof art.content === 'string' && art.content.length > 0) {
+        // Pending paste-mode entry — restore content directly.
+        document.getElementById('ct-art-content').value = art.content;
+        if (art.contentType) {
+            document.getElementById('ct-art-content-type').value = art.contentType;
+        }
+        switchArtifactMode('paste');
+    } else if (typeof art.sourceUrl === 'string' && art.sourceUrl.startsWith('data:')) {
+        const { mediaType, text } = decodeDataUri(art.sourceUrl);
+        document.getElementById('ct-art-content').value = text;
+        const ctSelect = document.getElementById('ct-art-content-type');
+        if ([...ctSelect.options].some(o => o.value === mediaType)) {
+            ctSelect.value = mediaType;
+        }
+        switchArtifactMode('paste');
+    } else if (typeof art.sourceUrl === 'string' && art.sourceUrl.length > 0) {
+        document.getElementById('ct-art-url').value = art.sourceUrl;
+        document.getElementById('ct-art-sha256').value = art.sha256 || '';
+        switchArtifactMode('url');
+    } else {
+        switchArtifactMode('upload');
+    }
+}
+
+export function editPendingArtifact(index) {
+    const art = pendingArtifacts[index];
+    if (!art) return;
+    // Order matters: populateArtifactForm calls showArtifactRow which resets
+    // editingArtifactTarget. Set it AFTER populating so saveArtifact sees it.
+    populateArtifactForm(art);
+    editingArtifactTarget = { kind: 'pending', index };
+    setArtifactSaveButtonLabel('Save Changes');
+}
+
+export function editArtifact(templateId, artifactId) {
+    const template = myTemplates.find(t => t.id === templateId);
+    if (!template) return;
+    const art = (template.artifacts || []).find(a => a.id === artifactId);
+    if (!art) return;
+    populateArtifactForm(art);
+    editingArtifactTarget = { kind: 'existing', templateId, id: artifactId };
+    setArtifactSaveButtonLabel('Save Changes');
+}
+
+function setArtifactSaveButtonLabel(label) {
+    const btn = document.querySelector(
+        '#ct-artifact-new-row button.btn-primary[onclick*="saveArtifact"]');
+    if (btn) btn.textContent = label;
 }
 
 export function showArtifactRow() {
     document.getElementById('ct-artifact-new-row').style.display = '';
     document.getElementById('ct-add-artifact-btn').style.display = 'none';
     // Clear all inputs
-    ['ct-art-name', 'ct-art-url', 'ct-art-sha256', 'ct-art-description'].forEach(id => {
+    ['ct-art-name', 'ct-art-url', 'ct-art-sha256', 'ct-art-description', 'ct-art-content'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    document.getElementById('ct-art-file').value = '';
+    document.getElementById('ct-art-file-meta').textContent = '';
+    document.getElementById('ct-art-file-meta').style.display = 'none';
+    document.getElementById('ct-art-drop-msg').textContent = 'Click to choose a file, or drag-and-drop here';
     document.getElementById('ct-art-type').value = '1';   // Script default
     document.getElementById('ct-art-arch').value = '';
+    document.getElementById('ct-art-content-type').value = 'text/x-shellscript';
+    const newRow = document.getElementById('ct-artifact-new-row');
+    delete newRow.dataset.dataUri;
+    delete newRow.dataset.fileName;
+
+    editingArtifactTarget = null;
+    setArtifactSaveButtonLabel('Add Artifact');
+
+    artifactMode = 'upload';
+    switchArtifactMode('upload');
+    bindArtifactDropZone();
 }
 
 export function cancelArtifact() {
     document.getElementById('ct-artifact-new-row').style.display = 'none';
     document.getElementById('ct-add-artifact-btn').style.display = '';
+    editingArtifactTarget = null;
+    setArtifactSaveButtonLabel('Add Artifact');
+}
+
+export function switchArtifactMode(mode) {
+    artifactMode = mode;
+    ['upload', 'paste', 'url'].forEach(m => {
+        const panel = document.getElementById(`ct-art-mode-${m}`);
+        if (panel) panel.style.display = (m === mode) ? '' : 'none';
+    });
+    document.querySelectorAll('.artifact-mode-tab').forEach(btn => {
+        const active = btn.dataset.artMode === mode;
+        btn.classList.toggle('btn-primary', active);
+        btn.classList.toggle('btn-secondary', !active);
+    });
+}
+
+function bindArtifactDropZone() {
+    const zone = document.getElementById('ct-art-drop-zone');
+    const input = document.getElementById('ct-art-file');
+    if (!zone || !input || zone.dataset.bound === '1') return;
+
+    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.style.background = 'var(--bg-tertiary, #222)';
+    });
+    zone.addEventListener('dragleave', () => {
+        zone.style.background = 'var(--bg-secondary, #1a1a1a)';
+    });
+    zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        zone.style.background = 'var(--bg-secondary, #1a1a1a)';
+        if (e.dataTransfer?.files?.length) {
+            readArtifactFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    zone.dataset.bound = '1';
+}
+
+export function onArtifactFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (file) readArtifactFile(file);
+}
+
+function readArtifactFile(file) {
+    if (file.size > 5 * 1024 * 1024) {
+        showToast('error', `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — inline limit is 5 MB. Use External URL for larger files.`);
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        const dataUri = reader.result;
+        const newRow = document.getElementById('ct-artifact-new-row');
+        newRow.dataset.dataUri = dataUri;
+        newRow.dataset.fileName = file.name;
+
+        // Pre-fill name from filename (sans extension) if name is empty.
+        const nameInput = document.getElementById('ct-art-name');
+        if (!nameInput.value.trim()) {
+            nameInput.value = file.name.replace(/\.[^.]+$/, '').toLowerCase()
+                .replace(/[^a-z0-9-]+/g, '-').replace(/(^-+|-+$)/g, '');
+        }
+
+        const meta = document.getElementById('ct-art-file-meta');
+        meta.textContent = `${file.name} — ${(file.size / 1024).toFixed(1)} KB`;
+        meta.style.display = '';
+        document.getElementById('ct-art-drop-msg').textContent = 'File ready. Click to replace.';
+    };
+    reader.onerror = () => showToast('error', 'Failed to read file');
+    reader.readAsDataURL(file);
 }
 
 export async function saveArtifact() {
     const templateId = document.getElementById('ct-template-id').value;
-    if (!templateId) return;  // shouldn't be reachable — button is hidden before save
+    const isTemplateEdit = !!templateId;
 
-    const name    = document.getElementById('ct-art-name').value.trim();
-    const srcUrl  = document.getElementById('ct-art-url').value.trim();
-    const sha256  = document.getElementById('ct-art-sha256').value.trim().toLowerCase();
+    const name = document.getElementById('ct-art-name').value.trim();
+    if (!name) { showToast('error', 'Artifact name is required'); return; }
 
-    if (!name)   { showToast('error', 'Artifact name is required'); return; }
-    if (!srcUrl) { showToast('error', 'Source URL is required'); return; }
-    if (!sha256) { showToast('error', 'SHA256 is required'); return; }
-    if (sha256.length !== 64 || !/^[0-9a-f]+$/.test(sha256)) {
-        showToast('error', 'SHA256 must be a 64-character lowercase hex string');
+    const description = document.getElementById('ct-art-description').value.trim() || null;
+    const type = parseInt(document.getElementById('ct-art-type').value, 10);
+    const architecture = document.getElementById('ct-art-arch').value || null;
+
+    const newRow = document.getElementById('ct-artifact-new-row');
+    let payload = { name, description, type, architecture };
+
+    if (artifactMode === 'upload') {
+        if (!newRow.dataset.dataUri) {
+            showToast('error', 'Choose a file to upload');
+            return;
+        }
+        payload.sourceUrl = newRow.dataset.dataUri;
+    } else if (artifactMode === 'paste') {
+        const content = document.getElementById('ct-art-content').value;
+        if (!content.trim()) {
+            showToast('error', 'Paste some content first');
+            return;
+        }
+        payload.content = content;
+        payload.contentType = document.getElementById('ct-art-content-type').value;
+    } else if (artifactMode === 'url') {
+        const url = document.getElementById('ct-art-url').value.trim();
+        const sha256 = document.getElementById('ct-art-sha256').value.trim().toLowerCase();
+        if (!url) { showToast('error', 'Source URL is required'); return; }
+        if (!sha256) { showToast('error', 'SHA256 is required for external URLs'); return; }
+        if (sha256.length !== 64 || !/^[0-9a-f]+$/.test(sha256)) {
+            showToast('error', 'SHA256 must be a 64-character lowercase hex string');
+            return;
+        }
+        payload.sourceUrl = url;
+        payload.sha256 = sha256;
+    }
+
+    // ── Editing an existing server-side artifact ───────────────────────────
+    if (editingArtifactTarget?.kind === 'existing') {
+        const { templateId: tid, id: aid } = editingArtifactTarget;
+        try {
+            const response = await api(`/api/marketplace/templates/${tid}/artifacts/${aid}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to update artifact');
+            }
+
+            showToast('success', `Artifact '${name}' updated`);
+            cancelArtifact();
+
+            await loadMyTemplates();
+            const updated = myTemplates.find(t => t.id === tid);
+            if (updated) renderCombinedArtifactsList(updated.artifacts || [], tid);
+        } catch (error) {
+            showToast('error', error.message);
+        }
         return;
     }
 
-    const payload = {
-        name,
-        description:  document.getElementById('ct-art-description').value.trim() || null,
-        sha256,
-        sizeBytes:    0,   // server fills this in for HTTPS artifacts; inline artifacts compute it
-        sourceUrl:    srcUrl,
-        architecture: document.getElementById('ct-art-arch').value || null,
-        type:         parseInt(document.getElementById('ct-art-type').value, 10)
-    };
-
-    try {
-        const response = await api(`/api/marketplace/templates/${templateId}/artifacts`, {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || err || 'Failed to add artifact');
-        }
-
-        showToast('success', `Artifact '${name}' added`);
+    // ── Editing a client-staged (pending) artifact ─────────────────────────
+    if (editingArtifactTarget?.kind === 'pending') {
+        pendingArtifacts[editingArtifactTarget.index] = payload;
+        showToast('success', `Artifact '${name}' updated`);
         cancelArtifact();
+        const tid = document.getElementById('ct-template-id').value;
+        const existing = tid
+            ? (myTemplates.find(t => t.id === tid)?.artifacts || [])
+            : [];
+        renderCombinedArtifactsList(existing, tid || null);
+        return;
+    }
 
-        // Refresh local cache and re-render
-        await loadMyTemplates();
-        const updated = myTemplates.find(t => t.id === templateId);
-        if (updated) renderArtifactsList(updated.artifacts || [], templateId);
-    } catch (error) {
-        showToast('error', error.message);
+    // ── Adding new during a template edit: POST immediately ────────────────
+    if (isTemplateEdit) {
+        try {
+            const response = await api(`/api/marketplace/templates/${templateId}/artifacts`, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to add artifact');
+            }
+
+            showToast('success', `Artifact '${name}' added`);
+            cancelArtifact();
+
+            await loadMyTemplates();
+            const updated = myTemplates.find(t => t.id === templateId);
+            if (updated) renderCombinedArtifactsList(updated.artifacts || [], templateId);
+        } catch (error) {
+            showToast('error', error.message);
+        }
+        return;
+    }
+
+    // ── Adding new during template create: stage locally ───────────────────
+    pendingArtifacts.push(payload);
+    showToast('success', `Artifact '${name}' staged (submitted on Create)`);
+    cancelArtifact();
+    renderCombinedArtifactsList([], null);
+}
+
+export function removePendingArtifact(index) {
+    pendingArtifacts.splice(index, 1);
+    const templateId = document.getElementById('ct-template-id').value;
+    if (templateId) {
+        const t = myTemplates.find(x => x.id === templateId);
+        renderCombinedArtifactsList(t?.artifacts || [], templateId);
+    } else {
+        renderCombinedArtifactsList([], null);
     }
 }
 
@@ -1173,10 +1585,184 @@ export async function removeArtifact(templateId, artifactId) {
 
         await loadMyTemplates();
         const updated = myTemplates.find(t => t.id === templateId);
-        if (updated) renderArtifactsList(updated.artifacts || [], templateId);
+        if (updated) renderCombinedArtifactsList(updated.artifacts || [], templateId);
     } catch (error) {
         showToast('error', error.message);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VARIABLES MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function toggleVariablesSection() {
+    const body = document.getElementById('ct-variables-body');
+    const icon = document.getElementById('ct-variables-toggle-icon');
+    const isHidden = body.style.display === 'none';
+    body.style.display = isHidden ? '' : 'none';
+    icon.textContent = isHidden ? '▼' : '▶';
+}
+
+// Add a variable row. When `startInView` is true (used when populating from a
+// loaded template), the row renders read-only with Edit/Delete buttons. When
+// false (used by the "+ Add Variable" button), the row opens directly into
+// edit mode so the user can fill in values.
+export function addVariable(startInView = false) {
+    const list = document.getElementById('ct-variables-list');
+    const row = document.createElement('div');
+    row.className = 'variable-row';
+    row.style.marginBottom = '10px';
+    row.style.padding = '10px';
+    row.style.border = '1px solid var(--border-color, #333)';
+    row.style.borderRadius = '6px';
+    row.innerHTML = `
+        <div class="variable-view" style="display:none; align-items:center; gap:8px;">
+            <div style="flex:1; min-width:0;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="variable-view-name" style="font-weight:600; font-family:var(--font-mono); font-size:13px;"></span>
+                    <span class="variable-view-kind" style="font-size:11px; padding:2px 6px; border-radius:3px; background:var(--bg-tertiary,#222);"></span>
+                    <span class="variable-view-required" style="font-size:11px; color:var(--accent,#00d9ff); display:none;">required</span>
+                </div>
+                <div class="variable-view-meta" style="font-size:11px; color:var(--text-muted,#6b7280); margin-top:2px; font-family:var(--font-mono);"></div>
+            </div>
+            <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.editVariableRow(this)"
+                type="button" style="flex-shrink:0; padding:4px 10px;">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="window.myTemplates.removeVariableRow(this)"
+                type="button" style="flex-shrink:0; padding:4px 8px;">✕</button>
+        </div>
+        <div class="variable-edit">
+            <div class="form-row" style="margin-bottom:6px;">
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Name *</label>
+                    <input type="text" class="form-input" data-var-field="name"
+                        placeholder="DECLOUD_PASSWORD" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
+                <div class="form-group" style="flex:1">
+                    <label class="form-label" style="font-size:11px;">Kind</label>
+                    <select class="form-input" data-var-field="kind"
+                        onchange="window.myTemplates.onVariableKindChange(this)">
+                        <option value="0">Static</option>
+                        <option value="1">Dynamic</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row variable-static-fields" style="margin-bottom:6px;">
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Default Value</label>
+                    <input type="text" class="form-input" data-var-field="defaultValue"
+                        placeholder="Optional default" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
+                <div class="form-group" style="flex:0 0 auto; display:flex; align-items:center; padding-top:20px;">
+                    <label class="filter-label">
+                        <input type="checkbox" data-var-field="required">
+                        <span style="font-size:12px;">Required</span>
+                    </label>
+                </div>
+                <div class="form-group" style="flex:2">
+                    <label class="form-label" style="font-size:11px;">Resolver Key (advanced)</label>
+                    <input type="text" class="form-input" data-var-field="resolverKey"
+                        placeholder="Defaults to Name" style="font-family:var(--font-mono); font-size:12px;">
+                </div>
+            </div>
+            <div style="display:flex; gap:6px;">
+                <button class="btn btn-sm btn-primary" onclick="window.myTemplates.doneVariableRow(this)"
+                    type="button">Done</button>
+                <button class="btn btn-sm btn-danger" onclick="window.myTemplates.removeVariableRow(this)"
+                    type="button">✕</button>
+            </div>
+        </div>
+    `;
+    list.appendChild(row);
+    if (startInView) setVariableRowMode(row, 'view');
+    updateVariablesCount();
+    return row;
+}
+
+function setVariableRowMode(row, mode) {
+    const viewEl = row.querySelector('.variable-view');
+    const editEl = row.querySelector('.variable-edit');
+    if (mode === 'view') {
+        refreshVariableViewText(row);
+        viewEl.style.display = 'flex';
+        editEl.style.display = 'none';
+    } else {
+        viewEl.style.display = 'none';
+        editEl.style.display = '';
+    }
+}
+
+function refreshVariableViewText(row) {
+    const name = row.querySelector('[data-var-field="name"]').value.trim();
+    const kind = row.querySelector('[data-var-field="kind"]').value;
+    const defaultValue = row.querySelector('[data-var-field="defaultValue"]').value;
+    const required = row.querySelector('[data-var-field="required"]').checked;
+    const resolverKey = row.querySelector('[data-var-field="resolverKey"]').value.trim();
+
+    row.querySelector('.variable-view-name').textContent = name || '(unnamed)';
+    row.querySelector('.variable-view-kind').textContent = kind === '1' ? 'Dynamic' : 'Static';
+    row.querySelector('.variable-view-required').style.display =
+        (kind === '0' && required) ? '' : 'none';
+
+    const parts = [];
+    if (kind === '0' && defaultValue) parts.push(`default = ${defaultValue}`);
+    if (resolverKey) parts.push(`resolver = ${resolverKey}`);
+    row.querySelector('.variable-view-meta').textContent = parts.join('  ·  ');
+}
+
+export function editVariableRow(btn) {
+    const row = btn.closest('.variable-row');
+    setVariableRowMode(row, 'edit');
+}
+
+export function doneVariableRow(btn) {
+    const row = btn.closest('.variable-row');
+    const name = row.querySelector('[data-var-field="name"]').value.trim();
+    if (!name) {
+        showToast('error', 'Variable name is required');
+        return;
+    }
+    setVariableRowMode(row, 'view');
+}
+
+export function removeVariableRow(btn) {
+    btn.closest('.variable-row')?.remove();
+    updateVariablesCount();
+}
+
+export function onVariableKindChange(select) {
+    const row = select.closest('.variable-row');
+    const staticFields = row.querySelector('.variable-static-fields');
+    // Dynamic kind: hide Default Value and Required (those are Static-only).
+    const isStatic = select.value === '0';
+    if (staticFields) staticFields.style.display = isStatic ? '' : 'none';
+}
+
+function updateVariablesCount() {
+    const list = document.getElementById('ct-variables-list');
+    const count = list ? list.querySelectorAll('.variable-row').length : 0;
+    const el = document.getElementById('ct-variables-count');
+    if (el) el.textContent = count > 0 ? `(${count})` : '';
+}
+
+function collectVariables() {
+    const rows = document.querySelectorAll('#ct-variables-list .variable-row');
+    const vars = [];
+    rows.forEach(row => {
+        const name = row.querySelector('[data-var-field="name"]')?.value?.trim();
+        if (!name) return;
+        const kind = parseInt(row.querySelector('[data-var-field="kind"]')?.value || '0', 10);
+        const defaultValue = row.querySelector('[data-var-field="defaultValue"]')?.value || '';
+        const required = row.querySelector('[data-var-field="required"]')?.checked || false;
+        const resolverKey = row.querySelector('[data-var-field="resolverKey"]')?.value?.trim() || null;
+        const entry = { name, kind };
+        if (kind === 0) {
+            entry.defaultValue = defaultValue || null;
+            entry.required = required;
+        }
+        if (resolverKey) entry.resolverKey = resolverKey;
+        vars.push(entry);
+    });
+    return vars;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1202,4 +1788,15 @@ window.myTemplates = {
     setLdTab,
     insertCloudInitStarter,
     updateSubstitutionPreview
+    switchArtifactMode,
+    onArtifactFileSelected,
+    removePendingArtifact,
+    editPendingArtifact,
+    editArtifact,
+    addVariable,
+    removeVariableRow,
+    editVariableRow,
+    doneVariableRow,
+    onVariableKindChange,
+    toggleVariablesSection
 };

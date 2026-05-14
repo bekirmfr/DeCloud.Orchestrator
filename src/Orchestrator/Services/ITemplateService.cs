@@ -29,7 +29,8 @@ public interface ITemplateService
     // ════════════════════════════════════════════════════════════════════════
 
     Task<VmTemplate> CreateTemplateAsync(VmTemplate template);
-    Task<VmTemplate> UpdateTemplateAsync(VmTemplate template);
+    Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false);
+    Task SaveTemplateDirectAsync(VmTemplate template);
     Task<bool> DeleteTemplateAsync(string templateId, string requesterId);
     Task<VmTemplate> PublishTemplateAsync(string templateId, string requesterId);
     Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template);

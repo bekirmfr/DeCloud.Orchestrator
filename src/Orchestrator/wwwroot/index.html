@@ -835,6 +835,15 @@
                     <p class="form-help" id="deploy-vm-name-preview">A unique suffix will be appended automatically</p>
                 </div>
 
+                <!-- Template Configuration — rendered dynamically by template-detail.js
+         when the template declares user-supplied variables (Kind=Static,
+         no platform resolver). Hidden when the template has none. -->
+                <div class="form-section" id="deploy-variables-section" style="display:none;">
+                    <h3 class="form-section-title">Template Configuration</h3>
+                    <p class="form-help" style="margin-bottom:10px;">Customize this template before deploying. Defaults are pre-filled.</p>
+                    <div id="deploy-variables-list"></div>
+                </div>
+
                 <div class="form-section">
                     <h3 class="form-section-title">Customize Specifications</h3>
                     <p class="form-help">Adjust resources based on your needs (pre-filled with recommended values)</p>

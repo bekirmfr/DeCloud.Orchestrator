@@ -27,6 +27,26 @@ const DEPLOY_BANDWIDTH_TIERS = {
     3: { name: 'Unmetered', hourlyRate: 0.040 }
 };
 
+// Variables that are always resolved by registered platform resolvers.
+// Any Static variable NOT in this set and without a resolverKey is user-supplied
+// and must be collected from the user before deployment.
+const PLATFORM_VARIABLE_NAMES = new Set([
+    'HOSTNAME', 'VM_ID', 'VM_NAME', 'NODE_ID', 'ORCHESTRATOR_URL',
+    'SSH_AUTHORIZED_KEYS_BLOCK', 'CA_PUBLIC_KEY',
+    'PASSWORD_CONFIG_BLOCK', 'SSH_PASSWORD_AUTH', 'ADMIN_PASSWORD',
+    'DECLOUD_ROLE', 'HOST_MACHINE_ID', 'PUBLIC_IP',
+    'VARIABLE_SCOPES_BLOCK', 'TIMESTAMP',
+]);
+
+// VariableKind enum: 0=Static, 1=Dynamic
+function getUserVariables(template) {
+    if (!Array.isArray(template.variables)) return [];
+    return template.variables.filter(v =>
+        (v.kind === 0 || v.kind === 'Static') &&     // Static only (int or string enum)
+        !PLATFORM_VARIABLE_NAMES.has(v.name)         // not platform-resolved
+    );
+}
+
 /**
  * Helper function to call the global API
  */
@@ -42,18 +62,18 @@ function api(endpoint, options = {}) {
  */
 export async function showTemplateDetail(templateIdOrSlug) {
     console.log('[Template Detail] Loading template:', templateIdOrSlug);
-    
+
     try {
         // Load template details
         const response = await api(`/api/marketplace/templates/${templateIdOrSlug}`);
         const data = await response.json();
-        
+
         // API may return direct object or wrapped in data/success
         currentTemplate = data.data || data;
-        
+
         // Render detail modal
         renderTemplateDetail(currentTemplate);
-        
+
         // Show modal
         const modal = document.getElementById('template-detail-modal');
         if (modal) {
@@ -85,22 +105,22 @@ export function closeTemplateDetail() {
 function renderTemplateDetail(template) {
     const container = document.getElementById('template-detail-content');
     if (!container) return;
-    
+
     // Format specs
     const minCpu = template.minimumSpec?.virtualCpuCores || 0;
     const minMemory = (template.minimumSpec?.memoryBytes || 0) / (1024 * 1024 * 1024);
     const minDisk = (template.minimumSpec?.diskBytes || 0) / (1024 * 1024 * 1024);
-    
+
     const recCpu = template.recommendedSpec?.virtualCpuCores || minCpu;
     const recMemory = (template.recommendedSpec?.memoryBytes || template.minimumSpec?.memoryBytes || 0) / (1024 * 1024 * 1024);
     const recDisk = (template.recommendedSpec?.diskBytes || template.minimumSpec?.diskBytes || 0) / (1024 * 1024 * 1024);
-    
+
     // Format cost
     const costPerHour = template.estimatedCostPerHour || 0;
     const costText = costPerHour > 0 ? `$${costPerHour.toFixed(2)}/hr` : 'Free';
     const costPerDay = (costPerHour * 24).toFixed(2);
     const costPerMonth = (costPerHour * 24 * 30).toFixed(2);
-    
+
     container.innerHTML = `
         <div class="template-detail-header">
             <div class="template-detail-icon">${getCategoryIcon(template.category)}</div>
@@ -205,9 +225,9 @@ function renderTemplateDetail(template) {
             <div class="detail-section">
                 <h3 class="detail-section-title">🏷️ Tags</h3>
                 <div class="template-tags-detail">
-                    ${template.tags.map(tag => 
-                        `<span class="tag-detail">${escapeHtml(tag)}</span>`
-                    ).join('')}
+                    ${template.tags.map(tag =>
+        `<span class="tag-detail">${escapeHtml(tag)}</span>`
+    ).join('')}
                 </div>
             </div>
         ` : ''}
@@ -260,7 +280,7 @@ function renderTemplateDetail(template) {
             <div id="template-review-form" style="margin-top: 16px; display: none;">
                 <h4 style="margin-bottom: 8px;">Write a Review</h4>
                 <div class="review-stars-input" id="review-stars-input" role="radiogroup" aria-label="Star rating">
-                    ${[1,2,3,4,5].map(i => `<button type="button" class="review-star" data-value="${i}" role="radio" aria-checked="false" aria-label="${i} star${i === 1 ? '' : 's'}" onclick="window.templateDetail.setReviewRating(${i})">☆</button>`).join('')}
+                    ${[1, 2, 3, 4, 5].map(i => `<button type="button" class="review-star" data-value="${i}" role="radio" aria-checked="false" aria-label="${i} star${i === 1 ? '' : 's'}" onclick="window.templateDetail.setReviewRating(${i})">☆</button>`).join('')}
                 </div>
                 <textarea class="form-input" id="review-comment" rows="3" placeholder="Share your experience with this template..." style="margin-top: 8px;"></textarea>
                 <button class="btn btn-sm btn-primary" onclick="window.templateDetail.submitReview()" style="margin-top: 8px;">
@@ -280,7 +300,7 @@ function renderTemplateDetail(template) {
             </div>
         ` : ''}
     `;
-    
+
     // Update deploy button
     const deployButton = document.getElementById('template-deploy-btn');
     if (deployButton) {
@@ -384,6 +404,9 @@ export async function openDeployTemplateModal(template) {
 
     // Update cost estimate
     updateDeployCostEstimate();
+    // Render user-supplied variable inputs (template configuration section)
+    renderDeployVariables(template);
+
 
     // Show modal
     if (window.openStaticModal) window.openStaticModal(modal);
@@ -543,6 +566,7 @@ export async function deployFromTemplate() {
             method: 'POST',
             body: JSON.stringify({
                 vmName: vmName,
+                environmentVariables: collectDeployVariables(),
                 customSpec: {
                     virtualCpuCores: cpu,
                     memoryBytes: memory,
@@ -568,13 +592,13 @@ export async function deployFromTemplate() {
 
         if (data.success || response.ok) {
             console.log('[Template Detail] Deployment successful:', data.data || data);
-            
+
             const vmId = (data.data || data).vmId;
             const password = (data.data || data).password;
-            
+
             // Close modal
             closeDeployTemplateModal();
-            
+
             // Show password modal if we got a valid password (human-readable format)
             if (password && !password.includes('_') && password.includes('-')) {
                 if (window.showPasswordModal) {
@@ -584,10 +608,10 @@ export async function deployFromTemplate() {
                     showToast('warning', `VM created! Password: ${password} - Please save it!`);
                 }
             }
-            
+
             // Show success message
             showToast('success', `VM "${vmName}" is being deployed!`);
-            
+
             // Navigate to VMs page
             setTimeout(() => {
                 window.showPage('virtual-machines');
@@ -604,6 +628,57 @@ export async function deployFromTemplate() {
             deployButton.textContent = 'Deploy Now';
         }
     }
+}
+
+/**
+ * Render user-supplied variable inputs into #deploy-variables-section.
+ * Called each time the deploy modal opens — clears and rebuilds the section.
+ */
+function renderDeployVariables(template) {
+    const section = document.getElementById('deploy-variables-section');
+    const list = document.getElementById('deploy-variables-list');
+    if (!section || !list) return;
+
+    const userVars = getUserVariables(template);
+
+    if (userVars.length === 0) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        return;
+    }
+
+    section.style.display = '';
+    list.innerHTML = userVars.map(v => {
+        const inputId = `deploy-var-${escapeHtml(v.name)}`;
+        const defaultVal = v.defaultValue ?? '';
+        const desc = v.description ? `<p class="form-help">${escapeHtml(v.description)}</p>` : '';
+        return `
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label" for="${inputId}">${escapeHtml(v.name.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()))}</label>
+                <input type="text" class="form-input deploy-template-var"
+                    id="${inputId}"
+                    data-var-name="${escapeHtml(v.name)}"
+                    value="${escapeHtml(defaultVal)}"
+                    placeholder="${escapeHtml(defaultVal)}">
+                ${desc}
+            </div>`;
+    }).join('');
+}
+
+/**
+ * Collect user-supplied variable values from the deploy modal inputs.
+ * Returns only entries that differ from the default (or all if no default).
+ * The backend's Layer 1 already applies template.DefaultEnvironmentVariables,
+ * so sending all values (including defaults) is safe — user values win (Layer 2).
+ */
+function collectDeployVariables() {
+    const result = {};
+    document.querySelectorAll('.deploy-template-var').forEach(input => {
+        const name = input.dataset.varName;
+        const value = input.value.trim();
+        if (name && value !== '') result[name] = value;
+    });
+    return result;
 }
 
 /**
@@ -665,13 +740,42 @@ function formatDate(dateString) {
     const now = new Date();
     const diffMs = now - date;
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays} days ago`;
     if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
     if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
     return date.toLocaleDateString();
+}
+
+/**
+ * Helper: Render markdown (simplified)
+ */
+function renderMarkdown(markdown) {
+    if (!markdown) return '';
+
+    // Simple markdown rendering (for full support, use marked.js)
+    let html = escapeHtml(markdown);
+
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // Code blocks
+    html = html.replace(/```([\s\S]+?)```/g, '<pre><code>$1</code></pre>');
+
+    // Inline code
+    html = html.replace(/`(.+?)`/g, '<code>$1</code>');
+
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
 }
 
 /**
