@@ -224,6 +224,48 @@ public class MarketplaceController : ControllerBase
 
             };
 
+            // Variables: declared by the author, validated for unique names.
+            // Empty list is the default for templates that don't use the
+            // declared-variable pipeline.
+            if (request.Variables is { Count: > 0 })
+            {
+                var seenNames = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var variable in request.Variables)
+                {
+                    if (string.IsNullOrWhiteSpace(variable.Name))
+                        return BadRequest(new { error = "Variable name is required." });
+
+                    if (!seenNames.Add(variable.Name))
+                        return BadRequest(new
+                        {
+                            error = $"Duplicate variable name '{variable.Name}'. " +
+                                    "Variable names must be unique within a template."
+                        });
+                }
+                template.Variables = request.Variables;
+            }
+
+            // Artifacts: build, verify, and stage them in the same call as the
+            // template create. Removes the previous draft→artifact→publish
+            // round-trip. Each artifact is validated using the same path as
+            // POST /artifacts so behaviour stays in lock step.
+            if (request.Artifacts is { Count: > 0 })
+            {
+                foreach (var artifactRequest in request.Artifacts)
+                {
+                    try
+                    {
+                        var built = await BuildAndVerifyArtifactAsync(
+                            artifactRequest, template.Artifacts, userId);
+                        template.Artifacts.Add(built);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        return BadRequest(new { error = ex.Message });
+                    }
+                }
+            }
+
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
             {
@@ -495,22 +537,77 @@ public class MarketplaceController : ControllerBase
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
 
-        // Validate artifact name uniqueness.
-        if (template.Artifacts.Any(a =>
+        TemplateArtifact artifact;
+        try
+        {
+            artifact = await BuildAndVerifyArtifactAsync(request, template.Artifacts, userId);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        template.Artifacts.Add(artifact);
+        await _templateService.SaveTemplateDirectAsync(template);
+
+        return Ok(artifact);
+    }
+
+    /// <summary>
+    /// Build a verified <see cref="TemplateArtifact"/> from an
+    /// <see cref="AddArtifactRequest"/>. Handles three input shapes:
+    ///   1. Raw <c>Content</c> + <c>ContentType</c> — server constructs the data: URI.
+    ///   2. <c>SourceUrl</c> as a data: URI — server decodes and computes SHA256
+    ///      when none supplied; verifies if one is supplied.
+    ///   3. <c>SourceUrl</c> as HTTPS — server fetches and verifies against
+    ///      the required <c>Sha256</c>.
+    ///
+    /// Enforces name uniqueness, the inline 5 MB per-artifact limit, and the
+    /// 10 MB per-template aggregate inline limit (accounting for
+    /// <paramref name="existingArtifacts"/>).
+    ///
+    /// Throws <see cref="ArgumentException"/> on validation failure. The caller
+    /// translates this to a 400 response.
+    /// </summary>
+    private async Task<TemplateArtifact> BuildAndVerifyArtifactAsync(
+        AddArtifactRequest request,
+        IReadOnlyCollection<TemplateArtifact> existingArtifacts,
+        string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Artifact name is required.");
+
+        if (existingArtifacts.Any(a =>
             string.Equals(a.Name, request.Name, StringComparison.OrdinalIgnoreCase)))
         {
-            return BadRequest(
+            throw new ArgumentException(
                 $"An artifact named '{request.Name}' already exists on this template. " +
                 "Names must be unique within a template.");
+        }
+
+        // Resolve effective SourceUrl: either supplied, or constructed from Content.
+        var sourceUrl = request.SourceUrl?.Trim();
+        if (string.IsNullOrEmpty(sourceUrl))
+        {
+            if (string.IsNullOrEmpty(request.Content))
+                throw new ArgumentException(
+                    "Either SourceUrl or Content is required for an artifact.");
+
+            var mediaType = string.IsNullOrWhiteSpace(request.ContentType)
+                ? "text/plain"
+                : request.ContentType.Trim();
+
+            var contentBytes = System.Text.Encoding.UTF8.GetBytes(request.Content);
+            sourceUrl = $"data:{mediaType};base64,{Convert.ToBase64String(contentBytes)}";
         }
 
         var artifact = new TemplateArtifact
         {
             Name = request.Name,
             Description = request.Description ?? string.Empty,
-            Sha256 = request.Sha256.ToLowerInvariant(),
-            SizeBytes = request.SizeBytes,
-            SourceUrl = request.SourceUrl,
+            Sha256 = request.Sha256?.Trim().ToLowerInvariant() ?? string.Empty,
+            SizeBytes = request.SizeBytes ?? 0,
+            SourceUrl = sourceUrl,
             Architecture = request.Architecture,
             Type = request.Type,
             RegisteredAt = DateTime.UtcNow,
@@ -519,72 +616,83 @@ public class MarketplaceController : ControllerBase
 
         if (artifact.IsInline)
         {
-            // ── Inline (data: URI) validation ───────────────────────────────
+            // ── Inline (data: URI) validation ─────────────────────────────
             if (artifact.Type == ArtifactType.Binary)
-                return BadRequest(
+                throw new ArgumentException(
                     "Binary artifacts must use an HTTPS SourceUrl. " +
                     "Compile the binary, host it externally (e.g., GitHub Releases), " +
                     "and register with the download URL.");
 
-            // Decode and verify SHA256 inline.
+            var commaIndex = sourceUrl.IndexOf(',');
+            if (commaIndex < 0 ||
+                !sourceUrl[..commaIndex]
+                    .Contains(";base64", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    "data: URI must be in the form: data:{mediaType};base64,{base64bytes}");
+
+            byte[] bytes;
             try
             {
-                var commaIndex = request.SourceUrl.IndexOf(',');
-                if (commaIndex < 0 ||
-                    !request.SourceUrl[..commaIndex]
-                        .Contains(";base64", StringComparison.OrdinalIgnoreCase))
-                    return BadRequest(
-                        "data: URI must be in the form: data:{mediaType};base64,{base64bytes}");
-
-                var bytes = Convert.FromBase64String(
-                    request.SourceUrl[(commaIndex + 1)..].Trim());
-
-                if (bytes.Length > TemplateArtifact.MaxInlineArtifactBytes)
-                    return BadRequest(
-                        $"Inline attachment decoded size {bytes.Length / 1024 / 1024.0:F1} MB " +
-                        $"exceeds the {TemplateArtifact.MaxInlineArtifactBytes / 1024 / 1024} MB limit. " +
-                        "Host larger files externally.");
-
-                var totalCurrentInline = template.Artifacts
-                    .Where(a => a.IsInline)
-                    .Sum(a => a.SizeBytes);
-
-                if (totalCurrentInline + bytes.Length > TemplateArtifact.MaxTotalInlineBytes)
-                    return BadRequest(
-                        $"Adding this attachment would bring the template's total inline size " +
-                        $"to {(totalCurrentInline + bytes.Length) / 1024 / 1024.0:F1} MB, " +
-                        $"exceeding the {TemplateArtifact.MaxTotalInlineBytes / 1024 / 1024} MB limit.");
-
-                var actualHash = Convert.ToHexString(
-                    System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
-
-                if (actualHash != artifact.Sha256)
-                    return BadRequest(
-                        $"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
-                        $"actual {actualHash[..12]}. " +
-                        "Recompute SHA256 of the decoded file and update the field.");
-
-                // Stamp the verified decoded size.
-                artifact.SizeBytes = bytes.Length;
+                bytes = Convert.FromBase64String(sourceUrl[(commaIndex + 1)..].Trim());
             }
             catch (FormatException)
             {
-                return BadRequest("data: URI contains invalid base64.");
+                throw new ArgumentException("data: URI contains invalid base64.");
             }
+
+            if (bytes.Length > TemplateArtifact.MaxInlineArtifactBytes)
+                throw new ArgumentException(
+                    $"Inline attachment decoded size {bytes.Length / 1024 / 1024.0:F1} MB " +
+                    $"exceeds the {TemplateArtifact.MaxInlineArtifactBytes / 1024 / 1024} MB limit. " +
+                    "Host larger files externally.");
+
+            var totalCurrentInline = existingArtifacts
+                .Where(a => a.IsInline)
+                .Sum(a => a.SizeBytes);
+
+            if (totalCurrentInline + bytes.Length > TemplateArtifact.MaxTotalInlineBytes)
+                throw new ArgumentException(
+                    $"Adding this attachment would bring the template's total inline size " +
+                    $"to {(totalCurrentInline + bytes.Length) / 1024 / 1024.0:F1} MB, " +
+                    $"exceeding the {TemplateArtifact.MaxTotalInlineBytes / 1024 / 1024} MB limit.");
+
+            var actualHash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
+            if (string.IsNullOrEmpty(artifact.Sha256))
+            {
+                // Inline path: declared SHA256 is optional — adopt the computed one.
+                artifact.Sha256 = actualHash;
+            }
+            else if (actualHash != artifact.Sha256)
+            {
+                throw new ArgumentException(
+                    $"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
+                    $"actual {actualHash[..12]}. " +
+                    "Recompute SHA256 of the decoded file and update the field, " +
+                    "or omit the SHA256 field to let the server compute it.");
+            }
+
+            artifact.SizeBytes = bytes.Length;
         }
         else
         {
-            // ── External (HTTPS) verification ────────────────────────────────
-            if (!Uri.TryCreate(request.SourceUrl, UriKind.Absolute, out var uri)
+            // ── External (HTTPS) verification ─────────────────────────────
+            if (string.IsNullOrEmpty(artifact.Sha256))
+                throw new ArgumentException(
+                    "SHA256 is required for external HTTPS artifacts so the fetched " +
+                    "bytes can be verified.");
+
+            if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri)
                 || uri.Scheme != "https")
-                return BadRequest(
+                throw new ArgumentException(
                     "SourceUrl must be an HTTPS URL or a data: URI.");
 
             try
             {
                 using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
                 using var response = await client.GetAsync(
-                    request.SourceUrl, HttpCompletionOption.ResponseHeadersRead);
+                    sourceUrl, HttpCompletionOption.ResponseHeadersRead);
                 response.EnsureSuccessStatusCode();
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var sha = System.Security.Cryptography.SHA256.Create();
@@ -592,7 +700,7 @@ public class MarketplaceController : ControllerBase
                 var actual = Convert.ToHexString(hash).ToLowerInvariant();
 
                 if (actual != artifact.Sha256)
-                    return BadRequest(
+                    throw new ArgumentException(
                         $"SHA256 mismatch: declared {artifact.Sha256[..12]}, " +
                         $"actual {actual[..12]}.");
 
@@ -601,16 +709,12 @@ public class MarketplaceController : ControllerBase
             }
             catch (HttpRequestException ex)
             {
-                return BadRequest(
-                    $"Could not fetch artifact from {request.SourceUrl}: {ex.Message}");
+                throw new ArgumentException(
+                    $"Could not fetch artifact from {sourceUrl}: {ex.Message}");
             }
         }
 
-        template.Artifacts.Add(artifact);
-        var isAdmin = User.IsInRole("Admin");
-        await _templateService.SaveTemplateDirectAsync(template);
-
-        return Ok(artifact);
+        return artifact;
     }
 
     /// <summary>Remove an artifact reference from a template.</summary>
@@ -989,6 +1093,22 @@ public class CreateTemplateRequest
     public decimal TemplatePrice { get; set; }
     public BandwidthTier DefaultBandwidthTier { get; set; } = BandwidthTier.Unmetered;
     public decimal EstimatedCostPerHour { get; set; }
+
+    /// <summary>
+    /// Artifacts to attach during creation. Each entry follows the same shape
+    /// as the standalone <see cref="AddArtifactRequest"/> — inline (data: URI
+    /// or raw <c>Content</c>) or external HTTPS. Validation, SHA256
+    /// computation, and size-limit enforcement are identical to
+    /// <c>POST /api/marketplace/templates/{id}/artifacts</c>.
+    /// </summary>
+    public List<AddArtifactRequest>? Artifacts { get; set; }
+
+    /// <summary>
+    /// Variables declared by this template. Surfaces the same metadata used by
+    /// the cloud-init renderer's static/dynamic resolution pipeline. Most
+    /// community templates leave this empty.
+    /// </summary>
+    public List<TemplateVariable>? Variables { get; set; }
 }
 
 /// <summary>
@@ -1015,10 +1135,40 @@ public class SubmitReviewRequest
 public class AddArtifactRequest
 {
     public required string Name { get; init; }
-    public required string Sha256 { get; init; }
-    public required string SourceUrl { get; init; }
-    public required long SizeBytes { get; init; }
+
+    /// <summary>
+    /// Optional for inline artifacts (data: URI or <see cref="Content"/>) — server computes it.
+    /// Required for external HTTPS artifacts so the fetched bytes can be verified.
+    /// </summary>
+    public string? Sha256 { get; init; }
+
+    /// <summary>
+    /// Either an HTTPS URL (fetched and SHA256-verified) or a data: URI
+    /// (decoded inline). Optional when <see cref="Content"/> is supplied —
+    /// the server constructs the data: URI from raw content.
+    /// </summary>
+    public string? SourceUrl { get; init; }
+
+    /// <summary>
+    /// Optional. Server fills this in from the decoded inline bytes
+    /// or from the external response's Content-Length header.
+    /// </summary>
+    public long? SizeBytes { get; init; }
+
     public required ArtifactType Type { get; init; }
     public string? Description { get; init; }
     public string? Architecture { get; init; }
+
+    /// <summary>
+    /// Raw script/config content. When set (and <see cref="SourceUrl"/> is empty),
+    /// the server base64-encodes the content and builds a data: URI using
+    /// <see cref="ContentType"/> as the media type. Eliminates the need for the
+    /// frontend to perform base64 encoding for "paste-script" UX.
+    /// </summary>
+    public string? Content { get; init; }
+
+    /// <summary>
+    /// Media type for <see cref="Content"/>. Defaults to "text/plain" if omitted.
+    /// </summary>
+    public string? ContentType { get; init; }
 }
