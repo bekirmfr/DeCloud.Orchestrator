@@ -1787,7 +1787,7 @@ window.myTemplates = {
     removeArtifact,
     setLdTab,
     insertCloudInitStarter,
-    updateSubstitutionPreview
+    updateSubstitutionPreview,
     switchArtifactMode,
     onArtifactFileSelected,
     removePendingArtifact,
