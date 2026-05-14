@@ -762,7 +762,8 @@ function resetCreateForm() {
     document.getElementById('create-template-modal-title').textContent = 'Create Template';
     document.getElementById('ct-artifacts-list').innerHTML = '';
     document.getElementById('ct-artifact-new-row').style.display = 'none';
-    document.getElementById('ct-artifacts-save-first').style.display = '';
+    const saveFirst = document.getElementById('ct-artifacts-save-first');
+    if (saveFirst) saveFirst.style.display = '';
     document.getElementById('ct-add-artifact-btn').style.display = 'none';
     // Reset Long Description to Write tab (also resets button active styles)
     setLdTab('write');
