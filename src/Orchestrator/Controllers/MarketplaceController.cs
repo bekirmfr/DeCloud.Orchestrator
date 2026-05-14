@@ -740,6 +740,61 @@ public class MarketplaceController : ControllerBase
 
     }
 
+    /// <summary>
+    /// Replace an existing artifact in place. Same request shape as
+    /// <see cref="AddArtifact"/> — accepts inline data: URI, raw
+    /// <c>Content</c> + <c>ContentType</c>, or external HTTPS — and runs the
+    /// same SHA256 verification and size-limit checks. The artifact's
+    /// <c>Id</c>, <c>RegisteredAt</c>, and <c>RegisteredBy</c> are preserved
+    /// so cloud-init references that pin the artifact by ID stay stable.
+    /// </summary>
+    [HttpPut("templates/{id}/artifacts/{artifactId}")]
+    [Authorize]
+    [ProducesResponseType(typeof(TemplateArtifact), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<TemplateArtifact>> UpdateArtifact(
+        string id,
+        string artifactId,
+        [FromBody] AddArtifactRequest request)
+    {
+        var userId = User.FindFirst("wallet")?.Value ?? User.FindFirst("sub")?.Value;
+        var template = await _templateService.GetTemplateByIdAsync(id);
+
+        if (template is null) return NotFound();
+        if (template.AuthorId != userId) return Forbid();
+
+        var existing = template.Artifacts.FirstOrDefault(a => a.Id == artifactId);
+        if (existing is null)
+            return NotFound(new { error = $"Artifact '{artifactId}' not found." });
+
+        // Verify name uniqueness against siblings only — renaming an artifact
+        // back to its own current name must not trip the duplicate check.
+        var siblings = template.Artifacts.Where(a => a.Id != artifactId).ToList();
+
+        TemplateArtifact built;
+        try
+        {
+            built = await BuildAndVerifyArtifactAsync(request, siblings, userId);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        // Preserve the original identity / registration metadata.
+        built.Id = existing.Id;
+        built.RegisteredAt = existing.RegisteredAt;
+        built.RegisteredBy = existing.RegisteredBy;
+
+        template.Artifacts.RemoveAll(a => a.Id == artifactId);
+        template.Artifacts.Add(built);
+
+        await _templateService.SaveTemplateDirectAsync(template);
+        return Ok(built);
+    }
+
 
     // ════════════════════════════════════════════════════════════════════════
     // Reviews
