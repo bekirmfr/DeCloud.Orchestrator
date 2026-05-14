@@ -526,6 +526,26 @@ public class TemplateService : ITemplateService
         if (template.EstimatedCostPerHour == 0)
             warnings.Add("Estimated cost per hour is not set");
 
+        // Validate variables: names must be non-empty and unique within the
+        // template. Same check applied to both create and update paths.
+        if (template.Variables.Count > 0)
+        {
+            var seenVarNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var v in template.Variables)
+            {
+                if (string.IsNullOrWhiteSpace(v.Name))
+                {
+                    errors.Add("Variable name is required");
+                    continue;
+                }
+
+                if (!seenVarNames.Add(v.Name))
+                    errors.Add(
+                        $"Duplicate variable name '{v.Name}'. " +
+                        "Variable names must be unique within a template.");
+            }
+        }
+
         return new TemplateValidationResult
         {
             IsValid = errors.Count == 0,
