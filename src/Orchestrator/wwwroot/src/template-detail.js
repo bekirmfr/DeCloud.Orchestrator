@@ -675,10 +675,6 @@ function formatDate(dateString) {
 }
 
 /**
- * Helper: Render markdown — imported from utils.js
- */
-
-/**
  * Helper: Render stars for detail view
  */
 function renderStarsDetail(rating) {

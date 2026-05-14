@@ -170,7 +170,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/create")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> CreateCommunityTemplate(
+    public async Task<IActionResult> CreateCommunityTemplate(
         [FromBody] CreateTemplateRequest request)
     {
         try
@@ -255,7 +255,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPut("templates/{templateId}")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> UpdateTemplate(
+    public async Task<IActionResult> UpdateTemplate(
         string templateId,
         [FromBody] VmTemplate template)
     {

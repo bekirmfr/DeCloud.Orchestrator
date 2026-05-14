@@ -32,7 +32,7 @@ const BANDWIDTH_TIER_TO_STR = {
 };
 
 // Platform variables substituted by the orchestrator before cloud-init runs.
-// Static statics use __DOUBLE_UNDERSCORE__ form; dynamic boot-time vars use ${DOLLAR_BRACE} form.
+// Static variables use __DOUBLE_UNDERSCORE__ form; dynamic boot-time vars use ${DOLLAR_BRACE} form.
 const PLATFORM_STATIC_VARS = new Set([
     '__VM_ID__', '__HOSTNAME__', '__CA_PUBLIC_KEY__',
     '__SSH_AUTHORIZED_KEYS_BLOCK__', '__ORCHESTRATOR_URL__'
@@ -41,21 +41,27 @@ const PLATFORM_DYNAMIC_VARS = new Set([
     'DECLOUD_PASSWORD', 'DECLOUD_DOMAIN'
 ]);
 
+// runcmd entries run under /bin/sh (dash on Ubuntu/Debian), which lacks pipefail.
+// Write the script as a file so it can be executed with bash.
 const CLOUD_INIT_STARTER = `#cloud-config
 package_update: true
 packages: []
 
-write_files: []
+write_files:
+  - path: /usr/local/bin/setup.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      exec >> /var/log/setup.log 2>&1
+      echo "=== Setup started $(date) ==="
+
+      # --- your setup commands here ---
+
+      echo "=== Setup complete $(date) ==="
 
 runcmd:
-  - |
-    set -euo pipefail
-    exec >> /var/log/setup.log 2>&1
-    echo "=== Setup started $(date) ==="
-
-    # --- your setup commands here ---
-
-    echo "=== Setup complete $(date) ==="
+  - /usr/local/bin/setup.sh
 `;
 
 function api(endpoint, options = {}) {
@@ -549,20 +555,17 @@ export function setLdTab(tab) {
     const prevBtn  = document.getElementById('ct-ld-preview-btn');
     if (!textarea || !preview) return;
 
-    const activeStyle   = 'background:var(--accent-primary,#7c3aed); color:#fff;';
-    const inactiveStyle = 'background:transparent; color:var(--text-muted,#9ca3af);';
-
     if (tab === 'preview') {
         textarea.style.display = 'none';
         preview.style.display  = '';
         preview.innerHTML = renderMarkdown(textarea.value) || '<span style="color:var(--text-muted,#9ca3af); font-style:italic;">Nothing to preview yet.</span>';
-        if (writeBtn) writeBtn.style.cssText += inactiveStyle;
-        if (prevBtn)  prevBtn.style.cssText  += activeStyle;
+        if (writeBtn) { writeBtn.style.background = 'transparent'; writeBtn.style.color = 'var(--text-muted,#9ca3af)'; }
+        if (prevBtn)  { prevBtn.style.background  = 'var(--accent-primary,#7c3aed)'; prevBtn.style.color = '#fff'; }
     } else {
         textarea.style.display = '';
         preview.style.display  = 'none';
-        if (writeBtn) writeBtn.style.cssText += activeStyle;
-        if (prevBtn)  prevBtn.style.cssText  += inactiveStyle;
+        if (writeBtn) { writeBtn.style.background = 'var(--accent-primary,#7c3aed)'; writeBtn.style.color = '#fff'; }
+        if (prevBtn)  { prevBtn.style.background  = 'transparent'; prevBtn.style.color = 'var(--text-muted,#9ca3af)'; }
     }
 }
 
@@ -583,6 +586,12 @@ export function updateSubstitutionPreview() {
     if (!container) return;
     const text = document.getElementById('ct-cloudinit')?.value || '';
 
+    // Collect user-defined env var keys so they show as 'dynamic' rather than 'unknown'
+    const userEnvKeys = new Set(PLATFORM_DYNAMIC_VARS);
+    document.querySelectorAll('#ct-env-vars-list [data-env-field="key"]').forEach(el => {
+        if (el.value.trim()) userEnvKeys.add(el.value.trim());
+    });
+
     // Collect all ${VAR} and __VAR__ references
     const found = new Map(); // name -> kind: 'static' | 'dynamic' | 'artifact' | 'unknown'
 
@@ -601,7 +610,7 @@ export function updateSubstitutionPreview() {
         if (found.has(raw)) continue;
         if (inner.startsWith('ARTIFACT_URL:') || inner.startsWith('ARTIFACT_SHA256:')) {
             found.set(raw, 'artifact');
-        } else if (PLATFORM_DYNAMIC_VARS.has(inner)) {
+        } else if (userEnvKeys.has(inner)) {
             found.set(raw, 'dynamic');
         } else {
             found.set(raw, 'unknown');
@@ -659,11 +668,8 @@ function resetCreateForm() {
     document.getElementById('ct-artifact-new-row').style.display = 'none';
     document.getElementById('ct-artifacts-save-first').style.display = '';
     document.getElementById('ct-add-artifact-btn').style.display = 'none';
-    // Reset Long Description to Write tab
-    const ldTextarea = document.getElementById('ct-long-description');
-    const ldPreview  = document.getElementById('ct-ld-preview');
-    if (ldTextarea) ldTextarea.style.display = '';
-    if (ldPreview)  ldPreview.style.display = 'none';
+    // Reset Long Description to Write tab (also resets button active styles)
+    setLdTab('write');
     // Reset substitution preview
     const subPreview = document.getElementById('ct-substitution-preview');
     if (subPreview) subPreview.innerHTML = '';
@@ -940,6 +946,7 @@ export async function editTemplate(templateId) {
     document.getElementById('ct-tags').value = (template.tags || []).join(', ');
     document.getElementById('ct-image').value = template.imageId || 'ubuntu-22.04';
     document.getElementById('ct-cloudinit').value = template.cloudInitTemplate || '';
+    updateSubstitutionPreview();
     document.getElementById('ct-requires-gpu').checked = template.requiresGpu || false;
     document.getElementById('ct-gpu-mode').value = template.defaultGpuMode || 1;
     document.getElementById('ct-gpu-mode-group').style.display = template.requiresGpu ? '' : 'none';
