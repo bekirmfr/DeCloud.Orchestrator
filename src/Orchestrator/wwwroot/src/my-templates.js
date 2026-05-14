@@ -824,7 +824,7 @@ function buildTemplatePayload() {
         iconUrl: document.getElementById('ct-icon-url').value.trim() || null,
         license: document.getElementById('ct-license').value.trim() || null,
         containerImage: document.getElementById('ct-image').value || null,
-        artifacts: pendingArtifacts.length > 0 ? pendingArtifacts : null,
+        artifacts: pendingArtifacts,
         variables: collectVariables()
     };
 }
@@ -1152,8 +1152,10 @@ function populateArtifactForm(art) {
 export function editPendingArtifact(index) {
     const art = pendingArtifacts[index];
     if (!art) return;
-    editingArtifactTarget = { kind: 'pending', index };
+    // Order matters: populateArtifactForm calls showArtifactRow which resets
+    // editingArtifactTarget. Set it AFTER populating so saveArtifact sees it.
     populateArtifactForm(art);
+    editingArtifactTarget = { kind: 'pending', index };
     setArtifactSaveButtonLabel('Save Changes');
 }
 
@@ -1162,8 +1164,8 @@ export function editArtifact(templateId, artifactId) {
     if (!template) return;
     const art = (template.artifacts || []).find(a => a.id === artifactId);
     if (!art) return;
-    editingArtifactTarget = { kind: 'existing', templateId, id: artifactId };
     populateArtifactForm(art);
+    editingArtifactTarget = { kind: 'existing', templateId, id: artifactId };
     setArtifactSaveButtonLabel('Save Changes');
 }
 
