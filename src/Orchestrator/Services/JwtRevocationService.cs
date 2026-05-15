@@ -1,4 +1,6 @@
-﻿using MongoDB.Driver;
+﻿using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver;
 using Orchestrator.Interfaces;
 using System.Collections.Concurrent;
 
@@ -100,6 +102,9 @@ public class JwtRevocationService : IJwtRevocationService
 
 public class RevokedJwt
 {
+    [BsonId]
+    [BsonRepresentation(BsonType.ObjectId)]
+    public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
     public string Jti { get; set; } = string.Empty;
     public string NodeId { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
