@@ -135,6 +135,13 @@ public sealed class BinaryReleaseResolver
         var psi = new ProcessStartInfo
         {
             FileName = "cosign",
+            Environment =
+            {
+                // cosign caches Sigstore TUF root metadata in ~/.sigstore by default.
+                // The orchestrator's systemd unit uses ProtectSystem=strict, making
+                // /root read-only. Point the cache to a writable temp directory.
+                ["TUF_ROOT"] = Path.Combine(Path.GetTempPath(), "cosign-tuf"),
+            },
             ArgumentList =
             {
                 "verify-blob",
