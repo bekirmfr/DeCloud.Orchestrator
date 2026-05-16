@@ -881,7 +881,7 @@ public class NodeService : INodeService
                 var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
                 if (slug is null) continue;
                 template = await _dataStore.GetTemplateBySlugAsync(slug);
-                if (template is not null && string.IsNullOrEmpty(obligation.TemplateId))
+                if (template is not null)
                 {
                     obligation.TemplateId = template.Id;
                     // Node will be saved by the caller after this method returns.
