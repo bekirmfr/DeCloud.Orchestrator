@@ -253,6 +253,7 @@ public sealed partial class SystemVmTemplateSeeder
             Variables = BuildBlockStoreVariables(),
             Artifacts = new List<TemplateArtifact>
         {
+            // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
             Artifact("blockstore-node", "BlockStore node binary",
                 ArtifactType.Binary, arch: "amd64",
                 sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
@@ -263,6 +264,7 @@ public sealed partial class SystemVmTemplateSeeder
                 sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
                 sourceUrl: arm64.Url),
 
+            // ── Shared scripts (data: URI inline) ────────────────────────
             Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
                 ArtifactType.Script,
                 sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
@@ -271,6 +273,7 @@ public sealed partial class SystemVmTemplateSeeder
                 ArtifactType.Script,
                 sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
 
+            // ── BlockStore-specific scripts (data: URI inline) ───────────────────
             Artifact("blockstore-health-check", "BlockStore health check script",
                 ArtifactType.Script,
                 sha256: BlockstoreHealthCheckSha256, sourceUrl: BlockstoreHealthCheckDataUri),
@@ -283,6 +286,7 @@ public sealed partial class SystemVmTemplateSeeder
                 ArtifactType.Script,
                 sha256: BlockstoreBootstrapPollSha256, sourceUrl: BlockstoreBootstrapPollDataUri),
 
+            // ── Dashboard (data: URI inline) ──────────────────────────────
             Artifact("blockstore-dashboard", "BlockStore dashboard server (Python)",
                 ArtifactType.WebAsset,
                 sha256: BlockstoreDashboardPySha256, sourceUrl: BlockstoreDashboardPyDataUri),
