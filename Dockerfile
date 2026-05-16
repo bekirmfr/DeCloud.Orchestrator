@@ -23,6 +23,16 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
 # Create non-root user
+# cosign is required by BinaryReleaseResolver to verify system VM binary manifests.
+# Pinned to the same version used in CI and the node agent install.sh.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64 \
+       -o /usr/local/bin/cosign \
+    && chmod +x /usr/local/bin/cosign \
+    && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
 RUN groupadd -r orchestrator && useradd -r -g orchestrator orchestrator
 
 COPY --from=build /app/publish .

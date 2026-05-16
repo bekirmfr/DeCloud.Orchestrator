@@ -67,6 +67,10 @@ CADDY_BACKUP_DIR="/etc/decloud/caddy-backups"
 ENV_FILE="/etc/decloud/orchestrator.env"  # NEW: Environment variables file
 REPO_URL="https://github.com/bekirmfr/DeCloud.Orchestrator.git"
 
+# Cosign — verifies system VM binary release manifests at seed time.
+# Pinned to match CI (release-binaries.yml) and node agent install.sh.
+COSIGN_VERSION="v2.4.1"
+
 # Logging
 INSTALL_LOG="$LOG_DIR/install.log"
 ENABLE_LOGGING=true
@@ -698,7 +702,40 @@ install_dependencies() {
         fail2ban \
         > /dev/null 2>&1
     
-    log_success "System dependencies installed"
+log_success "System dependencies installed"
+}
+
+install_cosign() {
+    if command -v cosign &>/dev/null; then
+        local cosign_ver
+        cosign_ver=$(cosign version 2>/dev/null | awk '/GitVersion/{print $NF; exit}')
+        log_success "cosign already installed: ${cosign_ver:-installed}"
+        return 0
+    fi
+
+    log_step "Installing cosign ${COSIGN_VERSION}..."
+
+    local cosign_arch
+    case "$(uname -m)" in
+        x86_64|amd64)  cosign_arch="amd64" ;;
+        aarch64|arm64) cosign_arch="arm64" ;;
+        *)
+            log_error "Unsupported architecture for cosign: $(uname -m)"
+            return 1
+            ;;
+    esac
+
+    local url="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${cosign_arch}"
+    local dest="/usr/local/bin/cosign"
+
+    if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "${dest}.tmp"; then
+        log_error "Failed to download cosign from $url"
+        rm -f "${dest}.tmp"
+        return 1
+    fi
+    chmod +x "${dest}.tmp"
+    mv "${dest}.tmp" "$dest"
+    log_success "cosign ${COSIGN_VERSION} installed"
 }
 
 install_nodejs() {
@@ -1857,6 +1894,7 @@ main() {
     
     # Install dependencies
     install_dependencies
+    install_cosign
     install_nodejs
     install_dotnet
     install_wireguard
