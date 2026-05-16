@@ -3,6 +3,8 @@ using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Orchestrator.Services.SystemVm;
 
@@ -36,7 +38,12 @@ public sealed partial class SystemVmTemplateSeeder
     // ── Binary release (HTTPS artifacts) ────────────────────────────────
     // Update these when a new binary release is cut in DeCloud.Builds.
 
-    private const string BinaryBaseUrl = "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.1.0";
+    /// <summary>
+    /// The only constant to update when cutting a new binary release.
+    /// Everything else — SHA256, size, URL — is resolved from the
+    /// cosign-verified manifest at seed time.
+    /// </summary>
+    private const string BinaryReleaseTag = "binaries/v1.1.0";
 
     /// <summary>
     /// Git ref (branch, tag, or commit SHA) used to fetch cloud-init YAML files
@@ -68,24 +75,6 @@ public sealed partial class SystemVmTemplateSeeder
     private const string BaseSystemMeshUrl =
         $"{CloudInitRepoBase}/base-templates/base-system-mesh.yaml";
 
-    // SHA256 values from the binaries/v1.0.0 release notes.
-    private const string DhtNodeAmd64Sha256 = "2cb706387725d13c161fa0781ba5fdf282fd4088e40522cccd4da73c06474210";
-    private const string DhtNodeArm64Sha256 = "52e4cfd2349b53663361872d6dc2324b8bab362fe446c516c31e95fc918d7fd4";
-    private const string BlockstoreNodeAmd64Sha256 = "01c62200e7a0be6c2c8cf5b73c88892b13b176df9269a817b9229df29c3c3cd2";
-    private const string BlockstoreNodeArm64Sha256 = "4cb83cd4721b0c9b4a3ab34898e179851de45f7094dfa49a3a3e93c846e5ffae";
-
-    private const long DhtNodeAmd64Bytes = 30_060_696;
-    private const long DhtNodeArm64Bytes = 28_967_064;
-    private const long BlockstoreNodeAmd64Bytes = 26_751_128;
-    private const long BlockstoreNodeArm64Bytes = 25_821_336;
-
-    // ── Template revisions ───────────────────────────────────────────────
-    // Bump when cloud-init content or artifacts change in a deploy-breaking way.
-
-    private const int DhtTemplateRevision = 1;
-    private const int BlockstoreTemplateRevision = 1;
-    private const int RelayTemplateRevision = 1;
-
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
     // SystemVmTemplateSeeder.Artifacts.cs (auto-generated, do not edit).
@@ -100,15 +89,18 @@ public sealed partial class SystemVmTemplateSeeder
 
     private readonly DataStore _dataStore;
     private readonly HttpClient _httpClient;
+    private readonly BinaryReleaseResolver _releaseResolver;
     private readonly ILogger<SystemVmTemplateSeeder> _logger;
 
     public SystemVmTemplateSeeder(
         DataStore dataStore,
         HttpClient httpClient,
+        BinaryReleaseResolver releaseResolver,
         ILogger<SystemVmTemplateSeeder> logger)
     {
         _dataStore = dataStore;
         _httpClient = httpClient;
+        _releaseResolver = releaseResolver;
         _logger = logger;
     }
 
@@ -120,41 +112,50 @@ public sealed partial class SystemVmTemplateSeeder
     /// </summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
+        // Resolve binary artifact metadata from the cosign-verified release manifest.
+        // Called once per seed; cached in memory for the process lifetime.
+        var binaries = await _releaseResolver.ResolveAsync(BinaryReleaseTag, ct);
+
         await SeedTemplateAsync(await BuildRelayTemplateAsync(ct), ct);
-        await SeedTemplateAsync(await BuildDhtTemplateAsync(ct), ct);
-        await SeedTemplateAsync(await BuildBlockstoreTemplateAsync(ct), ct);
+        await SeedTemplateAsync(await BuildDhtTemplateAsync(binaries, ct), ct);
+        await SeedTemplateAsync(await BuildBlockstoreTemplateAsync(binaries, ct), ct);
     }
 
     // ── Template builders ─────────────────────────────────────────────────
 
-    private async Task<VmTemplate> BuildDhtTemplateAsync(CancellationToken ct = default) => new()
+    private async Task<VmTemplate> BuildDhtTemplateAsync(BinaryManifest binaries, CancellationToken ct = default)
     {
-        Slug = "system-dht",
-        Name = "DHT Peer Node",
-        Description = "libp2p Kademlia DHT node for peer discovery, key-value storage, and GossipSub event propagation.",
-        Version = "7.0.0",
-        Revision = DhtTemplateRevision,
-        Category = "infrastructure",
-        AuthorId = "system",
-        IsCommunity = false,
-        IsVerified = true,
-        Status = TemplateStatus.Published,
-        Visibility = TemplateVisibility.Public,
-        PricingModel = TemplatePricingModel.Free,
-        CloudInitTemplate = await FetchCloudInitAsync("dht", ct),
-        Variables = BuildDhtVariables(),
-        Artifacts = new List<TemplateArtifact>
+        var amd64 = binaries.GetArtifact("dht-node-amd64");
+        var arm64 = binaries.GetArtifact("dht-node-arm64");
+
+        return new VmTemplate
+        {
+            Slug = "system-dht",
+            Name = "DHT Peer Node",
+            Description = "libp2p Kademlia DHT node for peer discovery, key-value storage, and GossipSub event propagation.",
+            Version = "7.0.0",
+            // Revision is derived from content hash in SeedTemplateAsync.
+            Category = "infrastructure",
+            AuthorId = "system",
+            IsCommunity = false,
+            IsVerified = true,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            PricingModel = TemplatePricingModel.Free,
+            CloudInitTemplate = await FetchCloudInitAsync("dht", ct),
+            Variables = BuildDhtVariables(),
+            Artifacts = new List<TemplateArtifact>
         {
             // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
             Artifact("dht-node", "DHT node binary (libp2p Kademlia)",
                 ArtifactType.Binary, arch: "amd64",
-                sha256: DhtNodeAmd64Sha256, sizeBytes: DhtNodeAmd64Bytes,
-                sourceUrl: $"{BinaryBaseUrl}/dht-node-amd64"),
+                sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
+                sourceUrl: amd64.Url),
 
             Artifact("dht-node", "DHT node binary — ARM64",
                 ArtifactType.Binary, arch: "arm64",
-                sha256: DhtNodeArm64Sha256, sizeBytes: DhtNodeArm64Bytes,
-                sourceUrl: $"{BinaryBaseUrl}/dht-node-arm64"),
+                sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
+                sourceUrl: arm64.Url),
 
             // ── Shared scripts (data: URI inline) ────────────────────────
             Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
@@ -207,7 +208,7 @@ public sealed partial class SystemVmTemplateSeeder
                 sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
 
-        ExposedPorts = new List<TemplatePort>
+            ExposedPorts = new List<TemplatePort>
         {
             new() { Port = 5080, Protocol = "http", Description = "DHT API",
                 ReadinessCheck = new ServiceCheck { Strategy = CheckStrategy.HttpGet, HttpPath = "/health", TimeoutSeconds = 300 } },
@@ -216,45 +217,51 @@ public sealed partial class SystemVmTemplateSeeder
             new() { Port = 4001, Protocol = "tcp", Description = "DHT libp2p", IsPublic = true },
         },
 
-        RecommendedSpec = new VmSpec
-        {
-            VirtualCpuCores = 1,
-            MemoryBytes = 512L * 1024 * 1024,
-            DiskBytes = 2L * 1024 * 1024 * 1024,
-            ImageId = DhtVmSpec.Standard.ImageId,
-        },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 512L * 1024 * 1024,
+                DiskBytes = 2L * 1024 * 1024 * 1024,
+                ImageId = DhtVmSpec.Standard.ImageId,
+            },
 
-        CreatedAt = DateTime.UtcNow,
-        UpdatedAt = DateTime.UtcNow,
-    };
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        }
 
-    private async Task<VmTemplate> BuildBlockstoreTemplateAsync(CancellationToken ct = default) => new()
+    private async Task<VmTemplate> BuildBlockstoreTemplateAsync(BinaryManifest binaries, CancellationToken ct = default)
     {
-        Slug = "system-blockstore",
-        Name = "Block Store Node",
-        Description = "libp2p BitSwap block store for content-addressed storage and data replication.",
-        Version = "3.0.0",
-        Revision = BlockstoreTemplateRevision,
-        Category = "infrastructure",
-        AuthorId = "system",
-        IsCommunity = false,
-        IsVerified = true,
-        Status = TemplateStatus.Published,
-        Visibility = TemplateVisibility.Public,
-        PricingModel = TemplatePricingModel.Free,
-        CloudInitTemplate = await FetchCloudInitAsync("blockstore", ct),
-        Variables = BuildBlockStoreVariables(),
-        Artifacts = new List<TemplateArtifact>
+        var amd64 = binaries.GetArtifact("blockstore-node-amd64");
+        var arm64 = binaries.GetArtifact("blockstore-node-arm64");
+
+        return new VmTemplate
+        {
+            Slug = "system-blockstore",
+            Name = "Block Store Node",
+            Description = "libp2p BitSwap block store for content-addressed storage and data replication.",
+            Version = "3.0.0",
+            // Revision is derived from content hash in SeedTemplateAsync.
+            Category = "infrastructure",
+            AuthorId = "system",
+            IsCommunity = false,
+            IsVerified = true,
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            PricingModel = TemplatePricingModel.Free,
+            CloudInitTemplate = await FetchCloudInitAsync("blockstore", ct),
+            Variables = BuildBlockStoreVariables(),
+            Artifacts = new List<TemplateArtifact>
         {
             Artifact("blockstore-node", "BlockStore node binary",
                 ArtifactType.Binary, arch: "amd64",
-                sha256: BlockstoreNodeAmd64Sha256, sizeBytes: BlockstoreNodeAmd64Bytes,
-                sourceUrl: $"{BinaryBaseUrl}/blockstore-node-amd64"),
+                sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
+                sourceUrl: amd64.Url),
 
             Artifact("blockstore-node", "BlockStore node binary — ARM64",
                 ArtifactType.Binary, arch: "arm64",
-                sha256: BlockstoreNodeArm64Sha256, sizeBytes: BlockstoreNodeArm64Bytes,
-                sourceUrl: $"{BinaryBaseUrl}/blockstore-node-arm64"),
+                sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
+                sourceUrl: arm64.Url),
 
             Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
                 ArtifactType.Script,
@@ -304,7 +311,7 @@ public sealed partial class SystemVmTemplateSeeder
                 sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
 
-        ExposedPorts = new List<TemplatePort>
+            ExposedPorts = new List<TemplatePort>
         {
             new() { Port =
                 5090, Protocol =
@@ -327,17 +334,18 @@ public sealed partial class SystemVmTemplateSeeder
                 IsPublic = true },
         },
 
-        RecommendedSpec = new VmSpec
-        {
-            VirtualCpuCores = 1,
-            MemoryBytes = 512L * 1024 * 1024,
-            DiskBytes = 10L * 1024 * 1024 * 1024,
-            ImageId = BlockStoreVmSpec.Create(0).ImageId,
-        },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 512L * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                ImageId = BlockStoreVmSpec.Create(0).ImageId,
+            },
 
-        CreatedAt = DateTime.UtcNow,
-        UpdatedAt = DateTime.UtcNow,
-    };
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+    }
 
     private async Task<VmTemplate> BuildRelayTemplateAsync(CancellationToken ct = default) => new()
     {
@@ -345,7 +353,7 @@ public sealed partial class SystemVmTemplateSeeder
         Name = "Relay Node",
         Description = "WireGuard relay for CGNAT traversal and peer-to-peer overlay routing.",
         Version = "1.0.0",
-        Revision = RelayTemplateRevision,
+        // Revision is derived from content hash in SeedTemplateAsync.
         Category = "infrastructure",
         AuthorId = "system",
         IsCommunity = false,
@@ -434,38 +442,75 @@ public sealed partial class SystemVmTemplateSeeder
     private async Task SeedTemplateAsync(VmTemplate template, CancellationToken ct)
     {
         var existing = await _dataStore.GetTemplateBySlugAsync(template.Slug);
+        var newHash = ComputeContentHash(template);
 
-        if (existing is not null && existing.Revision >= template.Revision)
+        if (existing != null)
         {
-            _logger.LogDebug(
-                "System template '{Slug}' r{Stored} ≥ seeder r{New} — skipping",
-                template.Slug, existing.Revision, template.Revision);
-            return;
-        }
+            var existingHash = ComputeContentHash(existing);
+            if (newHash == existingHash)
+            {
+                _logger.LogDebug(
+                    "Template '{Slug}' content unchanged (hash {Hash}) — skipping",
+                    template.Slug, newHash[..12]);
+                return;
+            }
 
-        if (existing is not null)
-        {
-            template.Id = existing.Id; // preserve MongoDB _id — update in-place
+            // Content changed. New revision must be strictly greater than existing.
+            // Use Unix seconds — always increasing, always greater than any
+            // previous manually-assigned revision (which topped out in the hundreds).
+            var nextRevision = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (nextRevision <= existing.Revision)
+                nextRevision = existing.Revision + 1; // safety: clock skew guard
+
+            template.Revision = nextRevision;
+            template.Id = existing.Id; // preserve MongoDB _id across updates
+
             _logger.LogInformation(
-                "Updating system template '{Slug}': r{Old} → r{New}",
-                template.Slug, existing.Revision, template.Revision);
+                "Template '{Slug}' content changed — updating r{OldRev} → r{NewRev} " +
+                "(hash {OldHash} → {NewHash})",
+                template.Slug, existing.Revision, template.Revision,
+                ComputeContentHash(existing)[..12], newHash[..12]);
         }
         else
         {
+            // First seed. Use Unix seconds as the initial revision.
+            template.Revision = (int)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
             _logger.LogInformation(
-                "Seeding new system template '{Slug}' r{Rev}",
-                template.Slug, template.Revision);
+                "Seeding new template '{Slug}' r{Rev} (hash {Hash})",
+                template.Slug, template.Revision, newHash[..12]);
         }
 
         await _dataStore.SaveTemplateAsync(template);
+    }
 
-        _logger.LogInformation(
-            "✓ System template '{Slug}' seeded " +
-            "(r{Rev}, {HttpsCount} HTTPS + {InlineCount} inline artifacts)",
-            template.Slug,
-            template.Revision,
-            template.Artifacts.Count(a => !a.IsInline),
-            template.Artifacts.Count(a => a.IsInline));
+    /// <summary>
+    /// SHA256 of all deployment-affecting fields. Any change to cloud-init,
+    /// variables, artifacts, version, or resource spec produces a different
+    /// hash, which triggers a revision bump in SeedTemplateAsync.
+    ///
+    /// Fields excluded: Revision (derived), Id (MongoDB), timestamps,
+    /// display metadata (Name, Description, Category, ratings).
+    /// </summary>
+    private static string ComputeContentHash(VmTemplate template)
+    {
+        var content = new
+        {
+            template.Version,
+            template.CloudInitTemplate,
+            Variables = template.Variables
+                .OrderBy(v => v.Name)
+                .Select(v => new { v.Name, v.DefaultValue, v.Scope, v.Kind }),
+            Artifacts = template.Artifacts
+                .OrderBy(a => a.Name).ThenBy(a => a.Architecture)
+                .Select(a => new { a.Name, a.Sha256, a.SourceUrl, a.SizeBytes, a.Type, a.Architecture }),
+            template.DefaultEnvironmentVariables,
+        };
+
+        var json = JsonSerializer.Serialize(content,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     /// <summary>

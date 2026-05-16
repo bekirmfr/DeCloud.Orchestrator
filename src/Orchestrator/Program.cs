@@ -140,6 +140,8 @@ builder.Services.AddSingleton<TemplateSeederService>();
 builder.Services.AddSingleton<SystemVmTemplateSeeder>();
 builder.Services.AddHttpClient<SystemVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<BinaryReleaseResolver>();
+builder.Services.AddHttpClient("github-releases");
 
 
 // Tenant VM template seeder — composes base-tenant.yaml + tenant-vms/general/
