@@ -1414,6 +1414,18 @@ public class NodeService : INodeService
             if (!string.IsNullOrEmpty(obligation.TemplateId))
                 template = await _dataStore.GetTemplateByIdAsync(obligation.TemplateId);
 
+            if (template is null)
+            {
+                var slug = SystemVmRoleMap.ToTemplateSlug(obligation.Role);
+                if (slug is null) continue;
+                template = await _dataStore.GetTemplateBySlugAsync(slug);
+                if (template is not null && obligation.TemplateId != template.Id)
+                {
+                    obligation.TemplateId = template.Id;
+                    await _dataStore.SaveNodeAsync(node);
+                }
+            }
+
             if (template is null) continue;
 
             nodeReportedRevisions.TryGetValue(roleName, out var nodeRevision);
