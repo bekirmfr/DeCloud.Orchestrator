@@ -268,6 +268,18 @@ public class VmLifecycleManager : IVmLifecycleManager
     private async Task ExecuteSideEffectsAsync(
         VirtualMachine vm, VmStatus from, VmStatus to, TransitionContext context)
     {
+        // ── Release scheduling hold when leaving Provisioning ─────────
+        // The hold was created in TryScheduleVmAsync STEP 3. Release it
+        // on any exit from Provisioning — the VM will appear in
+        // UsedResources via the next heartbeat if it was created.
+        // See docs/RESOURCE-ALLOCATION.md §8.2.
+        if (from == VmStatus.Provisioning)
+        {
+            await SafeExecuteAsync(
+                () => ReleaseSchedulingHoldAsync(vm),
+                "Scheduling hold release", vm.Id);
+        }
+
         switch (to)
         {
             // ── Entering Running ──────────────────────────────────────
@@ -728,6 +740,50 @@ public class VmLifecycleManager : IVmLifecycleManager
     // Resource Cleanup (used by OnVmDeletedAsync)
     // ════════════════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Release the transient scheduling hold for a VM leaving Provisioning.
+    /// Called when Provisioning → Running, Error, or Deleting.
+    /// See docs/RESOURCE-ALLOCATION.md §8.2.
+    /// </summary>
+    private async Task ReleaseSchedulingHoldAsync(VirtualMachine vm)
+    {
+        if (string.IsNullOrEmpty(vm.NodeId)) return;
+
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null) return;
+
+        var prevPoints = node.ReservedResources.ComputePoints;
+        node.ReservedResources.ComputePoints = Math.Max(0,
+            node.ReservedResources.ComputePoints - vm.Spec.ComputePointCost);
+        node.ReservedResources.MemoryBytes = Math.Max(0,
+            node.ReservedResources.MemoryBytes - vm.Spec.MemoryBytes);
+        node.ReservedResources.StorageBytes = Math.Max(0,
+            node.ReservedResources.StorageBytes - vm.Spec.DiskBytes);
+
+        await _dataStore.SaveNodeAsync(node);
+
+        // Only log if there was actually something to release
+        if (prevPoints > 0 || vm.Spec.ComputePointCost > 0)
+        {
+            _logger.LogInformation(
+                "Released scheduling hold for VM {VmId} on node {NodeId}: " +
+                "{Points} pts, {MemMb} MB, {StorGb} GB. Remaining holds: {RemPts} pts",
+                vm.Id, node.Id,
+                vm.Spec.ComputePointCost,
+                vm.Spec.MemoryBytes / (1024 * 1024),
+                vm.Spec.DiskBytes / (1024 * 1024 * 1024),
+                node.ReservedResources.ComputePoints);
+        }
+    }
+    /// <summary>
+    /// Safety-net resource cleanup on VM deletion.
+    /// In the new accounting model (docs/RESOURCE-ALLOCATION.md §8), the
+    /// primary mechanisms are: (1) UsedResources from heartbeat (ground truth),
+    /// (2) ReleaseSchedulingHoldAsync on Provisioning exit (transient holds).
+    /// This method catches edge cases (e.g., Pending → Deleting → Deleted where
+    /// no hold was ever created). The Math.Max(0,...) guards make double-
+    /// subtraction a no-op, so calling this redundantly is safe.
+    /// </summary>
     private async Task FreeNodeResourcesAsync(VirtualMachine vm)
     {
         if (string.IsNullOrEmpty(vm.NodeId)) return;
@@ -750,8 +806,8 @@ public class VmLifecycleManager : IVmLifecycleManager
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
-            "Released resources for VM {VmId} on node {NodeId}: " +
-            "{Points} points, {MemMb}MB, {StorGb}GB",
+            "Freed resources for VM {VmId} on node {NodeId}: " +
+            "{Points} pts, {MemMb} MB, {StorGb} GB",
             vm.Id, node.Id,
             vm.Spec.ComputePointCost,
             vm.Spec.MemoryBytes / (1024 * 1024),

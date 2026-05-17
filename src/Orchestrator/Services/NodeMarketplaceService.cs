@@ -246,9 +246,9 @@ public class NodeMarketplaceService : INodeMarketplaceService
 
             IsOnline = node.Status == NodeStatus.Online,
             SchedulingReady = node.SchedulingReady,
-            AvailableComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
-            AvailableMemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
-            AvailableStorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
+            AvailableComputePoints = Math.Max(0, node.TotalResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
+            AvailableMemoryBytes = Math.Max(0, node.TotalResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes),
+            AvailableStorageBytes = Math.Max(0, node.TotalResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes)
         };
     }
 }

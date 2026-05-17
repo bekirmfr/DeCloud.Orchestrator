@@ -466,9 +466,11 @@ public class VmSchedulingService : IVmSchedulingService
             TotalComputePoints = tierCapacity.TierComputePoints,
             TotalMemoryBytes = tierCapacity.TierMemoryBytes,
             TotalStorageBytes = tierCapacity.TierStorageBytes,
-            AllocatedComputePoints = node.ReservedResources.ComputePoints,
-            AllocatedMemoryBytes = node.ReservedResources.MemoryBytes,
-            AllocatedStorageBytes = node.ReservedResources.StorageBytes
+            // Used (heartbeat ground truth) + Reserved (transient scheduling holds)
+            // See docs/RESOURCE-ALLOCATION.md §8.4
+            AllocatedComputePoints = node.UsedResources.ComputePoints + node.ReservedResources.ComputePoints,
+            AllocatedMemoryBytes = node.UsedResources.MemoryBytes + node.ReservedResources.MemoryBytes,
+            AllocatedStorageBytes = node.UsedResources.StorageBytes + node.ReservedResources.StorageBytes
         };
     }
 

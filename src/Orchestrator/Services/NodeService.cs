@@ -298,7 +298,12 @@ public class NodeService : INodeService
             SchedulingReady = existingNode?.SchedulingReady ?? true,
             HardwareInventory = request.HardwareInventory,
             TotalResources = new ResourceSnapshot(),
-            ReservedResources = existingNode?.ReservedResources ?? new ResourceSnapshot(),
+            // ReservedResources resets on re-registration. Holds are transient
+            // (scheduling only) and stale after re-register. UsedResources
+            // (from heartbeat) is the ground truth for actual consumption.
+            // See docs/RESOURCE-ALLOCATION.md §8.2.
+            ReservedResources = new ResourceSnapshot(),
+            UsedResources = existingNode?.UsedResources ?? new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
             SupportedImages = request.SupportedImages,
             Locality = locality,
@@ -376,34 +381,36 @@ public class NodeService : INodeService
                 node.AllocatedResources.MemoryBytes = physicalRam;
             }
 
-            // Re-registration: reject if allocation is below existing reservations
-            if (existingNode?.ReservedResources.MemoryBytes > node.AllocatedResources.MemoryBytes.Value)
+            // Re-registration: reject if allocation is below currently used resources.
+            // UsedResources is ground truth from the most recent heartbeat.
+            // See docs/RESOURCE-ALLOCATION.md §8.6.
+            if (existingNode?.UsedResources.MemoryBytes > node.AllocatedResources.MemoryBytes.Value)
             {
                 throw new InvalidOperationException(
                     $"Allocated memory ({node.AllocatedResources.MemoryBytes.Value / (1024 * 1024)} MB) " +
-                    $"is below currently reserved ({existingNode.ReservedResources.MemoryBytes / (1024 * 1024)} MB). " +
+                    $"is below currently used ({existingNode.UsedResources.MemoryBytes / (1024 * 1024)} MB). " +
                     $"Drain or delete VMs first, then re-register.");
             }
         }
 
         if (node.AllocatedResources?.ComputePoints != null && existingNode != null)
         {
-            if (existingNode.ReservedResources.ComputePoints > node.AllocatedResources.ComputePoints.Value)
+            if (existingNode.UsedResources.ComputePoints > node.AllocatedResources.ComputePoints.Value)
             {
                 throw new InvalidOperationException(
                     $"Allocated CPU points ({node.AllocatedResources.ComputePoints.Value}) " +
-                    $"below currently reserved ({existingNode.ReservedResources.ComputePoints}). " +
+                    $"below currently used ({existingNode.UsedResources.ComputePoints}). " +
                     $"Drain or delete VMs first, then re-register.");
             }
         }
 
         if (node.AllocatedResources?.StorageBytes != null && existingNode != null)
         {
-            if (existingNode.ReservedResources.StorageBytes > node.AllocatedResources.StorageBytes.Value)
+            if (existingNode.UsedResources.StorageBytes > node.AllocatedResources.StorageBytes.Value)
             {
                 throw new InvalidOperationException(
                     $"Allocated storage ({node.AllocatedResources.StorageBytes.Value / (1024 * 1024 * 1024)} GB) " +
-                    $"below currently reserved ({existingNode.ReservedResources.StorageBytes / (1024 * 1024 * 1024)} GB). " +
+                    $"below currently used ({existingNode.UsedResources.StorageBytes / (1024 * 1024 * 1024)} GB). " +
                     $"Drain or delete VMs first, then re-register.");
             }
         }
@@ -1229,18 +1236,32 @@ public class NodeService : INodeService
             }
         }
 
-        // Log discrepancy between node-reported and orchestrator-tracked resources
+        // =====================================================
+        // Compute UsedResources from heartbeat-reported VMs (ground truth).
+        // Includes system VMs, tenant VMs, stopped VMs — everything the
+        // node reports. See docs/RESOURCE-ALLOCATION.md §8.3.
+        // =====================================================
+        var reportedVms = heartbeat.ActiveVms?
+            .Where(v => !string.Equals(v.State, "Deleted", StringComparison.OrdinalIgnoreCase))
+            .ToList() ?? new List<HeartbeatVmInfo>();
+
+        node.UsedResources = new ResourceSnapshot
+        {
+            ComputePoints = reportedVms.Sum(v => v.ComputePointCost),
+            MemoryBytes = reportedVms.Sum(v => v.MemoryBytes ?? 0),
+            StorageBytes = reportedVms.Sum(v => v.DiskBytes ?? 0),
+        };
+
+        // Log discrepancy between node-reported free and orchestrator-tracked free
         var nodeReportedFree = heartbeat.AvailableResources;
         var orchestratorTrackedFree = new ResourceSnapshot
         {
-            ComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
-            MemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
-            StorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
+            ComputePoints = node.TotalResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints,
+            MemoryBytes = node.TotalResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes,
+            StorageBytes = node.TotalResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes
         };
 
-        var computePointDiff = Math.Abs(
-            (node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints) -
-            (nodeReportedFree.ComputePoints));
+        var computePointDiff = Math.Abs(orchestratorTrackedFree.ComputePoints - nodeReportedFree.ComputePoints);
         var memDiff = Math.Abs(nodeReportedFree.MemoryBytes - orchestratorTrackedFree.MemoryBytes);
 
         if (computePointDiff > 1 || memDiff > 1024)
@@ -1249,16 +1270,14 @@ public class NodeService : INodeService
 
             _logger.LogDebug(
                 "Resource tracking drift on node {NodeId}: " +
-                "Node reports {NodeComputePoints} point(s) / {NodeMem} MB free, " +
-                "Orchestrator tracks {OrcComputePoints} point(s) / {OrcMem}MB free " + 
-                "(Reserved: {ResComputePoints} point(s) / {ResMem} MB)",
+                "Node reports {NodePts} pt(s) / {NodeMem} MB free, " +
+                "Orchestrator tracks {OrcPts} pt(s) / {OrcMem} MB free " +
+                "(Used: {UsedPts} pt(s) / {UsedMem} MB, Holds: {ResPts} pt(s) / {ResMem} MB)",
                 nodeId,
-                nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes,
-                orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes,
-                node.ReservedResources.ComputePoints, node.ReservedResources.MemoryBytes);
-
-            // TO-DO: Implement resource reconciliation logic here
-            // For now, we just log the discrepancy and update the node based on the ehartbeat
+                nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes / (1024 * 1024),
+                orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes / (1024 * 1024),
+                node.UsedResources.ComputePoints, node.UsedResources.MemoryBytes / (1024 * 1024),
+                node.ReservedResources.ComputePoints, node.ReservedResources.MemoryBytes / (1024 * 1024));
         }
 
         // If node was offline and is now back online, reset downtime tracking
@@ -3343,9 +3362,9 @@ public class NodeService : INodeService
 
             IsOnline = node.Status == NodeStatus.Online,
             SchedulingReady = node.SchedulingReady,
-            AvailableComputePoints = node.TotalResources.ComputePoints - node.ReservedResources.ComputePoints,
-            AvailableMemoryBytes = node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes,
-            AvailableStorageBytes = node.TotalResources.StorageBytes - node.ReservedResources.StorageBytes
+            AvailableComputePoints = Math.Max(0, node.TotalResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
+            AvailableMemoryBytes = Math.Max(0, node.TotalResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes),
+            AvailableStorageBytes = Math.Max(0, node.TotalResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes)
         };
     }
 

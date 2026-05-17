@@ -76,8 +76,6 @@ public class Node
     /// </summary>
     public NodePerformanceEvaluation? PerformanceEvaluation { get; set; }
     public ResourceSnapshot TotalResources { get; set; } = new();
-    public ResourceSnapshot ReservedResources { get; set; } = new();
-
     /// <summary>
     /// Operator-configured resource allocation limits from the most recent registration.
     /// Null on nodes that pre-date this feature — the capacity calculator applies the
@@ -85,6 +83,14 @@ public class Node
     /// See docs/RESOURCE-ALLOCATION.md §3.
     /// </summary>
     public DeCloud.Shared.AllocatedResources? AllocatedResources { get; set; }
+    public ResourceSnapshot ReservedResources { get; set; } = new();
+    /// <summary>
+    /// Resource usage computed from heartbeat-reported VMs.
+    /// Recomputed every heartbeat cycle from the sum of all active VM specs.
+    /// This is the ground truth for what the node is actually running.
+    /// See docs/RESOURCE-ALLOCATION.md S8.3.
+    /// </summary>
+    public ResourceSnapshot UsedResources { get; set; } = new();
 
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
