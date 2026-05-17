@@ -232,8 +232,8 @@ public class NodeMarketplaceService : INodeMarketplaceService
                     > 1_000_000_000, // > 1 Gbps
                 CpuModel = node.HardwareInventory.Cpu.Model,
                 CpuCores = node.HardwareInventory.Cpu.PhysicalCores,
-                TotalMemoryBytes = node.HardwareInventory.Memory.TotalBytes,
-                TotalStorageBytes = node.HardwareInventory.Storage.Sum(s => s.TotalBytes)
+                TotalMemoryBytes = node.TotalResources.MemoryBytes,
+                TotalStorageBytes = node.TotalResources.StorageBytes
             },
             
             UptimePercentage = node.UptimePercentage,
