@@ -1090,19 +1090,15 @@ public class DataStore
         var vms = GetActiveVMs().ToList();
 
         // ========================================
-        // CALCULATE ACTUAL RESOURCE USAGE FROM VMs
-        // This provides self-healing against reservation drift
+        // RESOURCE USAGE FROM NODE UsedResources (heartbeat ground truth)
+        // Includes system VMs + tenant VMs — no blind spots.
+        // See docs/RESOURCE-ALLOCATION.md §8.3.
         // ========================================
-        var activeVms = vms.Where(v =>
-            v.Status == VmStatus.Running ||
-            v.Status == VmStatus.Provisioning).ToList();
-
         var totalComputePoints = onlineNodes.Sum(n => n.TotalResources.ComputePoints);
-        var actualUsedPoints = activeVms.Sum(v => v.Spec.ComputePointCost);
+        var actualUsedPoints = onlineNodes.Sum(n => n.UsedResources.ComputePoints);
 
-        var actualUsedMemory = activeVms.Sum(v => (long)v.Spec.MemoryBytes);
-        var actualUsedStorage = activeVms.Sum(v => (long)v.Spec.DiskBytes);
-        var actualUsedCores = activeVms.Sum(v => v.Spec.VirtualCpuCores);
+        var actualUsedMemory = onlineNodes.Sum(n => n.UsedResources.MemoryBytes);
+        var actualUsedStorage = onlineNodes.Sum(n => n.UsedResources.StorageBytes);
 
         var stats = new SystemStats
         {
@@ -1118,21 +1114,21 @@ public class DataStore
             StoppedVms = vms.Count(v => v.Status == VmStatus.Stopped),
 
             // ========================================
-            // POINT-BASED CPU STATISTICS (SELF-HEALING)
+            // POINT-BASED CPU STATISTICS (from node UsedResources)
             // ========================================
             TotalComputePoints = totalComputePoints,
-            UsedComputePoints = actualUsedPoints,  // From actual VMs
+            UsedComputePoints = actualUsedPoints,
             AvailableComputePoints = totalComputePoints - actualUsedPoints,
 
             // ========================================
-            // MEMORY & STORAGE STATISTICS (SELF-HEALING)
+            // MEMORY & STORAGE STATISTICS (from node UsedResources)
             // ========================================
             TotalMemoryBytes = onlineNodes.Sum(n => n.TotalResources.MemoryBytes),
-            UsedMemoryBytes = actualUsedMemory,  // From actual VMs
+            UsedMemoryBytes = actualUsedMemory,
             AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory),
 
             TotalStorageBytes = onlineNodes.Sum(n => n.TotalResources.StorageBytes),
-            UsedStorageBytes = actualUsedStorage,  // From actual VMs
+            UsedStorageBytes = actualUsedStorage,
             AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage),
         };
 
