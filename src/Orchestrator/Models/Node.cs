@@ -693,6 +693,7 @@ public record NodeHeartbeat(
     /// Null on agents that pre-date P9.
     /// </summary>
     Dictionary<string, int>? SystemTemplateVersions = null,
+    string? AgentVersion = null,
     /// <summary>
     /// SHA-256 hash of the node's local settings (wallet, country, region, zone).
     /// Compared against the orchestrator's stored registration state to detect

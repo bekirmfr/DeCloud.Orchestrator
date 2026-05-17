@@ -1112,6 +1112,11 @@ public class NodeService : INodeService
         node.LastHeartbeat = DateTime.UtcNow;
         node.LatestMetrics = heartbeat.Metrics;
         node.LastSeenAt = DateTime.UtcNow;
+        if (!string.IsNullOrEmpty(heartbeat.AgentVersion))
+        {
+            node.AgentVersion = heartbeat.AgentVersion;
+        }
+
         // Persist the reported hash so login can gate on it
         if (!string.IsNullOrEmpty(heartbeat.SettingsHash))
         {
