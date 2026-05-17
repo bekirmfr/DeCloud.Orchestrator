@@ -220,6 +220,8 @@ public sealed partial class SystemVmTemplateSeeder
                 VirtualCpuCores = 1,
                 MemoryBytes = 512L * 1024 * 1024,
                 DiskBytes = 2L * 1024 * 1024 * 1024,
+                QualityTier = QualityTier.Burstable,
+                ComputePointCost = 1,
                 ImageId = DhtVmSpec.Standard.ImageId,
             },
             CreatedAt = DateTime.UtcNow,
@@ -340,6 +342,8 @@ public sealed partial class SystemVmTemplateSeeder
                 VirtualCpuCores = 1,
                 MemoryBytes = 512L * 1024 * 1024,
                 DiskBytes = 10L * 1024 * 1024 * 1024,
+                QualityTier = QualityTier.Burstable,
+                ComputePointCost = 1,
                 ImageId = BlockStoreVmSpec.Create(0).ImageId,
             },
 
@@ -431,6 +435,8 @@ public sealed partial class SystemVmTemplateSeeder
             VirtualCpuCores = 1,
             MemoryBytes = 256L * 1024 * 1024,
             DiskBytes = 2L * 1024 * 1024 * 1024,
+            QualityTier = QualityTier.Burstable,
+            ComputePointCost = 1,
             ImageId = RelayVmSpec.Basic.ImageId,
         },
 

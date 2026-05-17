@@ -1039,6 +1039,8 @@ public class NodeService : INodeService
             VirtualCpuCores = template.RecommendedSpec?.VirtualCpuCores ?? 1,
             MemoryBytes = template.RecommendedSpec?.MemoryBytes ?? (512L * 1024 * 1024),
             DiskBytes = template.RecommendedSpec?.DiskBytes ?? (2L * 1024 * 1024 * 1024),
+            QualityTier = (int)(template.RecommendedSpec?.QualityTier ?? QualityTier.Burstable),
+            ComputePointCost = template.RecommendedSpec?.ComputePointCost ?? 1,
             BaseImageUrl = baseImageUrl,
             BaseImageHash = string.Empty,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
