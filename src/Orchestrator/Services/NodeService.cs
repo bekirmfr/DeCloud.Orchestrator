@@ -357,7 +357,60 @@ public class NodeService : INodeService
                 $"Node performance below minimum requirements: {node.PerformanceEvaluation.RejectionReason}");
         }
 
+        // =====================================================
+        // STEP 5.5: Validate and store operator allocation limits
+        // See docs/RESOURCE-ALLOCATION.md §5.2, §8.4
+        // =====================================================
+        node.AllocatedResources = request.AllocatedResources;
+
+        if (node.AllocatedResources?.MemoryBytes != null)
+        {
+            var physicalRam = request.HardwareInventory.Memory.TotalBytes;
+            if (node.AllocatedResources.MemoryBytes.Value > physicalRam)
+            {
+                _logger.LogWarning(
+                    "Node {NodeId}: allocated memory ({AllocMb} MB) exceeds physical RAM ({PhysMb} MB), capping",
+                    nodeId,
+                    node.AllocatedResources.MemoryBytes.Value / (1024 * 1024),
+                    physicalRam / (1024 * 1024));
+                node.AllocatedResources.MemoryBytes = physicalRam;
+            }
+
+            // Re-registration: reject if allocation is below existing reservations
+            if (existingNode?.ReservedResources.MemoryBytes > node.AllocatedResources.MemoryBytes.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Allocated memory ({node.AllocatedResources.MemoryBytes.Value / (1024 * 1024)} MB) " +
+                    $"is below currently reserved ({existingNode.ReservedResources.MemoryBytes / (1024 * 1024)} MB). " +
+                    $"Drain or delete VMs first, then re-register.");
+            }
+        }
+
+        if (node.AllocatedResources?.ComputePoints != null && existingNode != null)
+        {
+            if (existingNode.ReservedResources.ComputePoints > node.AllocatedResources.ComputePoints.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Allocated CPU points ({node.AllocatedResources.ComputePoints.Value}) " +
+                    $"below currently reserved ({existingNode.ReservedResources.ComputePoints}). " +
+                    $"Drain or delete VMs first, then re-register.");
+            }
+        }
+
+        if (node.AllocatedResources?.StorageBytes != null && existingNode != null)
+        {
+            if (existingNode.ReservedResources.StorageBytes > node.AllocatedResources.StorageBytes.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Allocated storage ({node.AllocatedResources.StorageBytes.Value / (1024 * 1024 * 1024)} GB) " +
+                    $"below currently reserved ({existingNode.ReservedResources.StorageBytes / (1024 * 1024 * 1024)} GB). " +
+                    $"Drain or delete VMs first, then re-register.");
+            }
+        }
+
         // Calculate total capacity using NodeCapacityCalculator
+        // The calculator now reads node.AllocatedResources and applies
+        // operator limits with platform defaults for null fields.
         var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
         var capacityCalculator = new NodeCapacityCalculator(
             capacityLogger,

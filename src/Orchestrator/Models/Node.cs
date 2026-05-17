@@ -78,6 +78,14 @@ public class Node
     public ResourceSnapshot TotalResources { get; set; } = new();
     public ResourceSnapshot ReservedResources { get; set; } = new();
 
+    /// <summary>
+    /// Operator-configured resource allocation limits from the most recent registration.
+    /// Null on nodes that pre-date this feature — the capacity calculator applies the
+    /// platform default (90%) when this is null.
+    /// See docs/RESOURCE-ALLOCATION.md §3.
+    /// </summary>
+    public DeCloud.Shared.AllocatedResources? AllocatedResources { get; set; }
+
     // State
     public NodeStatus Status { get; set; } = NodeStatus.Offline;
     /// <summary>
@@ -533,6 +541,13 @@ public class NodeRegistrationRequest
     /// Absent or zero-valued entries mean no template stored for that role.
     /// </summary>
     public Dictionary<string, int>? SystemTemplateVersions { get; set; }
+
+    /// <summary>
+    /// Operator-configured resource allocation limits, resolved to absolute
+    /// values by the node agent. Null fields or null object = platform default (90%).
+    /// See docs/RESOURCE-ALLOCATION.md §5.2.
+    /// </summary>
+    public DeCloud.Shared.AllocatedResources? AllocatedResources { get; set; }
 }
 
 public class NodeDeregisterRequest

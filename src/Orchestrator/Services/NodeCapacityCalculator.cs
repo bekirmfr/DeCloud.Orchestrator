@@ -45,7 +45,7 @@ public class NodeCapacityCalculator
 
         // Load current configuration
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
-        var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
+        var rawPhysicalMemory = node.HardwareInventory.Memory.TotalBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
 
         // Get Burstable tier (maximum overcommit)
@@ -55,21 +55,35 @@ public class NodeCapacityCalculator
         // CPU CAPACITY (using Burstable overcommit)
         // ========================================
         var basePointsPerCore = evaluation.PointsPerCore;
-        var totalComputePoints = (int)(
+        var hardwareMaxComputePoints = (int)(
             physicalCores *
             basePointsPerCore *
             config.BaselineOvercommitRatio);
 
+        // Apply operator CPU limit (Phase 2 — for now use hardware max)
+        var totalComputePoints = node.AllocatedResources?.ComputePoints != null
+            ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareMaxComputePoints)
+            : hardwareMaxComputePoints;
+
         // ========================================
         // MEMORY CAPACITY (NO overcommit - physical only)
+        // Operator limit replaces the volatile AllocatableBytes.
+        // Null = platform default (90% of physical RAM).
+        // See docs/RESOURCE-ALLOCATION.md §5.3.
         // ========================================
-        var totalMemoryBytes = physicalMemory;
+        var totalMemoryBytes = node.AllocatedResources?.MemoryBytes != null
+            ? Math.Min(node.AllocatedResources.MemoryBytes.Value, rawPhysicalMemory)
+            : (long)(rawPhysicalMemory * DeCloud.Shared.AllocatedResources.DefaultPercent);
 
         // ========================================
         // STORAGE CAPACITY (using Burstable overcommit)
+        // Operator limit is pre-overcommit; overcommit applied on top.
         // ========================================
+        var operatorStorage = node.AllocatedResources?.StorageBytes != null
+            ? Math.Min(node.AllocatedResources.StorageBytes.Value, physicalStorage)
+            : (long)(physicalStorage * DeCloud.Shared.AllocatedResources.DefaultPercent);
         var totalStorageBytes = (long)(
-            physicalStorage *
+            operatorStorage *
             burstableTier.StorageOvercommitRatio);
 
         var capacity = new NodeTotalCapacity
@@ -143,7 +157,7 @@ public class NodeCapacityCalculator
             };
         }
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
-        var physicalMemory = node.HardwareInventory.Memory.AllocatableBytes;
+        var rawPhysicalMemory = node.HardwareInventory.Memory.TotalBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
 
         var basePointsPerCore = evaluation.PointsPerCore;
@@ -151,21 +165,31 @@ public class NodeCapacityCalculator
         // ========================================
         // TIER-SPECIFIC CPU CAPACITY
         // ========================================
-        var tierComputePoints = (int)(
+        var hardwareTierPoints = (int)(
             physicalCores *
             basePointsPerCore *
             tierConfig.CpuOvercommitRatio);
 
-        // ========================================
-        // TIER-SPECIFIC MEMORY (always physical)
-        // ========================================
-        var tierMemoryBytes = physicalMemory;
+        // Apply operator CPU limit (cap, never inflate)
+        var tierComputePoints = node.AllocatedResources?.ComputePoints != null
+            ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareTierPoints)
+            : hardwareTierPoints;
 
         // ========================================
-        // TIER-SPECIFIC STORAGE
+        // TIER-SPECIFIC MEMORY (always physical, operator-bounded)
         // ========================================
+        var tierMemoryBytes = node.AllocatedResources?.MemoryBytes != null
+            ? Math.Min(node.AllocatedResources.MemoryBytes.Value, rawPhysicalMemory)
+            : (long)(rawPhysicalMemory * DeCloud.Shared.AllocatedResources.DefaultPercent);
+
+        // ========================================
+        // TIER-SPECIFIC STORAGE (operator-bounded, then overcommit)
+        // ========================================
+        var operatorStorage = node.AllocatedResources?.StorageBytes != null
+            ? Math.Min(node.AllocatedResources.StorageBytes.Value, physicalStorage)
+            : (long)(physicalStorage * DeCloud.Shared.AllocatedResources.DefaultPercent);
         var tierStorageBytes = (long)(
-            physicalStorage *
+            operatorStorage *
             tierConfig.StorageOvercommitRatio);
 
         return new TierSpecificCapacity
