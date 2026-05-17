@@ -93,7 +93,7 @@ public class NodeCapacityCalculator
 
             // Physical resources
             PhysicalCores = physicalCores,
-            PhysicalMemoryBytes = physicalMemory,
+            PhysicalMemoryBytes = rawPhysicalMemory,
             PhysicalStorageBytes = physicalStorage,
 
             // Base performance
