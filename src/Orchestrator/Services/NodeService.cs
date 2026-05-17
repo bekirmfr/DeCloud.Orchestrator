@@ -995,6 +995,7 @@ public class NodeService : INodeService
                 Protocol = p.Protocol,
                 CheckType = p.ReadinessCheck?.Strategy.ToString() ?? "CloudInitDone",
                 HttpPath = p.ReadinessCheck?.HttpPath,
+                LivenessCheck = p.ReadinessCheck?.LivenessCheck ?? false,
                 TimeoutSeconds = p.ReadinessCheck?.TimeoutSeconds ?? 300,
             }).Prepend(new SystemVmServiceDeclaration
             {

@@ -145,78 +145,76 @@ public sealed partial class SystemVmTemplateSeeder
             CloudInitTemplate = await FetchCloudInitAsync("dht", ct),
             Variables = BuildDhtVariables(),
             Artifacts = new List<TemplateArtifact>
-        {
-            // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
-            Artifact("dht-node", "DHT node binary (libp2p Kademlia)",
-                ArtifactType.Binary, arch: "amd64",
-                sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
-                sourceUrl: amd64.Url),
+            {
+                // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
+                Artifact("dht-node", "DHT node binary (libp2p Kademlia)",
+                    ArtifactType.Binary, arch: "amd64",
+                    sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
+                    sourceUrl: amd64.Url),
 
-            Artifact("dht-node", "DHT node binary — ARM64",
-                ArtifactType.Binary, arch: "arm64",
-                sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
-                sourceUrl: arm64.Url),
+                Artifact("dht-node", "DHT node binary — ARM64",
+                    ArtifactType.Binary, arch: "arm64",
+                    sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
+                    sourceUrl: arm64.Url),
 
-            // ── Shared scripts (data: URI inline) ────────────────────────
-            Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
-                ArtifactType.Script,
-                sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
+                // ── Shared scripts (data: URI inline) ────────────────────────
+                Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
+                    ArtifactType.Script,
+                    sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
 
-            Artifact("wg-config-fetch", "WireGuard config fetch script",
-                ArtifactType.Script,
-                sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
+                Artifact("wg-config-fetch", "WireGuard config fetch script",
+                    ArtifactType.Script,
+                    sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
 
-            // ── DHT-specific scripts (data: URI inline) ───────────────────
-            Artifact("dht-health-check", "DHT health check script",
-                ArtifactType.Script,
-                sha256: DhtHealthCheckSha256, sourceUrl: DhtHealthCheckDataUri),
+                // ── DHT-specific scripts (data: URI inline) ───────────────────
+                Artifact("dht-health-check", "DHT health check script",
+                    ArtifactType.Script,
+                    sha256: DhtHealthCheckSha256, sourceUrl: DhtHealthCheckDataUri),
 
-            Artifact("dht-notify-ready", "DHT ready callback script",
-                ArtifactType.Script,
-                sha256: DhtNotifyReadySha256, sourceUrl: DhtNotifyReadyDataUri),
+                Artifact("dht-notify-ready", "DHT ready callback script",
+                    ArtifactType.Script,
+                    sha256: DhtNotifyReadySha256, sourceUrl: DhtNotifyReadyDataUri),
 
-            Artifact("dht-bootstrap-poll", "DHT bootstrap peer polling script",
-                ArtifactType.Script,
-                sha256: DhtBootstrapPollSha256, sourceUrl: DhtBootstrapPollDataUri),
+                Artifact("dht-bootstrap-poll", "DHT bootstrap peer polling script",
+                    ArtifactType.Script,
+                    sha256: DhtBootstrapPollSha256, sourceUrl: DhtBootstrapPollDataUri),
 
-            // ── Dashboard (data: URI inline) ──────────────────────────────
-            Artifact("dht-dashboard", "DHT dashboard server (Python)",
-                ArtifactType.WebAsset,
-                sha256: DhtDashboardPySha256, sourceUrl: DhtDashboardPyDataUri),
+                // ── Dashboard (data: URI inline) ──────────────────────────────
+                Artifact("dht-dashboard", "DHT dashboard server (Python)",
+                    ArtifactType.WebAsset,
+                    sha256: DhtDashboardPySha256, sourceUrl: DhtDashboardPyDataUri),
 
-            Artifact("dht-dashboard-html", "DHT dashboard HTML",
-                ArtifactType.WebAsset,
-                sha256: DhtDashboardHtmlSha256, sourceUrl: DhtDashboardHtmlDataUri),
+                Artifact("dht-dashboard-html", "DHT dashboard HTML",
+                    ArtifactType.WebAsset,
+                    sha256: DhtDashboardHtmlSha256, sourceUrl: DhtDashboardHtmlDataUri),
 
-            Artifact("dht-dashboard-css", "DHT dashboard CSS",
-                ArtifactType.WebAsset,
-                sha256: DhtDashboardCssSha256, sourceUrl: DhtDashboardCssDataUri),
+                Artifact("dht-dashboard-css", "DHT dashboard CSS",
+                    ArtifactType.WebAsset,
+                    sha256: DhtDashboardCssSha256, sourceUrl: DhtDashboardCssDataUri),
 
-            Artifact("dht-dashboard-js", "DHT dashboard JS",
-                ArtifactType.WebAsset,
-                sha256: DhtDashboardJsSha256, sourceUrl: DhtDashboardJsDataUri),
+                Artifact("dht-dashboard-js", "DHT dashboard JS",
+                    ArtifactType.WebAsset,
+                    sha256: DhtDashboardJsSha256, sourceUrl: DhtDashboardJsDataUri),
 
-            // ── Shared watcher artifacts ─────────────────────────────────────
-            Artifact("decloud-env-watcher", "In-VM environment watcher script",
-                ArtifactType.Script,
-                sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
-            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
-                ArtifactType.Config,
-                sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
-            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
-                ArtifactType.Config,
-                sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
-        },
-
+                // ── Shared watcher artifacts ─────────────────────────────────────
+                Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                    ArtifactType.Script,
+                    sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
+                Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                    ArtifactType.Config,
+                    sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
+                Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                    ArtifactType.Config,
+                    sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
+            },
             ExposedPorts = new List<TemplatePort>
-        {
-            new() { Port = 5080, Protocol = "http", Description = "DHT API",
-                ReadinessCheck = new ServiceCheck { Strategy = CheckStrategy.HttpGet, HttpPath = "/health", TimeoutSeconds = 300 } },
-            new() { Port = 5080, Protocol = "http", Description = "DHT mesh health",
-                ReadinessCheck = new ServiceCheck { Strategy = CheckStrategy.HttpGet, HttpPath = "/health/mesh", TimeoutSeconds = 600 } },
-            new() { Port = 4001, Protocol = "tcp", Description = "DHT libp2p", IsPublic = true },
-        },
-
+            {
+                new() { Port = 5080, Protocol = "http", Description = "DHT API",
+                    ReadinessCheck = new ServiceCheck { Strategy = CheckStrategy.HttpGet, HttpPath = "/health", LivenessCheck = true, TimeoutSeconds = 300 } },
+                new() { Port = 5080, Protocol = "http", Description = "DHT mesh health",
+                    ReadinessCheck = new ServiceCheck { Strategy = CheckStrategy.HttpGet, HttpPath = "/health/mesh", TimeoutSeconds = 600 } },
+                new() { Port = 4001, Protocol = "tcp", Description = "DHT libp2p", IsPublic = true },
+            },
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 1,
@@ -224,7 +222,6 @@ public sealed partial class SystemVmTemplateSeeder
                 DiskBytes = 2L * 1024 * 1024 * 1024,
                 ImageId = DhtVmSpec.Standard.ImageId,
             },
-
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
@@ -252,91 +249,91 @@ public sealed partial class SystemVmTemplateSeeder
             CloudInitTemplate = await FetchCloudInitAsync("blockstore", ct),
             Variables = BuildBlockStoreVariables(),
             Artifacts = new List<TemplateArtifact>
-        {
-            // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
-            Artifact("blockstore-node", "BlockStore node binary",
-                ArtifactType.Binary, arch: "amd64",
-                sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
-                sourceUrl: amd64.Url),
+            {
+                // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
+                Artifact("blockstore-node", "BlockStore node binary",
+                    ArtifactType.Binary, arch: "amd64",
+                    sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
+                    sourceUrl: amd64.Url),
 
-            Artifact("blockstore-node", "BlockStore node binary — ARM64",
-                ArtifactType.Binary, arch: "arm64",
-                sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
-                sourceUrl: arm64.Url),
+                Artifact("blockstore-node", "BlockStore node binary — ARM64",
+                    ArtifactType.Binary, arch: "arm64",
+                    sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
+                    sourceUrl: arm64.Url),
 
-            // ── Shared scripts (data: URI inline) ────────────────────────
-            Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
-                ArtifactType.Script,
-                sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
+                // ── Shared scripts (data: URI inline) ────────────────────────
+                Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
+                    ArtifactType.Script,
+                    sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
 
-            Artifact("wg-config-fetch", "WireGuard config fetch script",
-                ArtifactType.Script,
-                sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
+                Artifact("wg-config-fetch", "WireGuard config fetch script",
+                    ArtifactType.Script,
+                    sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
 
-            // ── BlockStore-specific scripts (data: URI inline) ───────────────────
-            Artifact("blockstore-health-check", "BlockStore health check script",
-                ArtifactType.Script,
-                sha256: BlockstoreHealthCheckSha256, sourceUrl: BlockstoreHealthCheckDataUri),
+                // ── BlockStore-specific scripts (data: URI inline) ───────────────────
+                Artifact("blockstore-health-check", "BlockStore health check script",
+                    ArtifactType.Script,
+                    sha256: BlockstoreHealthCheckSha256, sourceUrl: BlockstoreHealthCheckDataUri),
 
-            Artifact("blockstore-notify-ready", "BlockStore ready callback script",
-                ArtifactType.Script,
-                sha256: BlockstoreNotifyReadySha256, sourceUrl: BlockstoreNotifyReadyDataUri),
+                Artifact("blockstore-notify-ready", "BlockStore ready callback script",
+                    ArtifactType.Script,
+                    sha256: BlockstoreNotifyReadySha256, sourceUrl: BlockstoreNotifyReadyDataUri),
 
-            Artifact("blockstore-bootstrap-poll", "BlockStore bootstrap peer polling script",
-                ArtifactType.Script,
-                sha256: BlockstoreBootstrapPollSha256, sourceUrl: BlockstoreBootstrapPollDataUri),
+                Artifact("blockstore-bootstrap-poll", "BlockStore bootstrap peer polling script",
+                    ArtifactType.Script,
+                    sha256: BlockstoreBootstrapPollSha256, sourceUrl: BlockstoreBootstrapPollDataUri),
 
-            // ── Dashboard (data: URI inline) ──────────────────────────────
-            Artifact("blockstore-dashboard", "BlockStore dashboard server (Python)",
-                ArtifactType.WebAsset,
-                sha256: BlockstoreDashboardPySha256, sourceUrl: BlockstoreDashboardPyDataUri),
+                // ── Dashboard (data: URI inline) ──────────────────────────────
+                Artifact("blockstore-dashboard", "BlockStore dashboard server (Python)",
+                    ArtifactType.WebAsset,
+                    sha256: BlockstoreDashboardPySha256, sourceUrl: BlockstoreDashboardPyDataUri),
 
-            Artifact("blockstore-dashboard-html", "BlockStore dashboard HTML",
-                ArtifactType.WebAsset,
-                sha256: BlockstoreDashboardHtmlSha256, sourceUrl: BlockstoreDashboardHtmlDataUri),
+                Artifact("blockstore-dashboard-html", "BlockStore dashboard HTML",
+                    ArtifactType.WebAsset,
+                    sha256: BlockstoreDashboardHtmlSha256, sourceUrl: BlockstoreDashboardHtmlDataUri),
 
-            Artifact("blockstore-dashboard-css", "BlockStore dashboard CSS",
-                ArtifactType.WebAsset,
-                sha256: BlockstoreDashboardCssSha256, sourceUrl: BlockstoreDashboardCssDataUri),
+                Artifact("blockstore-dashboard-css", "BlockStore dashboard CSS",
+                    ArtifactType.WebAsset,
+                    sha256: BlockstoreDashboardCssSha256, sourceUrl: BlockstoreDashboardCssDataUri),
 
-            Artifact("blockstore-dashboard-js", "BlockStore dashboard JS",
-                ArtifactType.WebAsset,
-                sha256: BlockstoreDashboardJsSha256, sourceUrl: BlockstoreDashboardJsDataUri),
+                Artifact("blockstore-dashboard-js", "BlockStore dashboard JS",
+                    ArtifactType.WebAsset,
+                    sha256: BlockstoreDashboardJsSha256, sourceUrl: BlockstoreDashboardJsDataUri),
 
-            // ── Shared watcher artifacts ─────────────────────────────────────
-            Artifact("decloud-env-watcher", "In-VM environment watcher script",
-                ArtifactType.Script,
-                sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
-            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
-                ArtifactType.Config,
-                sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
-            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
-                ArtifactType.Config,
-                sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
-        },
+                // ── Shared watcher artifacts ─────────────────────────────────────
+                Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                    ArtifactType.Script,
+                    sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
+                Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                    ArtifactType.Config,
+                    sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
+                Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                    ArtifactType.Config,
+                    sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
+            },
 
             ExposedPorts = new List<TemplatePort>
-        {
-            new() { Port =
-                5090, Protocol =
-                "http", Description =
-                "BlockStore API",
-                ReadinessCheck = new ServiceCheck {
-                    Strategy = CheckStrategy.HttpGet,
-                    HttpPath = "/health",
-                    TimeoutSeconds = 300 } },
-            new() { Port = 5090,
-                Protocol = "http",
-                Description = "BlockStore mesh health",
-                ReadinessCheck = new ServiceCheck {
-                    Strategy = CheckStrategy.HttpGet,
-                    HttpPath = "/health/mesh",
-                    TimeoutSeconds = 600 } },
-            new() { Port = 5001,
-                Protocol = "tcp",
-                Description = "BlockStore bitswap",
-                IsPublic = true },
-        },
+            {
+                new() { Port = 5090,
+                    Protocol = "http",
+                    Description = "BlockStore API",
+                    ReadinessCheck = new ServiceCheck {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health",
+                        LivenessCheck = true,
+                        TimeoutSeconds = 300 } },
+                new() { Port = 5090,
+                    Protocol = "http",
+                    Description = "BlockStore mesh health",
+                    ReadinessCheck = new ServiceCheck {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health/mesh",
+                        TimeoutSeconds = 600 } },
+                new() { Port = 5001,
+                    Protocol = "tcp",
+                    Description = "BlockStore bitswap",
+                    IsPublic = true },
+            },
 
             RecommendedSpec = new VmSpec
             {

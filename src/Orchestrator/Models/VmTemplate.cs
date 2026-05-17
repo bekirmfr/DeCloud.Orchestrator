@@ -415,6 +415,14 @@ public class ServiceCheck
     /// Default: 300 (5 minutes).
     /// </summary>
     public int TimeoutSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// When true, the node agent re-checks this service periodically after
+    /// it reaches Ready. A failed re-check reverts Ready → Failed.
+    /// Use for services whose health endpoint carries pre-crash diagnostics
+    /// (memory pressure, OOM count) that should be captured continuously.
+    /// </summary>
+    public bool LivenessCheck { get; set; } = false;
 }
 
 /// <summary>

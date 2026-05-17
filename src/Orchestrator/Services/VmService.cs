@@ -1335,6 +1335,7 @@ public class VmService : IVmService
                 };
                 service.HttpPath = port.ReadinessCheck.HttpPath;
                 service.ExecCommand = port.ReadinessCheck.ExecCommand;
+                service.LivenessCheck = port.ReadinessCheck.LivenessCheck;
                 service.TimeoutSeconds = port.ReadinessCheck.TimeoutSeconds;
             }
             else
