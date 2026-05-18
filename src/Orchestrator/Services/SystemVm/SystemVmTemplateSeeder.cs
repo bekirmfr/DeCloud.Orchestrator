@@ -43,7 +43,7 @@ public sealed partial class SystemVmTemplateSeeder
     /// Everything else — SHA256, size, URL — is resolved from the
     /// cosign-verified manifest at seed time.
     /// </summary>
-    private const string BinaryReleaseTag = "binaries/v1.1.1";
+    private const string BinaryReleaseTag = "binaries/v1.0.0";
 
     /// <summary>
     /// Git ref (branch, tag, or commit SHA) used to fetch cloud-init YAML files
