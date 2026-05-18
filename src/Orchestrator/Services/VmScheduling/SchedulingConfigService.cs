@@ -401,8 +401,8 @@ public class SchedulingConfigService : ISchedulingConfigService
             },
             Limits = new SchedulingLimits
             {
-                MaxUtilizationPercent = 90.0,
-                MinFreeMemoryMb = 512,
+                MaxUtilizationPercent = 100.0,
+                MinFreeMemoryMb = 256,
                 MaxLoadAverage = 8.0,
                 PreferLocalRegion = true
             },
