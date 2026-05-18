@@ -161,9 +161,14 @@ public class TierConfiguration
 public class SchedulingLimits
 {
     /// <summary>
-    /// Safety buffer - Don't schedule if node would exceed this utilization
+    /// Maximum utilization threshold for scheduling.
+    /// With operator-controlled allocation limits (docs/RESOURCE-ALLOCATION.md),
+    /// the operator's allocation IS the safety boundary — the 10% holdback is
+    /// already baked into TotalResources. Default 100% means "fill to the
+    /// operator's stated capacity." Override below 100% only if additional
+    /// per-deployment headroom is needed beyond the operator's allocation.
     /// </summary>
-    public double MaxUtilizationPercent { get; set; } = 90.0;
+    public double MaxUtilizationPercent { get; set; } = 100.0;
 
     /// <summary>
     /// Minimum free memory to keep on node (in MB)
