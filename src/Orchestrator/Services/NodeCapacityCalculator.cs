@@ -60,10 +60,14 @@ public class NodeCapacityCalculator
             basePointsPerCore *
             config.BaselineOvercommitRatio);
 
-        // Apply operator CPU limit (Phase 2 — for now use hardware max)
+        // Apply operator CPU limit — absolute points takes priority, then
+        // percent of evaluated points, then platform default (90%).
         var totalComputePoints = node.AllocatedResources?.ComputePoints != null
             ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareMaxComputePoints)
-            : hardwareMaxComputePoints;
+            : node.AllocatedResources?.ComputePointsPercent != null
+                ? (int)Math.Floor(hardwareMaxComputePoints
+                      * Math.Clamp(node.AllocatedResources.ComputePointsPercent.Value, 1, 100) / 100.0)
+                : (int)(hardwareMaxComputePoints * DeCloud.Shared.AllocatedResources.DefaultPercent);
 
         // ========================================
         // MEMORY CAPACITY (NO overcommit - physical only)
@@ -170,10 +174,12 @@ public class NodeCapacityCalculator
             basePointsPerCore *
             tierConfig.CpuOvercommitRatio);
 
-        // Apply operator CPU limit (cap, never inflate)
         var tierComputePoints = node.AllocatedResources?.ComputePoints != null
             ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareTierPoints)
-            : hardwareTierPoints;
+            : node.AllocatedResources?.ComputePointsPercent != null
+                ? (int)Math.Floor(hardwareTierPoints
+                      * Math.Clamp(node.AllocatedResources.ComputePointsPercent.Value, 1, 100) / 100.0)
+                : hardwareTierPoints;
 
         // ========================================
         // TIER-SPECIFIC MEMORY (always physical, operator-bounded)
