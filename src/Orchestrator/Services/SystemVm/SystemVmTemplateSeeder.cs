@@ -512,6 +512,26 @@ public sealed partial class SystemVmTemplateSeeder
                 .OrderBy(a => a.Name).ThenBy(a => a.Architecture)
                 .Select(a => new { a.Name, a.Sha256, a.SourceUrl, a.SizeBytes, a.Type, a.Architecture }),
             template.DefaultEnvironmentVariables,
+            // Resource spec included so changes to QualityTier or ComputePointCost
+            // trigger a revision bump and node-side redeployment.
+            // Resource specs included so changes to either trigger a revision
+            // bump and node-side redeployment.
+            MinimumSpec = template.MinimumSpec == null ? null : new
+            {
+                template.MinimumSpec.VirtualCpuCores,
+                template.MinimumSpec.MemoryBytes,
+                template.MinimumSpec.DiskBytes,
+                template.MinimumSpec.QualityTier,
+                template.MinimumSpec.ComputePointCost,
+            },
+            RecommendedSpec = template.RecommendedSpec == null ? null : new
+            {
+                template.RecommendedSpec.VirtualCpuCores,
+                template.RecommendedSpec.MemoryBytes,
+                template.RecommendedSpec.DiskBytes,
+                template.RecommendedSpec.QualityTier,
+                template.RecommendedSpec.ComputePointCost,
+            },
         };
 
         var json = JsonSerializer.Serialize(content,
