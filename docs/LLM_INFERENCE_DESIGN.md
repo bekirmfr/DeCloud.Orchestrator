@@ -1,11 +1,6 @@
 # DeCloud Distributed LLM Inference — Design Document
 
 **Date:** 2026-05-19
-**Revised:** 2026-05-19 — Economic model updated throughout: base rates
-replaced by revenue-distribution pools (§2, §7). Operator config floors
-reframed as realised-earnings minimums (§4). Replication and routing signal
-language updated to match pool model (§3.3, §8.1, §8.2). Open questions
-renumbered; Q1 (rate discovery) removed as resolved by pool model (§15).
 **Status:** Design — Pre-implementation
 **Authors:** BMA + Claude AI assistant
 
@@ -22,10 +17,8 @@ that exceed any single consumer GPU's VRAM capacity.
 This document specifies a three-layer distributed inference system built on
 top of those primitives. The system enables a 200 GB+ model to be served
 across a voluntary network of consumer GPU providers, governed by open-market
-economics, with all inference revenue distributed across two pools:
-**availability** (zone-wide VRAM commitment share) and **compute** (per-route
-token-serving share). There are no platform-set base rates — revenue exists
-only when users pay, and flows entirely to operators.
+economics, with inference costs distributed across two independent markets:
+**availability** (VRAM-hour commitments) and **compute** (per-token GPU work).
 
 No existing DeCloud primitive is redesigned. The system is an optional
 participation layer — node operators opt in with a configurable GPU fraction.
@@ -60,35 +53,35 @@ centralized providers cannot separate. DeCloud exposes them independently.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1 — Availability Pool                                │
+│  Layer 1 — Availability Market                              │
 │                                                             │
 │  Operators commit GPU VRAM fraction to host model layers.   │
-│  Earns: a share of zone inference revenue proportional to   │
-│  committed VRAM. No traffic = no revenue. No base rates.    │
+│  Paid for: committed VRAM-hours, regardless of traffic.     │
+│  Price: supply/demand per zone per model. Voluntary opt-in. │
 └─────────────────────────────────────────────────────────────┘
         ↓ supplies capacity to
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2 — Compute Pool                                     │
+│  Layer 2 — Compute Market                                   │
 │                                                             │
-│  Operators on the active inference route earn per token.    │
-│  Earns: share of session revenue proportional to layers     │
-│  served. Only nodes on the route earn. No traffic = $0.     │
+│  Per-token payment to layer hosts on the inference path.    │
+│  Paid for: tokens generated, proportional to layer count.   │
+│  Routed by: trust score × availability × latency × load.   │
 └─────────────────────────────────────────────────────────────┘
         ↓ consumes and extends
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer 3 — Model / Adapter Market                           │
 │                                                             │
 │  Community publishes base models and LoRA adapters.         │
-│  Adapter creators earn per-use royalty on inference.        │
+│  Adapter creators earn per-use revenue on inference.        │
 │  Governed by: economic demand + compliance floor.           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-All revenue originates from user inference payments. There are no
-platform-administered base rates. The pools self-calibrate: high demand
-produces large pools and attracts supply; low demand produces thin pools
-and operators who cannot justify the electricity cost opt out, contracting
-supply until it matches demand. No committee manages this equilibrium.
+Each layer clears independently. An operator can price availability low to
+attract traffic, then earn per-token on compute. A model creator publishes
+once and earns passively. A user pays the market rate for the quality of
+path they route through. No committee decides pricing — each component
+finds its equilibrium separately.
 
 ---
 
@@ -147,8 +140,8 @@ graph entries, KV cache, and economics are backend-agnostic.
 - Runs `llama-rpc-server` against the local GPU proxy daemon
 - Registers its availability in the DHT: `{vmId, model_cid, layer_start, layer_end, endpoint, load, trust_score, backend}`
 - Reports metrics to the orchestrator on heartbeat
-- Earns availability-pool revenue proportional to committed VRAM-share × uptime in zone epoch
-- Earns compute-pool revenue proportional to tokens it serves on active routes
+- Earns availability-market revenue proportional to committed VRAM-hours
+- Earns compute-market revenue proportional to tokens it serves
 
 **Not an obligation.** Operators opt in explicitly. Operators who do not opt
 in are unaffected. Operators who opt in and later withdraw simply stop
@@ -188,10 +181,8 @@ existing DHT provider record semantics).
 
 The orchestrator maintains an aggregated view of the layer graph per model —
 which layer ranges have coverage, which have replication gaps, which zones
-are represented. This view is published in the network status API. Zones
-with replication gaps attract operators because fewer competitors means a
-larger share of the zone's availability pool — the market signal without
-a platform-set price.
+are represented. This view drives the availability market: zones with
+replication gaps attract higher availability prices, signaling supply to fill.
 
 ### 3.4 Deployment Patterns
 
@@ -244,19 +235,13 @@ gpu_pool:
   # Must be a registered model CID or well-known alias.
   llm_model: "llama-3-70b-instruct-q4"
 
-  # Minimum acceptable earnings per epoch (USDC).
-  # If the node's availability pool share for a completed epoch falls below
-  # this threshold, the node withdraws its LLM offer for the next epoch.
-  # This is a floor on realised earnings, not on a platform rate —
-  # it reflects the operator's electricity/opportunity cost judgment.
-  # Default 0 = always participate regardless of traffic.
-  llm_min_epoch_earnings_usdc: 0.01
+  # Availability price floor (USDC per VRAM-GB-hour).
+  # If market clears below this, the node withdraws its offer.
+  llm_availability_floor_usdc: 0.002
 
-  # Minimum acceptable compute earnings per session (USDC).
-  # Sessions routed through this node that would earn less than this
-  # threshold are declined at route-selection time. Prevents serving
-  # ultra-short sessions at a net loss.
-  llm_min_session_earnings_usdc: 0.001
+  # Per-token price floor (USDC per 1M tokens).
+  # If routed path clears below this, the node declines to serve.
+  llm_compute_floor_usdc: 0.50
 ```
 
 ### 4.1 Practical VRAM Commitment Examples
@@ -511,157 +496,85 @@ planning.
 
 ## 7. Economic Model
 
-### 7.1 Revenue Source
+### 7.1 Availability Market
 
-All operator revenue originates from user inference payments. There are no
-platform-administered base rates. An operator earns nothing when no users
-are paying — and earns more as the network attracts more traffic. This
-aligns every operator's interest with network growth.
-
-Each user session locks USDC in escrow at request start. On session close,
-that payment is split across three destinations: the availability pool, the
-compute pool, and the adapter royalty.
-
-The split between availability and compute is a governable network parameter
-(not hardcoded). The initial value is **65% availability / 35% compute**,
-chosen to ensure that holding layers warm is economically meaningful even
-during low-traffic periods, while still rewarding operators who serve heavy
-traffic with a visible compute premium.
+Operators earn for committed VRAM-hours, regardless of inference traffic.
+This compensates the opportunity cost of holding layers warm.
 
 ```
-session_revenue = user_payment_usdc
-
-availability_pool += session_revenue × 0.65   // zone-wide, hourly distribution
-compute_pool      += session_revenue × 0.35   // route-specific, per-session
-adapter_royalty    = compute_pool × adapter_fraction (if adapter requested)
+availability_earnings = committed_vram_gb × hours_online × availability_rate_usdc
 ```
 
-The split ratio is the only platform-governed parameter. Everything else —
-whether to participate, how much VRAM to commit, whether to stay online —
-is determined by each operator's own economic calculation.
+The availability rate floats with supply and demand per (zone, model) pair.
+The orchestrator publishes a reference rate; operators set a floor below
+which they withdraw. The market clears at the intersection.
 
-### 7.2 Availability Pool
+Example at $0.003 USDC/GB-hour:
+- RTX 3060, 25% commit → 3 GB × 24h = $0.216/day = $6.48/month
+- RTX 4090, 50% commit → 12 GB × 24h = $0.864/day = $25.92/month
+- M4 Pro Mac mini 48 GB, 50% commit → 24 GB × 24h = $1.728/day = $51.84/month
 
-The availability pool accumulates from all sessions closed in a zone during
-an epoch (one hour). At the epoch boundary, the pool is distributed to all
-layer hosts that were online in that zone during the epoch, weighted by
-committed VRAM and time online.
+These are availability earnings only — compute earnings on top.
 
-```
-operator_share    = (committed_vram_gb × hours_online_this_epoch)
-                    / sum(committed_vram_gb × hours_online for all zone operators)
+### 7.2 Compute Market
 
-availability_earn = zone_availability_pool_this_epoch × operator_share
-```
-
-**Key properties:**
-- Zone-scoped: an operator in `eu-east` earns only from `eu-east` traffic.
-  An unserved zone earns nothing — the right signal to move supply.
-- VRAM-weighted: larger commitments earn proportionally more.
-- Time-weighted: an operator online for 30 of 60 minutes earns half the
-  share of one online the full epoch.
-- No minimum: thin traffic produces thin earnings. Operators who cannot
-  justify their electricity cost at low traffic opt out naturally.
-
-**Illustrative earnings at moderate zone traffic ($500 USDC/day across zone,
-92 GB total committed VRAM, 65% availability split → $325 pool/day):**
-
-| Host | Commit fraction | VRAM committed | Daily availability share |
-|---|---|---|---|
-| RTX 4060 mobile | 25% | 2 GB | ~$7.07 |
-| RTX 3060 | 25% | 3 GB | ~$10.60 |
-| RTX 4060 Ti | 25% | 4 GB | ~$14.13 |
-| RTX 4090 | 50% | 12 GB | ~$42.39 |
-| M4 Mac mini 24 GB | 25% | 6 GB | ~$21.20 |
-| M4 Pro Mac mini 48 GB | 50% | 24 GB | ~$84.78 |
-
-These are availability earnings only. Compute earnings on top for operators
-whose nodes are selected on active inference routes.
-
-### 7.3 Compute Pool
-
-The compute pool from each session is distributed to the nodes on that
-session's inference route, weighted by layer count served.
+Per-token earnings distributed across the route, weighted by layer count.
 
 ```
-node_compute_earn = session_compute_pool × (node_layer_count / total_layers)
+per_token_total = model_compute_rate × (1 / tokens_per_second_delivered)
+per_node_share  = per_token_total × (node_layer_count / total_layers)
 ```
 
-A node hosting 8 of 80 layers earns 10% of the compute pool for every
-session that routes through it. Replica nodes not selected for a session
-earn nothing from that session's compute pool — but do earn from the
-availability pool.
+A node hosting 8 of 80 layers earns 10% of the per-token compute rate for
+every token that routes through it.
 
-This asymmetry is intentional: availability rewards being ready; compute
-rewards being used. A high-trust, low-latency node gets routed to
-preferentially and earns disproportionate compute revenue relative to its
-VRAM share — the market rewarding quality without a committee deciding it.
+Example at $1.00/M tokens, 70B model, route of 15 nodes:
+- Node with 6 layers: 6/80 = 7.5% share = $0.075/M tokens routed through it
+- At 10 tok/s sustained, 1M tokens takes ~27.8 hours of serving
+- Earning rate per busy serving hour: ~$0.036
 
-### 7.4 Adapter Market
+Availability + compute combined makes the economics meaningful at moderate
+utilization levels. Pure compute without availability would produce race-to-
+the-bottom pricing; pure availability without compute would disincentivize
+actual serving. The split is intentional.
 
-LoRA adapter creators publish adapters to the block store as `lora-adapter`
-manifest type (256 KB chunks). A user requesting inference with a specific
-adapter pays a royalty taken as a fraction of the compute pool before it is
-distributed to layer hosts.
+### 7.3 Adapter Market
+
+LoRA adapter creators publish adapters to the block store as
+`lora-adapter` manifest type (256 KB chunks). A user requesting inference
+with a specific adapter pays a per-token royalty to the adapter creator,
+distributed via the existing escrow settlement mechanism.
 
 ```
-adapter_royalty   = session_compute_pool × adapter_royalty_fraction
-                    (set by creator, discoverable in catalog, capped at 20%)
-
-layer_host_pool   = session_compute_pool − adapter_royalty
+adapter_royalty_per_token = adapter_rate (set by creator, discoverable in catalog)
 ```
 
-The front-door loads the requested adapter shards at session start (a few
-MB, fast). The layer hosts apply the LoRA delta on each forward pass
-(negligible compute overhead for r≤16 adapters).
+The front-door loads the requested adapter shards at session start (a few MB,
+fast). The layer hosts apply the LoRA delta on each forward pass (negligible
+compute overhead for r≤16 adapters).
 
-Adapter royalties clear independently of availability. A popular adapter
-earns from every session that uses it. An unpopular one earns nothing
-regardless of its declared rate.
+Adapter royalties clear independently of compute and availability. A popular
+adapter can command a royalty premium; an unpopular one earns nothing
+regardless of its rate.
 
-### 7.5 Settlement Flow
+### 7.4 Settlement Flow
 
 ```
 User escrow (USDC, locked at session start)
     │
-    ├─→ Availability pool (65% of session revenue)
-    │       ↓ accumulated in zone epoch bucket
-    │       ↓ distributed hourly to all zone layer hosts
-    │             by (committed_vram_gb × hours_online) share
+    ├─→ Availability pool (pre-settled hourly per zone)
+    │       ↓ distributed to all layer hosts in zone by VRAM-hours
     │
-    ├─→ Compute pool (35% of session revenue)
-    │       ├─→ Adapter royalty (up to 20% of compute pool, if adapter used)
-    │       │       ↓ to adapter creator wallet on session close
-    │       └─→ Remainder split across route nodes by layer share
-    │               ↓ settled per session close
+    ├─→ Compute payments (settled per-token, per session close)
+    │       ↓ split across route nodes by layer share
     │
-    └─→ Platform fee (0% at launch — revisit at network scale)
+    └─→ Adapter royalty (settled per session close)
+            ↓ to adapter creator wallet
 ```
 
 The existing `DeCloudEscrow.sol` contract and `OnChainSettlementService.cs`
-handle the mechanics. New primitives required:
-- Zone epoch bucket accumulation and hourly sweep
-- Per-session route compute split
-- Adapter royalty deduction before layer-host split
-
-The availability/compute split ratio (65/35 default) and the adapter royalty
-cap (20%) are stored in `SchedulingConfig` as governable parameters, not
-hardcoded constants. The orchestrator exposes them via `PATCH /scheduling` —
-the same mechanism used for tier weights and load ceilings.
-
-### 7.6 Bootstrap Period
-
-A zone with no traffic generates no pools and earns nothing. This creates
-a cold-start problem: operators will not commit supply without expected
-earnings, but earnings only exist if supply is committed.
-
-Resolution: during bootstrap, the orchestrator seeds one or two canonical
-layer hosts on its own infrastructure per zone. These orchestrator-run nodes
-earn from the same pools — their earnings recirculate into platform treasury
-rather than to an external wallet. As organic supply grows and zone traffic
-reaches self-sustaining levels, orchestrator nodes withdraw. The withdrawal
-threshold is a configurable fraction of R-covered layer ranges held by
-non-orchestrator operators.
+handle the mechanics. The new primitives are: availability pool accounting
+(hourly, zone-scoped) and per-route compute split (per-session, per-node).
 
 ---
 
@@ -672,9 +585,7 @@ non-orchestrator operators.
 Each layer range target has a replication factor R (default R=2). The
 orchestrator's reconciliation loop monitors the layer graph and flags ranges
 with fewer than R active providers as under-replicated. Under-replicated
-ranges are surfaced in the network status API — operators joining an under-
-served zone earn a larger availability pool share (fewer competitors), which
-is the natural supply signal without a platform-set rate.
+ranges receive an elevated availability rate signal, attracting new operators.
 
 With R=2 and 95% per-node availability:
 - Per-stage availability: 1 - (1-0.95)² = 99.75%
@@ -700,11 +611,10 @@ threshold. New sessions route automatically around failed nodes as long as
 R≥2 coverage exists.
 
 **Layer range recovery:** The reconciler detects under-replication and
-publishes the gap in the network status API — which zone, which layer range,
-current R versus target R. Operators monitoring the marketplace see the
-under-served zone and can expect higher availability pool share (fewer
-competitors for the same zone pool) if they commit supply there. The gap
-closes without orchestrator intervention beyond publishing the signal.
+signals higher availability rates for the gap zone. Operators responding
+to the signal bring new layer hosts online. Layer weights fetch via block
+store bitswap, VRAM loads, DHT record registers. The gap closes without
+orchestrator intervention beyond the pricing signal.
 
 ---
 
@@ -977,7 +887,7 @@ Explicit deferrals. These are known gaps, not oversights.
 
 ### Phase 5–6 (Economics + Adapters)
 - Operator earnings settle correctly within 1 hour of session close
-- Availability pool distributes within ±2% of each operator's computed pool share
+- Availability pool distributes within ±2% of committed VRAM-hour share
 - Adapter royalties flow to creator wallet within 1 hour of session close
 
 ### Network Scale Targets
@@ -993,7 +903,13 @@ Explicit deferrals. These are known gaps, not oversights.
 These are unresolved design decisions that should be answered before Phase 3
 implementation begins:
 
-1. **Layer range assignment on VRAM contention.** If an operator reduces
+1. **Availability rate discovery mechanism.** Does the orchestrator publish
+   a reference rate and let operators undercut it? Or does the orchestrator
+   run a periodic auction? The simplest v1 answer is a platform-published
+   floor rate (similar to compute point floor rates) with operator-set
+   minimums above it.
+
+2. **Layer range assignment on VRAM contention.** If an operator reduces
    their commitment fraction mid-service (e.g., gaming launches), how does
    the node agent handle VRAM pressure? Options: SIGTERM the LLM VM (session
    fails), pre-empt a graceful drain, or enforce commitment as a locked
@@ -1004,36 +920,27 @@ implementation begins:
    pinning) rather than VRAM partitioning, but the operator-facing semantics
    are identical.
 
-2. **Front-door VM cost.** Who pays for the front-door VM? Options: user
+3. **Front-door VM cost.** Who pays for the front-door VM? Options: user
    pays an API access fee that covers the front-door CPU cost; or the
    orchestrator subsidizes front-door VMs as network infrastructure (similar
-   to relay VMs). Recommendation: user-paid, priced into the per-session
-   escrow at a flat CPU rate, settled separately from the inference pools.
+   to relay VMs). Recommendation: user-paid, priced into the per-token rate.
    This applies uniformly to DeCloud-operated and community-operated
    front-doors (§3.4) — neither is subsidized at the platform layer.
 
-3. **Availability/compute split ratio governance.** The 65/35 default is a
-   starting point. What mechanism adjusts it as network dynamics become
-   clear? Recommendation: the orchestrator exposes it via `PATCH /scheduling`
-   (same as tier weights), with a rate-limit on changes to prevent gaming.
-   The ratio is visible in the public network status API so operators can
-   factor it into their opt-in decision.
-
-4. **Minimum viable zone supply.** Below what supply level should the
-   orchestrator refuse to route inference to a zone rather than serve at
-   degraded R<2 coverage? A partial layer graph (e.g., layers 0–40 covered
-   but 40–80 missing) cannot serve any inference. Recommendation: the
-   orchestrator only marks a zone as serving-eligible when all layer ranges
-   have R≥1 coverage. R≥2 is required for the zone to be promoted to
-   production status in the catalog.
+4. **Layer graph bootstrap.** When the first zone has no layer hosts for a
+   model, how does supply bootstrap? The availability rate signal only
+   attracts operators if they're already watching. This is the classic cold-
+   start problem. Mitigation: the orchestrator may seed one or two canonical
+   layer hosts on orchestrator-controlled nodes for v1, withdrawing them as
+   organic supply appears.
 
 5. **Backend-aware compute pricing.** A token served by an M4 Mac mini and
    a token served by an RTX 4090 take different wall-clock time but
    represent the same unit of work from the user's perspective. v1
    recommendation: price per-token uniformly (a token is a token), let the
    latency-and-load route scoring naturally bias traffic toward faster
-   nodes, and let the availability pool compensate slower nodes through
-   the VRAM-share channel. Revisit if real traffic shows pricing distortions.
+   nodes, and let the availability market compensate slower nodes through
+   the VRAM-hour channel. Revisit if real traffic shows pricing distortions.
 
 ---
 
