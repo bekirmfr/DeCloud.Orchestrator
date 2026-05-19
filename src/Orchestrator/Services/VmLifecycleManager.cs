@@ -268,23 +268,20 @@ public class VmLifecycleManager : IVmLifecycleManager
     private async Task ExecuteSideEffectsAsync(
         VirtualMachine vm, VmStatus from, VmStatus to, TransitionContext context)
     {
-        // ── Release scheduling hold when leaving Provisioning ─────────
-        // The hold was created in TryScheduleVmAsync STEP 3. Release it
-        // on any exit from Provisioning — the VM will appear in
-        // UsedResources via the next heartbeat if it was created.
-        // See docs/RESOURCE-ALLOCATION.md §8.2.
-        if (from == VmStatus.Provisioning)
-        {
-            await SafeExecuteAsync(
-                () => ReleaseSchedulingHoldAsync(vm),
-                "Scheduling hold release", vm.Id);
-        }
-
         switch (to)
         {
             // ── Entering Running ──────────────────────────────────────
             case VmStatus.Running when from is VmStatus.Provisioning or VmStatus.Stopped or VmStatus.Error or VmStatus.Stopping or VmStatus.Deleting:
                 await OnVmBecameRunningAsync(vm, context);
+                break;
+
+            // ── Provisioning failed before VM was created on the node ──
+            // The VM will never appear in a heartbeat, so the hold must
+            // be released here. The heartbeat handler can't help.
+            case VmStatus.Deleting when from == VmStatus.Provisioning:
+                await SafeExecuteAsync(
+                    () => ReleaseSchedulingHoldAsync(vm),
+                    "Scheduling hold release (provisioning failed)", vm.Id);
                 break;
 
             // ── Entering Stopped ──────────────────────────────────────

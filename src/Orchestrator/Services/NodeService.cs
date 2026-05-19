@@ -1248,9 +1248,47 @@ public class NodeService : INodeService
         node.UsedResources = new ResourceSnapshot
         {
             ComputePoints = reportedVms.Sum(v => v.ComputePointCost),
-            MemoryBytes = reportedVms.Sum(v => v.MemoryBytes ?? 0),
-            StorageBytes = reportedVms.Sum(v => v.DiskBytes ?? 0),
+            MemoryBytes = reportedVms.Sum(v => (long)(v.MemoryBytes ?? 0)),
+            StorageBytes = reportedVms.Sum(v => (long)(v.DiskBytes ?? 0)),
         };
+
+        // =====================================================
+        // Reconcile scheduling holds against heartbeat reality.
+        // VMs now in UsedResources no longer need holds. Reset
+        // ReservedResources to only cover VMs that are scheduled
+        // but not yet reported in the heartbeat.
+        // See docs/RESOURCE-ALLOCATION.md §8.2.
+        // =====================================================
+        var reportedVmIds = new HashSet<string>(
+            reportedVms.Select(v => v.VmId),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Find VMs that have scheduling holds but are now in the heartbeat
+        var provisioningVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        var pendingHoldVms = provisioningVms
+            .Where(v => v.Status == VmStatus.Provisioning
+                     && reportedVmIds.Contains(v.Id))
+            .ToList();
+
+        // These VMs are in UsedResources AND still have holds — release them
+        if (pendingHoldVms.Count > 0)
+        {
+            foreach (var vm in pendingHoldVms)
+            {
+                node.ReservedResources.ComputePoints = Math.Max(0,
+                    node.ReservedResources.ComputePoints - vm.Spec.ComputePointCost);
+                node.ReservedResources.MemoryBytes = Math.Max(0,
+                    node.ReservedResources.MemoryBytes - vm.Spec.MemoryBytes);
+                node.ReservedResources.StorageBytes = Math.Max(0,
+                    node.ReservedResources.StorageBytes - vm.Spec.DiskBytes);
+            }
+
+            _logger.LogInformation(
+                "Released {Count} scheduling hold(s) on node {NodeId} " +
+                "(VMs now in heartbeat: {VmIds})",
+                pendingHoldVms.Count, nodeId,
+                string.Join(", ", pendingHoldVms.Select(v => v.Id)));
+        }
 
         // Log discrepancy between node-reported free and orchestrator-tracked free
         var nodeReportedFree = heartbeat.AvailableResources;

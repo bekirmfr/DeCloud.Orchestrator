@@ -1118,7 +1118,7 @@ public class DataStore
             // ========================================
             TotalComputePoints = totalComputePoints,
             UsedComputePoints = actualUsedPoints,
-            AvailableComputePoints = totalComputePoints - actualUsedPoints,
+            AvailableComputePoints = Math.Max(0, totalComputePoints - actualUsedPoints),
 
             // ========================================
             // MEMORY & STORAGE STATISTICS (from node UsedResources)
