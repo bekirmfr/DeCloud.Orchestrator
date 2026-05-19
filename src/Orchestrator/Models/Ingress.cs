@@ -78,6 +78,13 @@ public class CentralIngressOptions
     public bool EnableWebSocket { get; set; } = true;
 
     /// <summary>
+    /// The orchestrator's own domain (e.g., "decloud.stackfi.tech").
+    /// When set, a reverse-proxy route to the local API is included in every
+    /// Caddy config reload — no fragile one-shot insertion needed.
+    /// </summary>
+    public string OrchestratorDomain { get; set; } = "";
+
+    /// <summary>
     /// Global rate limit per subdomain (requests/minute, 0 = disabled)
     /// </summary>
     public int RateLimitPerMinute { get; set; } = 0;

@@ -480,44 +480,36 @@ if (mongoDatabase != null)
             var ingressService = scope.ServiceProvider.GetRequiredService<ICentralIngressService>();
             if (ingressService.IsEnabled)
             {
-                logger.LogInformation("🔄 Restoring CentralIngress routes for Running VMs...");
-
-                // RestoreRunningVmRoutesAsync batch-populates _routes and issues a single
-                // Caddy reload. It bypasses the AutoRegisterOnStart option gate intentionally —
-                // startup restoration must always run regardless of that flag.
-                await ingressService.RestoreRunningVmRoutesAsync();
-
-                logger.LogInformation("✓ CentralIngress route restore complete");
-
-                if (ingressService.IsEnabled)
+                // Configure orchestrator route FIRST — stores the upstream
+                // so it's included in the first ReloadAllRoutesAsync call.
+                try
                 {
-                    try
+                    var orchestratorDomain = builder.Configuration
+                        .GetValue<string>("CentralIngress:OrchestratorDomain");
+
+                    if (!string.IsNullOrEmpty(orchestratorDomain))
                     {
-                        var orchestratorDomain = builder.Configuration
-                            .GetValue<string>("CentralIngress:OrchestratorDomain");
+                        var caddyManager = scope.ServiceProvider
+                            .GetRequiredService<ICentralCaddyManager>();
 
-                        if (!string.IsNullOrEmpty(orchestratorDomain))
-                        {
-                            var caddyManager = scope.ServiceProvider
-                                .GetRequiredService<ICentralCaddyManager>();
+                        caddyManager.EnsureOrchestratorRoute(
+                            orchestratorDomain,
+                            $"localhost:{builder.Configuration.GetValue<int>("ApiPort", 5050)}");
 
-                            await caddyManager.EnsureOrchestratorRouteAsync(
-                                orchestratorDomain,
-                                $"localhost:{builder.Configuration.GetValue<int>("ApiPort", 5050)}",
-                                CancellationToken.None);
-
-                            logger.LogInformation(
-                                "✓ Orchestrator route registered: https://{Domain} → localhost:5050",
-                                orchestratorDomain);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex,
-                            "Failed to register orchestrator domain route — " +
-                            "dashboard accessible via direct port");
+                        logger.LogInformation(
+                            "✓ Orchestrator route configured: https://{Domain} → localhost:5050",
+                            orchestratorDomain);
                     }
                 }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "Failed to configure orchestrator domain route");
+                }
+
+                logger.LogInformation("🔄 Restoring CentralIngress routes for Running VMs...");
+                await ingressService.RestoreRunningVmRoutesAsync();
+                logger.LogInformation("✓ CentralIngress route restore complete");
 
                 // ==================== Restore WireGuard Peers for Relay Nodes ====================
                 logger.LogInformation("🔄 Restoring WireGuard peers for relay nodes...");

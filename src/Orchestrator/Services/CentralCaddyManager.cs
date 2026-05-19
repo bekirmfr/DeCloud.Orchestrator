@@ -23,10 +23,9 @@ public interface ICentralCaddyManager
     /// Called on startup — idempotent, survives reloads because it is re-registered
     /// every time the orchestrator starts.
     /// </summary>
-    Task EnsureOrchestratorRouteAsync(
+    void EnsureOrchestratorRoute(
         string domain,
-        string upstream,
-        CancellationToken ct = default);
+        string upstream);
 }
 
     public class CentralCaddyManager : ICentralCaddyManager
@@ -34,6 +33,9 @@ public interface ICentralCaddyManager
     private readonly HttpClient _httpClient;
     private readonly CentralIngressOptions _options;
     private readonly ILogger<CentralCaddyManager> _logger;
+
+    // Orchestrator upstream — set by EnsureOrchestratorRouteAsync, defaults to localhost:5050
+    private string _orchestratorUpstream = "localhost:5050";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -152,79 +154,17 @@ public interface ICentralCaddyManager
         }
     }
 
-    // In implementation:
-    public async Task EnsureOrchestratorRouteAsync(
+    public void EnsureOrchestratorRoute(
         string domain,
-        string upstream,
-        CancellationToken ct = default)
+        string upstream)
     {
-        // Build a simple reverse-proxy route for the orchestrator domain.
-        // This is inserted at index 0 so it takes priority over wildcard VM routes.
-        var route = new
-        {
-            match = new[] { new { host = new[] { domain } } },
-            handle = new object[]
-            {
-                new
-                {
-                    handler = "reverse_proxy",
-                    upstreams = new[] { new { dial = upstream } },
-                    headers = new
-                    {
-                        request = new
-                        {
-                            set = new Dictionary<string, string[]>
-                            {
-                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
-                                ["X-Forwarded-For"]   = new[] { "{http.request.remote.host}" },
-                                ["X-Real-IP"]         = new[] { "{http.request.remote.host}" }
-                            }
-                        }
-                    },
-                    transport = new
-                    {
-                        protocol = "http",
-                        read_timeout = "300s",
-                        response_header_timeout = "300s"
-                    }
-                }
-            },
-            terminal = true
-        };
-
-        // Check if route already exists for this domain
-        try
-        {
-            var existing = await _httpClient.GetAsync(
-                "/config/apps/http/servers/central_ingress/routes", ct);
-
-            if (existing.IsSuccessStatusCode)
-            {
-                var json = await existing.Content.ReadAsStringAsync(ct);
-                if (json.Contains(domain))
-                {
-                    _logger.LogDebug(
-                        "Orchestrator route already exists for {Domain}", domain);
-                    return;
-                }
-            }
-        }
-        catch { /* continue to add */ }
-
-        // Insert at position 0 (before any VM wildcard routes)
-        var response = await _httpClient.PostAsJsonAsync(
-            "/config/apps/http/servers/central_ingress/routes/0",
-            route, ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var error = await response.Content.ReadAsStringAsync(ct);
-            throw new InvalidOperationException(
-                $"Failed to register orchestrator route for {domain}: {error}");
-        }
+        // Store the upstream so BuildOrchestratorRoute() uses it.
+        // The route itself is now included in every ReloadAllRoutesAsync call,
+        // so no one-shot POST is needed.
+        _orchestratorUpstream = upstream;
 
         _logger.LogInformation(
-            "✓ Orchestrator route added: {Domain} → {Upstream}",
+            "Orchestrator route configured: {Domain} → {Upstream} (included in every config reload)",
             domain, upstream);
     }
 
@@ -288,8 +228,34 @@ public interface ICentralCaddyManager
         // Add catch-all for unmatched VM subdomains
         caddyVmRoutes.Add(BuildCatchAllRoute());
 
-        // Combine: Infrastructure routes FIRST, then VM routes
-        var allRoutes = existingRoutes.Concat(caddyVmRoutes).ToList();
+        // Build the final route list:
+        // 1. Orchestrator domain route (highest priority — always first)
+        // 2. Preserved infrastructure routes (excluding orchestrator — we rebuild it)
+        // 3. VM subdomain routes + custom domain routes + catch-all
+        var allRoutes = new List<object>();
+
+        // Always include orchestrator route if configured
+        var orchRoute = BuildOrchestratorRoute();
+        if (orchRoute != null)
+        {
+            allRoutes.Add(orchRoute);
+        }
+
+        // Filter orchestrator domain out of preserved routes to avoid duplication
+        var orchDomain = _options.OrchestratorDomain;
+        foreach (var preserved in existingRoutes)
+        {
+            // Skip if this is the orchestrator route (we already added it above)
+            if (!string.IsNullOrEmpty(orchDomain))
+            {
+                var json = JsonSerializer.Serialize(preserved, JsonOptions);
+                if (json.Contains(orchDomain, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+            allRoutes.Add(preserved);
+        }
+
+        allRoutes.AddRange(caddyVmRoutes);
 
         _logger.LogInformation(
             "Combined routes: {InfraRoutes} infrastructure + {VmRoutes} VM + {CustomDomains} custom = {Total} total",
@@ -612,6 +578,48 @@ public interface ICentralCaddyManager
     }
 
     /// <summary>
+    /// Build the reverse-proxy route for the orchestrator's own domain.
+    /// Included in every config reload so it can never be lost.
+    /// </summary>
+    private object? BuildOrchestratorRoute()
+    {
+        if (string.IsNullOrEmpty(_options.OrchestratorDomain))
+            return null;
+
+        return new
+        {
+            match = new[] { new { host = new[] { _options.OrchestratorDomain } } },
+            handle = new object[]
+            {
+                new
+                {
+                    handler = "reverse_proxy",
+                    upstreams = new[] { new { dial = _orchestratorUpstream } },
+                    headers = new
+                    {
+                        request = new
+                        {
+                            set = new Dictionary<string, string[]>
+                            {
+                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
+                                ["X-Forwarded-For"]   = new[] { "{http.request.remote.host}" },
+                                ["X-Real-IP"]         = new[] { "{http.request.remote.host}" }
+                            }
+                        }
+                    },
+                    transport = new
+                    {
+                        protocol = "http",
+                        read_timeout = "300s",
+                        response_header_timeout = "300s"
+                    }
+                }
+            },
+            terminal = true
+        };
+    }
+
+    /// <summary>
     /// Build TLS configuration for wildcard certificate + on-demand TLS for custom domains
     /// </summary>
     private object? BuildTlsConfig(bool hasCustomDomains = false)
@@ -657,7 +665,9 @@ public interface ICentralCaddyManager
         // Wildcard policy for *.baseDomain using DNS-01 challenge
         var wildcardPolicy = new Dictionary<string, object>
         {
-            ["subjects"] = new[] { $"*.{_options.BaseDomain}" },
+            ["subjects"] = string.IsNullOrEmpty(_options.OrchestratorDomain)
+                ? new[] { $"*.{_options.BaseDomain}" }
+                : new[] { $"*.{_options.BaseDomain}", _options.OrchestratorDomain },
             ["issuers"] = new object[]
             {
                 new
