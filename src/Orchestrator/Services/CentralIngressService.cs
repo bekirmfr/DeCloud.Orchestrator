@@ -456,9 +456,9 @@ public class CentralIngressService : ICentralIngressService
             restored++;
         }
 
-        // Single Caddy reload with the complete route set.
-        if (restored > 0)
-            await ReloadAllAsync(ct);
+        // Always reload — the orchestrator's own domain route is built into every
+        // config reload, so this must run even when there are no VM routes.
+        await ReloadAllAsync(ct);
 
         _logger.LogInformation(
             "✓ Ingress route restore complete: {Restored} routes loaded, {Skipped} skipped",
