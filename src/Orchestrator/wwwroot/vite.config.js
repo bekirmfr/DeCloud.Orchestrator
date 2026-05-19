@@ -23,7 +23,6 @@ export default defineConfig({
                 // Add other HTML files here if needed
                 terminal: resolve(__dirname, 'terminal.html'),
                 fileBrowser: resolve(__dirname, 'file-browser.html'),
-                mainv2: resolve(__dirname, 'app-v2.html'),
             },
             output: {
                 manualChunks: {
