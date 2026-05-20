@@ -647,7 +647,6 @@ public class ObligationStatePayload
 public record NodeHeartbeat(
     string NodeId,
     NodeMetrics Metrics,
-    ResourceSnapshot AvailableResources,
     int SchedulingConfigVersion,
     List<HeartbeatVmInfo>? ActiveVms = null,
     CgnatNodeInfo? CgnatInfo = null,

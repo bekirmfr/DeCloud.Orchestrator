@@ -1052,34 +1052,6 @@ public class NodeService : INodeService
                 string.Join(", ", pendingHoldVms.Select(v => v.Id)));
         }
 
-        // Log discrepancy between node-reported free and orchestrator-tracked free
-        var nodeReportedFree = heartbeat.AvailableResources;
-        var orchestratorTrackedFree = new ResourceSnapshot
-        {
-            ComputePoints = node.TotalResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints,
-            MemoryBytes = node.TotalResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes,
-            StorageBytes = node.TotalResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes
-        };
-
-        var computePointDiff = Math.Abs(orchestratorTrackedFree.ComputePoints - nodeReportedFree.ComputePoints);
-        var memDiff = Math.Abs(nodeReportedFree.MemoryBytes - orchestratorTrackedFree.MemoryBytes);
-
-        if (computePointDiff > 1 || memDiff > 1024)
-        {
-            _logger.LogWarning("Resource drift detected on node {NodeId}", nodeId);
-
-            _logger.LogDebug(
-                "Resource tracking drift on node {NodeId}: " +
-                "Node reports {NodePts} pt(s) / {NodeMem} MB free, " +
-                "Orchestrator tracks {OrcPts} pt(s) / {OrcMem} MB free " +
-                "(Used: {UsedPts} pt(s) / {UsedMem} MB, Holds: {ResPts} pt(s) / {ResMem} MB)",
-                nodeId,
-                nodeReportedFree.ComputePoints, nodeReportedFree.MemoryBytes / (1024 * 1024),
-                orchestratorTrackedFree.ComputePoints, orchestratorTrackedFree.MemoryBytes / (1024 * 1024),
-                node.UsedResources.ComputePoints, node.UsedResources.MemoryBytes / (1024 * 1024),
-                node.ReservedResources.ComputePoints, node.ReservedResources.MemoryBytes / (1024 * 1024));
-        }
-
         // If node was offline and is now back online, reset downtime tracking
         if (wasOffline)
         {
