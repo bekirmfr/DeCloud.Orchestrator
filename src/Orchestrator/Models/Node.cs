@@ -529,26 +529,6 @@ public class NodeRegistrationRequest
     public NodePricing? Pricing { get; set; }
 
     /// <summary>
-    /// Versions of obligation identity state currently stored in the node agent's
-    /// SQLite database, keyed by canonical role name ("relay" | "dht" | "blockstore").
-    ///
-    /// The orchestrator compares these against the stored StateVersion on each
-    /// obligation. Only roles where orchestrator version > node version get a
-    /// state payload in the response — avoiding unnecessary retransmission.
-    ///
-    /// Absent or zero-valued entries mean the node has no state for that role.
-    /// </summary>
-    public Dictionary<string, int> ObligationStateVersions { get; set; } = new();
-    /// <summary>
-    /// Revisions of system templates currently stored in the node agent's
-    /// SQLite database, keyed by canonical role name.
-    /// The orchestrator sends templates only for roles where its revision
-    /// exceeds the node-reported value, avoiding retransmission.
-    /// Absent or zero-valued entries mean no template stored for that role.
-    /// </summary>
-    public Dictionary<string, int>? SystemTemplateVersions { get; set; }
-
-    /// <summary>
     /// Operator-configured resource allocation limits, resolved to absolute
     /// values by the node agent. Null fields or null object = platform default (90%).
     /// See docs/RESOURCE-ALLOCATION.md §5.2.
