@@ -1,9 +1,17 @@
-﻿using Orchestrator.Models;
+﻿using DeCloud.Shared.Contracts;
+using Orchestrator.Models;
 
 namespace Orchestrator.Interfaces;
 
 public interface INodeService
 {
+    /// <summary>
+    /// Process a resource allocation request. Validates percentages,
+    /// merges with existing allocation, persists. Concrete capacity
+    /// is computed at login time.
+    /// </summary>
+    Task<NodeAllocateResponse> AllocateNodeAsync(string nodeId, NodeAllocateRequest request, CancellationToken ct = default);
+
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
 
     /// <summary>

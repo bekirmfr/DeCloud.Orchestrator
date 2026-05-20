@@ -82,7 +82,7 @@ public class Node
     /// platform default (90%) when this is null.
     /// See docs/RESOURCE-ALLOCATION.md §3.
     /// </summary>
-    public DeCloud.Shared.AllocatedResources? AllocatedResources { get; set; }
+    public AllocatedResources? AllocatedResources { get; set; }
     public ResourceSnapshot ReservedResources { get; set; } = new();
     /// <summary>
     /// Resource usage computed from heartbeat-reported VMs.
@@ -553,7 +553,7 @@ public class NodeRegistrationRequest
     /// values by the node agent. Null fields or null object = platform default (90%).
     /// See docs/RESOURCE-ALLOCATION.md §5.2.
     /// </summary>
-    public DeCloud.Shared.AllocatedResources? AllocatedResources { get; set; }
+    public AllocatedResources? AllocatedResources { get; set; }
 }
 
 public class NodeDeregisterRequest

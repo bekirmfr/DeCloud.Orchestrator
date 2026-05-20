@@ -1,11 +1,22 @@
-﻿using Orchestrator.Models;
+// src/Orchestrator/Services/NodeCapacityCalculator.cs
+// Updated to read percentage-based allocation (AllocatedResources schema v2)
+// while remaining backward-compatible with v1 absolute values.
+
+using DeCloud.Shared.Models;
+using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Services;
 
 /// <summary>
-/// Calculates node capacity with tier-specific overcommit ratios
-/// Uses database-backed configuration from SchedulingConfigService
+/// Calculates node capacity with tier-specific overcommit ratios.
+/// Uses database-backed configuration from SchedulingConfigService.
+///
+/// <para><b>Allocation model (v2):</b> Operator allocation is expressed as
+/// percentages of physical capacity. The calculator resolves percentages to
+/// concrete byte/point values. Legacy v1 absolute values are accepted via
+/// <see cref="DeCloud.Shared.Models.AllocatedResources.IsLegacyFormat"/> and are
+/// used directly (capped at physical).</para>
 /// </summary>
 public class NodeCapacityCalculator
 {
@@ -21,8 +32,8 @@ public class NodeCapacityCalculator
     }
 
     /// <summary>
-    /// Calculate total node capacity across all tiers
-    /// Uses Burstable tier (highest overcommit) as maximum theoretical capacity
+    /// Calculate total node capacity across all tiers.
+    /// Uses Burstable tier (highest overcommit) as maximum theoretical capacity.
     /// </summary>
     public async Task<NodeTotalCapacity> CalculateTotalCapacityAsync(
         Node node,
@@ -51,41 +62,31 @@ public class NodeCapacityCalculator
         // Get Burstable tier (maximum overcommit)
         var burstableTier = config.Tiers[QualityTier.Burstable];
 
+        var basePointsPerCore = evaluation.PointsPerCore;
+
         // ========================================
         // CPU CAPACITY (using Burstable overcommit)
         // ========================================
-        var basePointsPerCore = evaluation.PointsPerCore;
         var hardwareMaxComputePoints = (int)(
             physicalCores *
             basePointsPerCore *
             config.BaselineOvercommitRatio);
 
-        // Apply operator CPU limit — absolute points takes priority, then
-        // percent of evaluated points, then platform default (90%).
-        var totalComputePoints = node.AllocatedResources?.ComputePoints != null
-            ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareMaxComputePoints)
-            : node.AllocatedResources?.ComputePointsPercent != null
-                ? (int)Math.Floor(hardwareMaxComputePoints
-                      * Math.Clamp(node.AllocatedResources.ComputePointsPercent.Value, 1, 100) / 100.0)
-                : (int)(hardwareMaxComputePoints * DeCloud.Shared.AllocatedResources.DefaultPercent);
+        var totalComputePoints = ResolveComputePoints(
+            node.AllocatedResources, hardwareMaxComputePoints);
 
         // ========================================
         // MEMORY CAPACITY (NO overcommit - physical only)
-        // Operator limit replaces the volatile AllocatableBytes.
-        // Null = platform default (90% of physical RAM).
-        // See docs/RESOURCE-ALLOCATION.md §5.3.
         // ========================================
-        var totalMemoryBytes = node.AllocatedResources?.MemoryBytes != null
-            ? Math.Min(node.AllocatedResources.MemoryBytes.Value, rawPhysicalMemory)
-            : (long)(rawPhysicalMemory * DeCloud.Shared.AllocatedResources.DefaultPercent);
+        var totalMemoryBytes = ResolveMemoryBytes(
+            node.AllocatedResources, rawPhysicalMemory);
 
         // ========================================
         // STORAGE CAPACITY (using Burstable overcommit)
-        // Operator limit is pre-overcommit; overcommit applied on top.
+        // Operator allocation is pre-overcommit; overcommit applied on top.
         // ========================================
-        var operatorStorage = node.AllocatedResources?.StorageBytes != null
-            ? Math.Min(node.AllocatedResources.StorageBytes.Value, physicalStorage)
-            : (long)(physicalStorage * DeCloud.Shared.AllocatedResources.DefaultPercent);
+        var operatorStorage = ResolveStorageBytes(
+            node.AllocatedResources, physicalStorage);
         var totalStorageBytes = (long)(
             operatorStorage *
             burstableTier.StorageOvercommitRatio);
@@ -121,7 +122,7 @@ public class NodeCapacityCalculator
     }
 
     /// <summary>
-    /// Calculate tier-specific capacity for a given tier
+    /// Calculate tier-specific capacity for a given tier.
     /// </summary>
     public async Task<TierSpecificCapacity> CalculateTierCapacityAsync(
         Node node,
@@ -160,6 +161,7 @@ public class NodeCapacityCalculator
                 IneligibilityReason = $"Tier {tier} not configured"
             };
         }
+
         var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
         var rawPhysicalMemory = node.HardwareInventory.Memory.TotalBytes;
         var physicalStorage = node.HardwareInventory.Storage.Sum(s => s.TotalBytes);
@@ -174,29 +176,21 @@ public class NodeCapacityCalculator
             basePointsPerCore *
             tierConfig.CpuOvercommitRatio);
 
-        var tierComputePoints = node.AllocatedResources?.ComputePoints != null
-            ? Math.Min(node.AllocatedResources.ComputePoints.Value, hardwareTierPoints)
-            : node.AllocatedResources?.ComputePointsPercent != null
-                ? (int)Math.Floor(hardwareTierPoints
-                      * Math.Clamp(node.AllocatedResources.ComputePointsPercent.Value, 1, 100) / 100.0)
-                : hardwareTierPoints;
+        var tierComputePoints = ResolveComputePoints(
+            node.AllocatedResources, hardwareTierPoints);
 
         // ========================================
         // TIER-SPECIFIC MEMORY (always physical, operator-bounded)
         // ========================================
-        var tierMemoryBytes = node.AllocatedResources?.MemoryBytes != null
-            ? Math.Min(node.AllocatedResources.MemoryBytes.Value, rawPhysicalMemory)
-            : (long)(rawPhysicalMemory * DeCloud.Shared.AllocatedResources.DefaultPercent);
+        var tierMemoryBytes = ResolveMemoryBytes(
+            node.AllocatedResources, rawPhysicalMemory);
 
         // ========================================
         // TIER-SPECIFIC STORAGE (operator-bounded, then overcommit)
         // ========================================
-        var operatorStorage = node.AllocatedResources?.StorageBytes != null
-            ? Math.Min(node.AllocatedResources.StorageBytes.Value, physicalStorage)
-            : (long)(physicalStorage * DeCloud.Shared.AllocatedResources.DefaultPercent);
-        var tierStorageBytes = (long)(
-            operatorStorage *
-            tierConfig.StorageOvercommitRatio);
+        var operatorStorage = ResolveStorageBytes(
+            node.AllocatedResources, physicalStorage);
+        var tierStorageBytes = (long)(operatorStorage * tierConfig.StorageOvercommitRatio);
 
         return new TierSpecificCapacity
         {
@@ -216,12 +210,103 @@ public class NodeCapacityCalculator
         };
     }
 
+    // =========================================================================
+    // Allocation resolution helpers
+    //
+    // Each method supports both schema v2 (percentages) and v1 (absolute).
+    // v2: multiply percentage × physical max, cap at physical.
+    // v1: use absolute value directly, cap at physical.
+    // null/missing: apply platform default (90%).
+    // =========================================================================
+
+    /// <summary>
+    /// Resolve CPU compute points from operator allocation.
+    /// </summary>
+    private static int ResolveComputePoints(
+        AllocatedResources? alloc,
+        int hardwareMaxPoints)
+    {
+        if (alloc == null)
+            return (int)(hardwareMaxPoints * AllocatedResources.DefaultPercent);
+
+        if (!alloc.IsLegacyFormat)
+        {
+            // Schema v2: percentage-based
+            var pct = alloc.EffectiveCpuPercent;
+            return (int)(hardwareMaxPoints * pct);
+        }
+
+        // Schema v1: absolute value (legacy)
+        return alloc.ComputePoints != null
+            ? Math.Min(alloc.ComputePoints.Value, hardwareMaxPoints)
+            : (int)(hardwareMaxPoints * AllocatedResources.DefaultPercent);
+    }
+
+    /// <summary>
+    /// Resolve memory allocation in bytes from operator allocation.
+    /// </summary>
+    private static long ResolveMemoryBytes(
+        AllocatedResources? alloc,
+        long physicalMemoryBytes)
+    {
+        if (alloc == null)
+            return (long)(physicalMemoryBytes * AllocatedResources.DefaultPercent);
+
+        if (!alloc.IsLegacyFormat)
+        {
+            // Schema v2: percentage-based
+            var pct = alloc.EffectiveMemoryPercent;
+            return (long)(physicalMemoryBytes * pct);
+        }
+
+        // Schema v1: absolute value (legacy)
+        return alloc.MemoryBytes != null
+            ? Math.Min(alloc.MemoryBytes.Value, physicalMemoryBytes)
+            : (long)(physicalMemoryBytes * AllocatedResources.DefaultPercent);
+    }
+
+    /// <summary>
+    /// Resolve storage allocation in bytes (pre-overcommit) from operator allocation.
+    /// </summary>
+    private static long ResolveStorageBytes(
+        AllocatedResources? alloc,
+        long physicalStorageBytes)
+    {
+        if (alloc == null)
+            return (long)(physicalStorageBytes * AllocatedResources.DefaultPercent);
+
+        if (!alloc.IsLegacyFormat)
+        {
+            // Schema v2: percentage-based
+            var pct = alloc.EffectiveStoragePercent;
+            return (long)(physicalStorageBytes * pct);
+        }
+
+        // Schema v1: absolute value (legacy)
+        return alloc.StorageBytes != null
+            ? Math.Min(alloc.StorageBytes.Value, physicalStorageBytes)
+            : (long)(physicalStorageBytes * AllocatedResources.DefaultPercent);
+    }
+
+    // =========================================================================
+    // Logging
+    // =========================================================================
+
     private void LogCapacityReport(NodeTotalCapacity capacity, Node node)
     {
+        var allocInfo = node.AllocatedResources != null
+            ? node.AllocatedResources.IsLegacyFormat
+                ? "v1/absolute"
+                : $"v2/percent (CPU={node.AllocatedResources.EffectiveCpuPercent:P0}, " +
+                  $"Mem={node.AllocatedResources.EffectiveMemoryPercent:P0}, " +
+                  $"Stor={node.AllocatedResources.EffectiveStoragePercent:P0})"
+            : "default (90%)";
+
         _logger.LogInformation(
             "Node {NodeId} Total Capacity: {Points} compute points, {Memory}GB RAM, {Storage}GB storage " +
             "(Physical: {PhysicalCores} cores, {PhysicalMem}GB RAM, {PhysicalStorage}GB storage) " +
-            "CPU Overcommit: {CpuOvercommit}x, Storage Overcommit: {StorageOvercommit}x",
+            "CPU Overcommit: {CpuOvercommit}x, Storage Overcommit: {StorageOvercommit}x, " +
+            "Allocation: {AllocInfo}",
             capacity.NodeId,
             capacity.TotalComputePoints,
             capacity.TotalMemoryBytes / (1024 * 1024 * 1024),
@@ -230,9 +315,14 @@ public class NodeCapacityCalculator
             capacity.PhysicalMemoryBytes / (1024 * 1024 * 1024),
             capacity.PhysicalStorageBytes / (1024 * 1024 * 1024),
             capacity.CpuOvercommitRatio,
-            capacity.StorageOvercommitRatio);
+            capacity.StorageOvercommitRatio,
+            allocInfo);
     }
 }
+
+// =========================================================================
+// Model classes (originally defined in this file)
+// =========================================================================
 
 /// <summary>
 /// Total capacity for a node (using maximum overcommit)

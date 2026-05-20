@@ -1,3 +1,4 @@
+using DeCloud.Shared.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
@@ -26,6 +27,45 @@ public class NodesController : ControllerBase
         _vmService = vmService;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Update resource allocation percentages for this node.
+    /// JWT-authenticated — no wallet signature required.
+    /// Stores allocation percentages; concrete capacity is computed at login.
+    /// </summary>
+    [HttpPost("{nodeId}/allocate")]
+    public async Task<ActionResult<ApiResponse<NodeAllocateResponse>>> Allocate(
+        string nodeId,
+        [FromBody] NodeAllocateRequest request)
+    {
+        var claimNodeId = User.FindFirst("node_id")?.Value;
+
+        if (claimNodeId != nodeId)
+        {
+            return Unauthorized(ApiResponse<NodeAllocateResponse>.Fail(
+                "NODE_MISMATCH",
+                "Node ID in URL doesn't match authenticated node"));
+        }
+
+        try
+        {
+            var response = await _nodeService.AllocateNodeAsync(nodeId, request);
+
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<NodeAllocateResponse>.Fail(
+                    "ALLOCATION_INVALID", response.Error ?? "Invalid allocation"));
+            }
+
+            return Ok(ApiResponse<NodeAllocateResponse>.Ok(response));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<NodeAllocateResponse>.Fail(
+                "NODE_NOT_FOUND", "Node not registered"));
+        }
+    }
+
 
     /// <summary>
     /// Register a new node in the network
