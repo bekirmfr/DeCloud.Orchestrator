@@ -3,6 +3,7 @@ using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -19,6 +20,9 @@ public class NodeSelfController : ControllerBase
 {
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
+    private readonly INodeService _nodeService;
+    private readonly IDhtNodeService _dhtNodeService;
+    private readonly IRelayNodeService _relayNodeService;
     private readonly NodePerformanceEvaluator _evaluator;
     private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly INodeMarketplaceService _marketplaceService;
@@ -31,6 +35,9 @@ public class NodeSelfController : ControllerBase
     public NodeSelfController(
         DataStore dataStore,
         ISchedulingConfigService configService,
+        INodeService nodeService,
+        IDhtNodeService dhtNodeService,
+        IRelayNodeService relayNodeService,
         NodePerformanceEvaluator evaluator,
         NodeCapacityCalculator capacityCalculator,
         INodeMarketplaceService marketplaceService,
@@ -42,6 +49,9 @@ public class NodeSelfController : ControllerBase
     {
         _dataStore = dataStore;
         _configService = configService;
+        _nodeService = nodeService;
+        _dhtNodeService = dhtNodeService;
+        _relayNodeService = relayNodeService;
         _evaluator = evaluator;
         _capacityCalculator = capacityCalculator;
         _marketplaceService = marketplaceService;
@@ -234,7 +244,7 @@ public class NodeSelfController : ControllerBase
     /// <summary>
     /// Get node performance evaluation and tier eligibility
     /// </summary>
-    [HttpGet("evaluation")]
+    [HttpGet("performance")]
     [ProducesResponseType(typeof(NodePerformanceEvaluation), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
@@ -320,14 +330,15 @@ public class NodeSelfController : ControllerBase
     }
 
     /// <summary>
-    /// Force re-evaluation of node performance
-    /// Useful after hardware changes or benchmarking issues
+    /// Evaluate node performance, assign obligations, and prepare system VMs.
+    /// This is a primary lifecycle step — called after register, before login.
     /// </summary>
     [HttpPost("evaluate")]
-    [ProducesResponseType(typeof(NodePerformanceEvaluation), 200)]
+    [ProducesResponseType(typeof(EvaluateNodeResponse), 200)]
     [ProducesResponseType(401)]
     [ProducesResponseType(404)]
-    public async Task<ActionResult<NodePerformanceEvaluation>> ForceEvaluation(CancellationToken ct,
+    public async Task<ActionResult<EvaluateNodeResponse>> Evaluate(
+        CancellationToken ct,
         [FromBody] HardwareInventory inventory)
     {
         var nodeId = GetNodeIdFromToken();
@@ -338,35 +349,92 @@ public class NodeSelfController : ControllerBase
         if (node == null)
             return NotFound("Node not registered");
 
-        _logger.LogInformation("Node {NodeId} requested re-evaluation", nodeId);
+        _logger.LogInformation("Node {NodeId} requested evaluation", nodeId);
 
         inventory.NodeId = nodeId;
 
-        // Re-run evaluation
+        // ── Step 1: Benchmark ────────────────────────────────────────────
         var evaluation = await _evaluator.EvaluateNodeAsync(inventory, ct);
-
         if (evaluation == null)
-        {
             return StatusCode(500, "Failed to evaluate node performance");
+
+        if (!evaluation.IsAcceptable)
+        {
+            return BadRequest($"Node performance below minimum requirements: {evaluation.RejectionReason}");
         }
 
         node.HardwareInventory = inventory;
         node.PerformanceEvaluation = evaluation;
-
-        // Persist updated node before reconciling so EnsureObligationsAsync
-        // sees the fresh evaluation when computing eligible roles.
         await _dataStore.SaveNodeAsync(node);
 
-        // Re-evaluate obligations against updated capabilities and deploy
-        // any newly eligible roles (e.g., node gained enough storage for
-        // BlockStore, or benchmark now meets a higher tier threshold).
+        // ── Step 2: Obligation seeding ───────────────────────────────────
         await _reconciler.EnsureObligationsForNodeAsync(node, ct);
 
-        _logger.LogInformation(
-            "Node {NodeId} re-evaluation complete — obligations reconciled",
-            nodeId);
+        // ── Step 3: CGNAT relay assignment ───────────────────────────────
+        if (node.HardwareInventory.Network.NatType != NatType.None && node.CgnatInfo == null)
+        {
+            _logger.LogInformation(
+                "Node {NodeId} is behind CGNAT — assigning to relay", nodeId);
 
-        return Ok(evaluation);
+            var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
+            if (relay != null)
+                await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
+            else
+                _logger.LogWarning("No available relay found for CGNAT node {NodeId}", nodeId);
+        }
+
+        // ── Step 4: Generate obligation states + system templates ────────
+        var obligationStates = new Dictionary<string, ObligationStatePayload>();
+        var systemTemplates = new Dictionary<string, SystemVmTemplatePayload>();
+
+        // Use the same logic that was in RegisterNodeAsync for generating
+        // obligation states and system templates. This is delegated to
+        // the existing helper methods on NodeService.
+        // (The controller needs access to NodeService for this — inject via DI
+        //  or call a dedicated service method.)
+        var nodeService = HttpContext.RequestServices.GetRequiredService<INodeService>();
+        var (states, templates) = await nodeService.GenerateObligationPayloadsAsync(node, ct);
+        obligationStates = states;
+        systemTemplates = templates;
+
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation(
+            "Node {NodeId} evaluation complete — {ObligationCount} obligations, " +
+            "HighestTier={Tier}, Points={Points}",
+            nodeId,
+            node.SystemVmObligations.Count,
+            evaluation.HighestTier,
+            evaluation.TotalComputePoints);
+
+        // ── Step 5: Build response ───────────────────────────────────────
+        var schedulingConfig = await _configService.GetConfigAsync(ct);
+        var dhtBootstrapPeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: nodeId);
+
+        var obligationDescriptors = node.SystemVmObligations
+            .Select(o =>
+            {
+                var roleName = SystemVmRoleMap.ToCanonicalName(o.Role);
+                if (roleName is null) return null;
+                var deps = SystemVmDependencies.GetDependencies(o.Role)
+                    .Select(d => SystemVmRoleMap.ToCanonicalName(d))
+                    .Where(d => d is not null)
+                    .Cast<string>()
+                    .ToList();
+                return new ObligationDescriptorPayload { Role = roleName, Deps = deps };
+            })
+            .Where(o => o is not null)
+            .Cast<ObligationDescriptorPayload>()
+            .ToList();
+
+        return Ok(new EvaluateNodeResponse(
+            evaluation,
+            schedulingConfig,
+            dhtBootstrapPeers,
+            obligationStates,
+            systemTemplates.Count > 0 ? systemTemplates : null,
+            obligationDescriptors
+        ));
     }
 
     /// <summary>

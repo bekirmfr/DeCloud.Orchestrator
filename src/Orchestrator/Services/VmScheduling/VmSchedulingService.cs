@@ -19,20 +19,20 @@ public class VmSchedulingService : IVmSchedulingService
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
     private readonly IConstraintEvaluator _constraintEvaluator;
-    private readonly ILoggerFactory _loggerFactory;
+    private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly ILogger<VmSchedulingService> _logger;
 
     public VmSchedulingService(
         DataStore dataStore,
         ISchedulingConfigService configService,
         IConstraintEvaluator constraintEvaluator,
-        ILoggerFactory loggerFactory,
+        NodeCapacityCalculator capacityCalculator,
         ILogger<VmSchedulingService> logger)
     {
         _dataStore = dataStore;
         _configService = configService;
         _constraintEvaluator = constraintEvaluator;
-        _loggerFactory = loggerFactory;
+        _capacityCalculator = capacityCalculator;
         _logger = logger;
     }
 
@@ -454,10 +454,7 @@ public class VmSchedulingService : IVmSchedulingService
         QualityTier tier,
         CancellationToken ct = default)
     {
-        var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(capacityLogger, _configService);
-
-        var tierCapacity = await capacityCalculator.CalculateTierCapacityAsync(node, tier, ct);
+        var tierCapacity = await _capacityCalculator.CalculateTierCapacityAsync(node, tier, ct);
 
         return new NodeResourceAvailability
         {

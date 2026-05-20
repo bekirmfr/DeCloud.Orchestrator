@@ -25,6 +25,7 @@ public class NodeService : INodeService
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
     private readonly IConstraintEvaluator _constraintEvaluator;
+    private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly ILocalityService _locality;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
@@ -47,6 +48,7 @@ public class NodeService : INodeService
         DataStore dataStore,
         ISchedulingConfigService configService,
         IConstraintEvaluator constraintEvaluator,
+        NodeCapacityCalculator capacityCalculator,
         ILocalityService locality,
         IEventService eventService,
         ICentralIngressService ingressService,
@@ -65,6 +67,7 @@ public class NodeService : INodeService
         _dataStore = dataStore;
         _configService = configService;
         _constraintEvaluator = constraintEvaluator;
+        _capacityCalculator = capacityCalculator;
         _locality = locality;
         _eventService = eventService;
         _ingressService = ingressService;
@@ -188,7 +191,8 @@ public class NodeService : INodeService
 
     // Implements deterministic node ID validation and registration
 
-    public async Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default)
+    public async Task<NodeRegistrationResponse> RegisterNodeAsync(
+    NodeRegistrationRequest request, CancellationToken ct = default)
     {
         // =====================================================
         // STEP 1: Validate Wallet Address
@@ -203,149 +207,55 @@ public class NodeService : INodeService
         }
 
         // =====================================================
-        // NEW: STEP 1.5: Verify Wallet Signature
+        // STEP 1.5: Verify Wallet Signature
         // =====================================================
         if (!VerifyWalletSignature(request.WalletAddress, request.Message, request.Signature))
         {
             _logger.LogError("Node registration rejected: Invalid wallet signature");
-            throw new UnauthorizedAccessException("Invalid wallet signature. Please ensure you're using the correct wallet.");
+            throw new UnauthorizedAccessException(
+                "Invalid wallet signature. Please ensure you're using the correct wallet.");
         }
 
         // =====================================================
         // STEP 1.6: Validate Signature Freshness
-        //
-        // The signed message embeds an ISO 8601 timestamp. We enforce a
-        // 5-minute validity window with ±2-minute skew tolerance to prevent
-        // replay of captured signatures.
-        //
-        // Messages in the legacy format (pre-canonical, no "Timestamp:" line
-        // with ISO 8601) skip this check for backward compatibility. Once all
-        // nodes are updated, the fallback can be removed.
         // =====================================================
-        var timestampFreshness = ValidateSignatureTimestamp(request.Message);
-        if (timestampFreshness != null)
-        {
-            _logger.LogWarning(
-                "Node registration timestamp validation: {Result} for wallet {Wallet}",
-                timestampFreshness, request.WalletAddress);
-
-            if (timestampFreshness == "EXPIRED" || timestampFreshness == "FUTURE")
-            {
-                throw new UnauthorizedAccessException(
-                    $"Signature timestamp is {timestampFreshness.ToLower()}. " +
-                    "The signing message is valid for 5 minutes from creation. " +
-                    "Please re-sign and try again.");
-            }
-            // "VALID" or "LEGACY_FORMAT" — proceed
-        }
+        ValidateSignatureTimestamp(request.Message);
 
         // =====================================================
-        // STEP 2: Validate Machine ID
+        // STEP 2: Compute Deterministic Node ID
         // =====================================================
-        if (string.IsNullOrWhiteSpace(request.MachineId))
-        {
-            _logger.LogError("Node registration rejected: missing machine ID");
-            throw new ArgumentException("Machine ID is required for node registration");
-        }
+        var nodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
 
         // =====================================================
-        // STEP 3: Generate and Validate Node ID
+        // STEP 3: Resolve Locality
         // =====================================================
-        string nodeId;
-        try
-        {
-            nodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
-
-            _logger.LogInformation(
-                "✓ Wallet signature generated for node {NodeId}",
-                nodeId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to generate node ID");
-            throw new ArgumentException("Invalid machine ID or wallet address", ex);
-        }
-
-        // =====================================================
-        // Get orchestrator WireGuard public key if available
-        // =====================================================
-        string? orchestratorPublicKey = null;
-
-        orchestratorPublicKey = await _wireGuardManager.GetOrchestratorPublicKeyAsync(ct);
-        _logger.LogInformation(
-            "Including orchestrator WireGuard public key {PublicKey} in registration response for node {NodeId}",
-            orchestratorPublicKey, nodeId);
-
-        // =====================================================
-        // Get scheduling configuration
-        // =====================================================
-
-        SchedulingConfig? schedulingConfig = await _configService.GetConfigAsync(ct);
-
-        // =====================================================
-        // Generate JWT token for node authentication
-        // =====================================================
-        var jti = Guid.NewGuid().ToString();
-        var apiKey = GenerateNodeJwtToken(nodeId, request.WalletAddress, request.MachineId, jti);
-        var apiKeyHash = GenerateHash(apiKey);
-
-        _logger.LogInformation("Generated JWT token for node {NodeId}", nodeId);
-
-        // =====================================================
-        // STEP 3.5: Locality validation and derivation
-        // =====================================================
-        // Country: normalize + validate (or treat absent as unknown)
         var country = string.IsNullOrWhiteSpace(request.Country)
             ? "ZZ"
             : request.Country.ToUpperInvariant().Trim();
 
         if (country != "ZZ" && !_locality.IsValidCountryCode(country))
         {
-            _logger.LogWarning(
-                "Node registration rejected: invalid country '{Country}' from node {NodeId}",
-                request.Country, nodeId);
             throw new ArgumentException(
                 $"Invalid country code '{request.Country}'. " +
-                $"Use ISO 3166-1 alpha-2 (e.g. 'TR', 'DE', 'US'). " +
-                $"'ZZ' is accepted to indicate unknown.");
+                $"Use ISO 3166-1 alpha-2 (e.g. 'TR', 'DE', 'US').");
         }
 
-        // Region: validate if it's not the legacy default sentinel
         var region = request.Region ?? "default";
         if (region != "default" && !_locality.IsValidRegionCode(region))
         {
-            _logger.LogWarning(
-                "Node registration rejected: invalid region '{Region}' from node {NodeId}",
-                region, nodeId);
             throw new ArgumentException(
                 $"Invalid region '{region}'. " +
                 $"Valid regions: [{string.Join(", ", _locality.Regions.Select(r => r.Code))}].");
         }
 
-        // Zone: validate format if provided and not the legacy default sentinel
         var zone = request.Zone ?? "default";
         if (zone != "default" && !_locality.IsValidZone(zone, region))
         {
-            _logger.LogWarning(
-                "Node registration rejected: invalid zone '{Zone}' for region '{Region}' from node {NodeId}",
-                zone, region, nodeId);
             throw new ArgumentException(
-                $"Invalid zone '{zone}'. Zone must follow format '<region>-<n>' " +
-                $"where <n> is a positive integer and the prefix matches " +
-                $"the parent region '{region}'.");
+                $"Invalid zone '{zone}'. Zone must follow format '<region>-<n>'.");
         }
 
-        // Derive supranational membership tags from the declared country.
-        // Tags are derived server-side from countries.json; the operator
-        // cannot set them directly.
         var jurisdictionTags = _locality.GetTagsForCountry(country).ToList();
-
-        // IP-derived country: best-effort, for corroboration only.
-        // We have request.PublicIp available; GeoIP lookup is deferred to
-        // when a GeoIP service is wired in. Store null for now so the field
-        // is populated incrementally rather than left permanently absent.
-        string? ipDerivedCountry = null;   // TODO(Phase 3): resolve via GeoIP service
-        var locationMismatch = false;
 
         var locality = new NodeLocality
         {
@@ -353,34 +263,19 @@ public class NodeService : INodeService
             JurisdictionTags = jurisdictionTags,
             Region = region == "default" ? "unknown" : region,
             Zone = zone == "default" ? null : zone,
-            IpDerivedCountry = ipDerivedCountry,
-            LocationMismatch = locationMismatch,
+            IpDerivedCountry = null,
+            LocationMismatch = false,
         };
 
-        _logger.LogInformation(
-            "Node {NodeId} locality resolved: Country={Country}, " +
-            "Tags=[{Tags}], Region={Region}, Zone={Zone}",
-            nodeId,
-            country,
-            string.Join(", ", jurisdictionTags),
-            locality.Region,
-            locality.Zone ?? "(none)");
+        // =====================================================
+        // STEP 4: Build Node Record
+        // =====================================================
+        var jti = Guid.NewGuid().ToString();
+        var apiKey = GenerateNodeJwtToken(nodeId, request.WalletAddress, request.MachineId, jti);
+        var apiKeyHash = Convert.ToBase64String(
+            System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(apiKey)));
 
-        // =====================================================
-        // STEP 4: Create Node
-        // =====================================================
-        _logger.LogInformation(
-            "Node registration: {NodeId} (Machine: {MachineId}, Wallet: {Wallet})",
-            nodeId, request.MachineId, request.WalletAddress);
-
-        // =====================================================
-        // Check for existing node (re-registration scenario)
-        // =====================================================
-        // When a node re-registers (e.g., after orchestrator restart or agent
-        // restart), we must preserve system VM state from the existing record.
-        // Without this, re-registration overwrites DhtInfo, RelayInfo,
-        // SystemVmObligations, and ReservedResources with empty defaults,
-        // causing duplicate system VM deployments and resource drift.
         var existingNode = await _dataStore.GetNodeAsync(nodeId);
 
         var node = new Node
@@ -393,17 +288,10 @@ public class NodeService : INodeService
             PublicIp = request.PublicIp,
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
-            // New registrations default to scheduling-ready for backward compat.
-            // Under the target lifecycle, the operator calls login separately
-            // after register. Until the CLI is updated, this preserves the
-            // current behavior where register implies ready.
-            SchedulingReady = existingNode?.SchedulingReady ?? true,
+            // Target lifecycle: operator calls login separately after evaluate.
+            SchedulingReady = false,
             HardwareInventory = request.HardwareInventory,
-            TotalResources = new ResourceSnapshot(),
-            // ReservedResources resets on re-registration. Holds are transient
-            // (scheduling only) and stale after re-register. UsedResources
-            // (from heartbeat) is the ground truth for actual consumption.
-            // See docs/RESOURCE-ALLOCATION.md §8.2.
+            TotalResources = existingNode?.TotalResources ?? new ResourceSnapshot(),
             ReservedResources = new ResourceSnapshot(),
             UsedResources = existingNode?.UsedResources ?? new ResourceSnapshot(),
             AgentVersion = request.AgentVersion,
@@ -411,17 +299,12 @@ public class NodeService : INodeService
             Locality = locality,
             RegisteredAt = existingNode?.RegisteredAt ?? request.RegisteredAt,
             LastSeenAt = DateTime.UtcNow,
-
-            // P1.9: forward the CA public key from the registration request into
-            // the persisted Node. CaPublicKeyResolver reads this at cloud-init
-            // render time. Preserve existing value on re-registration if request
-            // didn't include one (pre-P1.9 agents) — never silently null out a
-            // previously-stamped value.
             SshCaPublicKey = request.SshCaPublicKey ?? existingNode?.SshCaPublicKey,
-
             Pricing = request.Pricing ?? new NodePricing(),
-            // Preserve system VM state from existing node
+            // Preserve existing state on re-registration
             SystemVmObligations = existingNode?.SystemVmObligations ?? new List<SystemVmObligation>(),
+            PerformanceEvaluation = existingNode?.PerformanceEvaluation,
+            AllocatedResources = existingNode?.AllocatedResources,
             DhtInfo = existingNode?.DhtInfo,
             RelayInfo = existingNode?.RelayInfo,
             CgnatInfo = existingNode?.CgnatInfo,
@@ -431,333 +314,55 @@ public class NodeService : INodeService
                 region == "default" ? "unknown" : region)
         };
 
-        if (existingNode != null)
-        {
-            _logger.LogInformation(
-                "Node {NodeId} re-registering — preserved {ObligationCount} obligations, " +
-                "DhtInfo={HasDht}, RelayInfo={HasRelay}, Reserved={ReservedPoints} points",
-                nodeId,
-                node.SystemVmObligations.Count,
-                node.DhtInfo != null,
-                node.RelayInfo != null,
-                node.ReservedResources.ComputePoints);
-        }
-
         // =====================================================
-        // STEP 5: Performance Evaluation & Capacity Calculation
+        // STEP 5: Store allocation (if provided in request)
         // =====================================================
-        var performanceLogger = _loggerFactory.CreateLogger<NodePerformanceEvaluator>();
-        var performanceEvaluator = new NodePerformanceEvaluator(
-            performanceLogger,
-            _configService); // Pass config service
-
-        node.PerformanceEvaluation = await performanceEvaluator.EvaluateNodeAsync(request.HardwareInventory, ct);
-
-        if (!node.PerformanceEvaluation.IsAcceptable)
+        if (request.AllocatedResources != null)
         {
-            _logger.LogWarning(
-                "Node {NodeId} rejected during registration: {Reason}",
-                nodeId,
-                node.PerformanceEvaluation.RejectionReason);
+            node.AllocatedResources = request.AllocatedResources;
 
-            throw new InvalidOperationException(
-                $"Node performance below minimum requirements: {node.PerformanceEvaluation.RejectionReason}");
-        }
-
-        // =====================================================
-        // STEP 5.5: Validate and store operator allocation limits
-        // See docs/RESOURCE-ALLOCATION.md §5.2, §8.4
-        // =====================================================
-        // Store operator allocation. Convert v1 (absolute) to v2 (percent)
-        // if the agent sent the legacy format.
-        node.AllocatedResources = request.AllocatedResources;
-
-        if (node.AllocatedResources != null && node.AllocatedResources.IsLegacyFormat)
-        {
-            var physicalRam = request.HardwareInventory.Memory.TotalBytes;
-            var physicalStorage = request.HardwareInventory.Storage.Sum(s => s.TotalBytes);
-
-            // For legacy compute point conversion, we need the hardware max.
-            // At this point in registration, PerformanceEvaluation may already
-            // be computed (current flow) or may not yet exist (future flow
-            // where evaluate is separate). If available, use it; otherwise
-            // use 0 which means CpuPercent will be null (platform default).
-            var hardwareMaxPts = 0;
-            if (node.PerformanceEvaluation is { IsAcceptable: true })
+            if (node.AllocatedResources.IsLegacyFormat)
             {
-                var cfg = await _configService.GetConfigAsync(ct);
-                hardwareMaxPts = (int)(
-                    request.HardwareInventory.Cpu.PhysicalCores *
-                    node.PerformanceEvaluation.PointsPerCore *
-                    cfg.BaselineOvercommitRatio);
-            }
-
-            var converted = node.AllocatedResources.ToPercentFormat(
-                physicalRam, hardwareMaxPts, physicalStorage);
-
-            _logger.LogInformation(
-                "Node {NodeId}: converted v1 allocation to v2 percentages " +
-                "(CPU={CpuPct}, Mem={MemPct}, Stor={StorPct})",
-                nodeId,
-                converted.CpuPercent?.ToString("P0") ?? "default",
-                converted.MemoryPercent?.ToString("P0") ?? "default",
-                converted.StoragePercent?.ToString("P0") ?? "default");
-
-            node.AllocatedResources = converted;
-        }
-
-
-        if (node.AllocatedResources?.ComputePoints != null && existingNode != null)
-        {
-            if (existingNode.UsedResources.ComputePoints > node.AllocatedResources.ComputePoints.Value)
-            {
-                throw new InvalidOperationException(
-                    $"Allocated CPU points ({node.AllocatedResources.ComputePoints.Value}) " +
-                    $"below currently used ({existingNode.UsedResources.ComputePoints}). " +
-                    $"Drain or delete VMs first, then re-register.");
-            }
-        }
-
-        if (node.AllocatedResources?.StorageBytes != null && existingNode != null)
-        {
-            if (existingNode.UsedResources.StorageBytes > node.AllocatedResources.StorageBytes.Value)
-            {
-                throw new InvalidOperationException(
-                    $"Allocated storage ({node.AllocatedResources.StorageBytes.Value / (1024 * 1024 * 1024)} GB) " +
-                    $"below currently used ({existingNode.UsedResources.StorageBytes / (1024 * 1024 * 1024)} GB). " +
-                    $"Drain or delete VMs first, then re-register.");
-            }
-        }
-
-        // Calculate total capacity using NodeCapacityCalculator
-        // The calculator now reads node.AllocatedResources and applies
-        // operator limits with platform defaults for null fields.
-        var capacityLogger = _loggerFactory.CreateLogger<NodeCapacityCalculator>();
-        var capacityCalculator = new NodeCapacityCalculator(
-            capacityLogger,
-            _configService); // Pass config service
-
-        var totalCapacity = await capacityCalculator.CalculateTotalCapacityAsync(node, ct);
-
-        node.TotalResources = new ResourceSnapshot
-        {
-            ComputePoints = totalCapacity.TotalComputePoints,
-            MemoryBytes = totalCapacity.TotalMemoryBytes,
-            StorageBytes = totalCapacity.TotalStorageBytes
-        };
-
-        _logger.LogInformation(
-            "Node {NodeId} accepted: Highest tier={Tier}, Total capacity={Points} points",
-            nodeId,
-            node.PerformanceEvaluation.HighestTier,
-            totalCapacity.TotalComputePoints);
-
-        var registrationLock = _registrationLocks.GetOrAdd(nodeId, _ => new SemaphoreSlim(1, 1));
-        await registrationLock.WaitAsync(ct);
-
-        var obligationStates = new Dictionary<string, ObligationStatePayload>();
-        var systemTemplates = new Dictionary<string, SystemVmTemplatePayload>();
-
-        try
-        {
-
-            // =====================================================
-            // Generate and save API key
-            // =====================================================
-            node.ApiKeyHash = apiKeyHash;
-            node.ApiKeyCreatedAt = DateTime.UtcNow;
-            node.ApiKeyLastUsedAt = null;
-
-            await _dataStore.SaveNodeAsync(node);
-
-            _logger.LogInformation(
-                "✓ Node registered successfully: {NodeId}",
-                node.Id);
-
-            // =====================================================
-            // STEP 6a: CGNAT relay assignment (BEFORE system VM deployment)
-            // =====================================================
-            // CGNAT nodes need to be assigned to an *existing* relay on another node.
-            // This MUST happen before DHT deployment so GetAdvertiseIp() returns the
-            // WireGuard tunnel IP instead of the unreachable public IP. Without this,
-            // the DHT VM gets the wrong dht-advertise-ip label and other nodes can't
-            // connect to it via the overlay network.
-
-            if (node.HardwareInventory.Network.NatType != NatType.None)
-            {
-                if (node.CgnatInfo == null)
+                var physicalRam = request.HardwareInventory.Memory.TotalBytes;
+                var physicalStorage = request.HardwareInventory.Storage.Sum(s => s.TotalBytes);
+                var hardwareMaxPts = 0;
+                if (node.PerformanceEvaluation is { IsAcceptable: true })
                 {
-                    _logger.LogInformation(
-                    "Node {NodeId} is behind CGNAT (type: {NatType}) - assigning to relay",
-                    node.Id, node.HardwareInventory.Network.NatType);
-
-                    var relay = await _relayNodeService.FindBestRelayForCgnatNodeAsync(node);
-
-                    if (relay != null)
-                    {
-                        await _relayNodeService.AssignCgnatNodeToRelayAsync(node, relay);
-                    }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "No available relay found for CGNAT node {NodeId}",
-                            node.Id);
-                    }
+                    var cfg = await _configService.GetConfigAsync(ct);
+                    hardwareMaxPts = (int)(
+                        request.HardwareInventory.Cpu.PhysicalCores *
+                        node.PerformanceEvaluation.PointsPerCore *
+                        cfg.BaselineOvercommitRatio);
                 }
-                else
-                {
-                    _logger.LogInformation(
-                    "Node {NodeId} is behind CGNAT (type: {NatType}) - already assigned to relay {RelayNodeId}",
-                    node.Id, node.HardwareInventory.Network.NatType, node.CgnatInfo.AssignedRelayNodeId);
-
-                    // This is probably a re-registration of a cgnat node already assigned with a relay - verify relay is still valid
-
-
-                }
+                node.AllocatedResources = node.AllocatedResources.ToPercentFormat(
+                    physicalRam, hardwareMaxPts, physicalStorage);
             }
-
-            // =====================================================
-            // STEP 6b: Compute system VM obligations & deploy what's ready
-            // =====================================================
-            // Declare what this node should have (DHT, Relay, BlockStore, Ingress)
-            // based on its capabilities. The reconciliation loop converges toward it.
-
-            var requiredRoles = _eligibility.ComputeObligations(node);
-
-            if (node.SystemVmObligations.Count == 0)
-            {
-                // Fresh registration — seed all required obligations as Pending
-                // Fresh registration — seed all required obligations as Pending.
-                // Stamp TemplateId immediately (slug lookup) so GenerateSystemTemplatePayloads
-                // uses the primary _id path rather than the fallback for every obligation.
-                node.SystemVmObligations = new List<SystemVmObligation>();
-                foreach (var role in requiredRoles)
-                {
-                    var slug = SystemVmRoleMap.ToTemplateSlug(role);
-                    var tpl = slug is not null
-                        ? await _dataStore.GetTemplateBySlugAsync(slug)
-                        : null;
-
-                    node.SystemVmObligations.Add(new SystemVmObligation
-                    {
-                        Role = role,
-                        // VmId intentionally NOT pre-assigned (BLOCKSTORE-FIX §6 /
-                        // Phase 3 cleanup). The libvirt domain UUID is the single
-                        // authoritative VmId — minted on the node at deploy time
-                        // and stamped here via SyncVmStateFromHeartbeatAsync's
-                        // empty-VmId adoption guard. VmName remains derivable
-                        // from nodeId (stable across redeploys) so kept as-is.
-                        VmName = SystemVmRoleMap.ToVmName(role, node.Id),
-                        Status = SystemVmStatus.Pending,
-                        TemplateId = tpl?.Id,
-                    });
-                }
-            }
-            else
-            {
-                // Re-registration — preserve existing obligations but backfill any
-                // newly required roles (e.g., Relay re-enabled after initial registration).
-                // Without this, new roles only get added by the background loop's
-                // EnsureObligationsAsync (which ReconcileNodeAsync does NOT call).
-                var existingRoles = new HashSet<SystemVmRole>(
-                    node.SystemVmObligations.Select(o => o.Role));
-
-                foreach (var role in requiredRoles.Where(r => !existingRoles.Contains(r)))
-                {
-                    var slug = SystemVmRoleMap.ToTemplateSlug(role);
-                    var tpl = slug is not null
-                        ? await _dataStore.GetTemplateBySlugAsync(slug)
-                        : null;
-
-                    node.SystemVmObligations.Add(new SystemVmObligation
-                    {
-                        Role = role,
-                        Status = SystemVmStatus.Pending,
-                        TemplateId = tpl?.Id,
-                    });
-
-                    _logger.LogInformation(
-                        "Backfilled {Role} obligation on node {NodeId} during re-registration",
-                        role, node.Id);
-                }
-            }
-
-            _logger.LogInformation(
-                "Node {NodeId} obligations computed: [{Roles}]",
-                node.Id, string.Join(", ", requiredRoles));
-
-            // Generate identity state for any new obligation (StateVersion == 0)
-            // or any obligation where the orchestrator's version exceeds what the
-            // node reported.  State generation must be first so HydrateNodeFromObligationState
-            // finds a populated StateJson when it runs inside TryDeployAsync
-            obligationStates = GenerateAndAttachObligationStates(node, request.ObligationStateVersions);
-
-            // Generate system template payloads for any role where the orchestrator's
-            // revision exceeds what the node reported. Parallel to identity states.
-            systemTemplates = await GenerateSystemTemplatePayloads(node, request.SystemTemplateVersions ?? new());
-
-            // Ensure obligations are seeded for this node (obligation management —
-            // orchestrator authority). VM deployment is handled by the node's
-            // SystemVmReconciler (P6) which reads obligations from its local SQLite.
-            //
-            // NOTE: This runs after GenerateSystemTemplatePayloads. Any new obligations
-            // added here (nodes > 60s old) will not appear in the systemTemplates payload
-            // for this registration response — the node receives their templates on the
-            // next heartbeat cycle via the systemTemplatesPending pull mechanism.
-            // Nodes < 60s old are skipped by EnsureObligationsAsync (60s guard) and
-            // have their obligations backfilled inline above before GenerateSystemTemplatePayloads runs.
-            var obligationService = _serviceProvider.GetService<SystemVmObligationService>();
-            if (obligationService != null)
-            {
-                await obligationService.EnsureObligationsForNodeAsync(node, ct);
-            }
-
-            await _dataStore.SaveNodeAsync(node);
-
-        }
-        finally
-        {
-            registrationLock.Release();
         }
 
         // =====================================================
-        // VM compliance check on re-registration
-        //
-        // If this is a re-registration (existingNode != null) and locality
-        // has changed, walk running VMs and flag any whose placement
-        // constraints are no longer satisfied by the new locality.
-        //
-        // The check runs after the node is saved so constraint evaluation
-        // sees the new locality. Flagged VMs are included in the response
-        // so the operator sees them immediately.
+        // STEP 6: Save and issue credentials
         // =====================================================
-        List<NonCompliantVmInfo> nonCompliantVms = new();
+        node.ApiKeyHash = apiKeyHash;
+        node.ApiKeyCreatedAt = DateTime.UtcNow;
+        node.ApiKeyLastUsedAt = null;
 
+        await _dataStore.SaveNodeAsync(node);
+
+        _logger.LogInformation("✓ Node registered: {NodeId} (SchedulingReady=false)", node.Id);
+
+        // =====================================================
+        // STEP 7: VM compliance check (re-registration only)
+        // =====================================================
+        var nonCompliantVms = new List<NonCompliantVmInfo>();
         if (existingNode != null)
         {
             var localityChanged =
-                existingNode.Locality?.Country != node.Locality?.Country ||
-                existingNode.Locality?.Region != node.Locality?.Region;
+                !string.Equals(existingNode.Locality?.Country, node.Locality?.Country, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(existingNode.Locality?.Region, node.Locality?.Region, StringComparison.OrdinalIgnoreCase);
 
             if (localityChanged)
             {
-                _logger.LogInformation(
-                    "Locality changed for node {NodeId}: {OldCountry}/{OldRegion} → {NewCountry}/{NewRegion}. " +
-                    "Checking VM compliance.",
-                    nodeId,
-                    existingNode.Locality?.Country ?? "ZZ",
-                    existingNode.Locality?.Region ?? "unknown",
-                    node.Locality?.Country ?? "ZZ",
-                    node.Locality?.Region ?? "unknown");
-
                 nonCompliantVms = await FlagNonCompliantVmsAsync(node, ct);
-
-                if (nonCompliantVms.Count > 0)
-                {
-                    _logger.LogWarning(
-                        "Node {NodeId}: {Count} VM(s) flagged for migration due to locality change",
-                        nodeId, nonCompliantVms.Count);
-                }
             }
         }
 
@@ -772,45 +377,21 @@ public class NodeService : INodeService
                 ["name"] = node.Name,
                 ["region"] = node.Locality.Region,
                 ["machineId"] = node.MachineId,
-                ["wallet"] = node.WalletAddress,
-                ["resources"] = JsonSerializer.Serialize(node.TotalResources)
+                ["wallet"] = node.WalletAddress
             }
         });
 
-        // Collect bootstrap peers for the DHT VM that will deploy on this node
-        var dhtBootstrapPeers = await _dhtNodeService.GetBootstrapPeersAsync(excludeNodeId: node.Id);
-
-        // Build obligation descriptors for the node agent's local obligation table.
-        // The node's SystemVmReconciler reads this to determine intent (P6/P10).
-        var obligationDescriptors = node.SystemVmObligations
-            .Select(o =>
-            {
-                var roleName = SystemVmRoleMap.ToCanonicalName(o.Role);
-                if (roleName is null) return null;
-                var deps = SystemVmDependencies.GetDependencies(o.Role)
-                                    .Select(d => SystemVmRoleMap.ToCanonicalName(d))
-                                    .Where(d => d is not null)
-                                    .Cast<string>()
-                                    .ToList();
-                return new ObligationDescriptorPayload { Role = roleName, Deps = deps };
-            })
-            .Where(o => o is not null)
-            .Cast<ObligationDescriptorPayload>()
-            .ToList();
+        var orchestratorPublicKey = _configuration["WireGuard:PublicKey"] ?? "";
 
         return new NodeRegistrationResponse(
             node.Id,
-            node.PerformanceEvaluation,
             apiKey,
-            schedulingConfig,
             orchestratorPublicKey,
             TimeSpan.FromSeconds(15),
-            dhtBootstrapPeers,
-            obligationStates,
-            systemTemplates,
-            obligationDescriptors,
-            nonCompliantVms.Count > 0 ? nonCompliantVms : null);
+            nonCompliantVms.Count > 0 ? nonCompliantVms : null
+        );
     }
+
 
     public async Task<NodeDeregisterResponse> DeregisterNodeAsync(
     string nodeId, bool force, string reason,
@@ -905,11 +486,8 @@ public class NodeService : INodeService
         // Compute TotalResources from allocation percentages + evaluation
         // This is the moment percentages become concrete values.
         // -----------------------------------------------------------------
-        var capacityCalculator = new NodeCapacityCalculator(
-            _loggerFactory.CreateLogger<NodeCapacityCalculator>(),
-            _configService);
 
-        var totalCapacity = await capacityCalculator.CalculateTotalCapacityAsync(node, ct);
+        var totalCapacity = await _capacityCalculator.CalculateTotalCapacityAsync(node, ct);
 
         if (!totalCapacity.IsAcceptable)
         {
@@ -993,6 +571,23 @@ public class NodeService : INodeService
     }
 
     /// <summary>
+    /// Generate obligation identity states and system VM templates for the
+    /// node's current obligations. Used by the evaluate endpoint.
+    /// Passes empty version dictionaries so all states/templates are returned.
+    /// </summary>
+    public async Task<(Dictionary<string, ObligationStatePayload>, Dictionary<string, SystemVmTemplatePayload>)>
+        GenerateObligationPayloadsAsync(Node node, CancellationToken ct = default)
+    {
+        // Empty dictionaries = "node has nothing cached, send everything"
+        var emptyVersions = new Dictionary<string, int>();
+
+        var obligationStates = GenerateAndAttachObligationStates(node, emptyVersions);
+        var systemTemplates = await GenerateSystemTemplatePayloads(node, emptyVersions);
+
+        return (obligationStates, systemTemplates);
+    }
+
+    /// <summary>
     /// For each obligation on <paramref name="node"/>, generate fresh identity
     /// state if none exists (StateVersion == 0), or re-send existing state if
     /// the node's reported version is lower than the stored version.
@@ -1033,11 +628,6 @@ public class NodeService : INodeService
                         PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
                     });
 
-            FIND:
-                obligation.StateJson = stateJson;
-                obligation.StateVersion = state.Version; // always 1 on first generation
-
-            REPLACE:
                 obligation.StateJson = stateJson;
                 obligation.StateVersion = state.Version; // always 1 on first generation
 

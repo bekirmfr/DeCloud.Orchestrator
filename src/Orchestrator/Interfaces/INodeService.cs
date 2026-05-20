@@ -1,4 +1,5 @@
 ﻿using DeCloud.Shared.Contracts;
+using DeCloud.Shared.Models;
 using Orchestrator.Models;
 
 namespace Orchestrator.Interfaces;
@@ -13,6 +14,9 @@ public interface INodeService
     Task<NodeAllocateResponse> AllocateNodeAsync(string nodeId, NodeAllocateRequest request, CancellationToken ct = default);
 
     Task<NodeRegistrationResponse> RegisterNodeAsync(NodeRegistrationRequest request, CancellationToken ct = default);
+
+    Task<(Dictionary<string, ObligationStatePayload>, Dictionary<string, SystemVmTemplatePayload>)>
+    GenerateObligationPayloadsAsync(Node node, CancellationToken ct = default);
 
     /// <summary>
     /// Deregister a node. Refuses with tenant VMs unless force=true.

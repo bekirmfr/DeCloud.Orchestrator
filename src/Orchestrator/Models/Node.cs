@@ -556,6 +556,22 @@ public class NodeRegistrationRequest
     public AllocatedResources? AllocatedResources { get; set; }
 }
 
+/// <summary>
+/// Response from POST /api/nodes/me/evaluate.
+/// Carries everything that was previously bundled into NodeRegistrationResponse:
+/// performance evaluation, scheduling config, obligations, identity states,
+/// system templates, DHT bootstrap peers.
+/// </summary>
+public record EvaluateNodeResponse(
+    NodePerformanceEvaluation PerformanceEvaluation,
+    SchedulingConfig SchedulingConfig,
+    List<string> DhtBootstrapPeers,
+    Dictionary<string, ObligationStatePayload> ObligationStates,
+    Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null,
+    List<ObligationDescriptorPayload>? Obligations = null
+);
+
+
 public class NodeDeregisterRequest
 {
     public string Reason { get; set; } = "manual_uninstall";
@@ -583,38 +599,16 @@ public class ObligationDescriptorPayload
 
 public record NodeRegistrationResponse(
     string NodeId,
-    NodePerformanceEvaluation performanceEvaluation,
     string ApiKey,
-    SchedulingConfig SchedulingConfig,
     string OrchestratorWireGuardPublicKey,
     TimeSpan HeartbeatInterval,
-    List<string> DhtBootstrapPeers,
-    /// <summary>
-    /// Identity state payloads keyed by canonical role name.
-    /// Contains only roles where orchestrator version > node-reported version.
-    /// Empty if all states are already current on the node.
-    /// </summary>
-    Dictionary<string, ObligationStatePayload> ObligationStates,
-    /// <summary>
-    /// System template payloads keyed by canonical role name.
-    /// Contains only roles where orchestrator revision > node-reported revision.
-    /// Null or empty = all templates current on the node (or none seeded yet).
-    /// </summary>
-    Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null,
-    /// <summary>
-    /// Full obligation list for this node: roles + dependency graph.
-    /// Node agent saves this to its local SQLite <c>obligation</c> table so
-    /// <c>SystemVmReconciler</c> can compute intent without calling home.
-    /// Always included — empty list means the node has no current obligations.
-    /// </summary>
-    List<ObligationDescriptorPayload>? Obligations = null,
     /// <summary>
     /// VMs on this node whose placement constraints are no longer
-    /// satisfied after a locality change. Empty on first registration
-    /// or when no VMs are affected.
+    /// satisfied after a locality change. Empty on first registration.
     /// </summary>
     List<NonCompliantVmInfo>? NonCompliantVms = null
 );
+
 
 /// <summary>
 /// Response to POST /api/nodes/{id}/login.

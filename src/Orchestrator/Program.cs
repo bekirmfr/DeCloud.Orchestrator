@@ -100,7 +100,7 @@ builder.Services.AddSingleton<IJwtRevocationService>(sp =>
 });
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
-builder.Services.AddScoped<NodeCapacityCalculator>();
+builder.Services.AddSingleton<NodeCapacityCalculator>();
 builder.Services.AddSingleton<IVmSchedulingService, VmSchedulingService>();
 builder.Services.AddHttpClient("RelayApi");
 builder.Services.AddSingleton<IRelayNodeService, RelayNodeService>();
