@@ -392,8 +392,7 @@ public class NodeSelfController : ControllerBase
         // the existing helper methods on NodeService.
         // (The controller needs access to NodeService for this — inject via DI
         //  or call a dedicated service method.)
-        var nodeService = HttpContext.RequestServices.GetRequiredService<INodeService>();
-        var (states, templates) = await nodeService.GenerateObligationPayloadsAsync(node, ct);
+        var (states, templates) = await _nodeService.GenerateObligationPayloadsAsync(node, ct);
         obligationStates = states;
         systemTemplates = templates;
 
