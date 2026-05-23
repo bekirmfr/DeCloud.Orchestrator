@@ -368,7 +368,7 @@ public class NodeSelfController : ControllerBase
         await _dataStore.SaveNodeAsync(node);
 
         // ── Step 2: Obligation seeding ───────────────────────────────────
-        await _reconciler.EnsureObligationsForNodeAsync(node, ct);
+        await _reconciler.EnsureObligationsAsync(node, ct);
 
         // ── Step 3: CGNAT relay assignment ───────────────────────────────
         if (node.HardwareInventory.Network.NatType != NatType.None && node.CgnatInfo == null)

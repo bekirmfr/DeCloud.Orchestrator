@@ -308,39 +308,14 @@ public class NodeService : INodeService
             DhtInfo = existingNode?.DhtInfo,
             RelayInfo = existingNode?.RelayInfo,
             CgnatInfo = existingNode?.CgnatInfo,
-            RegisteredSettingsHash = DeCloud.Shared.SettingsHash.Compute(
+            RegisteredSettingsHash = SettingsHash.Compute(
                 request.WalletAddress,
                 country,
                 region == "default" ? "unknown" : region)
         };
 
         // =====================================================
-        // STEP 5: Store allocation (if provided in request)
-        // =====================================================
-        if (request.AllocatedResources != null)
-        {
-            node.AllocatedResources = request.AllocatedResources;
-
-            if (node.AllocatedResources.IsLegacyFormat)
-            {
-                var physicalRam = request.HardwareInventory.Memory.TotalBytes;
-                var physicalStorage = request.HardwareInventory.Storage.Sum(s => s.TotalBytes);
-                var hardwareMaxPts = 0;
-                if (node.PerformanceEvaluation is { IsAcceptable: true })
-                {
-                    var cfg = await _configService.GetConfigAsync(ct);
-                    hardwareMaxPts = (int)(
-                        request.HardwareInventory.Cpu.PhysicalCores *
-                        node.PerformanceEvaluation.PointsPerCore *
-                        cfg.BaselineOvercommitRatio);
-                }
-                node.AllocatedResources = node.AllocatedResources.ToPercentFormat(
-                    physicalRam, hardwareMaxPts, physicalStorage);
-            }
-        }
-
-        // =====================================================
-        // STEP 6: Save and issue credentials
+        // STEP 5: Save and issue credentials
         // =====================================================
         node.ApiKeyHash = apiKeyHash;
         node.ApiKeyCreatedAt = DateTime.UtcNow;
@@ -351,7 +326,7 @@ public class NodeService : INodeService
         _logger.LogInformation("✓ Node registered: {NodeId} (SchedulingReady=false)", node.Id);
 
         // =====================================================
-        // STEP 7: VM compliance check (re-registration only)
+        // STEP 6: VM compliance check (re-registration only)
         // =====================================================
         var nonCompliantVms = new List<NonCompliantVmInfo>();
         if (existingNode != null)
@@ -570,6 +545,10 @@ public class NodeService : INodeService
         };
     }
 
+    // ============================================================================
+    // Obligation States Management
+    // ============================================================================
+
     /// <summary>
     /// Generate obligation identity states and system VM templates for the
     /// node's current obligations. Used by the evaluate endpoint.
@@ -619,33 +598,43 @@ public class NodeService : INodeService
             // Generate fresh state if this is the first time (StateVersion == 0).
             if (obligation.StateVersion == 0 || string.IsNullOrEmpty(obligation.StateJson))
             {
-                var state = _stateGenerator.GenerateState(obligation.Role, node);
-                var stateJson = System.Text.Json.JsonSerializer.Serialize(
-                    state,
-                    state.GetType(),
-                    new System.Text.Json.JsonSerializerOptions
-                    {
-                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-                    });
-
-                obligation.StateJson = stateJson;
-                obligation.StateVersion = state.Version; // always 1 on first generation
-
-                // Stamp AuthToken on the obligation for fast lookup by callback
-                // controllers (DhtController.DhtJoin, BlockStoreController.Join).
-                // StateJson contains the token but requires deserialization — the
-                // top-level field avoids that cost on every inbound callback.
-                obligation.AuthToken = state switch
+                try
                 {
-                    DhtObligationState dht => dht.AuthToken,
-                    BlockStoreObligationState bs => bs.AuthToken,
-                    RelayObligationState relay => relay.AuthToken,
-                    _ => null
-                };
+                    var state = _stateGenerator.GenerateState(obligation.Role, node);
+                    var stateJson = System.Text.Json.JsonSerializer.Serialize(
+                        state,
+                        state.GetType(),
+                        new System.Text.Json.JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                        });
 
-                _logger.LogInformation(
-                    "Generated initial obligation state for role {Role} on node {NodeId} (v{Version})",
-                    obligation.Role, node.Id, state.Version);
+                    obligation.StateJson = stateJson;
+                    obligation.StateVersion = state.Version; // always 1 on first generation
+
+                    // Stamp AuthToken on the obligation for fast lookup by callback
+                    // controllers (DhtController.DhtJoin, BlockStoreController.Join).
+                    // StateJson contains the token but requires deserialization — the
+                    // top-level field avoids that cost on every inbound callback.
+                    obligation.AuthToken = state switch
+                    {
+                        DhtObligationState dht => dht.AuthToken,
+                        BlockStoreObligationState bs => bs.AuthToken,
+                        RelayObligationState relay => relay.AuthToken,
+                        _ => null
+                    };
+
+                    _logger.LogInformation(
+                        "Generated initial obligation state for role {Role} on node {NodeId} (v{Version})",
+                        obligation.Role, node.Id, state.Version);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Failed to generate state for {Role} on node {NodeId} — skipping",
+                        obligation.Role, node.Id);
+                    continue;
+                }
             }
 
             // Include in response if orchestrator version > node-reported version.

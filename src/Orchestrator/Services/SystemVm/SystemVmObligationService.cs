@@ -1,7 +1,6 @@
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Org.BouncyCastle.Pqc.Crypto.Lms;
 
 namespace Orchestrator.Services.SystemVm;
 
@@ -26,7 +25,7 @@ public class SystemVmObligationService : BackgroundService
 {
     private readonly DataStore _dataStore;
     private readonly IObligationEligibility _eligibility;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly ObligationStateGenerator _stateGenerator;
     private readonly ILogger<SystemVmObligationService> _logger;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(30);
@@ -34,12 +33,10 @@ public class SystemVmObligationService : BackgroundService
     public SystemVmObligationService(
         DataStore dataStore,
         IObligationEligibility eligibility,
-        IServiceProvider serviceProvider,
         ILogger<SystemVmObligationService> logger)
     {
         _dataStore = dataStore;
         _eligibility = eligibility;
-        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -93,16 +90,6 @@ public class SystemVmObligationService : BackgroundService
 
     /// <summary>
     /// Ensure a node's obligation list reflects its current capabilities.
-    /// Called from NodeService after registration to seed initial obligations.
-    /// VM deployment is handled by the node's SystemVmReconciler (P6).
-    /// </summary>
-    public async Task EnsureObligationsForNodeAsync(Node node, CancellationToken ct = default)
-    {
-        await EnsureObligationsAsync(node, ct);
-    }
-
-    /// <summary>
-    /// Ensure a node's obligation list reflects its current capabilities.
     /// Handles three cases:
     ///   1. Legacy nodes with an empty obligations list (registered before the obligation system)
     ///   2. Capability drift (e.g., node gained a public IP and is now eligible for Relay)
@@ -111,16 +98,17 @@ public class SystemVmObligationService : BackgroundService
     ///      of creating duplicate deployments.
     /// Existing obligations are never removed (removal would require draining VMs).
     /// </summary>
-    private async Task EnsureObligationsAsync(Node node, CancellationToken ct)
+    public async Task EnsureObligationsAsync(Node node, CancellationToken ct)
     {
-        // Skip nodes registered within the last 60 seconds — registration
-        // seeds and reconciles obligations atomically. Racing with it causes
-        // duplicate system VM deployments.
-        if ((DateTime.UtcNow - node.RegisteredAt).TotalSeconds < 60)
+        // Guard: skip nodes that haven't been evaluated yet. Obligation
+        // eligibility requires compute points, which are assigned during
+        // the evaluate step. Before evaluation, TotalComputePoints is 0
+        // and roles like Relay that require points won't pass eligibility.
+        if (node.PerformanceEvaluation is null)
         {
             _logger.LogDebug(
-                "Skipping EnsureObligations for recently registered node {NodeId} (age: {Age:F0}s)",
-                node.Id, (DateTime.UtcNow - node.RegisteredAt).TotalSeconds);
+                "Skipping EnsureObligations for unevaluated node {NodeId}",
+                node.Id);
             return;
         }
 
@@ -146,6 +134,40 @@ public class SystemVmObligationService : BackgroundService
             }
 
             node.SystemVmObligations.Add(adopted);
+
+            // Generate cryptographic identity state for the new obligation.
+            // Without this, the obligation shell exists but StateJson is null,
+            // and template rendering fails on the next heartbeat cycle.
+            if (adopted.StateVersion == 0)
+            {
+                try
+                {
+                    var state = _stateGenerator.GenerateState(role, node);
+                    adopted.StateJson = System.Text.Json.JsonSerializer.Serialize(
+                        state, state.GetType(),
+                        new System.Text.Json.JsonSerializerOptions
+                        {
+                            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                        });
+                    adopted.StateVersion = state.Version;
+                    adopted.AuthToken = state switch
+                    {
+                        DhtObligationState dht => dht.AuthToken,
+                        BlockStoreObligationState bs => bs.AuthToken,
+                        RelayObligationState relay => relay.AuthToken,
+                        _ => null
+                    };
+                    _logger.LogInformation(
+                        "Generated state for new {Role} obligation on node {NodeId} (v{Version})",
+                        role, node.Id, state.Version);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Failed to generate state for {Role} obligation on node {NodeId}",
+                        role, node.Id);
+                }
+            }
 
             if (adopted.Status == SystemVmStatus.Active)
             {

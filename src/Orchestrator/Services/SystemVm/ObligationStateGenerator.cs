@@ -84,11 +84,18 @@ public class ObligationStateGenerator
             ? $"10.20.{node.RelayInfo.RelaySubnet}.0/24"
             : AllocateRelaySubnet(node);
 
+        // Extract octet from the subnet we just resolved — not from RelayInfo
+        // which is null on first registration.
+        var subnetParts = relaySubnet.Split('.');
+        var subnetOctet = subnetParts.Length >= 3
+            ? subnetParts[2].Split('/')[0]
+            : "0";
+
         return new RelayObligationState
         {
             WireGuardPrivateKey = wgPriv,
             WireGuardPublicKey = wgPub,
-            TunnelIp = $"10.20.{node.RelayInfo?.RelaySubnet ?? 0}.254",
+            TunnelIp = $"10.20.{subnetOctet}.254",
             RelaySubnet = relaySubnet,
             AuthToken = GenerateAuthToken(),
             Version             = 1,
