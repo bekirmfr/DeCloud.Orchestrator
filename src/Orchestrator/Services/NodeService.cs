@@ -293,6 +293,7 @@ public class NodeService : INodeService
             // Preserve existing state on re-registration
             SystemVmObligations = existingNode?.SystemVmObligations ?? new List<SystemVmObligation>(),
             PerformanceEvaluation = existingNode?.PerformanceEvaluation,
+            AllocationConfig = existingNode?.AllocationConfig,
             AllocatedResources = existingNode?.AllocatedResources,
             DhtInfo = existingNode?.DhtInfo,
             RelayInfo = existingNode?.RelayInfo,
@@ -3007,7 +3008,7 @@ public class NodeService : INodeService
         if (criteria.MinAvailableComputePoints.HasValue)
         {
             nodes = nodes.Where(n =>
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) >=
+                (n.AllocatedResources.ComputePoints - n.UsedResources.ComputePoints - n.ReservedResources.ComputePoints) >=
                 criteria.MinAvailableComputePoints.Value);
         }
 
@@ -3045,7 +3046,7 @@ public class NodeService : INodeService
                 n.Status == NodeStatus.Online &&
                 n.UptimePercentage >= 95.0 &&
                 !string.IsNullOrEmpty(n.Description) &&
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) > 10 &&
+                (n.AllocatedResources.ComputePoints - n.UsedResources.ComputePoints - n.ReservedResources.ComputePoints) > 10 &&
                 (n.SystemVmObligations.Count == 0 ||
                  n.SystemVmObligations.All(o => o.Status == SystemVmStatus.Active)))
             .OrderByDescending(n => n.UptimePercentage)
