@@ -821,9 +821,9 @@ public class VmService : IVmService
             "Node utilization: {AllocatedPoints}/{TotalPoints} points ({Percent:F1}%)",
             vm.Id, selectedNode.Id, vm.Spec.VirtualCpuCores, vm.Spec.MemoryBytes / (1024 * 1024), vm.Spec.DiskBytes / (1024 * 1024 * 1024), pointCost, vm.Spec.QualityTier,
             selectedNode.ReservedResources.ComputePoints,
-            selectedNode.TotalResources.ComputePoints,
+            selectedNode.AllocatedResources.ComputePoints,
             (double)selectedNode.ReservedResources.ComputePoints /
-            Math.Max(1, selectedNode.TotalResources.ComputePoints) * 100);
+            Math.Max(1, selectedNode.AllocatedResources.ComputePoints) * 100);
 
         // ========================================
         // STEP 4: Update VM assignment

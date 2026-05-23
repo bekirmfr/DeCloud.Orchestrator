@@ -33,10 +33,12 @@ public class SystemVmObligationService : BackgroundService
     public SystemVmObligationService(
         DataStore dataStore,
         IObligationEligibility eligibility,
+        ObligationStateGenerator stateGenerator,
         ILogger<SystemVmObligationService> logger)
     {
         _dataStore = dataStore;
         _eligibility = eligibility;
+        _stateGenerator = stateGenerator;
         _logger = logger;
     }
 

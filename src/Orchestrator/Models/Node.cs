@@ -75,14 +75,25 @@ public class Node
     /// Populated by NodePerformanceEvaluator on registration
     /// </summary>
     public NodePerformanceEvaluation? PerformanceEvaluation { get; set; }
-    public ResourceSnapshot TotalResources { get; set; } = new();
     /// <summary>
-    /// Operator-configured resource allocation limits from the most recent registration.
-    /// Null on nodes that pre-date this feature — the capacity calculator applies the
-    /// platform default (90%) when this is null.
-    /// See docs/RESOURCE-ALLOCATION.md §3.
+    /// Physical capability totals. Set at evaluate time from HardwareInventory
+    /// and PerformanceEvaluation. Represents what the hardware CAN do.
     /// </summary>
-    public AllocatedResources? AllocatedResources { get; set; }
+    public ResourceSnapshot TotalResources { get; set; } = new();
+
+    /// <summary>
+    /// Operator-configured allocation percentages. Raw configuration —
+    /// resolved into concrete values in <see cref="AllocatedResources"/>
+    /// at allocate time.
+    /// </summary>
+    public AllocationConfig? AllocationConfig { get; set; }
+
+    /// <summary>
+    /// Concrete allocated capacity = TotalResources × AllocationConfig percentages.
+    /// Set at allocate time. Scheduling checks: AllocatedResources - UsedResources ≥ requested.
+    /// </summary>
+    public ResourceSnapshot AllocatedResources { get; set; } = new();
+
     public ResourceSnapshot ReservedResources { get; set; } = new();
     /// <summary>
     /// Resource usage computed from heartbeat-reported VMs.

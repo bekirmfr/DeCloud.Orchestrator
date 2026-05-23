@@ -68,15 +68,11 @@ public sealed class ObligationEligibility : IObligationEligibility
         if (!hasPublicIp)
             failures.Add($"no public IP (NAT type: {natType})");
 
-        // ── Physical cores ───────────────────────────────────────────────
-        // Compare against physical cores — the relay VM needs real CPU
-        // headroom, not a benchmark-derived score. TotalResources is not
-        // available at evaluate time (materialized at login), so read
-        // from the hardware inventory directly.
-        var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
-        if (physicalCores < RelayMinComputePoints)
+        // TotalResources = physical totals, set at evaluate time.
+        var computePoints = node.TotalResources.ComputePoints;
+        if (computePoints < RelayMinComputePoints)
             failures.Add(
-                $"insufficient CPU: {physicalCores} physical cores " +
+                $"insufficient compute points: {computePoints} " +
                 $"(minimum {RelayMinComputePoints})");
 
         // ── RAM ──────────────────────────────────────────────────────────

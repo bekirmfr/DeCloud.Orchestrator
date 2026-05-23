@@ -365,6 +365,25 @@ public class NodeSelfController : ControllerBase
 
         node.HardwareInventory = inventory;
         node.PerformanceEvaluation = evaluation;
+
+        // Stamp physical totals — what the hardware can do.
+        node.TotalResources = new ResourceSnapshot
+        {
+            ComputePoints = (int) evaluation.TotalComputePoints,
+            MemoryBytes = inventory.Memory.TotalBytes - inventory.Memory.ReservedBytes,
+            StorageBytes = inventory.Storage.Sum(s => s.TotalBytes),
+        };
+
+        // If no explicit allocation config exists, resolve defaults so
+        // AllocatedResources is always concrete after evaluate.
+        var allocConfig = node.AllocationConfig ?? new AllocationConfig();
+        node.AllocatedResources = new ResourceSnapshot
+        {
+            ComputePoints = (int)(node.TotalResources.ComputePoints * allocConfig.EffectiveCpuPercent),
+            MemoryBytes = (long)(node.TotalResources.MemoryBytes * allocConfig.EffectiveMemoryPercent),
+            StorageBytes = (long)(node.TotalResources.StorageBytes * allocConfig.EffectiveStoragePercent),
+        };
+
         await _dataStore.SaveNodeAsync(node);
 
         // ── Step 2: Obligation seeding ───────────────────────────────────

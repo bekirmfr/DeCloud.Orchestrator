@@ -125,62 +125,51 @@ public class NodeService : INodeService
             }
         }
 
-        // Merge request into existing allocation (or create new)
-        var newAllocation = request.ApplyTo(node.AllocatedResources);
-        node.AllocatedResources = newAllocation;
+        // ── Store raw percentages ────────────────────────────────────────
+        var config = node.AllocationConfig ?? new AllocationConfig();
+        config.CpuPercent = request.CpuPercent ?? config.CpuPercent;
+        config.MemoryPercent = request.MemoryPercent ?? config.MemoryPercent;
+        config.StoragePercent = request.StoragePercent ?? config.StoragePercent;
+        config.GpuCount = request.GpuCount ?? config.GpuCount;
+        node.AllocationConfig = config;
+
+        // ── Resolve concrete values from physical totals ─────────────────
+        // TotalResources is set at evaluate time. If not yet evaluated,
+        // we can only store percentages — concrete resolution happens
+        // on the next evaluate or when TotalResources becomes available.
+        if (node.TotalResources.ComputePoints > 0)
+        {
+            node.AllocatedResources = new ResourceSnapshot
+            {
+                ComputePoints = (int)(node.TotalResources.ComputePoints * config.EffectiveCpuPercent),
+                MemoryBytes = (long)(node.TotalResources.MemoryBytes * config.EffectiveMemoryPercent),
+                StorageBytes = (long)(node.TotalResources.StorageBytes * config.EffectiveStoragePercent),
+            };
+        }
 
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
             "Node {NodeId} allocation updated: CPU={CpuPct:P0}, Mem={MemPct:P0}, " +
-            "Stor={StorPct:P0}, GPU={Gpu}",
+            "Stor={StorPct:P0} → {Points} pts, {MemGb:F1} GB RAM, {StorGb:F1} GB storage",
             nodeId,
-            newAllocation.EffectiveCpuPercent,
-            newAllocation.EffectiveMemoryPercent,
-            newAllocation.EffectiveStoragePercent,
-            newAllocation.GpuCount?.ToString() ?? "all");
-
-        // Compute resolved values if evaluation is available
-        int? resolvedPoints = null;
-        long? resolvedMemory = null;
-        long? resolvedStorage = null;
-
-        if (node.PerformanceEvaluation is { IsAcceptable: true })
-        {
-            var physicalCores = node.HardwareInventory.Cpu.PhysicalCores;
-            var config = await _configService.GetConfigAsync(ct);
-            var hardwareMaxPoints = (int)(
-                physicalCores *
-                node.PerformanceEvaluation.PointsPerCore *
-                config.BaselineOvercommitRatio);
-
-            resolvedPoints = (int)(hardwareMaxPoints * newAllocation.EffectiveCpuPercent);
-        }
-
-        if (node.HardwareInventory?.Memory != null)
-        {
-            resolvedMemory = (long)(
-                node.HardwareInventory.Memory.TotalBytes *
-                newAllocation.EffectiveMemoryPercent);
-        }
-
-        if (node.HardwareInventory?.Storage != null)
-        {
-            resolvedStorage = (long)(
-                node.HardwareInventory.Storage.Sum(s => s.TotalBytes) *
-                newAllocation.EffectiveStoragePercent);
-        }
+            config.EffectiveCpuPercent,
+            config.EffectiveMemoryPercent,
+            config.EffectiveStoragePercent,
+            node.AllocatedResources.ComputePoints,
+            node.AllocatedResources.MemoryBytes / (1024.0 * 1024 * 1024),
+            node.AllocatedResources.StorageBytes / (1024.0 * 1024 * 1024));
 
         return new NodeAllocateResponse
         {
             Success = true,
-            EffectiveCpuPercent = newAllocation.EffectiveCpuPercent,
-            EffectiveMemoryPercent = newAllocation.EffectiveMemoryPercent,
-            EffectiveStoragePercent = newAllocation.EffectiveStoragePercent,
-            GpuCount = newAllocation.GpuCount,
-            ResolvedComputePoints = resolvedPoints,
-            ResolvedMemoryBytes = resolvedMemory,
-            ResolvedStorageBytes = resolvedStorage
+            EffectiveCpuPercent = config.EffectiveCpuPercent,
+            EffectiveMemoryPercent = config.EffectiveMemoryPercent,
+            EffectiveStoragePercent = config.EffectiveStoragePercent,
+            GpuCount = config.GpuCount,
+            ResolvedComputePoints = node.AllocatedResources.ComputePoints,
+            ResolvedMemoryBytes = node.AllocatedResources.MemoryBytes,
+            ResolvedStorageBytes = node.AllocatedResources.StorageBytes,
         };
     }
 
@@ -434,7 +423,7 @@ public class NodeService : INodeService
             ?? throw new KeyNotFoundException($"Node {nodeId} not found");
 
         // -----------------------------------------------------------------
-        // Precondition: settings drift check (existing behavior)
+        // Precondition: settings drift check
         // -----------------------------------------------------------------
         if (!string.IsNullOrEmpty(node.RegisteredSettingsHash) &&
             !string.IsNullOrEmpty(node.LatestHeartbeatSettingsHash) &&
@@ -449,7 +438,6 @@ public class NodeService : INodeService
 
         // -----------------------------------------------------------------
         // Precondition: evaluation must exist
-        // Without an evaluation, we can't compute capacity from percentages.
         // -----------------------------------------------------------------
         if (node.PerformanceEvaluation == null || !node.PerformanceEvaluation.IsAcceptable)
         {
@@ -458,59 +446,57 @@ public class NodeService : INodeService
         }
 
         // -----------------------------------------------------------------
-        // Compute TotalResources from allocation percentages + evaluation
-        // This is the moment percentages become concrete values.
+        // Precondition: allocation must be resolved
+        // AllocatedResources is set at allocate time. If the operator hasn't
+        // run allocate, apply defaults from TotalResources now.
         // -----------------------------------------------------------------
-
-        var totalCapacity = await _capacityCalculator.CalculateTotalCapacityAsync(node, ct);
-
-        if (!totalCapacity.IsAcceptable)
+        if (node.AllocatedResources.ComputePoints == 0 && node.TotalResources.ComputePoints > 0)
         {
-            throw new InvalidOperationException(
-                $"Node capacity calculation failed: {totalCapacity.RejectionReason}");
+            var pct = node.AllocationConfig ?? new AllocationConfig();
+            node.AllocatedResources = new ResourceSnapshot
+            {
+                ComputePoints = (int)(node.TotalResources.ComputePoints * pct.EffectiveCpuPercent),
+                MemoryBytes = (long)(node.TotalResources.MemoryBytes * pct.EffectiveMemoryPercent),
+                StorageBytes = (long)(node.TotalResources.StorageBytes * pct.EffectiveStoragePercent),
+            };
+
+            _logger.LogInformation(
+                "Node {NodeId} had no resolved allocation — applied defaults at login",
+                nodeId);
         }
 
         // -----------------------------------------------------------------
-        // Validate: used resources must not exceed new allocation.
-        // This protects against the operator reducing allocation below
-        // what's currently running (they must drain first).
+        // Validate: used resources must not exceed allocated capacity
         // -----------------------------------------------------------------
-        if (node.UsedResources.ComputePoints > totalCapacity.TotalComputePoints)
+        if (node.UsedResources.ComputePoints > node.AllocatedResources.ComputePoints)
         {
             throw new InvalidOperationException(
                 $"Current CPU usage ({node.UsedResources.ComputePoints} pts) exceeds " +
-                $"allocated capacity ({totalCapacity.TotalComputePoints} pts). " +
+                $"allocated capacity ({node.AllocatedResources.ComputePoints} pts). " +
                 "Drain or delete VMs first, then login.");
         }
 
-        if (node.UsedResources.MemoryBytes > totalCapacity.TotalMemoryBytes)
+        if (node.UsedResources.MemoryBytes > node.AllocatedResources.MemoryBytes)
         {
             throw new InvalidOperationException(
                 $"Current memory usage ({node.UsedResources.MemoryBytes / (1024 * 1024)} MB) exceeds " +
-                $"allocated capacity ({totalCapacity.TotalMemoryBytes / (1024 * 1024)} MB). " +
+                $"allocated capacity ({node.AllocatedResources.MemoryBytes / (1024 * 1024)} MB). " +
                 "Drain or delete VMs first, then login.");
         }
 
         // -----------------------------------------------------------------
-        // Materialize capacity and activate scheduling
+        // Activate scheduling — no computation, just a gate
         // -----------------------------------------------------------------
-        node.TotalResources = new ResourceSnapshot
-        {
-            ComputePoints = totalCapacity.TotalComputePoints,
-            MemoryBytes = totalCapacity.TotalMemoryBytes,
-            StorageBytes = totalCapacity.TotalStorageBytes
-        };
-
         node.SchedulingReady = true;
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
-            "Node {NodeId} logged in — capacity materialized: {Points} pts, " +
-            "{MemGb:F1} GB RAM, {StorGb:F1} GB storage. Scheduling resumed.",
+            "Node {NodeId} logged in — scheduling resumed. " +
+            "Allocated: {Points} pts, {MemGb:F1} GB RAM, {StorGb:F1} GB storage",
             nodeId,
-            totalCapacity.TotalComputePoints,
-            totalCapacity.TotalMemoryBytes / (1024.0 * 1024 * 1024),
-            totalCapacity.TotalStorageBytes / (1024.0 * 1024 * 1024));
+            node.AllocatedResources.ComputePoints,
+            node.AllocatedResources.MemoryBytes / (1024.0 * 1024 * 1024),
+            node.AllocatedResources.StorageBytes / (1024.0 * 1024 * 1024));
 
         return new NodeLoginResponse
         {
@@ -3123,9 +3109,9 @@ public class NodeService : INodeService
 
             IsOnline = node.Status == NodeStatus.Online,
             SchedulingReady = node.SchedulingReady,
-            AvailableComputePoints = Math.Max(0, node.TotalResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
-            AvailableMemoryBytes = Math.Max(0, node.TotalResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes),
-            AvailableStorageBytes = Math.Max(0, node.TotalResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes)
+            AvailableComputePoints = Math.Max(0, node.AllocatedResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
+            AvailableMemoryBytes = Math.Max(0, node.AllocatedResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes),
+            AvailableStorageBytes = Math.Max(0, node.AllocatedResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes)
         };
     }
 
