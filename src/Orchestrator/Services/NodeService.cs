@@ -2941,13 +2941,6 @@ public class NodeService : INodeService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private string GenerateHash(string data)
-    {
-        return Convert.ToBase64String(
-            System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(data)));
-    }
-
     // ============================================================================
     // Node Search & Marketplace (moved from NodeMarketplaceService)
     // ============================================================================

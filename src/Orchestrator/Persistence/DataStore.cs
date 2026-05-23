@@ -1096,9 +1096,13 @@ public class DataStore
         // ========================================
         var totalComputePoints = onlineNodes.Sum(n => n.TotalResources.ComputePoints);
         var actualUsedPoints = onlineNodes.Sum(n => n.UsedResources.ComputePoints);
+        var actualReservedPoints = onlineNodes.Sum(n => n.ReservedResources.ComputePoints);
 
         var actualUsedMemory = onlineNodes.Sum(n => n.UsedResources.MemoryBytes);
+        var actualReservedMemory = onlineNodes.Sum(n => n.ReservedResources.MemoryBytes);
+
         var actualUsedStorage = onlineNodes.Sum(n => n.UsedResources.StorageBytes);
+        var actualReservedStorage = onlineNodes.Sum(n => n.ReservedResources.StorageBytes);
 
         var stats = new SystemStats
         {
@@ -1125,11 +1129,11 @@ public class DataStore
             // ========================================
             TotalMemoryBytes = onlineNodes.Sum(n => n.TotalResources.MemoryBytes),
             UsedMemoryBytes = actualUsedMemory,
-            AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory),
+            AvailableMemoryBytes = (onlineNodes.Sum(n => n.TotalResources.MemoryBytes) - actualUsedMemory - actualReservedMemory),
 
             TotalStorageBytes = onlineNodes.Sum(n => n.TotalResources.StorageBytes),
             UsedStorageBytes = actualUsedStorage,
-            AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage),
+            AvailableStorageBytes = (onlineNodes.Sum(n => n.TotalResources.StorageBytes) - actualUsedStorage - actualReservedStorage),
         };
 
         // Calculate utilization percentages

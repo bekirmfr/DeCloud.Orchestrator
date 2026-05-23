@@ -370,7 +370,7 @@ public class NodeSelfController : ControllerBase
         node.TotalResources = new ResourceSnapshot
         {
             ComputePoints = (int) evaluation.TotalComputePoints,
-            MemoryBytes = inventory.Memory.TotalBytes - inventory.Memory.ReservedBytes,
+            MemoryBytes = inventory.Memory.TotalBytes,
             StorageBytes = inventory.Storage.Sum(s => s.TotalBytes),
         };
 

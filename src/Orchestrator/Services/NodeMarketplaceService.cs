@@ -91,7 +91,7 @@ public class NodeMarketplaceService : INodeMarketplaceService
         if (criteria.MinAvailableComputePoints.HasValue)
         {
             nodes = nodes.Where(n => 
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) >= 
+                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints -n.UsedResources.ComputePoints) >= 
                 criteria.MinAvailableComputePoints.Value);
         }
 
@@ -129,7 +129,7 @@ public class NodeMarketplaceService : INodeMarketplaceService
                 n.Status == NodeStatus.Online &&
                 n.UptimePercentage >= 95.0 &&
                 !string.IsNullOrEmpty(n.Description) &&
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints) > 10 &&
+                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints - n.UsedResources.ComputePoints) > 10 &&
                 (n.SystemVmObligations.Count == 0 ||
                  n.SystemVmObligations.All(o => o.Status == SystemVmStatus.Active)))
             .OrderByDescending(n => n.UptimePercentage)

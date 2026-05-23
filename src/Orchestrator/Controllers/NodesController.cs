@@ -483,7 +483,7 @@ public class NodesController : ControllerBase
                 {
                     Region = g.Key,
                     NodeCount = g.Count(),
-                    AvailableComputePoints = g.Sum(n => n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints),
+                    AvailableComputePoints = g.Sum(n => n.AllocatedResources.ComputePoints - n.ReservedResources.ComputePoints - n.UsedResources.ComputePoints),
                     HasGpu = g.Any(n => n.HardwareInventory.SupportsGpu)
                 })
                 .OrderByDescending(r => r.NodeCount)

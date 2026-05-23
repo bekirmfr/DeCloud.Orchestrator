@@ -347,7 +347,7 @@ public class VmSchedulingService : IVmSchedulingService
         // =====================================================
         // FILTER 7: Minimum Free Memory
         // =====================================================
-        var freeMemoryMb = (node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes) / (1024 * 1024);
+        var freeMemoryMb = (node.TotalResources.MemoryBytes - node.ReservedResources.MemoryBytes - node.UsedResources.MemoryBytes) / (1024 * 1024);
         if (freeMemoryMb < config.Limits.MinFreeMemoryMb)
             return $"Insufficient free memory ({freeMemoryMb}MB < {config.Limits.MinFreeMemoryMb}MB)";
 
