@@ -178,8 +178,10 @@ function renderNodeCards(container, nodes) {
 
     container.innerHTML = nodes.map(node => {
         const caps = node.capabilities || {};
-        const memoryGB = ((caps.totalMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(1);
-        const storageGB = ((caps.totalStorageBytes || 0) / (1024 * 1024 * 1024)).toFixed(0);
+        const computePoints = node.allocatedComputePoints;
+        const availComputePoints = node.availableComputePoints;
+        const memoryGB = ((node.allocatedMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(1);
+        const storageGB = ((node.allocatedStorageBytes || 0) / (1024 * 1024 * 1024)).toFixed(0);
         const availMemGB = ((node.availableMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(1);
         const availStorageGB = ((node.availableStorageBytes || 0) / (1024 * 1024 * 1024)).toFixed(0);
 

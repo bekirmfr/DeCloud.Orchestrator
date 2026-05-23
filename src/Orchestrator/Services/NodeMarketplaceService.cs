@@ -232,8 +232,6 @@ public class NodeMarketplaceService : INodeMarketplaceService
                     > 1_000_000_000, // > 1 Gbps
                 CpuModel = node.HardwareInventory.Cpu.Model,
                 CpuCores = node.HardwareInventory.Cpu.PhysicalCores,
-                TotalMemoryBytes = node.TotalResources.MemoryBytes,
-                TotalStorageBytes = node.TotalResources.StorageBytes
             },
             
             UptimePercentage = node.UptimePercentage,
@@ -246,8 +244,11 @@ public class NodeMarketplaceService : INodeMarketplaceService
 
             IsOnline = node.Status == NodeStatus.Online,
             SchedulingReady = node.SchedulingReady,
+            AllocatedComputePoints = node.AllocatedResources.ComputePoints,
             AvailableComputePoints = Math.Max(0, node.AllocatedResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
+            AllocatedMemoryBytes = node.AllocatedResources.MemoryBytes,
             AvailableMemoryBytes = Math.Max(0, node.AllocatedResources.MemoryBytes - node.UsedResources.MemoryBytes - node.ReservedResources.MemoryBytes),
+            AllocatedStorageBytes = node.AllocatedResources.StorageBytes,
             AvailableStorageBytes = Math.Max(0, node.AllocatedResources.StorageBytes - node.UsedResources.StorageBytes - node.ReservedResources.StorageBytes)
         };
     }

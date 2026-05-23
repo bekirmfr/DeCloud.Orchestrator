@@ -59,9 +59,12 @@ public class NodeAdvertisement
     /// False when the operator has logged out (online but paused).
     /// </summary>
     public bool SchedulingReady { get; set; }
-    public int AvailableComputePoints { get; set; }
-    public long AvailableMemoryBytes { get; set; }
-    public long AvailableStorageBytes { get; set; }
+    public long AllocatedComputePoints { get; set; } = 0;
+    public long AvailableComputePoints { get; set; } = 0;
+    public long AllocatedMemoryBytes { get; set; } = 0;
+    public long AvailableMemoryBytes { get; set; } = 0;
+    public long AllocatedStorageBytes { get; set; } = 0;
+    public long AvailableStorageBytes { get; set; } = 0;
 }
 
 /// <summary>
@@ -77,8 +80,6 @@ public class NodeCapabilities
     public bool HighBandwidth { get; set; } // >1Gbps
     public string CpuModel { get; set; } = string.Empty;
     public int CpuCores { get; set; }
-    public long TotalMemoryBytes { get; set; }
-    public long TotalStorageBytes { get; set; }
 }
 
 /// <summary>
