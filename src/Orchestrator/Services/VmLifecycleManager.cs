@@ -756,6 +756,9 @@ public class VmLifecycleManager : IVmLifecycleManager
             node.ReservedResources.MemoryBytes - vm.Spec.MemoryBytes);
         node.ReservedResources.StorageBytes = Math.Max(0,
             node.ReservedResources.StorageBytes - vm.Spec.DiskBytes);
+        if (vm.Spec.GpuMode == GpuMode.Proxied && vm.Spec.GpuVramBytes > 0)
+            node.ReservedResources.GpuVramBytes = Math.Max(0,
+                node.ReservedResources.GpuVramBytes - vm.Spec.GpuVramBytes.Value);
 
         await _dataStore.SaveNodeAsync(node);
 
@@ -799,6 +802,9 @@ public class VmLifecycleManager : IVmLifecycleManager
             node.ReservedResources.MemoryBytes - vm.Spec.MemoryBytes);
         node.ReservedResources.StorageBytes = Math.Max(0,
             node.ReservedResources.StorageBytes - vm.Spec.DiskBytes);
+        if (vm.Spec.GpuMode == GpuMode.Proxied && vm.Spec.GpuVramBytes > 0)
+            node.ReservedResources.GpuVramBytes = Math.Max(0,
+                node.ReservedResources.GpuVramBytes - vm.Spec.GpuVramBytes.Value);
 
         await _dataStore.SaveNodeAsync(node);
 

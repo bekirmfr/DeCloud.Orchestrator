@@ -813,6 +813,10 @@ public class VmService : IVmService
         selectedNode.ReservedResources.ComputePoints += pointCost;
         selectedNode.ReservedResources.MemoryBytes += vm.Spec.MemoryBytes;
         selectedNode.ReservedResources.StorageBytes += vm.Spec.DiskBytes;
+        // Reserve VRAM for Proxied GPU VMs so FILTER 5 sees the hold before the
+        // heartbeat confirms the VM as running.
+        if (vm.Spec.GpuMode == GpuMode.Proxied && vm.Spec.GpuVramBytes > 0)
+            selectedNode.ReservedResources.GpuVramBytes += vm.Spec.GpuVramBytes.Value;
 
         await _dataStore.SaveNodeAsync(selectedNode);
 

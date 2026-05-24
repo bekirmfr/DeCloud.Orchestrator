@@ -988,6 +988,10 @@ public class NodeService : INodeService
             ComputePoints = reportedVms.Sum(v => v.ComputePointCost),
             MemoryBytes = reportedVms.Sum(v => (long)(v.MemoryBytes ?? 0)),
             StorageBytes = reportedVms.Sum(v => (long)(v.DiskBytes ?? 0)),
+            // Sum VRAM quotas for active Proxied VMs — drives FILTER 5 VRAM headroom check.
+            GpuVramBytes = reportedVms
+                .Where(v => (GpuMode)v.GpuMode == GpuMode.Proxied && v.GpuVramBytes > 0)
+                .Sum(v => v.GpuVramBytes ?? 0),
         };
 
         // =====================================================

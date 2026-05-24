@@ -301,10 +301,11 @@ public class HardwareInventory
     public bool HasPassthroughCapableGpu => Gpus.Any(g => g.IsAvailableForPassthrough);
 
     /// <summary>
-    /// True if node can serve GPU workloads in proxied (shared) mode.
-    /// Requires GPU container support or any GPU present.
+    /// True if at least one GPU on this node is available for Proxied (shared) access
+    /// via the GPU proxy daemon. Populated from the agent's per-GPU discovery results.
+    /// A node may have both passthrough-capable and proxy-capable GPUs simultaneously.
     /// </summary>
-    public bool HasProxiedCapableGpu => SupportsGpu && GpuCount > 0;
+    public bool HasProxiedCapableGpu => Gpus.Any(g => g.IsAvailableForProxiedSharing);
 }
 
 public class CpuInfo
@@ -387,6 +388,12 @@ public class GpuInfo
     public bool IsIommuEnabled { get; set; }
     public string IommuGroup { get; set; } = string.Empty;
     public bool IsAvailableForPassthrough { get; set; }
+    /// <summary>
+    /// True if GPU can be shared via the host-side GPU proxy daemon over virtio-vsock.
+    /// Set when the GPU is present but not available for VFIO passthrough (no IOMMU).
+    /// Populated from the agent's HardwareInventory reported at registration/heartbeat.
+    /// </summary>
+    public bool IsAvailableForProxiedSharing { get; set; }
 
     /// <summary>
     /// True if GPU can be shared via Docker + NVIDIA Container Toolkit.
@@ -443,6 +450,13 @@ public class ResourceSnapshot
     public int ComputePoints { get; set; }
     public long MemoryBytes { get; set; }
     public long StorageBytes { get; set; }
+    /// <summary>
+    /// Committed VRAM across active GPU VMs.
+    /// In UsedResources: sum of GpuVramBytes quotas for Proxied VMs in the heartbeat.
+    /// In ReservedResources: transient scheduling holds for VMs entering Provisioning.
+    /// In AllocatedResources: not used (GPU VRAM allocation is not percentage-based).
+    /// </summary>
+    public long GpuVramBytes { get; set; }
 }
 
 public class NodeMetrics
@@ -742,6 +756,10 @@ public class HeartbeatVmInfo
     public int ComputePointCost { get; set; }
     public long? MemoryBytes { get; set; }
     public long? DiskBytes { get; set; }
+    /// <summary>GPU access mode: 0=None, 1=Passthrough, 2=Proxied.</summary>
+    public int GpuMode { get; set; }
+    /// <summary>VRAM quota for Proxied VMs. Null = no quota / not a GPU VM.</summary>
+    public long? GpuVramBytes { get; set; }
     public string? ImageId { get; set; }  // for recovery
     public DateTime? StartedAt { get; set; }
 

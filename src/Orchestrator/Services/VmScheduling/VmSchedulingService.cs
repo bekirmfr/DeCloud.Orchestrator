@@ -332,9 +332,28 @@ public class VmSchedulingService : IVmSchedulingService
         }
         else if (spec.GpuMode == GpuMode.Proxied)
         {
-            // Proxied mode requires any node with a GPU (no IOMMU needed)
             if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.GpuCount == 0)
                 return "VM requires proxied GPU but node has no GPU";
+
+            if (!node.HardwareInventory.HasProxiedCapableGpu)
+                return "VM requires proxied GPU but no GPU is available for proxy sharing on this node";
+
+            // VRAM headroom — only enforced when the VM carries a quota requirement.
+            // Null GpuVramBytes means unlimited; skip the check to avoid spurious rejections.
+            if (spec.GpuVramBytes is > 0)
+            {
+                var totalProxiedVram = node.HardwareInventory.Gpus
+                    .Where(g => g.IsAvailableForProxiedSharing)
+                    .Sum(g => g.MemoryBytes);
+                var committedVram = node.UsedResources.GpuVramBytes
+                                  + node.ReservedResources.GpuVramBytes;
+                var availableVram = totalProxiedVram - committedVram;
+
+                if (availableVram < spec.GpuVramBytes.Value)
+                    return $"Insufficient VRAM: " +
+                           $"{availableVram / (1024.0 * 1024 * 1024):F1} GB available, " +
+                           $"{spec.GpuVramBytes.Value / (1024.0 * 1024 * 1024):F1} GB required";
+            }
         }
         // GpuMode.None — no GPU filter applied
 
