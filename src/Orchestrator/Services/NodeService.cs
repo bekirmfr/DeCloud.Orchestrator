@@ -120,6 +120,7 @@ public class NodeService : INodeService
         config.MemoryPercent = request.MemoryPercent ?? config.MemoryPercent;
         config.StoragePercent = request.StoragePercent ?? config.StoragePercent;
         config.GpuCount = request.GpuCount ?? config.GpuCount;
+        config.GpuVramPercent = request.GpuVramPercent ?? config.GpuVramPercent;
         node.AllocationConfig = config;
 
         // ── Resolve concrete values from physical totals ─────────────────
@@ -128,11 +129,22 @@ public class NodeService : INodeService
         // on the next evaluate or when TotalResources becomes available.
         if (node.TotalResources.ComputePoints > 0)
         {
+            // Total proxy-eligible VRAM baseline (set in TotalResources at evaluate time).
+            // Falls back to inventory sum for nodes evaluated before this field existed.
+            var totalProxiedVram = node.TotalResources.GpuVramBytes > 0
+                ? node.TotalResources.GpuVramBytes
+                : node.HardwareInventory.Gpus
+                    .Where(g => g.IsAvailableForProxiedSharing)
+                    .Sum(g => g.MemoryBytes);
+
             node.AllocatedResources = new ResourceSnapshot
             {
                 ComputePoints = (int)(node.TotalResources.ComputePoints * config.EffectiveCpuPercent),
                 MemoryBytes = (long)(node.TotalResources.MemoryBytes * config.EffectiveMemoryPercent),
                 StorageBytes = (long)(node.TotalResources.StorageBytes * config.EffectiveStoragePercent),
+                GpuVramBytes = config.GpuVramPercent.HasValue
+                    ? (long)(totalProxiedVram * config.GpuVramPercent.Value)
+                    : totalProxiedVram, // null = 100%
             };
         }
 
@@ -140,14 +152,17 @@ public class NodeService : INodeService
 
         _logger.LogInformation(
             "Node {NodeId} allocation updated: CPU={CpuPct:P0}, Mem={MemPct:P0}, " +
-            "Stor={StorPct:P0} → {Points} pts, {MemGb:F1} GB RAM, {StorGb:F1} GB storage",
+            "Stor={StorPct:P0}, GpuVram={GpuVramPct} → {Points} pts, {MemGb:F1} GB RAM, " +
+            "{StorGb:F1} GB storage, {VramGb:F1} GB GPU VRAM",
             nodeId,
             config.EffectiveCpuPercent,
             config.EffectiveMemoryPercent,
             config.EffectiveStoragePercent,
+            config.GpuVramPercent.HasValue ? $"{config.GpuVramPercent.Value:P0}" : "100%",
             node.AllocatedResources.ComputePoints,
             node.AllocatedResources.MemoryBytes / (1024.0 * 1024 * 1024),
-            node.AllocatedResources.StorageBytes / (1024.0 * 1024 * 1024));
+            node.AllocatedResources.StorageBytes / (1024.0 * 1024 * 1024),
+            node.AllocatedResources.GpuVramBytes / (1024.0 * 1024 * 1024));
 
         return new NodeAllocateResponse
         {
@@ -155,10 +170,12 @@ public class NodeService : INodeService
             EffectiveCpuPercent = config.EffectiveCpuPercent,
             EffectiveMemoryPercent = config.EffectiveMemoryPercent,
             EffectiveStoragePercent = config.EffectiveStoragePercent,
+            EffectiveGpuVramPercent = config.GpuVramPercent,
             GpuCount = config.GpuCount,
             ResolvedComputePoints = node.AllocatedResources.ComputePoints,
             ResolvedMemoryBytes = node.AllocatedResources.MemoryBytes,
             ResolvedStorageBytes = node.AllocatedResources.StorageBytes,
+            ResolvedGpuVramBytes = node.AllocatedResources.GpuVramBytes,
         };
     }
 

@@ -342,9 +342,13 @@ public class VmSchedulingService : IVmSchedulingService
             // Null GpuVramBytes means unlimited; skip the check to avoid spurious rejections.
             if (spec.GpuVramBytes is > 0)
             {
-                var totalProxiedVram = node.HardwareInventory.Gpus
-                    .Where(g => g.IsAvailableForProxiedSharing)
-                    .Sum(g => g.MemoryBytes);
+                // Use operator ceiling when set; fall back to physical for nodes
+                // evaluated before GpuVramPercent support was deployed.
+                var totalProxiedVram = node.AllocatedResources.GpuVramBytes > 0
+                    ? node.AllocatedResources.GpuVramBytes
+                    : node.HardwareInventory.Gpus
+                        .Where(g => g.IsAvailableForProxiedSharing)
+                        .Sum(g => g.MemoryBytes);
                 var committedVram = node.UsedResources.GpuVramBytes
                                   + node.ReservedResources.GpuVramBytes;
                 var availableVram = totalProxiedVram - committedVram;

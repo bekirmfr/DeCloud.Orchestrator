@@ -369,9 +369,14 @@ public class NodeSelfController : ControllerBase
         // Stamp physical totals — what the hardware can do.
         node.TotalResources = new ResourceSnapshot
         {
-            ComputePoints = (int) evaluation.TotalComputePoints,
+            ComputePoints = (int)evaluation.TotalComputePoints,
             MemoryBytes = inventory.Memory.TotalBytes,
             StorageBytes = inventory.Storage.Sum(s => s.TotalBytes),
+            // Physical proxy-eligible VRAM baseline — used by AllocateNodeAsync
+            // to resolve GpuVramPercent into a concrete byte ceiling.
+            GpuVramBytes = inventory.Gpus
+                .Where(g => g.IsAvailableForProxiedSharing)
+                .Sum(g => g.MemoryBytes),
         };
 
         // If no explicit allocation config exists, resolve defaults so
