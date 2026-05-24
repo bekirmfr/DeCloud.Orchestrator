@@ -100,17 +100,48 @@ public class NodeService : INodeService
             };
         }
 
-        // Validate GPU count against detected hardware
-        if (request.GpuCount.HasValue && node.HardwareInventory?.Gpus != null)
+        // ── GPU allocation mode guards ────────────────────────────────────
+        // GpuCount   → Passthrough only. Proxied shares one GPU across VMs;
+        //              the scheduling unit is VRAM, not GPU count.
+        //              The correct Proxied control is GpuVramPercent.
+        // GpuVramPercent → Proxied only. Passthrough dedicates a full physical
+        //              GPU per VM; there is no shared VRAM pool to partition.
+        //              The correct Passthrough control is GpuCount.
+        if (node.HardwareInventory?.Gpus != null)
         {
-            var detectedGpus = node.HardwareInventory.Gpus.Count;
-            if (request.GpuCount.Value > detectedGpus)
+            if (request.GpuCount.HasValue)
             {
-                return new NodeAllocateResponse
-                {
-                    Success = false,
-                    Error = $"GpuCount ({request.GpuCount.Value}) exceeds detected GPUs ({detectedGpus})"
-                };
+                var detectedGpus = node.HardwareInventory.Gpus.Count;
+                if (request.GpuCount.Value > detectedGpus)
+                    return new NodeAllocateResponse
+                    {
+                        Success = false,
+                        Error = $"GpuCount ({request.GpuCount.Value}) exceeds detected GPUs ({detectedGpus})"
+                    };
+
+                var hasPassthrough = node.HardwareInventory.Gpus
+                    .Any(g => g.IsAvailableForPassthrough);
+                if (!hasPassthrough)
+                    return new NodeAllocateResponse
+                    {
+                        Success = false,
+                        Error = "GpuCount requires at least one passthrough-capable GPU " +
+                                "(IOMMU + vfio-pci). Proxied-only nodes use GpuVramPercent " +
+                                "to limit GPU VRAM availability."
+                    };
+            }
+
+            if (request.GpuVramPercent.HasValue)
+            {
+                var hasProxied = node.HardwareInventory.Gpus
+                    .Any(g => g.IsAvailableForProxiedSharing);
+                if (!hasProxied)
+                    return new NodeAllocateResponse
+                    {
+                        Success = false,
+                        Error = "GpuVramPercent requires at least one proxy-eligible GPU. " +
+                                "Passthrough-only nodes use GpuCount to limit GPU availability."
+                    };
             }
         }
 
