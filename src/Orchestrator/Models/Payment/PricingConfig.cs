@@ -27,6 +27,12 @@ public class PricingConfig
     public decimal DefaultStoragePerGbPerHour { get; set; } = 0.0001m;
     public decimal DefaultGpuPerHour { get; set; } = 0.10m;
 
+    // ── Proxied GPU VRAM rates ────────────────────────────────────────────────
+    // Charged per GB of VRAM quota reserved at scheduling time.
+    // Distinct from GpuPerHour (flat, Passthrough only) — scales with reservation.
+    public decimal FloorGpuVramPerGbPerHour { get; set; } = 0.003m;
+    public decimal DefaultGpuVramPerGbPerHour { get; set; } = 0.006m;
+
     // ── Storage replication rates (block-based) ───────────────────────────────
     // Platform-set, not operator-overridable. Replication is a network duty cost,
     // not a per-node operator service.
@@ -48,14 +54,20 @@ public class PricingConfig
 /// </summary>
 public class NodePricing
 {
+    public string Currency { get; set; } = "USDC";
     public decimal CpuPerHour { get; set; }
     public decimal MemoryPerGbPerHour { get; set; }
     public decimal StoragePerGbPerHour { get; set; }
     public decimal GpuPerHour { get; set; }
-    public string Currency { get; set; } = "USDC";
+    /// <summary>
+    /// Per-GB-per-hour rate for Proxied GPU VRAM reservations.
+    /// Applied to spec.GpuVramBytes at billing time.
+    /// 0 = use platform default (DefaultGpuVramPerGbPerHour).
+    /// </summary>
+    public decimal GpuVramPerGbPerHour { get; set; }
 
     /// <summary>Returns true if the operator has set any custom pricing.</summary>
     public bool HasCustomPricing =>
         CpuPerHour > 0 || MemoryPerGbPerHour > 0 ||
-        StoragePerGbPerHour > 0 || GpuPerHour > 0;
+        StoragePerGbPerHour > 0 || GpuPerHour > 0 || GpuVramPerGbPerHour > 0;
 }

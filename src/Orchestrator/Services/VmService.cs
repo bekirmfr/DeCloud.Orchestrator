@@ -1231,12 +1231,32 @@ public class VmService : IVmService
             _                      => 1.0m
         };
 
-        var resourceCost =
-            (spec.VirtualCpuCores         * cpuRate) +
-            ((spec.MemoryBytes / BYTES_PER_GB) * memRate) +
-            ((spec.DiskBytes   / BYTES_PER_GB) * storageRate);
+        // ── GPU cost — mode-aware ─────────────────────────────────────────────
+        // Passthrough: flat GpuPerHour — full GPU dedicated to one VM.
+        // Proxied: per-GB-per-hour on the VRAM quota set at scheduling time.
+        // None / no quota: zero GPU cost.
+        var gpuCost = spec.GpuMode switch
+        {
+            GpuMode.Passthrough => Math.Max(
+                nodePricing?.GpuPerHour > 0 ? nodePricing.GpuPerHour : cfg.DefaultGpuPerHour,
+                cfg.FloorGpuPerHour),
 
-        var computeCost = (resourceCost * tierMultiplier) + bandwidthRate;
+            GpuMode.Proxied when spec.GpuVramBytes is > 0 =>
+                (spec.GpuVramBytes.Value / BYTES_PER_GB) * Math.Max(
+                    nodePricing?.GpuVramPerGbPerHour > 0
+                        ? nodePricing.GpuVramPerGbPerHour
+                        : cfg.DefaultGpuVramPerGbPerHour,
+                    cfg.FloorGpuVramPerGbPerHour),
+
+            _ => 0m
+        };
+
+        var resourceCost =
+            (spec.VirtualCpuCores * cpuRate) +
+            ((spec.MemoryBytes / BYTES_PER_GB) * memRate) +
+            ((spec.DiskBytes / BYTES_PER_GB) * storageRate);
+
+        var computeCost = (resourceCost * tierMultiplier) + bandwidthRate + gpuCost;
 
         // ── Storage replication cost (block-count exact, platform-priced) ─────
         // Zero for ephemeral VMs (replicationFactor == 0).
