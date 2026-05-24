@@ -90,9 +90,24 @@ public class NodeMarketplaceService : INodeMarketplaceService
         // Filter by available capacity
         if (criteria.MinAvailableComputePoints.HasValue)
         {
-            nodes = nodes.Where(n => 
-                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints -n.UsedResources.ComputePoints) >= 
+            nodes = nodes.Where(n =>
+                (n.AllocatedResources.ComputePoints - n.UsedResources.ComputePoints - n.ReservedResources.ComputePoints) >=
                 criteria.MinAvailableComputePoints.Value);
+        }
+
+        // Filter by available GPU VRAM (Proxied workloads)
+        if (criteria.MinAvailableGpuVramBytes.HasValue)
+        {
+            nodes = nodes.Where(n =>
+            {
+                var totalProxiedVram = n.HardwareInventory.Gpus
+                    .Where(g => g.IsAvailableForProxiedSharing)
+                    .Sum(g => g.MemoryBytes);
+                var availableVram = totalProxiedVram
+                    - n.UsedResources.GpuVramBytes
+                    - n.ReservedResources.GpuVramBytes;
+                return availableVram >= criteria.MinAvailableGpuVramBytes.Value;
+            });
         }
 
         // Convert to advertisements
@@ -190,6 +205,7 @@ public class NodeMarketplaceService : INodeMarketplaceService
                 MemoryPerGbPerHour = p.MemoryPerGbPerHour > 0 ? Math.Max(p.MemoryPerGbPerHour, _pricingConfig.FloorMemoryPerGbPerHour) : 0,
                 StoragePerGbPerHour = p.StoragePerGbPerHour > 0 ? Math.Max(p.StoragePerGbPerHour, _pricingConfig.FloorStoragePerGbPerHour) : 0,
                 GpuPerHour = p.GpuPerHour > 0 ? Math.Max(p.GpuPerHour, _pricingConfig.FloorGpuPerHour) : 0,
+                GpuVramPerGbPerHour = p.GpuVramPerGbPerHour > 0 ? Math.Max(p.GpuVramPerGbPerHour, _pricingConfig.FloorGpuVramPerGbPerHour) : 0,
                 Currency = p.Currency ?? "USDC"
             };
         }
@@ -226,14 +242,23 @@ public class NodeMarketplaceService : INodeMarketplaceService
                 GpuModel = node.HardwareInventory.Gpus.FirstOrDefault()?.Model,
                 GpuCount = node.HardwareInventory.Gpus.Count > 0 ? node.HardwareInventory.Gpus.Count : null,
                 GpuMemoryBytes = node.HardwareInventory.Gpus.FirstOrDefault()?.MemoryBytes,
-                HasNvmeStorage = node.HardwareInventory.Storage
-                    .Any(s => s.Type == StorageType.NVMe),
-                HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) 
-                    > 1_000_000_000, // > 1 Gbps
+                SupportsProxiedGpu = node.HardwareInventory.HasProxiedCapableGpu,
+                TotalGpuVramBytes = node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes),
+                AvailableGpuVramBytes = Math.Max(0,
+                    node.HardwareInventory.Gpus
+                        .Where(g => g.IsAvailableForProxiedSharing)
+                        .Sum(g => g.MemoryBytes)
+                    - node.UsedResources.GpuVramBytes
+                    - node.ReservedResources.GpuVramBytes),
+                GpuVramPerGbPerHour = node.Pricing.GpuVramPerGbPerHour > 0
+                    ? Math.Max(node.Pricing.GpuVramPerGbPerHour, _pricingConfig.FloorGpuVramPerGbPerHour)
+                    : _pricingConfig.DefaultGpuVramPerGbPerHour,
+                HasNvmeStorage = node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe),
+                HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000,
                 CpuModel = node.HardwareInventory.Cpu.Model,
                 CpuCores = node.HardwareInventory.Cpu.PhysicalCores,
             },
-            
+
             UptimePercentage = node.UptimePercentage,
             TotalVmsHosted = node.TotalVmsHosted,
             SuccessfulVmCompletions = node.SuccessfulVmCompletions,

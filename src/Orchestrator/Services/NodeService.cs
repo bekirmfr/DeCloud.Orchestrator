@@ -3,6 +3,7 @@ using DeCloud.Shared;
 using DeCloud.Shared.Contracts;
 using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Orchestrator.Interfaces;
 using Orchestrator.Interfaces.VmScheduling;
@@ -25,21 +26,17 @@ public class NodeService : INodeService
     private readonly DataStore _dataStore;
     private readonly ISchedulingConfigService _configService;
     private readonly IConstraintEvaluator _constraintEvaluator;
-    private readonly NodeCapacityCalculator _capacityCalculator;
     private readonly ILocalityService _locality;
     private readonly IEventService _eventService;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
-    private readonly ILoggerFactory _loggerFactory;
     private readonly HttpClient _httpClient;
-    private readonly IObligationEligibility _eligibility;
     private readonly IRelayNodeService _relayNodeService;
-    private readonly IDhtNodeService _dhtNodeService;
     private readonly IServiceProvider _serviceProvider;
-    private readonly IWireGuardManager _wireGuardManager;
     private readonly ObligationStateGenerator _stateGenerator;
     private readonly IConfiguration _configuration;
     private readonly ICloudInitRenderer _cloudInitRenderer;
+    private readonly PricingConfig _pricingConfig;
 
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _cgnatSyncLocks = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _registrationLocks = new();
@@ -48,39 +45,31 @@ public class NodeService : INodeService
         DataStore dataStore,
         ISchedulingConfigService configService,
         IConstraintEvaluator constraintEvaluator,
-        NodeCapacityCalculator capacityCalculator,
         ILocalityService locality,
         IEventService eventService,
         ICentralIngressService ingressService,
         ILogger<NodeService> logger,
-        ILoggerFactory loggerFactory,
         HttpClient httpClient,
-        IObligationEligibility eligibility,
         IRelayNodeService relayNodeService,
-        IDhtNodeService dhtNodeService,
         IServiceProvider serviceProvider,
-        IWireGuardManager wireGuardManager,
         ICloudInitRenderer cloudInitRenderer,
         IConfiguration configuration,
+        IOptions<PricingConfig> pricingConfig,
         ObligationStateGenerator stateGenerator)
     {
         _dataStore = dataStore;
         _configService = configService;
         _constraintEvaluator = constraintEvaluator;
-        _capacityCalculator = capacityCalculator;
         _locality = locality;
         _eventService = eventService;
         _ingressService = ingressService;
         _logger = logger;
-        _loggerFactory = loggerFactory;
         _httpClient = httpClient;
-        _eligibility = eligibility;
         _relayNodeService = relayNodeService;
-        _dhtNodeService = dhtNodeService;
         _serviceProvider = serviceProvider;
-        _wireGuardManager = wireGuardManager;
         _cloudInitRenderer = cloudInitRenderer;
         _configuration = configuration;
+        _pricingConfig = pricingConfig.Value;
         _stateGenerator = stateGenerator;
     }
 
@@ -3001,12 +2990,27 @@ public class NodeService : INodeService
             nodes = nodes.Where(n => n.BasePrice <= criteria.MaxPricePerPoint.Value);
         }
 
-        // Filter by available capacity
+        /// Filter by available capacity
         if (criteria.MinAvailableComputePoints.HasValue)
         {
             nodes = nodes.Where(n =>
-                (n.AllocatedResources.ComputePoints - n.UsedResources.ComputePoints - n.ReservedResources.ComputePoints) >=
+                (n.TotalResources.ComputePoints - n.ReservedResources.ComputePoints - n.UsedResources.ComputePoints) >=
                 criteria.MinAvailableComputePoints.Value);
+        }
+
+        // Filter by available GPU VRAM (Proxied workloads)
+        if (criteria.MinAvailableGpuVramBytes.HasValue)
+        {
+            nodes = nodes.Where(n =>
+            {
+                var totalProxiedVram = n.HardwareInventory.Gpus
+                    .Where(g => g.IsAvailableForProxiedSharing)
+                    .Sum(g => g.MemoryBytes);
+                var availableVram = totalProxiedVram
+                    - n.UsedResources.GpuVramBytes
+                    - n.ReservedResources.GpuVramBytes;
+                return availableVram >= criteria.MinAvailableGpuVramBytes.Value;
+            });
         }
 
         // Convert to advertisements
@@ -3086,10 +3090,19 @@ public class NodeService : INodeService
                 GpuModel = node.HardwareInventory.Gpus.FirstOrDefault()?.Model,
                 GpuCount = node.HardwareInventory.Gpus.Count > 0 ? node.HardwareInventory.Gpus.Count : null,
                 GpuMemoryBytes = node.HardwareInventory.Gpus.FirstOrDefault()?.MemoryBytes,
-                HasNvmeStorage = node.HardwareInventory.Storage
-                    .Any(s => s.Type == StorageType.NVMe),
-                HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0)
-                    > 1_000_000_000, // > 1 Gbps
+                SupportsProxiedGpu = node.HardwareInventory.HasProxiedCapableGpu,
+                TotalGpuVramBytes = node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes),
+                AvailableGpuVramBytes = Math.Max(0,
+                    node.HardwareInventory.Gpus
+                        .Where(g => g.IsAvailableForProxiedSharing)
+                        .Sum(g => g.MemoryBytes)
+                    - node.UsedResources.GpuVramBytes
+                    - node.ReservedResources.GpuVramBytes),
+                GpuVramPerGbPerHour = node.Pricing.GpuVramPerGbPerHour > 0
+                    ? Math.Max(node.Pricing.GpuVramPerGbPerHour, _pricingConfig.FloorGpuVramPerGbPerHour)
+                    : _pricingConfig.DefaultGpuVramPerGbPerHour,
+                HasNvmeStorage = node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe),
+                HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000,
                 CpuModel = node.HardwareInventory.Cpu.Model,
                 CpuCores = node.HardwareInventory.Cpu.PhysicalCores,
             },

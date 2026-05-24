@@ -76,6 +76,14 @@ public class NodeCapabilities
     public string? GpuModel { get; set; }
     public int? GpuCount { get; set; }
     public long? GpuMemoryBytes { get; set; }
+    /// <summary>True if at least one GPU is available for Proxied (shared) access via the GPU proxy daemon.</summary>
+    public bool SupportsProxiedGpu { get; set; }
+    /// <summary>Sum of MemoryBytes for all detected GPUs on this node.</summary>
+    public long TotalGpuVramBytes { get; set; }
+    /// <summary>VRAM not yet committed to active or scheduled VMs. Safe to reserve for new Proxied VMs.</summary>
+    public long AvailableGpuVramBytes { get; set; }
+    /// <summary>Effective per-GB-per-hour rate for Proxied VRAM reservations (floor-clamped).</summary>
+    public decimal GpuVramPerGbPerHour { get; set; }
     public bool HasNvmeStorage { get; set; }
     public bool HighBandwidth { get; set; } // >1Gbps
     public string CpuModel { get; set; } = string.Empty;
@@ -112,17 +120,23 @@ public class NodeSearchCriteria
     /// Require GPU availability
     /// </summary>
     public bool? RequiresGpu { get; set; }
-    
+
     /// <summary>
     /// Minimum available compute points
     /// </summary>
     public int? MinAvailableComputePoints { get; set; }
-    
+
+    /// <summary>
+    /// Minimum available GPU VRAM in bytes for Proxied workloads.
+    /// Filters to nodes with enough free VRAM to accept a Proxied VM of this size.
+    /// </summary>
+    public long? MinAvailableGpuVramBytes { get; set; }
+
     /// <summary>
     /// Only show online nodes
     /// </summary>
     public bool OnlineOnly { get; set; } = true;
-    
+
     /// <summary>
     /// Sort by (e.g., "price", "uptime", "capacity")
     /// </summary>
