@@ -1082,6 +1082,7 @@ public class VmService : IVmService
                 // GPU scheduling: orchestrator sets gpuMode explicitly (node agent no longer auto-detects)
                 GpuMode = (int)resolvedGpuMode,
                 GpuPciAddress = gpuPciAddress,
+                GpuVramBytes = vm.Spec.GpuVramBytes,
                 DeploymentMode = (int)deploymentMode,
                 ContainerImage = vm.Spec.ContainerImage,
                 Network = new

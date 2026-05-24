@@ -235,6 +235,14 @@ public class VmSpec
     public GpuMode GpuMode { get; set; } = GpuMode.None;
 
     /// <summary>
+    /// VRAM quota for Proxied GPU access, in bytes.
+    /// Resolved at scheduling time from the template MinimumSpec or user request.
+    /// Carried through the CreateVm command and enforced by the node's GPU proxy daemon.
+    /// Null = no quota. Not applicable for Passthrough mode.
+    /// </summary>
+    public long? GpuVramBytes { get; set; }
+
+    /// <summary>
     /// Convenience property: true when GpuMode requires any GPU access.
     /// Used by scheduling hard-filters and marketplace queries.
     /// </summary>
