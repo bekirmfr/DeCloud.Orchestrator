@@ -185,6 +185,12 @@ public class AttestationVerificationResult
     /// When the verification was performed
     /// </summary>
     public DateTime VerifiedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// True when the attempt was skipped gracefully (agent warming up, VM too young).
+    /// No failure was recorded; do NOT log at Warning level.
+    /// </summary>
+    public bool IsSkipped { get; set; }
 }
 
 /// <summary>
@@ -235,6 +241,13 @@ public class VmLivenessState
     public double SuccessRate => TotalChallenges > 0
         ? (double)TotalSuccesses / TotalChallenges * 100.0
         : 0;
+
+    /// <summary>
+    /// Consecutive health check failures before the first successful RTT measurement.
+    /// Once this reaches FailureThreshold the next health check failure is promoted
+    /// to a real attestation failure and billing is paused.
+    /// </summary>
+    public int HealthCheckFailureCount { get; set; }
 
     /// <summary>
     /// Is billing currently paused due to failures?

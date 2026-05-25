@@ -120,6 +120,12 @@ public class AttestationSchedulerService : BackgroundService
                     "✓ VM {VmId} attestation passed in {ResponseTime:F1}ms",
                     vm.Id, result.ResponseTimeMs);
             }
+            else if (result.IsSkipped)
+            {
+                _logger.LogDebug(
+                    "~ VM {VmId} attestation skipped: {Reason}",
+                    vm.Id, string.Join(", ", result.Errors));
+            }
             else
             {
                 failedCount++;

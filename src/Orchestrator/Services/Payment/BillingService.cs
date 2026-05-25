@@ -1,12 +1,13 @@
 ﻿// src/Orchestrator/Services/Payment/BillingService.cs
 // Updated: Uses BalanceService for balance validation (breaks circular dependency)
 
-using System.Threading.Channels;
+using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Balance;
 using Orchestrator.Services.Settlement;
+using System.Threading.Channels;
 
 namespace Orchestrator.Services.Payment;
 
@@ -30,7 +31,8 @@ public class BillingService : BackgroundService
     private readonly DataStore _dataStore;
     private readonly IAttestationService _attestationService;
     private readonly ISettlementService _settlementService;
-    private readonly IBalanceService _balanceService; // NEW: Use BalanceService instead
+    private readonly IBalanceService _balanceService;
+    private readonly AttestationConfig _attestationConfig;
     private readonly ILogger<BillingService> _logger;
 
     // Event-driven billing queue
@@ -43,13 +45,15 @@ public class BillingService : BackgroundService
         DataStore dataStore,
         IAttestationService attestationService,
         ISettlementService settlementService,
-        IBalanceService balanceService, // NEW: Added BalanceService
+        IBalanceService balanceService,
+        IOptions<AttestationConfig> attestationConfig,
         ILogger<BillingService> logger)
     {
         _dataStore = dataStore;
         _attestationService = attestationService;
         _settlementService = settlementService;
-        _balanceService = balanceService; // NEW
+        _balanceService = balanceService;
+        _attestationConfig = attestationConfig.Value;
         _logger = logger;
 
         // Create bounded channel (max 1000 pending events)
@@ -228,7 +232,7 @@ public class BillingService : BackgroundService
         // ═══════════════════════════════════════════════════════════════════════
 
         var attestationStatus = _attestationService.GetLivenessState(vm.Id);
-        var isVerified = attestationStatus?.ConsecutiveSuccesses > 0;
+        var isVerified = attestationStatus?.ConsecutiveSuccesses >= _attestationConfig.RecoveryThreshold;
 
         if (attestationStatus?.BillingPaused == true && evt.Trigger != BillingTrigger.VmStop)
         {

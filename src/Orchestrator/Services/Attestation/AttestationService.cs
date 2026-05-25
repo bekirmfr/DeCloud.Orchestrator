@@ -172,20 +172,59 @@ public class AttestationService : IAttestationService
         }
         else
         {
-            // Pre-flight health check (only for first attestation)
-
+            // Pre-flight health check — only runs before the first successful RTT measurement.
             var isHealthy = await IsAgentHealthyAsync(vmId, nodeAgentUrl, ct);
             if (!isHealthy)
             {
-                _logger.LogDebug(
-                    "VM {VmId} agent not responding to health check - skipping attestation",
-                    vmId);
+                // Increment the health-check failure counter in liveness state.
+                int healthCheckFailures;
+                lock (_stateLock)
+                {
+                    if (!_livenessStates.TryGetValue(vmId, out var hcState))
+                    {
+                        hcState = new VmLivenessState { VmId = vmId };
+                        _livenessStates[vmId] = hcState;
+                    }
+                    hcState.HealthCheckFailureCount++;
+                    healthCheckFailures = hcState.HealthCheckFailureCount;
+                }
 
-                // Don't count as failure - agent just not ready yet
+                // Promote to a real failure once the grace window is exhausted.
+                // At 5-minute normal interval, FailureThreshold=3 → 15 minutes of grace.
+                if (healthCheckFailures >= _config.FailureThreshold)
+                {
+                    _logger.LogWarning(
+                        "VM {VmId} agent unreachable for {Count} consecutive checks " +
+                        "— promoting to attestation failure (billing will pause)",
+                        vmId, healthCheckFailures);
+                    await RecordFailureAsync(vmId, "Agent unreachable (health check timeout)");
+                    await SaveAttestationRecordAsync(vm, CreateChallenge(vm),
+                        new AttestationVerificationResult
+                        {
+                            Errors = { $"Agent unreachable after {healthCheckFailures} checks" }
+                        }, null);
+                    return new AttestationVerificationResult
+                    {
+                        Errors = { $"Agent unreachable after {healthCheckFailures} checks" }
+                    };
+                }
+
+                _logger.LogDebug(
+                    "VM {VmId} agent health check failed ({Count}/{Threshold}) — grace skip",
+                    vmId, healthCheckFailures, _config.FailureThreshold);
+
                 return new AttestationVerificationResult
                 {
-                    Errors = { "Agent not ready (health check failed)" }
+                    IsSkipped = true,
+                    Errors = { $"Agent not ready (health check {healthCheckFailures}/{_config.FailureThreshold})" }
                 };
+            }
+
+            // Agent is healthy — reset the health-check failure counter.
+            lock (_stateLock)
+            {
+                if (_livenessStates.TryGetValue(vmId, out var hcState))
+                    hcState.HealthCheckFailureCount = 0;
             }
 
             // Measure RTT
@@ -303,13 +342,13 @@ public class AttestationService : IAttestationService
 
                 if (isFirstAttestation)
                 {
-                    _logger.LogWarning(
-                        "VM {VmId} first attestation timeout (>{Timeout:F1}ms) - agent warming up, not counting as failure",
+                    _logger.LogDebug(
+                        "VM {VmId} first attestation timeout (>{Timeout:F1}ms) — agent warming up, grace skip",
                         vmId, adaptiveTimeout);
 
+                    result.IsSkipped = true;
                     result.Errors.Add("First attestation timeout (agent warming up)");
                     result.TimingValid = false;
-                    // Don't call RecordFailureAsync - this is expected
                     return result;
                 }
 
