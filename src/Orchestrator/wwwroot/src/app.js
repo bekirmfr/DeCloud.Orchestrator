@@ -1455,6 +1455,7 @@ async function createVM() {
                 bandwidthTier: bandwidthTier,
                 replicationFactor: replicationFactor,
                 constraints: constraints.length > 0 ?
+                    constraints : undefined
             }
         };
 
