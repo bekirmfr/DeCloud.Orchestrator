@@ -61,8 +61,6 @@ public class DataStore
         _database?.GetCollection<ManifestRecord>("blockstore_manifests");
     private IMongoCollection<OrchestratorEvent>? EventsCollection =>
         _database?.GetCollection<OrchestratorEvent>("events");
-    private IMongoCollection<Attestation>? AttestationsCollection =>
-        _database?.GetCollection<Attestation>("attestations");
     private IMongoCollection<UsageRecord>? UsageRecordsCollection =>
         _database?.GetCollection<UsageRecord>("usageRecords");
     private IMongoCollection<VmTemplate>? TemplatesCollection =>
@@ -189,24 +187,6 @@ public class DataStore
             };
 
             TryCreateIndexesAsync(EventsCollection!, "events", eventIndexes).Wait();
-
-            // Attestations indexes
-            var attestationIndexes = new[]
-            {
-            new CreateIndexModel<Attestation>(
-                Builders<Attestation>.IndexKeys
-                    .Ascending(r => r.VmId)
-                    .Descending(r => r.Timestamp),
-                new CreateIndexOptions { Name = "idx_vm_timestamp" }),
-            new CreateIndexModel<Attestation>(
-                Builders<Attestation>.IndexKeys.Ascending(r => r.NodeId),
-                new CreateIndexOptions { Name = "idx_node" }),
-            new CreateIndexModel<Attestation>(
-                Builders<Attestation>.IndexKeys.Ascending(r => r.Success),
-                new CreateIndexOptions { Name = "idx_success" })
-            };
-            
-            TryCreateIndexesAsync(AttestationsCollection!, "attestations", attestationIndexes).Wait();
 
             // UsageRecords indexes
             var usageIndexes = new[]
@@ -773,52 +753,6 @@ public class DataStore
                 await EventsCollection!.InsertOneAsync(evt);
             }, $"persist event {evt.Id}", maxRetries: 2); // Events are less critical
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // ATTESTATION METHODS
-    // ═══════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Save an attestation record for audit trail
-    /// </summary>
-    public async Task SaveAttestationAsync(Attestation record)
-    {
-        if (_useMongoDB)
-        {
-            await RetryMongoOperationAsync(async () =>
-            {
-                await AttestationsCollection!.InsertOneAsync(record);
-            }, $"persist attestation record {record.Id}", maxRetries: 2);
-        }
-    }
-
-    /// <summary>
-    /// Get attestation records for a VM
-    /// </summary>
-    public async Task<List<Attestation>> GetAttestationsAsync(
-        string vmId,
-        int limit = 100,
-        DateTime? since = null)
-    {
-        if (!_useMongoDB || AttestationsCollection == null)
-        {
-            return new List<Attestation>();
-        }
-
-        var filterBuilder = Builders<Attestation>.Filter;
-        var filter = filterBuilder.Eq(r => r.VmId, vmId);
-
-        if (since.HasValue)
-        {
-            filter = filterBuilder.And(filter, filterBuilder.Gte(r => r.Timestamp, since.Value));
-        }
-
-        return await AttestationsCollection
-            .Find(filter)
-            .SortByDescending(r => r.Timestamp)
-            .Limit(limit)
-            .ToListAsync();
     }
 
     // ════════════════════════════════════════════════════════════════════════
