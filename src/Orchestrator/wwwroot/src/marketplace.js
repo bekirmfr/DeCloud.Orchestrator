@@ -249,7 +249,17 @@ function renderNodeCards(container, nodes) {
                     </div>
                     <div class="mp-spec">
                         <span class="mp-spec-label">${caps.hasGpu ? 'GPU' : 'Storage'}</span>
-                        <span class="mp-spec-value">${caps.hasGpu ? escapeHtmlFn(caps.gpuModel?.split(' ').slice(-1)[0] || 'Yes') : storageGB + ' GB'}</span>
+                        <span class="mp-spec-value">
+                            ${caps.hasGpu
+                                ? `${escapeHtmlFn(caps.gpuModel?.split(' ').slice(-1)[0] || 'GPU')}
+                                   <span style="display:inline-block;font-size:10px;font-weight:500;padding:1px 6px;border-radius:20px;margin-left:4px;
+                                     ${caps.supportsProxiedGpu
+                                        ? 'background:#E1F5EE;color:#0F6E56'
+                                        : 'background:#E6F1FB;color:#185FA5'}">
+                                     ${caps.supportsProxiedGpu ? 'Proxied' : 'Passthrough'}
+                                   </span>`
+                                : storageGB + ' GB'}
+                        </span>
                     </div>
                 </div>
 
@@ -276,9 +286,34 @@ function renderNodeCards(container, nodes) {
                             <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
                         </svg>
                     </div>
-                    <div class="mp-gpu-info">
-                        <div class="mp-gpu-model">${escapeHtmlFn(caps.gpuModel || 'GPU Available')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}</div>
-                        ${caps.gpuMemoryBytes ? `<div class="mp-gpu-memory">${((caps.gpuMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(0)} GB VRAM</div>` : ''}
+                    <div class="mp-gpu-info" style="flex:1;min-width:0">
+                        <div class="mp-gpu-model" style="display:flex;align-items:center;gap:6px">
+                            ${escapeHtmlFn(caps.gpuModel || 'GPU Available')}${caps.gpuCount > 1 ? ' ×' + caps.gpuCount : ''}
+                            <span style="flex-shrink:0;font-size:10px;font-weight:500;padding:1px 6px;border-radius:20px;
+                                ${caps.supportsProxiedGpu
+                                    ? 'background:#E1F5EE;color:#0F6E56'
+                                    : 'background:#E6F1FB;color:#185FA5'}">
+                                ${caps.supportsProxiedGpu ? 'Proxied' : 'Passthrough'}
+                            </span>
+                        </div>
+                        ${(() => {
+                            const totalVram = caps.totalGpuVramBytes || caps.gpuMemoryBytes || 0;
+                            const availVram = caps.availableGpuVramBytes ?? totalVram;
+                            const totalGB = (totalVram / (1024 ** 3)).toFixed(0);
+                            const availGB = (availVram / (1024 ** 3)).toFixed(1);
+                            const usedPct = totalVram > 0 ? Math.round((totalVram - availVram) / totalVram * 100) : 0;
+                            const rate = caps.gpuVramPerGbPerHour;
+                            const rateStr = rate > 0 ? `$${rate.toFixed(3)}/GB·h` : '';
+                            return totalVram > 0 ? `
+                        <div class="mp-gpu-memory" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px">
+                            <span style="color:var(--text-success,#1D9E75);font-weight:500">${availGB} GB free</span>
+                            <span style="color:var(--text-muted)">/ ${totalGB} GB total</span>
+                            ${rateStr ? `<span style="color:var(--text-muted)">${rateStr}</span>` : ''}
+                        </div>
+                        <div style="margin-top:5px;height:3px;border-radius:2px;background:var(--border-color,rgba(0,0,0,.1))">
+                            <div style="height:3px;border-radius:2px;background:#1D9E75;width:${usedPct}%"></div>
+                        </div>` : '';
+                        })()}
                     </div>
                 </div>
                 ` : ''}
@@ -377,9 +412,24 @@ export async function openNodeDetail(nodeId) {
                                     <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
                                 </svg>
                                 GPU
+                                <span style="font-size:10px;font-weight:500;padding:1px 6px;border-radius:20px;margin-left:4px;
+                                    ${caps.supportsProxiedGpu
+                                        ? 'background:#E1F5EE;color:#0F6E56'
+                                        : 'background:#E6F1FB;color:#185FA5'}">
+                                    ${caps.supportsProxiedGpu ? 'Proxied' : 'Passthrough'}
+                                </span>
                             </span>
                             <span class="node-detail-value" style="font-weight: 600;">
-                                ${escapeHtmlFn(caps.gpuModel || 'Available')}${caps.gpuCount > 1 ? ' x' + caps.gpuCount : ''}
+                                ${escapeHtmlFn(caps.gpuModel || 'Available')}${caps.gpuCount > 1 ? ' ×' + caps.gpuCount : ''}
+                                ${(() => {
+                                    const total = caps.totalGpuVramBytes || caps.gpuMemoryBytes || 0;
+                                    const avail = caps.availableGpuVramBytes ?? total;
+                                    const rate = caps.gpuVramPerGbPerHour;
+                                    const parts = [];
+                                    if (total > 0) parts.push(`${(avail / 1024 ** 3).toFixed(1)} / ${(total / 1024 ** 3).toFixed(0)} GB VRAM`);
+                                    if (rate > 0) parts.push(`$${rate.toFixed(3)}/GB·h`);
+                                    return parts.length ? `<span style="font-weight:400;color:var(--text-muted);margin-left:6px">(${parts.join(' · ')})</span>` : '';
+                                })()}
                                 ${caps.gpuMemoryBytes ? `<span style="color: var(--text-muted); font-weight: 400; font-size: 13px;"> • ${((caps.gpuMemoryBytes || 0) / (1024 * 1024 * 1024)).toFixed(0)} GB VRAM</span>` : ''}
                             </span>
                         </div>` : ''}

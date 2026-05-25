@@ -2236,7 +2236,7 @@ runcmd:
       echo ""DeCloud GPU proxy shims detected — installing Ollama natively...""
 
       # Install Ollama via official script (creates systemd service)
-      curl -fsSL https://ollama.com/install.sh | sh
+      curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.7.0 sh
 
       # ── Replace bundled NVIDIA libs with our shims (DT_NEEDED fix) ──
       # libggml-cuda.so has DT_NEEDED: libcudart.so.12, libcublas.so.12, libcublasLt.so.12
