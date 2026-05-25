@@ -80,6 +80,8 @@ public class NodeCapabilities
     public bool SupportsProxiedGpu { get; set; }
     /// <summary>Sum of MemoryBytes for all detected GPUs on this node.</summary>
     public long TotalGpuVramBytes { get; set; }
+    /// <summary>Operator-configured VRAM ceiling (AllocatedResources.GpuVramBytes). Falls back to physical proxy-eligible VRAM when no ceiling is configured.</summary>
+    public long AllocatedGpuVramBytes { get; set; }
     /// <summary>VRAM not yet committed to active or scheduled VMs. Safe to reserve for new Proxied VMs.</summary>
     public long AvailableGpuVramBytes { get; set; }
     /// <summary>Effective per-GB-per-hour rate for Proxied VRAM reservations (floor-clamped).</summary>

@@ -3140,10 +3140,20 @@ public class NodeService : INodeService
                 GpuMemoryBytes = node.HardwareInventory.Gpus.FirstOrDefault()?.MemoryBytes,
                 SupportsProxiedGpu = node.HardwareInventory.HasProxiedCapableGpu,
                 TotalGpuVramBytes = node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes),
-                AvailableGpuVramBytes = Math.Max(0,
-                    node.HardwareInventory.Gpus
+                // Operator ceiling: use AllocatedResources.GpuVramBytes when set;
+                // fall back to physical proxy-eligible sum for nodes that have not
+                // run decloud allocate since GpuVramPercent support was deployed.
+                AllocatedGpuVramBytes = node.AllocatedResources.GpuVramBytes > 0
+                    ? node.AllocatedResources.GpuVramBytes
+                    : node.HardwareInventory.Gpus
                         .Where(g => g.IsAvailableForProxiedSharing)
-                        .Sum(g => g.MemoryBytes)
+                        .Sum(g => g.MemoryBytes),
+                AvailableGpuVramBytes = Math.Max(0,
+                    (node.AllocatedResources.GpuVramBytes > 0
+                        ? node.AllocatedResources.GpuVramBytes
+                        : node.HardwareInventory.Gpus
+                            .Where(g => g.IsAvailableForProxiedSharing)
+                            .Sum(g => g.MemoryBytes))
                     - node.UsedResources.GpuVramBytes
                     - node.ReservedResources.GpuVramBytes),
                 GpuVramPerGbPerHour = node.Pricing.GpuVramPerGbPerHour > 0
