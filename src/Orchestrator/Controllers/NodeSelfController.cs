@@ -3,6 +3,7 @@ using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -46,7 +47,7 @@ public class NodeSelfController : ControllerBase
         SystemVmObligationService reconciler,
         ICentralIngressService ingressService,
         ICloudInitRenderer cloudInitRenderer,
-        PricingConfig pricingConfig,
+        IOptions<PricingConfig> pricingConfig,
         IConfiguration configuration,
         ILogger<NodeSelfController> logger)
     {
@@ -61,7 +62,7 @@ public class NodeSelfController : ControllerBase
         _reconciler = reconciler;
         _ingressService = ingressService;
         _cloudInitRenderer = cloudInitRenderer;
-        _pricingConfig = pricingConfig;
+        _pricingConfig = pricingConfig.Value;
         _configuration = configuration;
         _logger = logger;
     }

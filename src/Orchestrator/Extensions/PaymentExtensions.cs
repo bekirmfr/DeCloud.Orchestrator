@@ -1,8 +1,9 @@
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
 using Orchestrator.Services.Balance;
-using Orchestrator.Services.Settlement;
 using Orchestrator.Services.Payment;
+using Orchestrator.Services.Settlement;
 
 namespace Orchestrator.Extensions;
 
@@ -32,6 +33,7 @@ public static class PaymentExtensions
 
         // Bind and validate configuration
         services.Configure<PaymentConfig>(paymentSection);
+        services.Configure<PricingConfig>(configuration.GetSection("Pricing"));
 
         // Add configuration validation on startup
         services.AddOptions<PaymentConfig>()
@@ -116,6 +118,15 @@ public static class PaymentExtensions
         var paymentConfig = new PaymentConfig();
         paymentSection.Bind(paymentConfig);
         services.AddSingleton(paymentConfig);
+
+        // PricingConfig singleton — mirrors PaymentConfig pattern so consumers
+        // can inject PricingConfig directly without the IOptions<> wrapper.
+        // Existing consumers (VmService, NodeMarketplaceService, NodeService)
+        // still use IOptions<PricingConfig> and continue to work because
+        // Configure<PricingConfig> above also registered the options binding.
+        var pricingConfig = new PricingConfig();
+        configuration.GetSection("Pricing").Bind(pricingConfig);
+        services.AddSingleton(pricingConfig);
 
         // =====================================================
         // SERVICE REGISTRATION
