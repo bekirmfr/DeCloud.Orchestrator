@@ -2198,6 +2198,7 @@ window.closeModal = closeModal;
 window.createVM = createVM;
 window.updateTierInfo = updateTierInfo;
 window.updateEstimatedCost = updateEstimatedCost;
+window.onGpuModeChange = onGpuModeChange;
 window.updateBandwidthInfo = updateBandwidthInfo;
 window.updateReplicationInfo = updateReplicationInfo;
 window.startVM = startVM;

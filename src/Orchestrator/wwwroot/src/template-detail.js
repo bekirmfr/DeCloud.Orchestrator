@@ -940,6 +940,7 @@ window.templateDetail = {
     closeDeployTemplateModal,
     deployFromTemplate,
     updateDeployCostEstimate,
+    onDeployGpuModeChange,
     onRegionChange,
     setReviewRating,
     submitReview
