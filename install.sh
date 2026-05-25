@@ -82,40 +82,6 @@ API_PORT=5050
 MONGODB_URI=""
 
 # ============================================================
-# Attestation Configuration (v3.1 - Adaptive Timeout)
-# ============================================================
-# These are security-critical parameters that should NOT be changed
-# without understanding the security implications
-
-# Adaptive timeout configuration
-ATTESTATION_ENABLE_ADAPTIVE=true                # Enable adaptive timeout based on network RTT
-ATTESTATION_MIN_VM_AGE_SECONDS=300              # Wait 90s after VM starts before first attestation
-ATTESTATION_MAX_PROCESSING_MS=100               # Max processing time inside VM (SECURITY CRITICAL - DO NOT INCREASE)
-ATTESTATION_SAFETY_MARGIN_MS=20                 # Safety margin for network jitter
-ATTESTATION_ABSOLUTE_MAX_MS=500                 # Absolute maximum timeout (prevents abuse via fake high RTT)
-ATTESTATION_MAX_RESPONSE_MS=300                 # Fallback fixed timeout (when adaptive disabled or no metrics)
-
-# Challenge intervals (UPDATED: 5 minutes instead of 1 hour for normal period)
-ATTESTATION_STARTUP_INTERVAL=60                 # Every 60s during first 5 minutes
-ATTESTATION_NORMAL_INTERVAL=300                 # Every 5 minutes after startup (CHANGED from 3600)
-
-# Failure thresholds
-ATTESTATION_FAILURE_THRESHOLD=3                 # Pause billing after 3 consecutive failures
-ATTESTATION_RECOVERY_THRESHOLD=2                # Resume billing after 2 consecutive successes
-
-# Memory verification (UPDATED: More lenient for hardware diversity)
-ATTESTATION_MAX_MEMORY_TOUCH_MS=100.0          # Total time for memory touch test (CHANGED from 50.0)
-ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS=20.0      # Single page touch max (CHANGED from 10.0)
-
-# Network calibration (NEW)
-ATTESTATION_CALIBRATION_PINGS=5                 # Number of pings for baseline RTT calibration
-ATTESTATION_RECALIBRATION_HOURS=4               # How often to recalibrate baseline (hours)
-ATTESTATION_RTT_CHANGE_THRESHOLD=0.3            # Trigger recalibration if RTT changes by 30%
-ATTESTATION_MAX_STDDEV_RATIO=0.5                # Trigger recalibration if variance is high
-ATTESTATION_SMOOTHING_FACTOR=0.3                # Exponential smoothing factor for moving average
-ATTESTATION_DEFAULT_RTT_MS=50.0                 # Default RTT when measurement fails
-
-# ============================================================
 # Payment/Blockchain Configuration (v3.0)
 # ============================================================
 
@@ -443,7 +409,7 @@ EOF
 }
 
 # ============================================================
-# NEW: Security Validation Functions (v3.0)
+# Security Validation Functions (v3.0)
 # ============================================================
 
 validate_wallet_address() {
@@ -1777,25 +1743,15 @@ print_summary() {
     echo "    ${GREEN}✓ Smart contract escrow configured${NC}"
     echo ""
     
-    # Attestation system info
+    # Billing model info
     echo "  ─────────────────────────────────────────────────────────────"
-    echo "  ${GREEN}Attestation System (Adaptive Timeout):${NC}"
+    echo "  ${GREEN}Billing Model:${NC}"
     echo "  ─────────────────────────────────────────────────────────────"
-    if [ "$ATTESTATION_ENABLE_ADAPTIVE" = true ]; then
-        echo "    Mode:            Adaptive (Network-aware)"
-    else
-        echo "    Mode:            Fixed timeout"
-    fi
-    echo "    Min Vm Age:  ${ATTESTATION_MIN_VM_AGE_SECONDS}s (attestation starts after)"
-    echo "    Max Processing:  ${ATTESTATION_MAX_PROCESSING_MS}ms (security threshold)"
-    echo "    Fallback Timeout: ${ATTESTATION_MAX_RESPONSE_MS}ms"
-    echo "    Startup Checks:  Every ${ATTESTATION_STARTUP_INTERVAL}s (first 5 min)"
-    echo "    Normal Checks:   Every ${ATTESTATION_NORMAL_INTERVAL}s (5 min intervals)"
-    echo "    Fail Threshold:  ${ATTESTATION_FAILURE_THRESHOLD} consecutive failures"
+    echo "    Mode:            Heartbeat-based"
+    echo "    Pause threshold: 90s of stale heartbeat"
     echo ""
-    echo "    ${GREEN}✓ Adaptive timeout adjusts for network latency${NC}"
-    echo "    ${GREEN}✓ Billing pauses automatically on attestation failure${NC}"
-    echo "    ${GREEN}✓ Only verified runtime is billed to users${NC}"
+    echo "    ${GREEN}✓ Billing pauses when a node's heartbeat goes stale${NC}"
+    echo "    ${GREEN}✓ Resumes automatically when the heartbeat returns${NC}"
     echo ""
     
     if [ "$INSTALL_CADDY" = true ] && [ -n "$INGRESS_DOMAIN" ]; then

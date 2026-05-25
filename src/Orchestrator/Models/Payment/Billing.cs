@@ -1,10 +1,7 @@
 ﻿namespace Orchestrator.Models.Payment;
 
 /// <summary>
-/// Extended billing information for VMs with attestation tracking
-/// 
-/// This extends the existing VmBillingInfo model.
-/// Add these properties to your existing model.
+/// Per-VM billing state: rate, accumulated cost, runtime, and pause status.
 /// </summary>
 public class VmBillingInfo
 {
@@ -42,74 +39,15 @@ public class VmBillingInfo
     public string? PauseReason { get; set; }
 
     // =====================================================
-    // NEW PROPERTIES FOR ATTESTATION TRACKING
-    // Add these to your existing class
+    // PROPERTIES FOR ATTESTATION TRACKING
     // =====================================================
 
     /// <summary>
-    /// Runtime where attestation was passing (verified resources)
-    /// Only this time is billed to the user
+    /// Total runtime — accrued every billing cycle while the node heartbeat
+    /// is fresh. Renamed conceptually from "VerifiedRuntime" but the field
+    /// name is preserved for MongoDB document compatibility.
     /// </summary>
     public TimeSpan VerifiedRuntime { get; set; }
-
-    /// <summary>
-    /// LEGACY — no longer incremented after the attestation system was removed.
-    /// Retained on the model to preserve existing MongoDB document compatibility.
-    /// All billable runtime now accrues to <see cref="VerifiedRuntime"/>.
-    /// Scheduled for removal in a future schema migration.
-    /// </summary>
-    [Obsolete("No longer incremented. All runtime accrues to VerifiedRuntime.")]
-    public TimeSpan UnverifiedRuntime { get; set; }
-
-    // =====================================================
-    // COMPUTED PROPERTIES (optional but useful)
-    // =====================================================
-
-    /// <summary>
-    /// Percentage of runtime that was verified
-    /// </summary>
-    public double VerificationRate =>
-        TotalRuntime.TotalMinutes > 0
-            ? VerifiedRuntime.TotalMinutes / TotalRuntime.TotalMinutes * 100.0
-            : 100.0;
-
-    /// <summary>
-    /// Is the VM currently in good standing (attestation passing)?
-    /// </summary>
-    public bool IsVerified => UnverifiedRuntime.TotalMinutes == 0 ||
-        VerifiedRuntime > UnverifiedRuntime;
-}
-
-/// <summary>
-/// If you need to keep the existing VmBillingInfo unchanged,
-/// use this class instead and map between them.
-/// </summary>
-public class AttestationAwareBillingInfo
-{
-    // Core billing
-    public decimal HourlyRateCrypto { get; set; }
-    public string CryptoSymbol { get; set; } = "USDC";
-    public decimal TotalChargedCrypto { get; set; }
-    public DateTime? LastBillingAt { get; set; }
-
-    // Attestation tracking (both intervals billed at full rate — unverified is
-    // recorded for observability only, not discounted)
-    public int VerifiedRuntimeMinutes { get; set; }
-    public int UnverifiedRuntimeMinutes { get; set; }
-
-    // Status
-    public string? StoppedReason { get; set; }
-    public string? StoppedAt { get; set; }
-
-    // Computed
-    public double VerificationRate =>
-        (VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes) > 0
-            ? (double)VerifiedRuntimeMinutes / (VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes) * 100.0
-            : 100.0;
-
-    public TimeSpan VerifiedRuntime => TimeSpan.FromMinutes(VerifiedRuntimeMinutes);
-    public TimeSpan UnverifiedRuntime => TimeSpan.FromMinutes(UnverifiedRuntimeMinutes);
-    public TimeSpan TotalRuntime => TimeSpan.FromMinutes(VerifiedRuntimeMinutes + UnverifiedRuntimeMinutes);
 }
 
 public class BillingEvent

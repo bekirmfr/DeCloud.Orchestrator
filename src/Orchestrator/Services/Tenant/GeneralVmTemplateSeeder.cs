@@ -66,13 +66,6 @@ public sealed partial class GeneralVmTemplateSeeder
     private const string GeneralRoleUrl =
         $"{CloudInitRawBase}/tenant-vms/general/cloud-init.yaml";
 
-    /// <summary>
-    /// HTTPS base for binary artifacts (decloud-agent). Update when a new
-    /// binary release is cut in DeCloud.Builds and bump
-    /// <see cref="GeneralTemplateRevision"/>.
-    /// </summary>
-    private const string BinaryBaseUrl =
-        "https://github.com/bekirmfr/DeCloud.Builds/releases/download/binaries%2Fv1.1.0";
 
     // ── Template revision ────────────────────────────────────────────────
 
@@ -82,18 +75,6 @@ public sealed partial class GeneralVmTemplateSeeder
     /// this template. Existing running VMs are not affected by revision bumps.
     /// </summary>
     private const int GeneralTemplateRevision = 1;
-
-    // ── Binary artifact constants ────────────────────────────────────────
-    // From binaries/v1.0.0 release notes. Update both halves when the binary
-    // is rebuilt; bump GeneralTemplateRevision.
-
-    private const string DecloudAgentAmd64Sha256 =
-        "530c33c349f4c55d17a4f7e6a328d60da09b1257c1ffd2c54c4efd9f3e3962a2";
-    private const string DecloudAgentArm64Sha256 =
-        "349ad8dd16c837a868d8385a693a8ee376f72948660f823e8e70f150bda142ac";
-
-    private const long DecloudAgentAmd64Bytes = 5_087_384;  // 4.85 MB
-    private const long DecloudAgentArm64Bytes = 4_915_352;  // 4.69 MB
 
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
@@ -236,17 +217,6 @@ public sealed partial class GeneralVmTemplateSeeder
 
     private static List<TemplateArtifact> BuildArtifacts() => new()
     {
-        // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────────
-        Artifact("decloud-agent", "DeCloud agent — amd64",
-            ArtifactType.Binary, arch: "amd64",
-            sha256: DecloudAgentAmd64Sha256, sizeBytes: DecloudAgentAmd64Bytes,
-            sourceUrl: $"{BinaryBaseUrl}/decloud-agent-amd64"),
-
-        Artifact("decloud-agent", "DeCloud agent — arm64",
-            ArtifactType.Binary, arch: "arm64",
-            sha256: DecloudAgentArm64Sha256, sizeBytes: DecloudAgentArm64Bytes,
-            sourceUrl: $"{BinaryBaseUrl}/decloud-agent-arm64"),
-
         // ── Inline (data: URI) ───────────────────────────────────────────
         Artifact("general-api", "General-purpose VM dashboard API (Python)",
             ArtifactType.Script,

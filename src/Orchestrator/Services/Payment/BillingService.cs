@@ -29,10 +29,8 @@ namespace Orchestrator.Services.Payment;
 public class BillingService : BackgroundService
 {
     private readonly DataStore _dataStore;
-    private readonly IAttestationService _attestationService;
     private readonly ISettlementService _settlementService;
     private readonly IBalanceService _balanceService;
-    private readonly AttestationConfig _attestationConfig;
     private readonly ILogger<BillingService> _logger;
 
     // Event-driven billing queue
@@ -43,17 +41,13 @@ public class BillingService : BackgroundService
 
     public BillingService(
         DataStore dataStore,
-        IAttestationService attestationService,
         ISettlementService settlementService,
         IBalanceService balanceService,
-        IOptions<AttestationConfig> attestationConfig,
         ILogger<BillingService> logger)
     {
         _dataStore = dataStore;
-        _attestationService = attestationService;
         _settlementService = settlementService;
         _balanceService = balanceService;
-        _attestationConfig = attestationConfig.Value;
         _logger = logger;
 
         // Create bounded channel (max 1000 pending events)
@@ -304,11 +298,10 @@ public class BillingService : BackgroundService
         if (billingPeriod < TimeSpan.FromMinutes(1) && evt.Trigger != BillingTrigger.VmStop)
         {
             _logger.LogDebug(
-                "VM {VmId}: Runtime tracked (verified={Verified:F2}min, unverified={Unverified:F2}min) " +
-                "but not billing (period={Period:F2}min < 1min threshold)",
+                "VM {VmId}: runtime tracked ({Runtime:F2}min) but not billing " +
+                "(period={Period:F2}min < 1min threshold)",
                 vm.Id,
                 vm.BillingInfo.VerifiedRuntime.TotalMinutes,
-                vm.BillingInfo.UnverifiedRuntime.TotalMinutes,
                 billingPeriod.TotalMinutes);
             return;
         }
@@ -356,10 +349,12 @@ public class BillingService : BackgroundService
         }
 
         _logger.LogInformation(
-            "Billing VM {VmId}: Period={Period}, Cost={Cost}, ",
+            "Billing VM {VmId}: Period={Period}, Cost={Cost}, " +
+            "Runtime={RuntimeMs}ms",
             vm.Id,
             billingPeriod,
-            cost);
+            cost,
+            vm.BillingInfo.VerifiedRuntime.TotalMilliseconds);
 
         // Update billing info (CurrentPeriodStart already set to `now` above)
         vm.BillingInfo.TotalBilled += cost;
@@ -392,14 +387,12 @@ public class BillingService : BackgroundService
 
         _logger.LogInformation(
             "✓ Billed VM {VmId}: {Cost:F4} USDC for {Duration}, trigger={Trigger}, " +
-            "lifetime_verified={LifetimeVerified:F2}min, lifetime_unverified={LifetimeUnverified:F2}min, " +
-            "total_billed={TotalBilled:F4} USDC",
+            "lifetime_runtime={LifetimeRuntime:F2}min, total_billed={TotalBilled:F4} USDC",
             vm.Id,
             cost,
             billingPeriod,
             evt.Trigger,
             vm.BillingInfo.VerifiedRuntime.TotalMinutes,
-            vm.BillingInfo.UnverifiedRuntime.TotalMinutes,
             vm.BillingInfo.TotalBilled);
     }
 }

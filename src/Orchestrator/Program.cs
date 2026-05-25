@@ -196,8 +196,6 @@ builder.Services.AddHttpClient("latency-tracker")
     {
         client.Timeout = TimeSpan.FromSeconds(5);
     });
-// Add attestation services
-builder.Services.AddAttestationServices(builder.Configuration);
 builder.Services.AddPaymentServices(builder.Configuration);
 
 // Configure JSON serialization for all HttpClient JSON extension methods
@@ -468,10 +466,6 @@ if (mongoDatabase != null)
         {
             await dataStore.LoadStateFromDatabaseAsync();
             logger.LogInformation("✓ State loaded successfully from MongoDB");
-
-            var attestationService = scope.ServiceProvider.GetRequiredService<IAttestationService>();
-            await attestationService.InitializeAsync();
-            logger.LogInformation("✓ Attestation stats restored for running VMs");
 
             // Load revoked JWTs into memory cache
             var revocationService = app.Services.GetRequiredService<IJwtRevocationService>();

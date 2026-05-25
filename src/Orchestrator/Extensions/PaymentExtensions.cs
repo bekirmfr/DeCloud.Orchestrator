@@ -133,10 +133,11 @@ public static class PaymentExtensions
         // BACKGROUND SERVICES (Order matters for dependency resolution)
         // =====================================================
 
-        // 2. Attestation-Aware Billing Service - bills users based on verified runtime
-        //    NOTE: This integrates with IAttestationService to pause billing when attestation fails
+        // 2. Billing Service — bills users based on node heartbeat liveness.
+        //    Pauses billing when the host heartbeat goes stale; resumes when
+        //    fresh heartbeats return or on explicit BalanceAdded/HeartbeatResumed.
         services.AddSingleton<BillingService>();
-services.AddHostedService(sp => sp.GetRequiredService<BillingService>());
+        services.AddHostedService(sp => sp.GetRequiredService<BillingService>());
         services.AddHostedService<OnChainSettlementService>();
 
         // 3. Settlement Service - batches payments to nodes (commented out for now)
