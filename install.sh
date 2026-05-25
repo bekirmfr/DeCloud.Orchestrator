@@ -82,7 +82,7 @@ API_PORT=5050
 MONGODB_URI=""
 
 # ============================================================
-# NEW: Attestation Configuration (v3.1 - Adaptive Timeout)
+# Attestation Configuration (v3.1 - Adaptive Timeout)
 # ============================================================
 # These are security-critical parameters that should NOT be changed
 # without understanding the security implications
@@ -116,7 +116,7 @@ ATTESTATION_SMOOTHING_FACTOR=0.3                # Exponential smoothing factor f
 ATTESTATION_DEFAULT_RTT_MS=50.0                 # Default RTT when measurement fails
 
 # ============================================================
-# NEW: Payment/Blockchain Configuration (v3.0)
+# Payment/Blockchain Configuration (v3.0)
 # ============================================================
 
 # Blockchain network
@@ -133,10 +133,40 @@ ORCHESTRATOR_PRIVATE_KEY=""         # NEVER logged or committed - stored in env 
 REQUIRED_CONFIRMATIONS=12           # Block confirmations (12 for testnet, 20+ for mainnet)
 MIN_SETTLEMENT_AMOUNT=1.0           # Minimum $ to trigger settlement
 SETTLEMENT_INTERVAL_HOURS=1         # How often to settle (every hour)
-PLATFORM_FEE_PERCENT=5.0            # Platform fee (5%)
+PLATFORM_FEE_PERCENT=15.0           # Platform fee (5%)
 
 # JWT Secret
 JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
+
+# ============================================================
+# Pricing Configuration (Platform Defaults & Floor Rates)
+# ============================================================
+# Floor rates: the minimum any node operator can charge.
+# Default rates: applied to nodes that have not set custom pricing.
+# These are platform-level settings — node operators set their own
+# rates above the floor via: decloud pricing --cpu 0.012 ...
+
+# CPU
+PRICING_FLOOR_CPU=0.005             # $0.005 per core per hour (minimum)
+PRICING_DEFAULT_CPU=0.01            # $0.01 per core per hour (platform default)
+
+# Memory
+PRICING_FLOOR_MEMORY=0.0025         # $0.0025 per GB per hour (minimum)
+PRICING_DEFAULT_MEMORY=0.005        # $0.005 per GB per hour (platform default)
+
+# Storage (disk allocation)
+PRICING_FLOOR_STORAGE=0.00005       # $0.00005 per GB per hour (minimum)
+PRICING_DEFAULT_STORAGE=0.0001      # $0.0001 per GB per hour (platform default)
+
+# GPU VRAM (both Passthrough and Proxied modes, per GB of VRAM)
+PRICING_FLOOR_GPU_VRAM=0.003        # $0.003 per GB per hour (minimum)
+PRICING_DEFAULT_GPU_VRAM=0.006      # $0.006 per GB per hour (platform default)
+
+# Bandwidth tiers (platform-set, not operator-overridable)
+PRICING_BW_BASIC=0.002              # $0.002/hr — Basic (10 Mbps)
+PRICING_BW_STANDARD=0.008           # $0.008/hr — Standard (50 Mbps)
+PRICING_BW_PERFORMANCE=0.020        # $0.020/hr — Performance (200 Mbps)
+PRICING_BW_UNMETERED=0.040          # $0.040/hr — Unmetered
 
 # Central Ingress (Caddy)
 INSTALL_CADDY=false
@@ -187,7 +217,7 @@ parse_args() {
                 ;;
                 
             # =====================================================
-            # NEW: Blockchain/Payment Arguments (v3.0)
+            # Blockchain/Payment Arguments (v3.0)
             # =====================================================
             --blockchain-chain-id)
                 BLOCKCHAIN_CHAIN_ID="$2"
@@ -1505,9 +1535,25 @@ create_configuration() {
     "MinSettlementAmount": 0,
     "SettlementIntervalHours": 0,
     "PlatformFeePercent": 0
+  },
+
+  "Pricing": {
+    "FloorCpuPerHour": ${PRICING_FLOOR_CPU},
+    "DefaultCpuPerHour": ${PRICING_DEFAULT_CPU},
+    "FloorMemoryPerGbPerHour": ${PRICING_FLOOR_MEMORY},
+    "DefaultMemoryPerGbPerHour": ${PRICING_DEFAULT_MEMORY},
+    "FloorStoragePerGbPerHour": ${PRICING_FLOOR_STORAGE},
+    "DefaultStoragePerGbPerHour": ${PRICING_DEFAULT_STORAGE},
+    "FloorGpuVramPerGbPerHour": ${PRICING_FLOOR_GPU_VRAM},
+    "DefaultGpuVramPerGbPerHour": ${PRICING_DEFAULT_GPU_VRAM},
+    "BandwidthBasicPerHour": ${PRICING_BW_BASIC},
+    "BandwidthStandardPerHour": ${PRICING_BW_STANDARD},
+    "BandwidthPerformancePerHour": ${PRICING_BW_PERFORMANCE},
+    "BandwidthUnmeteredPerHour": ${PRICING_BW_UNMETERED}
   }
 }
 EOF
+This uses shell parameter expansion with defaults (${VAR:-default}), so the install works identically with no extra flags. Platform operators who want non-default rates pass the variables before running the script — or edit the generated file afterwards, since it's now visible and documented.1 / 2
     
     chmod 640 "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
     
