@@ -1416,6 +1416,13 @@ async function createVM() {
     const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
     const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
 
+    // GPU — read from the GPU Access section
+    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
+    const gpuVramGb = parseFloat(document.getElementById('vm-gpu-vram')?.value ?? '0');
+    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
+        ? Math.round(gpuVramGb * 1024 ** 3)
+        : null;
+
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
 
@@ -1442,10 +1449,12 @@ async function createVM() {
                 memoryBytes: memoryMb * (1024 * 1024),
                 diskBytes: diskGb * (1024 * 1024 * 1024),
                 imageId: imageId,
+                gpuMode: gpuMode,
+                gpuVramBytes: gpuVramBytes,
                 qualityTier: qualityTier,
                 bandwidthTier: bandwidthTier,
                 replicationFactor: replicationFactor,
-                constraints: constraints.length > 0 ? constraints : undefined
+                constraints: constraints.length > 0 ?
             }
         };
 
@@ -1479,6 +1488,10 @@ async function createVM() {
             document.getElementById('quality-tier').value = '1';
             document.getElementById('bandwidth-tier').value = '3';
             document.getElementById('replication-factor').value = '3';
+            const gpuModeEl = document.getElementById('vm-gpu-mode');
+            if (gpuModeEl) gpuModeEl.value = '0';
+            const gpuVramRow = document.getElementById('vm-gpu-vram-row');
+            if (gpuVramRow) gpuVramRow.style.display = 'none';
             updateTierInfo();
             updateBandwidthInfo();
             updateReplicationInfo();
@@ -1675,6 +1688,16 @@ function updateReplicationInfo() {
     updateEstimatedCost();
 }
 
+/**
+ * Show/hide VRAM input when GPU mode changes, then refresh cost estimate.
+ */
+function onGpuModeChange() {
+    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
+    const gpuVramRow = document.getElementById('vm-gpu-vram-row');
+    if (gpuVramRow) gpuVramRow.style.display = gpuMode === 2 ? 'flex' : 'none';
+    updateEstimatedCost();
+}
+
 function updateEstimatedCost() {
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
     const memoryMb = parseInt(document.getElementById('vm-memory').value);
@@ -1694,7 +1717,19 @@ function updateEstimatedCost() {
     const memoryCost = (memoryMb / 1024) * baseMemoryRate;
     const storageCost = diskGb * baseStorageRate;
 
-    const hourlyTotal = ((cpuCost + memoryCost + storageCost) * tier.priceMultiplier) + bw.hourlyRate;
+    // GPU cost — added outside tierMultiplier, matching VmService.CalculateHourlyRate.
+    // Passthrough: flat DefaultGpuPerHour. Proxied: per-GB DefaultGpuVramPerGbPerHour.
+    const GPU_PASSTHROUGH_RATE = 0.10;
+    const GPU_VRAM_RATE = 0.006;
+    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
+    const gpuVramGb = parseFloat(document.getElementById('vm-gpu-vram')?.value ?? '0');
+    let gpuCost = 0;
+    if (gpuMode === 1) gpuCost = GPU_PASSTHROUGH_RATE;
+    else if (gpuMode === 2 && gpuVramGb) gpuCost = gpuVramGb * GPU_VRAM_RATE;
+
+    const hourlyTotal = ((cpuCost + memoryCost + storageCost) * tier.priceMultiplier)
+        + bw.hourlyRate
+        + gpuCost;
 
     document.getElementById('compute-points').textContent = `${computePoints} points`;
     document.getElementById('estimated-cost').textContent = `~$${hourlyTotal.toFixed(4)}/hr (default rates)`;
