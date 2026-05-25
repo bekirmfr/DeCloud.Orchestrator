@@ -221,11 +221,16 @@ public class Node
     /// Examples: "gpu", "nvme", "high-memory", "eu-gdpr", "gaming"
     /// </summary>
     public List<string> Tags { get; set; } = new();
-    
+
     /// <summary>
-    /// Base pricing in USDC per compute point per hour (legacy, kept for backward compatibility)
-    /// Prefer using Pricing for per-resource rates.
+    /// Base pricing in USDC per compute point per hour.
     /// </summary>
+    /// <remarks>
+    /// Deprecated — never read by the billing pipeline. Preserved only for
+    /// backward-compatible deserialization of existing MongoDB documents.
+    /// Use <see cref="Pricing"/> for all rate logic.
+    /// </remarks>
+    [Obsolete("Not used in billing. Read Pricing instead.")]
     public decimal BasePrice { get; set; } = 0.01m;
 
     /// <summary>

@@ -18,18 +18,17 @@ public class PricingConfig
     public decimal FloorCpuPerHour { get; set; } = 0.005m;
     public decimal FloorMemoryPerGbPerHour { get; set; } = 0.0025m;
     public decimal FloorStoragePerGbPerHour { get; set; } = 0.00005m;
-    public decimal FloorGpuPerHour { get; set; } = 0.05m;
 
     // ── Compute resource default rates ───────────────────────────────────────
     // Applied to nodes that haven't set custom pricing.
     public decimal DefaultCpuPerHour { get; set; } = 0.01m;
     public decimal DefaultMemoryPerGbPerHour { get; set; } = 0.005m;
     public decimal DefaultStoragePerGbPerHour { get; set; } = 0.0001m;
-    public decimal DefaultGpuPerHour { get; set; } = 0.10m;
 
-    // ── Proxied GPU VRAM rates ────────────────────────────────────────────────
-    // Charged per GB of VRAM quota reserved at scheduling time.
-    // Distinct from GpuPerHour (flat, Passthrough only) — scales with reservation.
+    // ── GPU VRAM rates ────────────────────────────────────────────────────────
+    // Applied per GB of GPU VRAM for both Passthrough and Proxied modes.
+    // Passthrough: node's total GPU VRAM × rate (stamped by scheduler).
+    // Proxied: VRAM quota reserved at scheduling time × rate.
     public decimal FloorGpuVramPerGbPerHour { get; set; } = 0.003m;
     public decimal DefaultGpuVramPerGbPerHour { get; set; } = 0.006m;
 
@@ -44,30 +43,10 @@ public class PricingConfig
     // A VM with 4,000 × 1 MB blocks at N=3 costs: 4000 × 3 × $0.000001 = $0.012/hr.
     public decimal FloorStoragePerMbPerHour { get; set; } = 0.0000005m;
     public decimal DefaultStoragePerMbPerHour { get; set; } = 0.000001m;
-}
 
-/// <summary>
-/// Per-node pricing set by the node operator.
-/// Rates must be >= platform floor rates.
-/// If null/zero, platform defaults are used.
-/// Note: StoragePerMbPerHour is platform-set and not operator-overridable.
-/// </summary>
-public class NodePricing
-{
-    public string Currency { get; set; } = "USDC";
-    public decimal CpuPerHour { get; set; }
-    public decimal MemoryPerGbPerHour { get; set; }
-    public decimal StoragePerGbPerHour { get; set; }
-    public decimal GpuPerHour { get; set; }
-    /// <summary>
-    /// Per-GB-per-hour rate for Proxied GPU VRAM reservations.
-    /// Applied to spec.GpuVramBytes at billing time.
-    /// 0 = use platform default (DefaultGpuVramPerGbPerHour).
-    /// </summary>
-    public decimal GpuVramPerGbPerHour { get; set; }
-
-    /// <summary>Returns true if the operator has set any custom pricing.</summary>
-    public bool HasCustomPricing =>
-        CpuPerHour > 0 || MemoryPerGbPerHour > 0 ||
-        StoragePerGbPerHour > 0 || GpuPerHour > 0 || GpuVramPerGbPerHour > 0;
+    // ── Bandwidth tier rates (platform-set, not operator-overridable) ─────────
+    public decimal BandwidthBasicPerHour { get; set; } = 0.002m;       // 10 Mbps
+    public decimal BandwidthStandardPerHour { get; set; } = 0.008m;    // 50 Mbps
+    public decimal BandwidthPerformancePerHour { get; set; } = 0.020m; // 200 Mbps
+    public decimal BandwidthUnmeteredPerHour { get; set; } = 0.040m;   // Unmetered
 }

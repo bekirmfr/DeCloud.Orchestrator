@@ -1,3 +1,4 @@
+using DeCloud.Shared.Models;
 using Orchestrator.Models.Payment;
 
 namespace Orchestrator.Models;

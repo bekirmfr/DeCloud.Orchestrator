@@ -288,15 +288,15 @@ public class SettlementService : ISettlementService
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Get total pending payout for a node operator
+    /// Get total pending payout for a node operator.
+    /// Returns the node's share of usage that has been recorded but not yet
+    /// settled on-chain. Once settled, the amount moves to settlement history.
     /// </summary>
     public Task<decimal> GetNodePendingPayoutAsync(string nodeId)
     {
         var pendingPayout = _dataStore.UnsettledUsage.Values
-            .Where(u => u.NodeId == nodeId && u.SettledOnChain)
+            .Where(u => u.NodeId == nodeId && !u.SettledOnChain)
             .Sum(u => u.NodeShare);
-
-        // TODO: Subtract already withdrawn amounts when withdrawal feature is implemented
 
         return Task.FromResult(pendingPayout);
     }

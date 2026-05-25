@@ -197,6 +197,33 @@ public class BillingService : BackgroundService
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // BALANCE-PAUSED GUARD
+        // ═══════════════════════════════════════════════════════════════════════
+
+        if (vm.BillingInfo.IsPaused)
+        {
+            if (evt.Trigger == BillingTrigger.BalanceAdded)
+            {
+                // User topped up — clear the pause and continue to bill normally.
+                vm.BillingInfo.IsPaused = false;
+                vm.BillingInfo.PausedAt = null;
+                vm.BillingInfo.PauseReason = null;
+                _logger.LogInformation(
+                    "VM {VmId}: billing RESUMED after balance deposit.", vm.Id);
+                // fall through to normal billing
+            }
+            else if (evt.Trigger != BillingTrigger.VmStop)
+            {
+                // Still paused — skip periodic cycles, but always bill the final
+                // period on stop so we don't lose trailing usage.
+                _logger.LogDebug(
+                    "VM {VmId}: billing paused (reason: {Reason}) — skipping cycle.",
+                    vm.Id, vm.BillingInfo.PauseReason);
+                return;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // ATTESTATION CHECK - Core security feature
         // ═══════════════════════════════════════════════════════════════════════
 

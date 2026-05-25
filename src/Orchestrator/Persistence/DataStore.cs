@@ -1382,35 +1382,9 @@ public class DataStore
             Images.TryAdd(image.Id, image);
         }
 
-        // Default pricing tiers
-        var tiers = new[]
-        {
-            new VmPricingTier
-            {
-                Id = "standard-small",
-                Name = "Standard Small",
-                CpuCores = 1,
-                MemoryMb = 2048,
-                DiskGb = 20,
-                HourlyRateCrypto = 0.01m,
-                CryptoSymbol = "USDC"
-            },
-            new VmPricingTier
-            {
-                Id = "standard-medium",
-                Name = "Standard Medium",
-                CpuCores = 2,
-                MemoryMb = 4096,
-                DiskGb = 40,
-                HourlyRateCrypto = 0.02m,
-                CryptoSymbol = "USDC"
-            }
-        };
-
-        foreach (var tier in tiers)
-        {
-            PricingTiers.TryAdd(tier.Id, tier);
-        }
+        // VmPricingTier seed data removed — the tier-based pricing model is
+        // superseded by per-resource NodePricing. PricingTiers dictionary
+        // retained for now to avoid a breaking schema change; it is empty.
     }
 
     /// <summary>

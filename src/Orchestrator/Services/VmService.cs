@@ -123,9 +123,6 @@ public class VmService : IVmService
         // Generate memorable password
         var password = isSystemVm ? null : GenerateMemorablePassword();
 
-        // Calculate pricing (no overlay measurement yet — uses 5% estimate)
-        var hourlyRate = CalculateHourlyRate(request.Spec);
-
         // Validate and apply replication factor.
         // System VMs are always ephemeral (factor=0): they redeploy from cloud-init,
         // not from disk state. Tenant VMs default to 3, validated to allowed tiers.
@@ -194,7 +191,7 @@ public class VmService : IVmService
             Labels = request.Labels ?? [],
             BillingInfo = new VmBillingInfo
             {
-                HourlyRateCrypto = hourlyRate,
+                HourlyRateCrypto = 0,   // Set in ScheduleVmAsync once a node is selected
                 CryptoSymbol = "USDC"
             },
             NetworkConfig = new VmNetworkConfig
@@ -840,6 +837,16 @@ public class VmService : IVmService
         vm.Status = VmStatus.Provisioning;
         vm.NetworkConfig.PrivateIp = GeneratePrivateIp();
 
+        // For Passthrough mode, stamp GpuVramBytes from the selected node's GPU so
+        // billing uses the same per-GB-per-hour formula as Proxied mode. Only set
+        // when the scheduler hasn't already provided a value.
+        if (vm.Spec.GpuMode == GpuMode.Passthrough && !(vm.Spec.GpuVramBytes > 0))
+        {
+            var assignedGpuVram = selectedNode.HardwareInventory.Gpus.FirstOrDefault()?.MemoryBytes ?? 0L;
+            if (assignedGpuVram > 0)
+                vm.Spec.GpuVramBytes = assignedGpuVram;
+        }
+
         // Recalculate hourly rate with node-specific pricing (replaces platform defaults).
         // Pass block count + size if available (populated by LazysyncManager each cycle).
         vm.BillingInfo.HourlyRateCrypto = CalculateHourlyRate(
@@ -1215,13 +1222,13 @@ public class VmService : IVmService
             nodePricing?.StoragePerGbPerHour > 0 ? nodePricing.StoragePerGbPerHour : cfg.DefaultStoragePerGbPerHour,
             cfg.FloorStoragePerGbPerHour);
 
-        // ── Bandwidth tier pricing (platform-set) ─────────────────────────────
+        // ── Bandwidth tier pricing (platform-set, configurable via PricingConfig) ──
         var bandwidthRate = spec.BandwidthTier switch
         {
-            BandwidthTier.Basic       => 0.002m,   // 10 Mbps
-            BandwidthTier.Standard    => 0.008m,   // 50 Mbps
-            BandwidthTier.Performance => 0.020m,   // 200 Mbps
-            _                         => 0.040m    // Unmetered
+            BandwidthTier.Basic => cfg.BandwidthBasicPerHour,
+            BandwidthTier.Standard => cfg.BandwidthStandardPerHour,
+            BandwidthTier.Performance => cfg.BandwidthPerformancePerHour,
+            _ => cfg.BandwidthUnmeteredPerHour
         };
 
         // ── Quality tier multiplier ───────────────────────────────────────────
@@ -1234,25 +1241,21 @@ public class VmService : IVmService
             _                      => 1.0m
         };
 
-        // ── GPU cost — mode-aware ─────────────────────────────────────────────
-        // Passthrough: flat GpuPerHour — full GPU dedicated to one VM.
-        // Proxied: per-GB-per-hour on the VRAM quota set at scheduling time.
-        // None / no quota: zero GPU cost.
-        var gpuCost = spec.GpuMode switch
-        {
-            GpuMode.Passthrough => Math.Max(
-                nodePricing?.GpuPerHour > 0 ? nodePricing.GpuPerHour : cfg.DefaultGpuPerHour,
-                cfg.FloorGpuPerHour),
+        // ── GPU cost — unified per-GB-per-hour formula ────────────────────────
+        // Both Passthrough and Proxied use GpuVramPerGbPerHour × GpuVramBytes.
+        // GpuVramBytes is stamped by the scheduler:
+        //   Passthrough → assigned GPU's total MemoryBytes
+        //   Proxied     → tenant-requested VRAM quota
+        // Zero GpuVramBytes (no GPU, or GPU mode None) → zero cost.
+        var gpuVramRate = Math.Max(
+            nodePricing?.GpuVramPerGbPerHour > 0
+                ? nodePricing.GpuVramPerGbPerHour
+                : cfg.DefaultGpuVramPerGbPerHour,
+            cfg.FloorGpuVramPerGbPerHour);
 
-            GpuMode.Proxied when spec.GpuVramBytes is > 0 =>
-                (spec.GpuVramBytes.Value / BYTES_PER_GB) * Math.Max(
-                    nodePricing?.GpuVramPerGbPerHour > 0
-                        ? nodePricing.GpuVramPerGbPerHour
-                        : cfg.DefaultGpuVramPerGbPerHour,
-                    cfg.FloorGpuVramPerGbPerHour),
-
-            _ => 0m
-        };
+        var gpuCost = spec.GpuVramBytes is > 0
+            ? (spec.GpuVramBytes.Value / BYTES_PER_GB) * gpuVramRate
+            : 0m;
 
         var resourceCost =
             (spec.VirtualCpuCores * cpuRate) +

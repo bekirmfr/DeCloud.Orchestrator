@@ -2,6 +2,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Microsoft.Extensions.Options;
+using DeCloud.Shared.Models;
 
 namespace Orchestrator.Services;
 
@@ -204,7 +205,6 @@ public class NodeMarketplaceService : INodeMarketplaceService
                 CpuPerHour = p.CpuPerHour > 0 ? Math.Max(p.CpuPerHour, _pricingConfig.FloorCpuPerHour) : 0,
                 MemoryPerGbPerHour = p.MemoryPerGbPerHour > 0 ? Math.Max(p.MemoryPerGbPerHour, _pricingConfig.FloorMemoryPerGbPerHour) : 0,
                 StoragePerGbPerHour = p.StoragePerGbPerHour > 0 ? Math.Max(p.StoragePerGbPerHour, _pricingConfig.FloorStoragePerGbPerHour) : 0,
-                GpuPerHour = p.GpuPerHour > 0 ? Math.Max(p.GpuPerHour, _pricingConfig.FloorGpuPerHour) : 0,
                 GpuVramPerGbPerHour = p.GpuVramPerGbPerHour > 0 ? Math.Max(p.GpuVramPerGbPerHour, _pricingConfig.FloorGpuVramPerGbPerHour) : 0,
                 Currency = p.Currency ?? "USDC"
             };

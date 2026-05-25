@@ -495,10 +495,10 @@ export async function openNodeDetail(nodeId) {
                             <span class="node-detail-label">Storage (per GB)</span>
                             <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.storagePerGbPerHour.toFixed(5)}</span>
                         </div>
-                        ${node.pricing.gpuPerHour > 0 ? `
+                        ${node.pricing.gpuVramPerGbPerHour > 0 ? `
                         <div class="node-detail-row">
-                            <span class="node-detail-label">GPU (per unit)</span>
-                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.gpuPerHour.toFixed(4)}</span>
+                            <span class="node-detail-label">GPU (per GB VRAM/hr)</span>
+                            <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.gpuVramPerGbPerHour.toFixed(4)}</span>
                         </div>` : ''}
                         ` : `
                         <div class="node-detail-row">

@@ -53,9 +53,10 @@ public class VmBillingInfo
     public TimeSpan VerifiedRuntime { get; set; }
 
     /// <summary>
-    /// Runtime where attestation was failing (unverified resources)
-    /// This time is NOT billed - the user isn't charged for time
-    /// when we can't verify the VM is actually running properly
+    /// Runtime where attestation was failing or paused.
+    /// Billed at the same rate as verified runtime — this field is for
+    /// observability and dispute resolution, not a discount signal.
+    /// See BillingService.ProcessVmBillingAsync for the authoritative policy.
     /// </summary>
     public TimeSpan UnverifiedRuntime { get; set; }
 
@@ -90,13 +91,14 @@ public class AttestationAwareBillingInfo
     public decimal TotalChargedCrypto { get; set; }
     public DateTime? LastBillingAt { get; set; }
 
-    // Attestation tracking
+    // Attestation tracking (both intervals billed at full rate — unverified is
+    // recorded for observability only, not discounted)
     public int VerifiedRuntimeMinutes { get; set; }
     public int UnverifiedRuntimeMinutes { get; set; }
 
     // Status
     public string? StoppedReason { get; set; }
-    public DateTime? StoppedAt { get; set; }
+    public string? StoppedAt { get; set; }
 
     // Computed
     public double VerificationRate =>
