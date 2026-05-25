@@ -482,7 +482,6 @@ export async function openNodeDetail(nodeId) {
 
                     <div class="node-detail-section">
                         <div class="node-detail-section-title">Pricing (USDC/hr)</div>
-                        ${node.pricing && node.pricing.hasCustomPricing ? `
                         <div class="node-detail-row">
                             <span class="node-detail-label">CPU (per core)</span>
                             <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.cpuPerHour.toFixed(4)}</span>
@@ -495,17 +494,11 @@ export async function openNodeDetail(nodeId) {
                             <span class="node-detail-label">Storage (per GB)</span>
                             <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.storagePerGbPerHour.toFixed(5)}</span>
                         </div>
-                        ${node.pricing.gpuVramPerGbPerHour > 0 ? `
+                        ${node.capabilities && node.capabilities.hasGpu ? `
                         <div class="node-detail-row">
                             <span class="node-detail-label">GPU (per GB VRAM/hr)</span>
                             <span class="node-detail-value" style="color: var(--accent-primary);">$${node.pricing.gpuVramPerGbPerHour.toFixed(4)}</span>
                         </div>` : ''}
-                        ` : `
-                        <div class="node-detail-row">
-                            <span class="node-detail-label">Rates</span>
-                            <span class="node-detail-value" style="color: var(--text-muted);">Platform defaults</span>
-                        </div>
-                        `}
                         <div class="node-detail-row">
                             <span class="node-detail-label">Region</span>
                             <span class="node-detail-value">${escapeHtmlFn(node.region || 'Unknown')}</span>

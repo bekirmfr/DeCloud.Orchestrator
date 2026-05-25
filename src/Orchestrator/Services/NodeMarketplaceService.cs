@@ -1,8 +1,9 @@
+using DeCloud.Shared.Models;
+using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
-using Microsoft.Extensions.Options;
-using DeCloud.Shared.Models;
+using Orchestrator.Services.Payment;
 
 namespace Orchestrator.Services;
 
@@ -250,9 +251,6 @@ public class NodeMarketplaceService : INodeMarketplaceService
                         .Sum(g => g.MemoryBytes)
                     - node.UsedResources.GpuVramBytes
                     - node.ReservedResources.GpuVramBytes),
-                GpuVramPerGbPerHour = node.Pricing.GpuVramPerGbPerHour > 0
-                    ? Math.Max(node.Pricing.GpuVramPerGbPerHour, _pricingConfig.FloorGpuVramPerGbPerHour)
-                    : _pricingConfig.DefaultGpuVramPerGbPerHour,
                 HasNvmeStorage = node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe),
                 HighBandwidth = (node.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000,
                 CpuModel = node.HardwareInventory.Cpu.Model,
@@ -263,9 +261,9 @@ public class NodeMarketplaceService : INodeMarketplaceService
             TotalVmsHosted = node.TotalVmsHosted,
             SuccessfulVmCompletions = node.SuccessfulVmCompletions,
             RegisteredAt = node.RegisteredAt,
-            
+
             BasePrice = node.BasePrice,
-            Pricing = node.Pricing,
+            Pricing = PricingResolver.Resolve(node.Pricing, _pricingConfig),
 
             IsOnline = node.Status == NodeStatus.Online,
             SchedulingReady = node.SchedulingReady,

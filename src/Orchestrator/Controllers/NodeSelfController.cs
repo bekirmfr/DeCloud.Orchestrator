@@ -8,6 +8,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services;
+using Orchestrator.Services.Payment;
 using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 
@@ -29,6 +30,7 @@ public class NodeSelfController : ControllerBase
     private readonly SystemVmObligationService _reconciler;
     private readonly ICentralIngressService _ingressService;
     private readonly ICloudInitRenderer _cloudInitRenderer;
+    private readonly PricingConfig _pricingConfig;
     private readonly IConfiguration _configuration;
     private readonly ILogger<NodeSelfController> _logger;
 
@@ -44,6 +46,7 @@ public class NodeSelfController : ControllerBase
         SystemVmObligationService reconciler,
         ICentralIngressService ingressService,
         ICloudInitRenderer cloudInitRenderer,
+        PricingConfig pricingConfig,
         IConfiguration configuration,
         ILogger<NodeSelfController> logger)
     {
@@ -58,6 +61,7 @@ public class NodeSelfController : ControllerBase
         _reconciler = reconciler;
         _ingressService = ingressService;
         _cloudInitRenderer = cloudInitRenderer;
+        _pricingConfig = pricingConfig;
         _configuration = configuration;
         _logger = logger;
     }
@@ -477,7 +481,9 @@ public class NodeSelfController : ControllerBase
     }
 
     /// <summary>
-    /// Get current pricing for this node
+    /// Get effective pricing for this node — operator's custom rates resolved
+    /// against platform defaults and clamped to floor minimums. Unset fields
+    /// in the operator's settings appear here as the platform default rate.
     /// </summary>
     [HttpGet("pricing")]
     [ProducesResponseType(typeof(NodePricing), 200)]
@@ -493,7 +499,7 @@ public class NodeSelfController : ControllerBase
         if (node == null)
             return NotFound("Node not registered");
 
-        return Ok(node.Pricing);
+        return Ok(PricingResolver.Resolve(node.Pricing, _pricingConfig));
     }
 
     /// <summary>
@@ -738,9 +744,10 @@ public class NodeSelfController : ControllerBase
         if (!success)
             return NotFound("Node not registered");
 
-        // Return the saved pricing (with floor enforcement applied)
+        // Return the effective pricing — operator's custom rates resolved
+        // against platform defaults and clamped to floor minimums.
         var node = await _dataStore.GetNodeAsync(nodeId);
-        return Ok(node!.Pricing);
+        return Ok(PricingResolver.Resolve(node!.Pricing, _pricingConfig));
     }
 
     /// <summary>

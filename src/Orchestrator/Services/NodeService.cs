@@ -1021,54 +1021,59 @@ public class NodeService : INodeService
             .Where(v => !string.Equals(v.State, "Deleted", StringComparison.OrdinalIgnoreCase))
             .ToList() ?? new List<HeartbeatVmInfo>();
 
+        // AllocatedGpuVramBytes — not GpuVramBytes — matches the field read by
+        // ToAdvertisement and VmSchedulingService FILTER 5.
         node.UsedResources = new ResourceSnapshot
         {
             ComputePoints = reportedVms.Sum(v => v.ComputePointCost),
             MemoryBytes = reportedVms.Sum(v => (long)(v.MemoryBytes ?? 0)),
             StorageBytes = reportedVms.Sum(v => (long)(v.DiskBytes ?? 0)),
-            // Sum VRAM quotas for active Proxied VMs — drives FILTER 5 VRAM headroom check.
             GpuVramBytes = reportedVms
                 .Where(v => (GpuMode)v.GpuMode == GpuMode.Proxied && v.GpuVramBytes > 0)
                 .Sum(v => v.GpuVramBytes ?? 0),
         };
 
         // =====================================================
-        // Reconcile scheduling holds against heartbeat reality.
-        // VMs now in UsedResources no longer need holds. Reset
-        // ReservedResources to only cover VMs that are scheduled
-        // but not yet reported in the heartbeat.
-        // See docs/RESOURCE-ALLOCATION.md §8.2.
+        // Reconcile ReservedResources from the actual Provisioning
+        // VM set on every heartbeat. Recomputing from scratch prevents
+        // holds from accumulating across node restarts, offline events,
+        // and state machine race conditions where the VM's DB status
+        // was updated to Running before the hold was explicitly released.
+        //
+        // VMs that appear in the heartbeat are confirmed running —
+        // exclude them even if DB still shows Provisioning (timing race).
         // =====================================================
         var reportedVmIds = new HashSet<string>(
             reportedVms.Select(v => v.VmId),
             StringComparer.OrdinalIgnoreCase);
 
-        // Find VMs that have scheduling holds but are now in the heartbeat
-        var provisioningVms = await _dataStore.GetVmsByNodeAsync(nodeId);
-        var pendingHoldVms = provisioningVms
+        var allNodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+
+        var stillProvisioningVms = allNodeVms
             .Where(v => v.Status == VmStatus.Provisioning
-                     && reportedVmIds.Contains(v.Id))
+                     && !reportedVmIds.Contains(v.Id)) // confirmed-running VMs excluded
             .ToList();
 
-        // These VMs are in UsedResources AND still have holds — release them
-        if (pendingHoldVms.Count > 0)
-        {
-            foreach (var vm in pendingHoldVms)
-            {
-                node.ReservedResources.ComputePoints = Math.Max(0,
-                    node.ReservedResources.ComputePoints - vm.Spec.ComputePointCost);
-                node.ReservedResources.MemoryBytes = Math.Max(0,
-                    node.ReservedResources.MemoryBytes - vm.Spec.MemoryBytes);
-                node.ReservedResources.StorageBytes = Math.Max(0,
-                    node.ReservedResources.StorageBytes - vm.Spec.DiskBytes);
-            }
+        var prevReservedMemory = node.ReservedResources.MemoryBytes;
 
+        node.ReservedResources = new ResourceSnapshot
+        {
+            ComputePoints = stillProvisioningVms.Sum(v => v.Spec.ComputePointCost),
+            MemoryBytes = stillProvisioningVms.Sum(v => v.Spec.MemoryBytes),
+            StorageBytes = stillProvisioningVms.Sum(v => v.Spec.DiskBytes),
+            GpuVramBytes = stillProvisioningVms
+                .Where(v => v.Spec.GpuMode == GpuMode.Proxied
+                         && v.Spec.GpuVramBytes is > 0)
+                .Sum(v => v.Spec.GpuVramBytes!.Value),
+        };
+
+        if (prevReservedMemory != node.ReservedResources.MemoryBytes)
             _logger.LogInformation(
-                "Released {Count} scheduling hold(s) on node {NodeId} " +
-                "(VMs now in heartbeat: {VmIds})",
-                pendingHoldVms.Count, nodeId,
-                string.Join(", ", pendingHoldVms.Select(v => v.Id)));
-        }
+                "Node {NodeId}: ReservedResources reconciled — " +
+                "{Count} VM(s) still in Provisioning, " +
+                "memory hold {Prev} → {New} bytes",
+                nodeId, stillProvisioningVms.Count,
+                prevReservedMemory, node.ReservedResources.MemoryBytes);
 
         // If node was offline and is now back online, reset downtime tracking
         if (wasOffline)
