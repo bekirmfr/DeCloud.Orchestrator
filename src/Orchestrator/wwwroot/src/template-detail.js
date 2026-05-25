@@ -392,6 +392,32 @@ export async function openDeployTemplateModal(template) {
         bwSelect.appendChild(opt);
     }
 
+    // GPU: show section and pre-select mode + VRAM from template spec
+    const gpuSection = document.getElementById('deploy-gpu-section');
+    const gpuModeSelect = document.getElementById('deploy-gpu-mode');
+    const gpuVramRow = document.getElementById('deploy-gpu-vram-row');
+    const gpuVramInput = document.getElementById('deploy-gpu-vram');
+
+    if (gpuSection) {
+        // defaultGpuMode: 0=None, 1=Passthrough, 2=Proxied
+        const defaultGpuMode = template.defaultGpuMode ?? 0;
+        const requiresGpu = template.requiresGpu || defaultGpuMode !== 0;
+
+        gpuSection.style.display = requiresGpu ? 'block' : 'none';
+
+        if (gpuModeSelect) gpuModeSelect.value = String(defaultGpuMode);
+
+        if (gpuVramRow)
+            gpuVramRow.style.display = defaultGpuMode === 2 ? 'flex' : 'none';
+
+        // Pre-fill VRAM from recommended spec, fall back to minimum, then 4 GB
+        const recGpuVram = recSpec.gpuVramBytes || minSpec.gpuVramBytes || 0;
+        if (gpuVramInput)
+            gpuVramInput.value = recGpuVram > 0
+                ? Math.round(recGpuVram / (1024 ** 3))
+                : 4;
+    }
+
     // Load available regions
     await loadAvailableRegions();
 
@@ -518,6 +544,13 @@ export async function deployFromTemplate() {
     const region = document.getElementById('deploy-region')?.value || null;
     const zone = document.getElementById('deploy-zone')?.value || null;
 
+    // GPU — read from the GPU Access section (hidden when template has no GPU requirement)
+    const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
+    const gpuVramGb = parseFloat(document.getElementById('deploy-gpu-vram')?.value ?? '0');
+    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
+        ? Math.round(gpuVramGb * 1024 ** 3)
+        : null;
+
     // Client-side name validation (mirrors server-side VmNameService)
     const sanitized = window.sanitizeVmName ? window.sanitizeVmName(vmName) : vmName;
     const nameError = window.validateVmName ? window.validateVmName(sanitized) : (!vmName ? 'Please enter a VM name' : null);
@@ -572,7 +605,9 @@ export async function deployFromTemplate() {
                     memoryBytes: memory,
                     diskBytes: disk,
                     imageId: 'ubuntu-22.04',
-                    requiresGpu: currentTemplate?.requiresGpu || false,
+                    gpuMode: gpuMode,
+                    gpuVramBytes: gpuVramBytes,
+                    requiresGpu: gpuMode !== 0,
                     qualityTier: qualityTier,
                     bandwidthTier: bandwidthTier,
                     replicationFactor: replicationFactor,
@@ -682,6 +717,16 @@ function collectDeployVariables() {
 }
 
 /**
+ * Show/hide VRAM input when GPU mode changes, then refresh cost.
+ */
+export function onDeployGpuModeChange() {
+    const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
+    const gpuVramRow = document.getElementById('deploy-gpu-vram-row');
+    if (gpuVramRow) gpuVramRow.style.display = gpuMode === 2 ? 'flex' : 'none';
+    updateDeployCostEstimate();
+}
+
+/**
  * Update cost estimate in deploy modal
  */
 function updateDeployCostEstimate() {
@@ -704,7 +749,17 @@ function updateDeployCostEstimate() {
     const diskCost = disk * baseDiskRate;
 
     const resourceCost = (cpuCost + memCost + diskCost) * qualityTier.priceMultiplier;
-    const totalHourly = resourceCost + bwTier.hourlyRate;
+
+    // GPU cost — added outside tierMultiplier, matching VmService.CalculateHourlyRate
+    const GPU_PASSTHROUGH_RATE = 0.10;  // DefaultGpuPerHour
+    const GPU_VRAM_RATE = 0.006; // DefaultGpuVramPerGbPerHour
+    const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
+    const gpuVramGb = parseFloat(document.getElementById('deploy-gpu-vram')?.value ?? '0');
+    let gpuCost = 0;
+    if (gpuMode === 1) gpuCost = GPU_PASSTHROUGH_RATE;
+    else if (gpuMode === 2 && gpuVramGb) gpuCost = gpuVramGb * GPU_VRAM_RATE;
+
+    const totalHourly = resourceCost + bwTier.hourlyRate + gpuCost;
 
     const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
 

@@ -897,6 +897,32 @@
                         </p>
                     </div>
 
+                    <!-- GPU Access — shown only when template.requiresGpu or defaultGpuMode != None -->
+                    <div class="form-group" id="deploy-gpu-section" style="display:none;">
+                        <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <rect x="2" y="7" width="20" height="14" rx="2" />
+                                <path d="M2 11h20M7 7V4M12 7V4M17 7V4" />
+                            </svg>
+                            GPU Access
+                        </label>
+                        <select class="form-input" id="deploy-gpu-mode"
+                                onchange="window.templateDetail.onDeployGpuModeChange()">
+                            <option value="0">None (no GPU)</option>
+                            <option value="2">Proxied — shared VRAM (cost-effective)</option>
+                            <option value="1">Passthrough — dedicated GPU (best performance)</option>
+                        </select>
+                        <div id="deploy-gpu-vram-row" style="display:none;align-items:center;gap:8px;margin-top:8px;">
+                            <label class="form-label" style="margin:0;white-space:nowrap;">VRAM (GB)</label>
+                            <input type="number" class="form-input" id="deploy-gpu-vram"
+                                   value="4" min="1" max="80" style="width:90px;"
+                                   onchange="window.templateDetail.updateDeployCostEstimate()">
+                            <span style="font-size:12px;color:var(--color-text-tertiary)">
+                                Scheduler finds a node with at least this much free VRAM.
+                            </span>
+                        </div>
+                    </div>
+
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">
