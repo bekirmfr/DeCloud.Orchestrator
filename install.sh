@@ -1553,7 +1553,6 @@ create_configuration() {
   }
 }
 EOF
-This uses shell parameter expansion with defaults (${VAR:-default}), so the install works identically with no extra flags. Platform operators who want non-default rates pass the variables before running the script — or edit the generated file afterwards, since it's now visible and documented.1 / 2
     
     chmod 640 "$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/appsettings.Production.json"
     
