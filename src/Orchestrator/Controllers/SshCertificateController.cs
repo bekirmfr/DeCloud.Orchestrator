@@ -225,7 +225,7 @@ public class SshCertificateController : ControllerBase
             VmIp = vm.NetworkConfig?.PrivateIp ?? "",
             NodeIp = nodeIp,
             NodePort = 22,
-            Username = "root",
+            Username = vm.Spec.SshUsername,
             HasUserSshKey = hasUserKey,
             RequiresWalletSignature = !hasUserKey,
             SshCommand = GenerateSshCommand(nodeIp, vm.NetworkConfig?.PrivateIp ?? "", vm.Id, hasUserKey)

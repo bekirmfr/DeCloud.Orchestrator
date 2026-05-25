@@ -333,6 +333,13 @@ public class VmSpec
     public string? SshPublicKey { get; set; }
 
     /// <summary>
+    /// SSH username for terminal access. "root" for standard platform VMs;
+    /// inherited from VmTemplate.DefaultUsername for marketplace deployments
+    /// (e.g. "debian", "ubuntu", "user").
+    /// </summary>
+    public string SshUsername { get; set; } = "root";
+
+    /// <summary>
     /// Wallet-encrypted password (stored permanently)
     /// Format: base64(iv):base64(ciphertext):base64(tag)
     /// </summary>

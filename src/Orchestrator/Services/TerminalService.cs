@@ -108,10 +108,11 @@ public class TerminalService : ITerminalService
             // Call Node Agent to setup terminal access with ephemeral key
             var nodeUrl = GetNodeApiUrl(node);
             var setupUrl = $"{nodeUrl}/api/vms/{vmId}/terminal/connect";
+            var sshUsername = vm.Spec.SshUsername;
 
             var setupRequest = new
             {
-                Username = "root",
+                Username = sshUsername,
                 TtlSeconds = ttlSeconds,
                 VmIp = vmIp,
                 Port = vm.AccessInfo?.SshPort ?? 22
@@ -146,7 +147,7 @@ public class TerminalService : ITerminalService
                 UserId = userId,
                 NodeId = vm.NodeId,
                 VmIp = vmIp,
-                Username = "root",
+                Username = sshUsername,
                 Fingerprint = setupResult.Fingerprint,
                 StartedAt = DateTime.UtcNow,
                 ExpiresAt = setupResult.ExpiresAt ?? DateTime.UtcNow.AddSeconds(ttlSeconds)
@@ -159,7 +160,7 @@ public class TerminalService : ITerminalService
                 sessionId, vmId, session.ExpiresAt);
 
             // Build the WebSocket URL for the client
-            var wsUrl = BuildWebSocketUrl(node, vmId, vmIp);
+            var wsUrl = BuildWebSocketUrl(node, vmId, vmIp, sshUsername);
             var nodePort = node.AgentPort > 0 ? node.AgentPort : 5100;
 
             return TerminalAccessResult.Ok(new TerminalCredentials
@@ -247,14 +248,11 @@ public class TerminalService : ITerminalService
         return $"http://{ip}:{port}";
     }
 
-    private string BuildWebSocketUrl(Node node, string vmId, string vmIp)
+    private string BuildWebSocketUrl(Node node, string vmId, string vmIp, string username)
     {
         var port = node.AgentPort > 0 ? node.AgentPort : 5100;
         var ip = node.PublicIp;
-
-        // Note: We don't include the private key in the URL for security.
-        // The client should add it via header or the private key should be passed separately.
-        return $"ws://{ip}:{port}/api/vms/{vmId}/terminal?ip={vmIp}&user=root";
+        return $"ws://{ip}:{port}/api/vms/{vmId}/terminal?ip={vmIp}&user={Uri.EscapeDataString(username)}";
     }
 }
 

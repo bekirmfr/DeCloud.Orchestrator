@@ -297,6 +297,9 @@ public class VmService : IVmService
                         vm.Id, template.DefaultGpuMode, template.Name);
                 }
 
+                if (!string.IsNullOrEmpty(template.DefaultUsername))
+                    vm.Spec.SshUsername = template.DefaultUsername;
+
                 _logger.LogInformation(
                     "VM {VmId} created from template {TemplateName} (v{Version})",
                     vm.Id, template.Name, template.Version);
