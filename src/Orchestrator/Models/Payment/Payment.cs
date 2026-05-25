@@ -49,20 +49,16 @@ public class UsageRecord
     public DateTime PeriodStart { get; set; }
     public DateTime PeriodEnd { get; set; }
     public TimeSpan Duration => PeriodEnd - PeriodStart;
-    
+
     // Billing
     public decimal TotalCost { get; set; }
     public decimal NodeShare { get; set; }       // 85%
     public decimal PlatformFee { get; set; }     // 15%
-    
-    // Attestation
-    public bool AttestationVerified { get; set; }
-    public string? AttestationId { get; set; }
-    
+
     // Settlement status
     public bool SettledOnChain { get; set; }
     public string? SettlementTxHash { get; set; }
-    
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

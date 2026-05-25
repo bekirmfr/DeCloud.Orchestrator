@@ -373,9 +373,7 @@ public class BillingService : BackgroundService
             nodeId: vm.NodeId!,
             amount: cost,
             periodStart: currentPeriodStart,
-            periodEnd: now,
-            attestationVerified: true  // Legacy field — heartbeat-based billing always considers periods verified.
-        );
+            periodEnd: now);
 
         if (!success)
         {

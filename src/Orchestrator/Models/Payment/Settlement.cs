@@ -46,7 +46,6 @@ namespace Orchestrator.Models.Payment
         public decimal Amount { get; set; }
         public DateTime PeriodStart { get; set; }
         public DateTime PeriodEnd { get; set; }
-        public bool AttestationVerified { get; set; } = true;
     }
 
     /// <summary>

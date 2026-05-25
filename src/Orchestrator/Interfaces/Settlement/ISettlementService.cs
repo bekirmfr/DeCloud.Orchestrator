@@ -17,8 +17,8 @@ public interface ISettlementService
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Record VM usage for billing
-    /// Creates an unpaid usage record that will be settled on-chain later
+    /// Record VM usage for billing.
+    /// Creates an unpaid usage record that will be settled on-chain later.
     /// </summary>
     /// <param name="userId">User ID</param>
     /// <param name="vmId">VM ID</param>
@@ -26,16 +26,14 @@ public interface ISettlementService
     /// <param name="amount">Cost in USDC</param>
     /// <param name="periodStart">Usage period start</param>
     /// <param name="periodEnd">Usage period end</param>
-    /// <param name="attestationVerified">Whether usage was verified by attestation</param>
-    /// <returns>True if usage was recorded, false if insufficient balance</returns>
+    /// <returns>True if usage was recorded.</returns>
     Task<bool> RecordUsageAsync(
         string userId,
         string vmId,
         string nodeId,
         decimal amount,
         DateTime periodStart,
-        DateTime periodEnd,
-        bool attestationVerified = true);
+        DateTime periodEnd);
 
     /// <summary>
     /// Record batch usage for multiple VMs

@@ -33,9 +33,8 @@ public class SettlementService : ISettlementService
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Record VM usage for billing
-    /// NOTE: Balance validation is now handled by caller (BillingService via BalanceService)
-    /// This service just records the usage - no validation
+    /// Record VM usage for billing.
+    /// Balance validation is handled by the caller (BillingService via BalanceService).
     /// </summary>
     public async Task<bool> RecordUsageAsync(
         string userId,
@@ -43,21 +42,15 @@ public class SettlementService : ISettlementService
         string nodeId,
         decimal amount,
         DateTime periodStart,
-        DateTime periodEnd,
-        bool attestationVerified = true)
+        DateTime periodEnd)
     {
         if (amount < 0) throw new ArgumentException("Amount must be non-negative", nameof(amount));
         if (periodEnd < periodStart) throw new ArgumentException("periodEnd must be >= periodStart");
 
-        // REMOVED: Balance validation (now handled by BalanceService in caller)
-        // BillingService should call BalanceService.HasSufficientBalanceAsync() first
-
-        // Create usage record
-
         var platformFeeRatio = _paymentConfig.PlatformFeePercent / 100m;
         var platformFee = amount * platformFeeRatio;
         var nodeShare = amount * (1 - platformFeeRatio);
-        
+
         var usageRecord = new UsageRecord
         {
             Id = Guid.NewGuid().ToString(),
@@ -69,7 +62,6 @@ public class SettlementService : ISettlementService
             TotalCost = amount,
             NodeShare = nodeShare,
             PlatformFee = platformFee,
-            AttestationVerified = attestationVerified,
             SettledOnChain = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -77,11 +69,9 @@ public class SettlementService : ISettlementService
         await _dataStore.SaveUsageRecordAsync(usageRecord);
 
         _logger.LogInformation(
-            "Recorded usage: VM={VmId}, Amount={Amount}, Verified={Verified}, " +
-            "RecordId={RecordId}",
+            "Recorded usage: VM={VmId}, Amount={Amount}, RecordId={RecordId}",
             vmId,
             amount,
-            attestationVerified,
             usageRecord.Id);
 
         return true;
@@ -102,8 +92,7 @@ public class SettlementService : ISettlementService
                 request.NodeId,
                 request.Amount,
                 request.PeriodStart,
-                request.PeriodEnd,
-                request.AttestationVerified);
+                request.PeriodEnd);
 
             if (success)
                 successCount++;

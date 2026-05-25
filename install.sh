@@ -1460,36 +1460,6 @@ create_configuration() {
     "Enabled": ${ENABLE_WIREGUARD}
   },
   
-  "Attestation": {
-    "EnableAdaptiveTimeout": ${ATTESTATION_ENABLE_ADAPTIVE},
-    "MinVmAgeForAttestationSeconds": ${ATTESTATION_MIN_VM_AGE_SECONDS},
-    "MaxProcessingTimeMs": ${ATTESTATION_MAX_PROCESSING_MS},
-    "SafetyMarginMs": ${ATTESTATION_SAFETY_MARGIN_MS},
-    "AbsoluteMaxTimeoutMs": ${ATTESTATION_ABSOLUTE_MAX_MS},
-    "MaxResponseTimeMs": ${ATTESTATION_MAX_RESPONSE_MS},
-    "StartupChallengeIntervalSeconds": ${ATTESTATION_STARTUP_INTERVAL},
-    "NormalChallengeIntervalSeconds": ${ATTESTATION_NORMAL_INTERVAL},
-    "StartupPeriodMinutes": 5,
-    "MaxMemoryTouchMs": ${ATTESTATION_MAX_MEMORY_TOUCH_MS},
-    "MaxSinglePageTouchMs": ${ATTESTATION_MAX_SINGLE_PAGE_TOUCH_MS},
-    "MemoryToleranceLow": 0.85,
-    "MemoryToleranceHigh": 1.15,
-    "FailureThreshold": ${ATTESTATION_FAILURE_THRESHOLD},
-    "RecoveryThreshold": ${ATTESTATION_RECOVERY_THRESHOLD},
-    "InitialCalibrationPings": ${ATTESTATION_CALIBRATION_PINGS},
-    "RecalibrationIntervalHours": ${ATTESTATION_RECALIBRATION_HOURS},
-    "RttChangeThreshold": ${ATTESTATION_RTT_CHANGE_THRESHOLD},
-    "MaxStdDevRatio": ${ATTESTATION_MAX_STDDEV_RATIO},
-    "DefaultRttMs": ${ATTESTATION_DEFAULT_RTT_MS},
-    "SmoothingFactor": ${ATTESTATION_SMOOTHING_FACTOR}
-  },
-  
-  "AttestationNetwork": {
-    "AgentPort": 9999,
-    "HttpTimeoutMs": 200,
-    "UseTls": false
-  },
-  
   "Payment": {
     "ChainId": "",
     "RpcUrl": "",

@@ -595,8 +595,7 @@ public class VmLifecycleManager : IVmLifecycleManager
                 nodeId: template.AuthorRevenueWallet,
                 amount: template.TemplatePrice,
                 periodStart: DateTime.UtcNow,
-                periodEnd: DateTime.UtcNow,
-                attestationVerified: true);
+                periodEnd: DateTime.UtcNow);
 
             if (success)
             {
