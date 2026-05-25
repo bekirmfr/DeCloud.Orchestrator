@@ -299,7 +299,7 @@ function renderNodeCards(container, nodes) {
                         ${(() => {
                             const totalVram = caps.allocatedGpuVramBytes || 0;
                             const availVram = caps.availableGpuVramBytes || 0;
-                            const totalGB = (totalVram / (1024 ** 3)).toFixed(0);
+                            const totalGB = (totalVram / (1024 ** 3)).toFixed(1);
                             const availGB = (availVram / (1024 ** 3)).toFixed(1);
                             const usedPct = totalVram > 0 ? Math.round((totalVram - availVram) / totalVram * 100) : 0;
                             const rate = caps.gpuVramPerGbPerHour;
@@ -422,11 +422,11 @@ export async function openNodeDetail(nodeId) {
                             <span class="node-detail-value" style="font-weight: 600;">
                                 ${escapeHtmlFn(caps.gpuModel || 'Available')}${caps.gpuCount > 1 ? ' ×' + caps.gpuCount : ''}
                                 ${(() => {
-                                    const total = caps.totalGpuVramBytes || 0;
+                                    const alloc = caps.allocatedGpuVramBytes || 0;
                                     const avail = caps.availableGpuVramBytes || 0;
                                     const rate = caps.gpuVramPerGbPerHour;
                                     const parts = [];
-                                    if (total > 0) parts.push(`${(avail / 1024 ** 3).toFixed(1)} / ${(total / 1024 ** 3).toFixed(0)} GB VRAM`);
+                                    if (alloc > 0) parts.push(`${(avail / 1024 ** 3).toFixed(1)} / ${(alloc / 1024 ** 3).toFixed(0)} GB VRAM`);
                                     if (rate > 0) parts.push(`$${rate.toFixed(3)}/GB·h`);
                                     return parts.length ? `<span style="font-weight:400;color:var(--text-muted);margin-left:6px">(${parts.join(' · ')})</span>` : '';
                                 })()}
