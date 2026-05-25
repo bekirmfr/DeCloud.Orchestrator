@@ -53,11 +53,12 @@ public class VmBillingInfo
     public TimeSpan VerifiedRuntime { get; set; }
 
     /// <summary>
-    /// Runtime where attestation was failing or paused.
-    /// Billed at the same rate as verified runtime — this field is for
-    /// observability and dispute resolution, not a discount signal.
-    /// See BillingService.ProcessVmBillingAsync for the authoritative policy.
+    /// LEGACY — no longer incremented after the attestation system was removed.
+    /// Retained on the model to preserve existing MongoDB document compatibility.
+    /// All billable runtime now accrues to <see cref="VerifiedRuntime"/>.
+    /// Scheduled for removal in a future schema migration.
     /// </summary>
+    [Obsolete("No longer incremented. All runtime accrues to VerifiedRuntime.")]
     public TimeSpan UnverifiedRuntime { get; set; }
 
     // =====================================================
@@ -121,8 +122,9 @@ public class BillingEvent
 
 public enum BillingTrigger
 {
-    Periodic,       // Periodic timer (every 5 min)
-    VmStop,         // VM stopped - bill final usage
-    Manual,         // Admin trigger
-    BalanceAdded    // User added balance - resume billing
+    Periodic,           // Periodic timer (every 5 min)
+    VmStop,             // VM stopped - bill final usage
+    Manual,             // Admin trigger
+    BalanceAdded,       // User added balance - resume billing
+    HeartbeatResumed    // Node heartbeat returned after staleness - resume billing
 }

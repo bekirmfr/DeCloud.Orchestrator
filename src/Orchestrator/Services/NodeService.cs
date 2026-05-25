@@ -11,6 +11,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Locality;
+using Orchestrator.Services.Payment;
 using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using System.Collections.Concurrent;
@@ -1104,6 +1105,28 @@ public class NodeService : INodeService
                 ResourceType = "node",
                 ResourceId = nodeId
             });
+
+            // Resume billing immediately for all VMs on this node. Without this,
+            // billing would remain paused until the next 5-min periodic cycle
+            // detects the fresh heartbeat. Use the service provider to avoid
+            // a circular dependency between NodeService and BillingService.
+            var billingService = _serviceProvider.GetService<BillingService>();
+            if (billingService != null)
+            {
+                var nodeVms = (await _dataStore.GetVmsByNodeAsync(nodeId))
+                    .Where(v => v.Status == VmStatus.Running)
+                    .ToList();
+                foreach (var vm in nodeVms)
+                {
+                    await billingService.EnqueueBillingAsync(
+                        vm.Id,
+                        BillingTrigger.HeartbeatResumed,
+                        "Node back online");
+                }
+                _logger.LogInformation(
+                    "Enqueued HeartbeatResumed for {Count} VMs on node {NodeId}",
+                    nodeVms.Count, nodeId);
+            }
         }
 
         // Synchronize VM state from heartbeat

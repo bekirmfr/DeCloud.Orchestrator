@@ -201,46 +201,80 @@ public class BillingService : BackgroundService
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // BALANCE-PAUSED GUARD
+        // HEARTBEAT-STALENESS GUARD
         // ═══════════════════════════════════════════════════════════════════════
+        // Billing follows node liveness. If the host hasn't heartbeat recently,
+        // we cannot confirm the VM is operating — pause until heartbeat returns.
+        // Replaces the prior attestation-based pause/verified-runtime logic.
+
+        const string PauseReasonStaleHeartbeat = "Node heartbeat stale";
+        var stalenessThreshold = TimeSpan.FromSeconds(90); // 3 missed cycles at 30s cadence
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        var heartbeatAge = DateTime.UtcNow - (node?.LastHeartbeat ?? DateTime.MinValue);
+        if (node == null)
+        {
+            _logger.LogWarning(
+                "VM {VmId}: NodeId {NodeId} does not resolve to a node — skipping billing",
+                vm.Id, vm.NodeId);
+            return;
+        }
+        var heartbeatStale = heartbeatAge > stalenessThreshold;
+
+        if (heartbeatStale && evt.Trigger != BillingTrigger.VmStop)
+        {
+            if (!vm.BillingInfo.IsPaused)
+            {
+                _logger.LogWarning(
+                    "VM {VmId}: node {NodeId} heartbeat stale ({AgeSec:F0}s ago) — pausing billing",
+                    vm.Id, vm.NodeId, heartbeatAge.TotalSeconds);
+                vm.BillingInfo.IsPaused = true;
+                vm.BillingInfo.PausedAt = DateTime.UtcNow;
+                vm.BillingInfo.PauseReason = PauseReasonStaleHeartbeat;
+                // Advance the period start so when the node returns we don't
+                // bill the gap from now until resume.
+                vm.BillingInfo.CurrentPeriodStart = DateTime.UtcNow;
+                await _dataStore.SaveVmAsync(vm);
+            }
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PAUSED-STATE GUARD
+        // ═══════════════════════════════════════════════════════════════════════
+        // Resume on: explicit BalanceAdded/HeartbeatResumed triggers, OR
+        // automatically when paused for stale heartbeat and the heartbeat is
+        // now fresh (handled by the staleness guard above falling through).
 
         if (vm.BillingInfo.IsPaused)
         {
-            if (evt.Trigger == BillingTrigger.BalanceAdded)
+            var shouldResume =
+                evt.Trigger == BillingTrigger.BalanceAdded ||
+                evt.Trigger == BillingTrigger.HeartbeatResumed ||
+                vm.BillingInfo.PauseReason == PauseReasonStaleHeartbeat; // safe: heartbeat
+                                                                         // is fresh — staleness
+                                                                         // check returned early
+                                                                         // above when it wasn't
+
+            if (shouldResume)
             {
-                // User topped up — clear the pause and continue to bill normally.
+                var previousReason = vm.BillingInfo.PauseReason;
                 vm.BillingInfo.IsPaused = false;
                 vm.BillingInfo.PausedAt = null;
                 vm.BillingInfo.PauseReason = null;
+                // Start the next period at "now" so the gap is not billed.
+                vm.BillingInfo.CurrentPeriodStart = DateTime.UtcNow;
                 _logger.LogInformation(
-                    "VM {VmId}: billing RESUMED after balance deposit.", vm.Id);
+                    "VM {VmId}: billing RESUMED (trigger: {Trigger}, prior reason: {Reason})",
+                    vm.Id, evt.Trigger, previousReason);
                 // fall through to normal billing
             }
             else if (evt.Trigger != BillingTrigger.VmStop)
             {
-                // Still paused — skip periodic cycles, but always bill the final
-                // period on stop so we don't lose trailing usage.
                 _logger.LogDebug(
                     "VM {VmId}: billing paused (reason: {Reason}) — skipping cycle.",
                     vm.Id, vm.BillingInfo.PauseReason);
                 return;
             }
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // ATTESTATION CHECK - Core security feature
-        // ═══════════════════════════════════════════════════════════════════════
-
-        var attestationStatus = _attestationService.GetLivenessState(vm.Id);
-        var isVerified = attestationStatus?.ConsecutiveSuccesses >= _attestationConfig.RecoveryThreshold;
-
-        if (attestationStatus?.BillingPaused == true && evt.Trigger != BillingTrigger.VmStop)
-        {
-            _logger.LogWarning(
-                "⚠️ Attestation PAUSED for VM {VmId} — billing as unverified usage",
-                vm.Id);
-            isVerified = false;
-            // fall through — bill the period at unverified rate
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -254,14 +288,9 @@ public class BillingService : BackgroundService
         // Track the period for this billing attempt
         var billingPeriod = now - currentPeriodStart;
 
-        if (isVerified)
-        {
-            vm.BillingInfo.VerifiedRuntime += billingPeriod;
-        }
-        else
-        {
-            vm.BillingInfo.UnverifiedRuntime += billingPeriod;
-        }
+        // All runtime is accrued under the verified counter — heartbeat-based
+        // billing makes no per-cycle verified/unverified distinction.
+        vm.BillingInfo.VerifiedRuntime += billingPeriod;
 
         // Always advance CurrentPeriodStart to now so the next billing cycle
         // measures only the NEW period — not from the original start time.
@@ -327,14 +356,10 @@ public class BillingService : BackgroundService
         }
 
         _logger.LogInformation(
-            "Billing VM {VmId}: Period={Period}, Cost={Cost}, IsVerified={Verified}, " +
-            "VerifiedRuntime={VerifiedMs}ms, UnverifiedRuntime={UnverifiedMs}ms",
+            "Billing VM {VmId}: Period={Period}, Cost={Cost}, ",
             vm.Id,
             billingPeriod,
-            cost,
-            isVerified,
-            vm.BillingInfo.VerifiedRuntime.TotalMilliseconds,
-            vm.BillingInfo.UnverifiedRuntime.TotalMilliseconds);
+            cost);
 
         // Update billing info (CurrentPeriodStart already set to `now` above)
         vm.BillingInfo.TotalBilled += cost;
@@ -354,7 +379,7 @@ public class BillingService : BackgroundService
             amount: cost,
             periodStart: currentPeriodStart,
             periodEnd: now,
-            attestationVerified: isVerified
+            attestationVerified: true  // Legacy field — heartbeat-based billing always considers periods verified.
         );
 
         if (!success)
@@ -366,14 +391,13 @@ public class BillingService : BackgroundService
         }
 
         _logger.LogInformation(
-            "✓ Billed VM {VmId}: {Cost:F4} USDC for {Duration}, trigger={Trigger}, verified={Verified}, " +
+            "✓ Billed VM {VmId}: {Cost:F4} USDC for {Duration}, trigger={Trigger}, " +
             "lifetime_verified={LifetimeVerified:F2}min, lifetime_unverified={LifetimeUnverified:F2}min, " +
             "total_billed={TotalBilled:F4} USDC",
             vm.Id,
             cost,
             billingPeriod,
             evt.Trigger,
-            isVerified,
             vm.BillingInfo.VerifiedRuntime.TotalMinutes,
             vm.BillingInfo.UnverifiedRuntime.TotalMinutes,
             vm.BillingInfo.TotalBilled);

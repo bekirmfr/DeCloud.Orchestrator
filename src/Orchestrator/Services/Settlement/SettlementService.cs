@@ -1,8 +1,4 @@
-﻿// src/Orchestrator/Services/Settlement/SettlementService.cs
-// Updated: Removed circular dependency on UserService for validation
-// Balance validation is now handled by BalanceService
-
-using Orchestrator.Interfaces.Blockchain;
+﻿using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -17,20 +13,17 @@ public class SettlementService : ISettlementService
 {
     private readonly ILogger<SettlementService> _logger;
     private readonly DataStore _dataStore;
-    private readonly IBlockchainService _blockchainService;
     private readonly IUserService _userService;
     private readonly PaymentConfig _paymentConfig;
 
     public SettlementService(
         ILogger<SettlementService> logger,
         DataStore dataStore,
-        IBlockchainService blockchainService,
         IUserService userService,
         PaymentConfig paymentConfig)
     {
         _logger = logger;
         _dataStore = dataStore;
-        _blockchainService = blockchainService;
         _userService = userService;
         _paymentConfig = paymentConfig;
     }
@@ -53,6 +46,9 @@ public class SettlementService : ISettlementService
         DateTime periodEnd,
         bool attestationVerified = true)
     {
+        if (amount < 0) throw new ArgumentException("Amount must be non-negative", nameof(amount));
+        if (periodEnd < periodStart) throw new ArgumentException("periodEnd must be >= periodStart");
+
         // REMOVED: Balance validation (now handled by BalanceService in caller)
         // BillingService should call BalanceService.HasSufficientBalanceAsync() first
 
@@ -198,22 +194,23 @@ public class SettlementService : ISettlementService
     /// </summary>
     public async Task MarkUsageAsSettledAsync(IEnumerable<string> usageRecordIds, string settlementTxHash)
     {
-        foreach (var usageRecordId in usageRecordIds)
-        {
-            var usageRecord = _dataStore.UnsettledUsage.Values
-                .FirstOrDefault(u => u.Id == usageRecordId);
+        var ids = usageRecordIds.ToList();
+        int markedCount = 0;
 
-            if (usageRecord != null)
+        foreach (var usageRecordId in ids)
+        {
+            if (_dataStore.UnsettledUsage.TryGetValue(usageRecordId, out var usageRecord))
             {
                 usageRecord.SettledOnChain = true;
                 usageRecord.SettlementTxHash = settlementTxHash;
                 await _dataStore.SaveUsageRecordAsync(usageRecord);
+                markedCount++;
             }
         }
 
         _logger.LogInformation(
             "Marked {Count} usage records as settled, tx={TxHash}",
-            usageRecordIds.Count(), settlementTxHash[..16] + "...");
+            markedCount, settlementTxHash[..16] + "...");
     }
 
     /// <summary>
