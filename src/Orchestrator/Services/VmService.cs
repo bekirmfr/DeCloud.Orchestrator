@@ -7,6 +7,7 @@ using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Payment;
 using Orchestrator.Services.SystemVm;
 using Orchestrator.Services.VmScheduling;
 using System.Security.Cryptography;
@@ -847,11 +848,13 @@ public class VmService : IVmService
                 vm.Spec.GpuVramBytes = assignedGpuVram;
         }
 
-        // Recalculate hourly rate with node-specific pricing (replaces platform defaults).
-        // Pass block count + size if available (populated by LazysyncManager each cycle).
-        vm.BillingInfo.HourlyRateCrypto = CalculateHourlyRate(
-            vm.Spec, selectedNode.Pricing,
-            vm.CurrentManifestBlockCount, vm.CurrentManifestBlockSizeKb);
+        // Stamp the per-hour rate using HourlyRateCalculator — the single
+        // source of truth for the VM cost formula. Pass block count + size
+        // when known (populated by LazysyncManager each cycle); falls back
+        // to a 5%-of-disk estimate before the first lazysync cycle.
+        vm.BillingInfo.HourlyRateCrypto = HourlyRateCalculator.Calculate(
+            vm.Spec, selectedNode.Pricing, _pricingConfig,
+            vm.CurrentManifestBlockCount, vm.CurrentManifestBlockSizeKb).Total;
 
         // Track VM hosting in node reputation
         var reputationService = _serviceProvider.GetService<INodeReputationService>();
@@ -1180,114 +1183,6 @@ public class VmService : IVmService
         var num = RandomNumberGenerator.GetInt32(10, 100);
 
         return $"{adj}-{noun}-{verb}-{num}";
-    }
-
-    /// <summary>
-    /// Calculate the hourly rate for a VM based on its spec and the node's pricing.
-    ///
-    /// Two cost components:
-    ///
-    /// 1. Compute cost (node-operator priced, quality-tier multiplied):
-    ///      vCPUs × cpuRate + memoryGb × memRate + diskGb × storageRate
-    ///
-    /// 2. Storage replication cost (platform-priced, block-count exact):
-    ///      blockCount × (blockSizeKb / 1024) × replicationFactor × StoragePerMbPerHour
-    ///
-    ///    blockCount comes from CurrentManifestBlockCount (updated by LazysyncManager).
-    ///    Before the first lazysync cycle, falls back to a conservative estimate:
-    ///      estimatedBlocks = (DiskBytes × 5%) / (blockSizeKb × 1024)
-    ///
-    ///    replicationFactor=0 → zero replication cost (ephemeral VM).
-    /// </summary>
-    private decimal CalculateHourlyRate(
-        VmSpec spec,
-        NodePricing? nodePricing = null,
-        int? manifestBlockCount = null,
-        int manifestBlockSizeKb = BlockSizeConstants.VmOverlayKb)
-    {
-        if (spec.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore)
-            return 0.005m; // Flat rate for system VMs
-
-        const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
-        var cfg = _pricingConfig;
-
-        // ── Compute rates: node pricing > platform default, clamped to floor ──
-        var cpuRate     = Math.Max(
-            nodePricing?.CpuPerHour > 0 ? nodePricing.CpuPerHour : cfg.DefaultCpuPerHour,
-            cfg.FloorCpuPerHour);
-        var memRate     = Math.Max(
-            nodePricing?.MemoryPerGbPerHour > 0 ? nodePricing.MemoryPerGbPerHour : cfg.DefaultMemoryPerGbPerHour,
-            cfg.FloorMemoryPerGbPerHour);
-        var storageRate = Math.Max(
-            nodePricing?.StoragePerGbPerHour > 0 ? nodePricing.StoragePerGbPerHour : cfg.DefaultStoragePerGbPerHour,
-            cfg.FloorStoragePerGbPerHour);
-
-        // ── Bandwidth tier pricing (platform-set, configurable via PricingConfig) ──
-        var bandwidthRate = spec.BandwidthTier switch
-        {
-            BandwidthTier.Basic => cfg.BandwidthBasicPerHour,
-            BandwidthTier.Standard => cfg.BandwidthStandardPerHour,
-            BandwidthTier.Performance => cfg.BandwidthPerformancePerHour,
-            _ => cfg.BandwidthUnmeteredPerHour
-        };
-
-        // ── Quality tier multiplier ───────────────────────────────────────────
-        var tierMultiplier = spec.QualityTier switch
-        {
-            QualityTier.Guaranteed => 2.5m,
-            QualityTier.Standard   => 1.0m,
-            QualityTier.Balanced   => 0.6m,
-            QualityTier.Burstable  => 0.4m,
-            _                      => 1.0m
-        };
-
-        // ── GPU cost — unified per-GB-per-hour formula ────────────────────────
-        // Both Passthrough and Proxied use GpuVramPerGbPerHour × GpuVramBytes.
-        // GpuVramBytes is stamped by the scheduler:
-        //   Passthrough → assigned GPU's total MemoryBytes
-        //   Proxied     → tenant-requested VRAM quota
-        // Zero GpuVramBytes (no GPU, or GPU mode None) → zero cost.
-        var gpuVramRate = Math.Max(
-            nodePricing?.GpuVramPerGbPerHour > 0
-                ? nodePricing.GpuVramPerGbPerHour
-                : cfg.DefaultGpuVramPerGbPerHour,
-            cfg.FloorGpuVramPerGbPerHour);
-
-        var gpuCost = spec.GpuVramBytes is > 0
-            ? (spec.GpuVramBytes.Value / BYTES_PER_GB) * gpuVramRate
-            : 0m;
-
-        var resourceCost =
-            (spec.VirtualCpuCores * cpuRate) +
-            ((spec.MemoryBytes / BYTES_PER_GB) * memRate) +
-            ((spec.DiskBytes / BYTES_PER_GB) * storageRate);
-
-        var computeCost = (resourceCost * tierMultiplier) + bandwidthRate + gpuCost;
-
-        // ── Storage replication cost (block-count exact, platform-priced) ─────
-        // Zero for ephemeral VMs (replicationFactor == 0).
-        if (spec.ReplicationFactor == 0)
-            return computeCost;
-
-        // Use exact block count from last lazysync cycle when available.
-        // Fall back to: (overlay estimate of 5% of disk) / blockSizeKb
-        var effectiveBlockSizeKb = manifestBlockSizeKb > 0
-            ? manifestBlockSizeKb
-            : BlockSizeConstants.VmOverlayKb;
-
-        var blockCount = manifestBlockCount ?? (int)(
-            (spec.DiskBytes * 0.05m) / (effectiveBlockSizeKb * 1024m));
-        blockCount = Math.Max(blockCount, 1); // at least 1 block
-
-        // cost_per_mb = StoragePerMbPerHour (platform floor, not operator rate)
-        var costPerMb = Math.Max(cfg.DefaultStoragePerMbPerHour, cfg.FloorStoragePerMbPerHour);
-
-        // blockSizeMb = blockSizeKb / 1024 (e.g., 1.0 for VmOverlay, 64.0 for ModelShard)
-        var blockSizeMb = effectiveBlockSizeKb / 1024m;
-
-        var replicationCost = blockCount * blockSizeMb * spec.ReplicationFactor * costPerMb;
-
-        return computeCost + replicationCost;
     }
 
     private static string GeneratePrivateIp()

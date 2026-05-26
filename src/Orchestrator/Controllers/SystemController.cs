@@ -104,48 +104,34 @@ public class SystemController : ControllerBase
     }
 
     /// <summary>
-    /// Calculate estimated price for a VM configuration at platform default rates.
-    /// Reflects the rates a tenant would see on a node with no operator-set
-    /// pricing. Real billing applies the host node's effective rates, which may
-    /// be higher (but never below the platform floor).
+    /// Calculate the estimated hourly cost for a VM configuration at platform
+    /// default rates. Reflects what a tenant would be billed on a node with no
+    /// operator-set pricing — real billing on a specific node may be higher
+    /// (operator-set rates above the platform default) but never below the
+    /// platform floor.
     ///
-    /// The formula mirrors <c>VmService.CalculateHourlyRate</c> but excludes
-    /// the quality-tier multiplier, bandwidth tier surcharge, and storage
-    /// replication cost — those depend on data not present in a stand-alone
-    /// VmSpec estimate.
+    /// Delegates to <see cref="HourlyRateCalculator"/>, which is also the
+    /// formula used by <see cref="VmService"/> at scheduling time. Passing
+    /// <c>nodePricing = null</c> yields the platform-default version.
     /// </summary>
     [HttpPost("pricing/calculate")]
     [AllowAnonymous]
     public ActionResult<ApiResponse<PriceCalculation>> CalculatePrice([FromBody] VmSpec spec)
     {
-        const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
-
-        // Resolve platform default effective rates. Passing null for the operator
-        // pricing means: "use platform defaults for every field, clamped to floor."
-        var rates = PricingResolver.Resolve(raw: null, cfg: _pricingConfig);
-
-        var memoryGb = spec.MemoryBytes / BYTES_PER_GB;
-        var diskGb = spec.DiskBytes / BYTES_PER_GB;
-        var gpuVramGb = (spec.GpuVramBytes ?? 0) / BYTES_PER_GB;
-
-        var cpuCost = spec.VirtualCpuCores * rates.CpuPerHour;
-        var memoryCost = memoryGb * rates.MemoryPerGbPerHour;
-        var storageCost = diskGb * rates.StoragePerGbPerHour;
-        var gpuCost = gpuVramGb * rates.GpuVramPerGbPerHour;
-
-        var hourlyTotal = cpuCost + memoryCost + storageCost + gpuCost;
-        var dailyTotal = hourlyTotal * 24m;
-        var monthlyTotal = dailyTotal * 30m;
+        var breakdown = HourlyRateCalculator.Calculate(
+            spec, nodePricing: null, cfg: _pricingConfig);
 
         var calculation = new PriceCalculation(
-            cpuCost,
-            memoryCost,
-            storageCost,
-            gpuCost,
-            hourlyTotal,
-            dailyTotal,
-            monthlyTotal,
-            rates.Currency
+            CpuCost: breakdown.CpuCost,
+            MemoryCost: breakdown.MemoryCost,
+            StorageCost: breakdown.StorageCost,
+            GpuCost: breakdown.GpuCost,
+            BandwidthCost: breakdown.BandwidthCost,
+            ReplicationCost: breakdown.ReplicationCost,
+            HourlyTotal: breakdown.Total,
+            DailyTotal: breakdown.Total * 24m,
+            MonthlyTotal: breakdown.Total * 24m * 30m,
+            Currency: breakdown.Currency
         );
 
         return Ok(ApiResponse<PriceCalculation>.Ok(calculation));
@@ -196,11 +182,22 @@ public class SystemController : ControllerBase
     }
 }
 
+/// <summary>
+/// Per-hour cost breakdown returned by /api/system/pricing/calculate.
+/// Mirrors the line items in HourlyRateBreakdown that matter to tenants
+/// — TierMultiplier is intentionally excluded; the post-multiplier compute
+/// costs already reflect its effect.
+///
+/// CpuCost + MemoryCost + StorageCost + BandwidthCost + GpuCost +
+/// ReplicationCost == HourlyTotal.
+/// </summary>
 public record PriceCalculation(
     decimal CpuCost,
     decimal MemoryCost,
     decimal StorageCost,
     decimal GpuCost,
+    decimal BandwidthCost,
+    decimal ReplicationCost,
     decimal HourlyTotal,
     decimal DailyTotal,
     decimal MonthlyTotal,
