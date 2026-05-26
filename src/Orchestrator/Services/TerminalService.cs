@@ -110,7 +110,7 @@ public class TerminalService : ITerminalService
             var setupUrl = $"{nodeUrl}/api/vms/{vmId}/terminal/connect";
             var sshUsername = vm.Spec.SshUsername;
 
-            var setupRequest = new
+            var setupRequest = new TerminalConnectRequest
             {
                 Username = sshUsername,
                 TtlSeconds = ttlSeconds,
@@ -129,7 +129,7 @@ public class TerminalService : ITerminalService
                 return TerminalAccessResult.Fail($"Node setup failed: {response.StatusCode}");
             }
 
-            var setupResult = JsonSerializer.Deserialize<NodeTerminalSetupResponse>(content,
+            var setupResult = JsonSerializer.Deserialize<TerminalConnectResponse>(content,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             if (setupResult == null || !setupResult.Success)
@@ -299,20 +299,4 @@ public class TerminalSessionInfo
     public DateTime StartedAt { get; init; }
     public DateTime ExpiresAt { get; init; }
 }
-
-// Response from Node Agent
-internal class NodeTerminalSetupResponse
-{
-    public bool Success { get; set; }
-    public string? Error { get; set; }
-    public string PrivateKey { get; set; } = "";
-    public string PrivateKeyBase64 { get; set; } = "";
-    public string PublicKey { get; set; } = "";
-    public string Fingerprint { get; set; } = "";
-    public string Username { get; set; } = "";
-    public DateTime? ExpiresAt { get; set; }
-    public string? MethodUsed { get; set; }
-    public string? Password { get; set; }
-}
-
 #endregion

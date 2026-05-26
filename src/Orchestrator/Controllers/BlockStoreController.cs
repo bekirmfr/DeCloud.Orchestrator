@@ -488,29 +488,3 @@ public class BlockStoreAnnounceRequest
     /// <summary>Current storage used (optional — updates BlockStoreInfo).</summary>
     public long? UsedBytes { get; set; }
 }
-
-public class BlockStoreManifestRequest
-{
-    public string VmId { get; set; } = string.Empty;
-    public string NodeId { get; set; } = string.Empty;
-    public string RootCid { get; set; } = string.Empty;
-    public int Version { get; set; }
-    public List<string>? ChangedBlockCids { get; set; }
-    /// <summary>
-    /// Full offset→CID map for this manifest version.
-    /// Key: byte offset (long). Value: CIDv1 string.
-    /// Nullable — older daemon versions omit it; treated as empty if missing.
-    /// </summary>
-    public Dictionary<long, string>? ChunkMap { get; set; }
-    public int BlockCount { get; set; }
-    public int BlockSizeKb { get; set; } = BlockSizeConstants.VmOverlayKb;
-    public ManifestType ManifestType { get; set; } = ManifestType.VmOverlay;
-    public long TotalBytes { get; set; }
-    /// <summary>
-    /// True when the lazysync daemon is still in the initial seeding phase
-    /// (state.Version == 0, not all chunks pushed yet). Used by the orchestrator
-    /// to set LazysyncStatus.Seeding on the VM record.
-    /// </summary>
-    public bool? IsSeeding { get; set; }
-    public int ReplicationFactor { get; set; } = 3;
-}

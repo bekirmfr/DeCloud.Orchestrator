@@ -11,39 +11,6 @@ namespace Orchestrator.Services;
 // ════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
-/// Manifest type determines block size and billing rate.
-/// Block size is a protocol constant per type — enforced at write time
-/// by the block store binary.
-/// </summary>
-public enum ManifestType
-{
-    /// <summary>
-    /// VM overlay disk replication (lazysync).
-    /// Block size: 1 MB. Optimised for sparse write patterns.
-    /// </summary>
-    VmOverlay = 0,
-
-    /// <summary>
-    /// Large language model weight shard for distributed inference.
-    /// Block size: 64 MB. Aligned to transformer layer boundaries.
-    /// Llama-3 70B Q4 ≈ 640 blocks, FP16 ≈ 2,240 blocks.
-    /// </summary>
-    ModelShard = 1,
-
-    /// <summary>
-    /// LoRA fine-tune adapter weights.
-    /// Block size: 256 KB. Fine-grained deduplication across adapter variants.
-    /// </summary>
-    LoraAdapter = 2,
-
-    /// <summary>
-    /// Base OS image template (e.g., debian-12-generic).
-    /// Block size: 4 MB. Clean chunk counts, good cross-image deduplication.
-    /// </summary>
-    ImageTemplate = 3,
-}
-
-/// <summary>
 /// Protocol-level block size constants per manifest type.
 /// These are immutable network constants — changing them requires a network migration.
 /// The block store binary enforces these at write time.
