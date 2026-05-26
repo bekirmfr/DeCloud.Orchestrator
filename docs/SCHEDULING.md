@@ -1,8 +1,9 @@
 # DeCloud Scheduling
 
 How the orchestrator places tenant VMs onto operator nodes: the entry
-paths, the filter chain, the scoring model, the tunable parameters, and
-the constraint vocabulary that lets tenants express all node selection
+paths, the filter chain, the scoring model, the tunable parameters, the
+constraint vocabulary that lets tenants express node selection
+requirements, and the dashboard surface that lets them compose those
 requirements.
 
 > **Companion documents:**
@@ -22,9 +23,10 @@ requirements.
 6. [Tunable parameters](#tunable-parameters)
 7. [Constraint vocabulary](#constraint-vocabulary)
 8. [API endpoints](#api-endpoints)
-9. [Worked example](#worked-example)
-10. [What is intentionally NOT here](#what-is-intentionally-not-here)
-11. [References](#references)
+9. [Client integration](#client-integration)
+10. [Worked example](#worked-example)
+11. [What is intentionally NOT here](#what-is-intentionally-not-here)
+12. [References](#references)
 
 ---
 
@@ -39,12 +41,20 @@ the federated pool. The scheduler does this in two phases:
 2. **Scoring** — among eligible nodes, compute a weighted score across
    capacity, load, reputation, and locality, then pick the highest.
 
-**The constraint engine is the sole mechanism for node selection
-requirements.** Tenants express all requirements — locality, architecture,
-reputation, jurisdiction, GPU model, or any other per-node predicate —
-as a flat AND list of `{ target, operator, value }` constraints in
-`spec.Constraints`. No bespoke flat fields exist for scheduling. No
+**Constraints are the sole mechanism for tenant-expressible node
+selection requirements.** Tenants express all per-node requirements —
+locality, architecture, reputation, jurisdiction, GPU model, hardware
+capability, or any other selection predicate — as a flat AND list of
+`{ target, operator, value }` constraints in `spec.Constraints`. No
 method-level override parameters exist on the scheduler interface.
+
+A small set of **platform-imposed filters** apply regardless: node status,
+quality-tier eligibility, GPU capability matching for `spec.GpuMode`, a
+load and free-memory safety floor, system obligations, the BlockStore
+requirement for replicated VMs, and KVM availability. These are detailed
+in §3 and exist for platform safety and capability coherence — tenants
+cannot disable them, and they cannot be expressed as constraints because
+they encode platform invariants, not tenant preferences.
 
 Configuration lives in MongoDB (`scheduling_configs` collection,
 versioned with audit history) and is served by `ISchedulingConfigService`
@@ -55,7 +65,7 @@ it through `PUT /api/admin/scheduling-config`.
 
 ## Entry paths
 
-Three paths reach the scheduler. All converge on the same filter chain.
+Four paths reach the scheduler. All converge on the same filter chain.
 
 ### Path A — Auto-scheduling (default VM creation)
 
@@ -108,6 +118,47 @@ A VM that booted on an x86_64 node has its overlay disk filled with
 x86_64 binaries. Migration enforces architecture stickiness via a
 constraint so the VM cannot land on an architecturally incompatible node.
 
+### Path D — Template marketplace deployment
+
+```
+POST /api/marketplace/templates/{templateId}/deploy
+  → MarketplaceController.DeployTemplate
+  → TemplateService.BuildVmRequestFromTemplateAsync
+      STEP 1: merge template constraints with user spec (see below)
+      STEP 2: produce CreateVmRequest with merged Constraints[]
+  → VmService.CreateVmAsync   ← converges on Path A from here
+```
+
+Template marketplace deployments produce a regular `CreateVmRequest` and
+then enter Path A. The interesting work happens before: the user submits
+a partial `customSpec` (CPU, memory, disk, etc.) along with the template
+ID, and `BuildVmRequestFromTemplateAsync` produces the final `VmSpec` by
+merging three constraint sources with explicit precedence.
+
+**Template constraint merging.** A `VmTemplate` carries two embedded
+`VmSpec` instances, both of which may declare `Constraints`:
+
+| Source | Precedence | User can remove? | Use case |
+|---|---|---|---|
+| `template.MinimumSpec.Constraints` | Mandatory | No | Hard workload requirement: "needs NVMe", "needs ≥24 GB GPU VRAM" |
+| `template.RecommendedSpec.Constraints` | Default | Yes | Author recommendation: "prefer EU placement", "prefer high-uptime operators" |
+| `customSpec.Constraints` (user-supplied) | Override | — | Tenant-specific requirements |
+
+Merge algorithm:
+
+1. Start with `template.MinimumSpec.Constraints` (always present, by Target).
+2. For each `template.RecommendedSpec.Constraint`, add unless
+   `customSpec.Constraints` already targets the same field.
+3. Append `customSpec.Constraints`.
+4. On conflict (same `Target` between `MinimumSpec` and a user constraint),
+   `MinimumSpec` wins — the user cannot remove a mandatory constraint.
+
+The merged list is what `VmService.CreateVmAsync` receives and validates
+as `request.Spec.Constraints` before scheduling. In the dashboard, the
+deploy modal renders `MinimumSpec.Constraints` as locked rows (non-removable),
+`RecommendedSpec.Constraints` as editable defaults, and lets the user
+append their own. See §9 for the unified constraint builder component.
+
 ### Marketplace browse — NOT scheduling
 
 ```
@@ -120,15 +171,15 @@ GET /api/nodes/featured
 
 Browse is an exploration affordance — it shows candidate nodes regardless
 of whether any specific VM could be placed on them. Eligibility is checked
-at deploy time (Path A or B). A node visible in marketplace listings may
-be rejected at deploy if the VM's constraints are not satisfied. This is
-expected and by design.
+at deploy time (Path A, B, or D). A node visible in marketplace listings
+may be rejected at deploy if the VM's constraints are not satisfied. This
+is expected and by design.
 
 ---
 
 ## The filter chain
 
-All three scheduling paths converge on `ApplyHardFiltersAsync` in
+All scheduling paths converge on `ApplyHardFiltersAsync` in
 `VmSchedulingService`. It evaluates filters in order, short-circuiting on
 the first failure. The rejection reason is a human-readable string returned
 to the caller (and surfaced in `ScoredNode.RejectionReason`).
@@ -144,6 +195,18 @@ ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
   │     node.PerformanceEvaluation.EligibleTiers contains tier?
   │     Source: NodePerformanceEvaluator at registration
   │
+  ├── FILTER 3: (reserved — historically architecture)
+  │     Architecture matching migrated to FILTER 10 as a constraint.
+  │     Express via spec.Constraints[i] =
+  │       { target: "node.architecture", operator: "eq", value: "x86_64" }.
+  │     Filter number preserved for commit-history continuity.
+  │
+  ├── FILTER 4: (reserved — historically locality and reputation)
+  │     Locality and reputation thresholds migrated to FILTER 10 as
+  │     constraints. Express via node.locality.* targets and
+  │     node.uptimePercent / node.reputationScore.
+  │     Filter number preserved for commit-history continuity.
+  │
   ├── FILTER 5: GPU mode
   │     spec.GpuMode == Passthrough → node has IOMMU-capable GPU for VFIO?
   │     spec.GpuMode == Proxied     → node has any GPU?
@@ -151,8 +214,8 @@ ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
   │     Source: spec.GpuMode + node.HardwareInventory
   │
   ├── FILTER 6: Load average
-  │     node.LatestMetrics.LoadAverage <= config.Limits.MaxLoadAverage?
-  │     Passes if LatestMetrics is null (no signal to reject on).
+  │     node.LatestMetrics?.LoadAverage <= config.Limits.MaxLoadAverage?
+  │     Passes if LatestMetrics or LoadAverage is null (no signal to reject on).
   │     Source: node telemetry
   │
   ├── FILTER 7: Free memory
@@ -184,10 +247,20 @@ ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
         Source: spec.Constraints (validated at VM creation)
 ```
 
-**FILTER 3 (architecture) and FILTER 4 (locality, reputation) do not
-exist as bespoke if-blocks.** All such requirements are expressed via
-`spec.Constraints` and evaluated in FILTER 10. FILTER numbering is
-preserved for historical reference in commit history.
+The filters fall into two categories:
+
+- **Platform-imposed** (1, 2, 5, 6, 7, 8, 8.1, 9). Tenants cannot disable
+  these. They encode platform safety thresholds, capability matching for
+  spec-declared workload requirements (GPU mode, replication factor), and
+  operational readiness (status, obligations, KVM). The §1 statement
+  "constraints are the sole mechanism for tenant-expressible requirements"
+  is true; platform invariants are not tenant requirements.
+
+- **Tenant-expressible** (10). Every other selection predicate goes here.
+  Architecture, locality, jurisdiction, country, reputation, GPU model,
+  hardware capabilities, custom tags — all live in `spec.Constraints` and
+  are evaluated through the constraint vocabulary registered in
+  `ConstraintEvaluator.BuildTargetRegistry`.
 
 ---
 
@@ -230,7 +303,11 @@ remainingComputePoints / totalComputePoints
 
 Higher remaining capacity = better. Encourages spreading load across the
 pool and keeping nodes from saturating. Falls to 0.0 when remaining
-capacity is zero.
+capacity is zero. `remainingComputePoints` is computed by
+`NodeCapacityCalculator` as
+`AllocatedResources.ComputePoints − UsedResources.ComputePoints − ReservedResources.ComputePoints`;
+the denominator is `TotalComputePoints` from the same availability
+snapshot.
 
 ### Load score
 
@@ -239,22 +316,24 @@ max(0, 1.0 - loadAverage / 16.0)
 ```
 
 Lower current load = better. Avoids stacking new VMs on already-saturated
-hosts. Neutral 0.5 when `LatestMetrics` is null.
+hosts. Neutral 0.5 when `LatestMetrics` is null or `LoadAverage` is null.
 
 ### Reputation score
 
 ```
-(uptimePercent × 0.7) + (successRate × 0.3)
+(uptimePercentage / 100 × 0.7) + (successRate × 0.3)
 ```
 
-Where `successRate = successfulVmCompletions / totalVmsHosted`, or `0.5`
-for new nodes (neutral — neither rewarded nor penalised before they have a
-track record).
+Where `uptimePercentage` is the 0.0–100.0 rolling 30-day measurement on
+`Node.UptimePercentage` (divided by 100 in the formula to bring it into
+the [0, 1] range), and `successRate = successfulVmCompletions /
+totalVmsHosted`, or `0.5` for new nodes (`totalVmsHosted == 0`) —
+neutral, neither rewarded nor penalised before they have a track record.
 
 Single source of truth: `NodeReputation.Compute(node)` in
-`src/Orchestrator/Services/VmScheduling/NodeReputation.cs`. Both the
-scoring path and the `node.reputationScore` constraint target use this
-method.
+`src/Orchestrator/Services/VmScheduling/NodeReputation.cs`. The scoring
+path, the `node.reputationScore` constraint target, and any future caller
+all route through this method.
 
 ### Locality score
 
@@ -313,10 +392,10 @@ omits it.
 
 ## Constraint vocabulary
 
-Constraints are the sole mechanism for expressing VM node-selection
-requirements. All entries in `spec.Constraints` are evaluated as a flat
-AND in FILTER 10. Validated at VM creation; malformed entries are rejected
-before any resource is allocated.
+Constraints are the sole mechanism for expressing tenant-side VM
+node-selection requirements. All entries in `spec.Constraints` are
+evaluated as a flat AND in FILTER 10. Validated at VM creation; malformed
+entries are rejected before any resource is allocated.
 
 ### Wire shape
 
@@ -369,6 +448,11 @@ new Constraint { Target = "node.locality.cuntry", Operator = "in", ... }
 | `ConstraintTargets.Node.Architecture` | `node.architecture` | `Node.Architecture` | string |
 | `ConstraintTargets.Node.KvmAvailable` | `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
 | `ConstraintTargets.Node.GpuModel` | `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` | string |
+| `ConstraintTargets.Node.Hardware.HasGpu` | `node.hardware.hasGpu` | `Node.HardwareInventory.SupportsGpu` | bool |
+| `ConstraintTargets.Node.Hardware.HasNvme` | `node.hardware.hasNvme` | `Node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe)` | bool |
+| `ConstraintTargets.Node.Hardware.HighBandwidth` | `node.hardware.highBandwidth` | `Node.HardwareInventory.Network.BandwidthBitsPerSecond > 1_000_000_000` | bool |
+| `ConstraintTargets.Node.Hardware.CpuCores` | `node.hardware.cpuCores` | `Node.HardwareInventory.Cpu.PhysicalCores` | numeric |
+| `ConstraintTargets.Node.Hardware.GpuVramBytes` | `node.hardware.gpuVramBytes` | `Node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes)` | numeric |
 | `ConstraintTargets.Node.Tier` | `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] |
 | `ConstraintTargets.Node.BenchmarkScore` | `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
 | `ConstraintTargets.Node.UptimePercent` | `node.uptimePercent` | `Node.UptimePercentage` | numeric |
@@ -381,6 +465,11 @@ Prefer `ConstraintTargets.Node.Locality.Country` in new code.
 Use `ConstraintTargets.Node.ReputationScore` when the composite reputation
 measure matters; use `ConstraintTargets.Node.UptimePercent` when only
 uptime matters.
+
+The hardware-capability targets (`HasGpu`, `HasNvme`, `HighBandwidth`,
+`CpuCores`, `GpuVramBytes`) cover the common preset library cases in §9.
+They are static node attributes — they do not change between heartbeats,
+so the v1 "static fields only" principle (see §11) holds.
 
 Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 (2) a `TargetDescriptor` entry in `ConstraintEvaluator.BuildTargetRegistry`,
@@ -458,6 +547,15 @@ empty list removes all constraints (VM will migrate to any eligible node).
 Only allowed in `Error` state. The endpoint requires ownership or `Admin`
 role.
 
+### JSON serialization notes
+
+- `QualityTier` and `BandwidthTier` enums are serialized as strings via
+  `JsonStringEnumConverter` (registered globally). Wire form:
+  `"qualityTier": "Guaranteed"`, not `"qualityTier": 1`.
+- `Constraint.Value` arrives as a `JsonElement` from JSON wire input or
+  `BsonValue` from MongoDB. The evaluator's `NormalizeValue` layer
+  unboxes both into native C# types before operator evaluation.
+
 ---
 
 ## API endpoints
@@ -481,6 +579,31 @@ is enforced at the controller level.
 |---|---|---|
 | `PATCH` | `/api/vms/{vmId}/scheduling` | Replace scheduling constraints on a stranded VM (Error state only) |
 
+### Constraint vocabulary (anonymous, read-only)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/vms/constraint-vocabulary` | Registered target and operator names |
+
+Current response is bare-minimum:
+
+```json
+{
+  "targets":   ["node.architecture", "node.country", ...],
+  "operators": ["adjacent_to", "contains", ...]
+}
+```
+
+Used by the dashboard constraint builder (§9) to populate dropdowns
+without hardcoding the vocabulary. A richer schema (target types, value
+domains, descriptions, units) is planned — see §11.
+
+### Template deployment
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/marketplace/templates/{templateId}/deploy` | Deploy a VM from a template — applies the merge policy from §2 Path D, then converges on Path A |
+
 ### Locality reference (read-only, anonymous)
 
 See [`LOCALITY_STANDARDS.md`](LOCALITY_STANDARDS.md) for the country/region
@@ -491,6 +614,113 @@ model. Reference endpoints:
 | `GET` | `/api/locality/countries` | Full country list with jurisdiction tags |
 | `GET` | `/api/locality/regions` | Full region list |
 | `GET` | `/api/locality/suggest/{country}` | Suggested region for a country code |
+
+### Planned endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/vms/scheduling/preview` | Eligibility preview — takes a `Constraint[]`, returns count of matching nodes + top rejection reasons. Powers the constraint builder's live match counter. |
+| `GET` | `/api/marketplace/constraint-presets` | Preset library — returns user-facing presets that compile to ordinary constraints. Powers the "Common requirements" section of the builder. |
+
+---
+
+## Client integration
+
+The dashboard exposes a single reusable **constraint builder** component
+that the user encounters in five contexts:
+
+1. **Create VM modal** (`POST /api/vms`) — empty initial state, no locked rows.
+2. **Template deploy modal** — pre-populated with
+   `template.MinimumSpec.Constraints` (locked) and
+   `template.RecommendedSpec.Constraints` (editable defaults). See §2
+   Path D for the merge policy.
+3. **Template detail page** — read-only display of both constraint
+   sources, so users can review requirements before clicking Deploy.
+4. **Stranded VM editor** (`PATCH /api/vms/{id}/scheduling` for VMs in
+   `Error` state) — pre-populated with the VM's current constraints.
+5. **Diagnostics view** — read-only, with eligibility annotations per
+   constraint.
+
+Same component, same `Constraint[]` data shape, five modes. This is the
+single source of truth for constraint editing across the dashboard — no
+per-flow ad-hoc constraint logic.
+
+### Two-layer UX
+
+To keep the builder approachable for the common cases without locking out
+the long tail:
+
+- **Preset library** — one-click toggles for frequently-needed requirements
+  ("EU jurisdiction only", "GPU required", "NVMe storage", "≥99% uptime").
+  Each preset compiles to one or more ordinary constraints. The list is
+  curated, served from a config file, and validated at orchestrator
+  startup against the live vocabulary (presets referencing unknown
+  targets fail-fast at boot).
+
+- **Custom builder** — three-column rows (target dropdown, operator
+  dropdown filtered by target type, value input rendered based on
+  `(target, operator)`). Power users compose anything the vocabulary
+  supports. Same data path as presets — both write to the underlying
+  `Constraint[]`.
+
+Locked rows from `template.MinimumSpec.Constraints` appear in the custom
+section as greyed-out, non-removable entries with a "Required by template"
+tooltip.
+
+### Live eligibility preview
+
+While the user edits constraints, the builder debounces and calls
+`POST /api/vms/scheduling/preview` (planned — see §11) with the working
+constraint set. Response includes the count of eligible nodes and the
+top rejection reasons among ineligible ones:
+
+```json
+{
+  "totalOnline": 47,
+  "eligible": 12,
+  "rejected": 35,
+  "rejectionReasons": [
+    { "count": 28, "reason": "node.locality.country not in [DE, FR]" },
+    { "count":  7, "reason": "node.hardware.hasNvme = false" }
+  ]
+}
+```
+
+Users discover infeasible constraint combinations *while editing*, not
+on deploy failure. This is the single most impactful UX affordance the
+builder provides.
+
+### Component contract
+
+The builder is a vanilla ES module (no framework dependency) exposing:
+
+```javascript
+const handle = constraintBuilder.mount(containerEl, {
+    initial: existingConstraints,     // Constraint[] starting state
+    lockedRows: templateConstraints,  // template.MinimumSpec.Constraints (non-removable)
+    mode: 'edit' | 'readonly',
+    onChange: (constraints) => { ... } // fired on every edit, debounced for preview
+});
+```
+
+The builder owns its DOM and its working state. Consumers pass an array
+in, get an array out — they never reach inside.
+
+### Vocabulary as the source of truth
+
+The builder never hardcodes target names or operator names. Both come
+from `GET /api/vms/constraint-vocabulary` (cached for the session).
+Adding a new target in `ConstraintEvaluator.BuildTargetRegistry` makes it
+immediately available in the builder UI — no frontend deploy required.
+
+Presets are *data*: a JSON file (planned: `config/constraint-presets.json`)
+loaded at orchestrator startup. Adding a preset is editing a config file.
+Curation (the user-friendly label and category) is a separate concern
+from vocabulary (the machine-readable target/operator/value); adding a
+new target does not auto-create a preset.
+
+Implementation lives in `src/Orchestrator/wwwroot/src/constraint-builder.js`
+(planned).
 
 ---
 
@@ -610,6 +840,35 @@ Multi-arch templates do not need this — architecture is resolved
 post-scheduling from the selected node's `HardwareInventory.Cpu.Architecture`,
 and artifact URLs are substituted accordingly.
 
+### Same workload via marketplace template
+
+If the same tenant deploys a payment-processor *template* from the
+marketplace (Path D), the template author can bake the mandatory EU
+requirement into `MinimumSpec.Constraints` so it survives any user
+customization:
+
+```csharp
+template.MinimumSpec.Constraints = new()
+{
+    new() {
+        Target   = ConstraintTargets.Node.Locality.JurisdictionTags,
+        Operator = ConstraintOperators.Contains,
+        Value    = "EU"
+    },
+    new() {
+        Target   = ConstraintTargets.Node.Locality.LocationMismatch,
+        Operator = ConstraintOperators.Eq,
+        Value    = false
+    },
+};
+```
+
+The author can put the country exclusion list and uptime floor in
+`RecommendedSpec.Constraints` so users can override them per deployment.
+The dashboard renders `MinimumSpec.Constraints` as locked rows in the
+deploy modal; users see exactly what the template requires before they
+deploy.
+
 ---
 
 ## What is intentionally NOT here
@@ -638,7 +897,8 @@ and artifact URLs are substituted accordingly.
 - **Affinity / anti-affinity between VMs.** "Place this VM in the same
   zone as VM-X" or "never co-locate these two VMs on the same node" are
   valid future concerns but require multi-VM scheduling state the current
-  single-VM-per-decision pipeline does not model.
+  single-VM-per-decision pipeline does not model. `VmSpec.SchedulingTags`
+  is reserved for this purpose but not consumed by the scheduler today.
 
 - **Soft constraint composition (OR, NOT groups).** The constraint list is a
   flat AND. Negation is expressible per-constraint (`not_in`,
@@ -655,6 +915,42 @@ and artifact URLs are substituted accordingly.
   Moving a running VM is handled by `BackgroundServices.MigrateVmAsync`,
   which calls the same filter chain but adds an architecture-stickiness
   constraint.
+
+- **Vocabulary introspection beyond names.** The current
+  `/api/vms/constraint-vocabulary` endpoint returns target and operator
+  names only. A richer schema (target value types, closed-domain
+  enumerations, descriptions, units, default operator suggestions) is
+  needed to give the constraint builder typed value inputs without
+  hardcoding metadata client-side. Planned; the data needed to populate
+  it already lives in `TargetDescriptor` and `OperatorDescriptor`.
+
+- **Eligibility preview at edit time.** The planned
+  `POST /api/vms/scheduling/preview` endpoint accepts a `Constraint[]`
+  and returns the live count of matching nodes plus top rejection
+  reasons. It wraps `IVmSchedulingService.GetScoredNodesForVmAsync` —
+  the underlying capability already exists; what's missing is the public
+  endpoint shape. Users currently discover infeasible constraint sets
+  only at deploy time.
+
+- **Constraint preset library.** The data file
+  (`config/constraint-presets.json`) and the
+  `/api/marketplace/constraint-presets` endpoint that serves it are
+  planned but not yet built. Presets reference only registered
+  vocabulary targets; the constraint builder treats them as
+  pre-composed shortcuts that materialize as ordinary
+  `Constraint[]` entries.
+
+- **Resource-threshold constraints (live counters).** The vocabulary
+  exposes static node attributes — physical CPU cores, total GPU VRAM,
+  declared bandwidth class. It does *not* expose
+  `availableComputePoints` or `freeMemoryBytes` as constraint targets,
+  even though these fields exist on `Node`. The v1 "static fields only"
+  principle (Constraint.cs) prevents tenants from writing
+  "give me a node with ≥ 16 free CPU cores right now" — such
+  constraints would pass validation but might fail at scheduling time
+  because the value drifts between validation and evaluation. Resource
+  thresholds are enforced by the platform filters (FILTER 7 for memory
+  and the implicit capacity check) rather than by tenant constraints.
 
 ---
 
@@ -673,11 +969,15 @@ and artifact URLs are substituted accordingly.
 | `src/Orchestrator/Services/Locality/LocalityService.cs` | Locality data + adjacency graph |
 | `src/Orchestrator/Services/NodeCapacityCalculator.cs` | Overcommit math |
 | `src/Orchestrator/Services/NodePerformanceEvaluator.cs` | Tier eligibility |
+| `src/Orchestrator/Services/TemplateService.cs` | `BuildVmRequestFromTemplateAsync` — Path D merge policy |
+| `src/Orchestrator/Controllers/MarketplaceController.cs` | `POST /api/marketplace/templates/{id}/deploy` — Path D entry |
 | `src/Orchestrator/Models/SchedulingConfig.cs` | Config schema |
 | `src/Orchestrator/Models/VirtualMachine.cs` | `VmSpec` (host of `Constraints`) |
-| `src/Orchestrator/Controllers/VmsController.cs` | VM creation + PATCH /scheduling |
+| `src/Orchestrator/Controllers/VmsController.cs` | VM creation, PATCH /scheduling, GET /constraint-vocabulary |
 | `src/Orchestrator/Background/BackgroundServices.cs` | Migration scheduler |
 | `src/Orchestrator/Interfaces/VmScheduling/IVmSchedulingService.cs` | Scheduler contract |
+| `src/Orchestrator/wwwroot/src/constraint-builder.js` | (planned) Global constraint builder UI module |
+| `config/constraint-presets.json` | (planned) Preset library data |
 
 **Related docs**
 
