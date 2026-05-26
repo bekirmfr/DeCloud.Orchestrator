@@ -2085,7 +2085,7 @@ final_message: |
         {
             Name = "AI Chatbot (Ollama + Open WebUI)",
             Slug = "ai-chatbot-ollama",
-            Version = "2.0.0",
+            Version = "1.0.0",
             Category = "ai-ml",
             Description = "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, Gemma) locally with a beautiful chat interface. No data leaves your server.",
             LongDescription = @"## Your Own Private ChatGPT
@@ -2382,14 +2382,8 @@ runcmd:
       ghcr.io/open-webui/open-webui:latest
 
   # ── Nginx reverse proxy with basic auth ──
-  - htpasswd -bc /etc/nginx/.htpasswd user ${DECLOUD_PASSWORD}
   - |
     cat > /etc/nginx/sites-available/ai-chatbot <<'EOFNGINX'
-    # Skip basic auth when the request carries a Bearer token (Open WebUI JWT)
-    map $http_authorization $auth_type {
-        default          ""AI Chatbot"";
-        ""~^Bearer ""    off;
-    }
 
     server {
         listen 8080;
@@ -2425,14 +2419,15 @@ runcmd:
   - |
     cat > /etc/motd <<'EOF'
     ╔═══════════════════════════════════════════════════════════════╗
-    ║    AI Chatbot (Ollama + Open WebUI) - DeCloud Template       ║
+    ║    AI Chatbot (Ollama + Open WebUI) - DeCloud Template        ║
     ╠═══════════════════════════════════════════════════════════════╣
     ║                                                               ║
-    ║  Chat UI:  https://${DECLOUD_DOMAIN}                         ║
-    ║  Username: user                                               ║
-    ║  Password: ${DECLOUD_PASSWORD}                               ║
+    ║  Chat UI:  https://${DECLOUD_DOMAIN}                          ║
+    ║  Web UI:   Sign up on first visit (you become admin)          ║
     ║                                                               ║
-    ║  Default Model: llama3.2:3b                                  ║
+    ║  SSH:      root / ${DECLOUD_PASSWORD}                         ║
+    ║                                                               ║
+    ║  Default Model: llama3.2:3b                                   ║
     ║                                                               ║
     ║  Pull more models:                                            ║
     ║    ollama pull mistral                                        ║
@@ -2440,7 +2435,7 @@ runcmd:
     ║    ollama pull gemma2:9b                                      ║
     ║                                                               ║
     ║  Services:                                                    ║
-    ║    systemctl status ollama    (Ollama service)                 ║
+    ║    systemctl status ollama    (Ollama service)                ║
     ║    journalctl -u ollama -f    (Ollama logs)                   ║
     ║    docker logs -f open-webui  (Open WebUI logs)               ║
     ║                                                               ║
@@ -2485,13 +2480,13 @@ final_message: |
                     {
                         Strategy = CheckStrategy.HttpGet,
                         HttpPath = "/health",
-                        TimeoutSeconds = 600 // Docker pull + model download on first boot
+                        TimeoutSeconds = 1200 // Docker pull + model download on first boot
                     }
                 }
             },
 
             DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
-            DefaultUsername = "user",
+            DefaultUsername = "root",
             UseGeneratedPassword = true,
 
             EstimatedCostPerHour = 0.15m, // $0.15/hour — moderate workload
