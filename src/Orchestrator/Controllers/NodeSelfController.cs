@@ -460,7 +460,7 @@ public class NodeSelfController : ControllerBase
 
         return Ok(new EvaluateNodeResponse(
             evaluation,
-            schedulingConfig,
+            MapToAgentConfig(schedulingConfig),
             dhtBootstrapPeers,
             obligationStates,
             systemTemplates.Count > 0 ? systemTemplates : null,

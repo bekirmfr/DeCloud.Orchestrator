@@ -557,19 +557,17 @@ public class NodeRegistrationRequest
 
 /// <summary>
 /// Response from POST /api/nodes/me/evaluate.
-/// Carries everything that was previously bundled into NodeRegistrationResponse:
-/// performance evaluation, scheduling config, obligations, identity states,
-/// system templates, DHT bootstrap peers.
+/// Uses AgentSchedulingConfig (the lightweight projection) — not the full
+/// SchedulingConfig MongoDB document — so the wire type is identical on both sides.
 /// </summary>
 public record EvaluateNodeResponse(
     NodePerformanceEvaluation PerformanceEvaluation,
-    SchedulingConfig SchedulingConfig,
+    AgentSchedulingConfig SchedulingConfig,
     List<string> DhtBootstrapPeers,
     Dictionary<string, ObligationStatePayload> ObligationStates,
     Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null,
     List<ObligationDescriptorDto>? Obligations = null
 );
-
 
 public class NodeDeregisterRequest
 {
