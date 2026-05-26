@@ -64,6 +64,12 @@ public class NodesController : ControllerBase
             return NotFound(ApiResponse<NodeAllocateResponse>.Fail(
                 "NODE_NOT_FOUND", "Node not registered"));
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled exception in AllocateNodeAsync for node {NodeId}", nodeId);
+            return StatusCode(500, ApiResponse<NodeAllocateResponse>.Fail(
+                "INTERNAL_ERROR", ex.Message));
+        }
     }
 
 

@@ -148,7 +148,8 @@ public class Node
     /// <summary>
     /// CGNAT node configuration (null if node has public IP)
     /// </summary>
-    public bool IsBehindCgnat => HardwareInventory.Network.NatType != NatType.None;
+    public bool IsBehindCgnat => HardwareInventory != null
+                                   && HardwareInventory?.Network?.NatType != NatType.None;
     public CgnatNodeInfo? CgnatInfo { get; set; }
 
     /// <summary>
