@@ -293,22 +293,27 @@ public class VmsController : ControllerBase
                     "INVALID_CONSTRAINT", validationError));
         }
 
+        // Resolve quality tier — accept numeric ("1") or named ("Standard") strings.
+        var tier = Enum.TryParse<QualityTier>(request.QualityTier, ignoreCase: true, out var parsed)
+            ? parsed
+            : QualityTier.Standard;
+
         // Minimal spec: constraints and tier are all that matter for this preview.
         // ComputePointCost = 0 (default) means the capacity-points check always
         // passes — resource-based rejections don't mask constraint mismatches.
         var previewSpec = new VmSpec
         {
             VirtualCpuCores = 1,
-            MemoryBytes = 256L * 1024 * 1024,        // 256 MB
-            DiskBytes = 1L * 1024 * 1024 * 1024, // 1 GB
-            QualityTier = request.QualityTier ?? QualityTier.Standard,
+            MemoryBytes = 256L * 1024 * 1024,
+            DiskBytes = 1L * 1024 * 1024 * 1024,
+            QualityTier = tier,
             GpuMode = GpuMode.None,
             ReplicationFactor = 0,
             Constraints = request.Constraints
         };
 
         var scored = await _schedulingService.GetScoredNodesForVmAsync(
-            previewSpec, previewSpec.QualityTier, ct);
+            previewSpec, tier, ct);
 
         var totalOnline = scored.Count;
         var eligible = scored.Count(sn => sn.RejectionReason is null);
@@ -337,9 +342,12 @@ public class VmsController : ControllerBase
     private static string NormalizeRejectionReason(string reason) =>
         Regex.Replace(reason, @"\s*\([^)]+\)", string.Empty).Trim();
 
+    // QualityTier is accepted as a string to handle both numeric ("1") and
+    // named ("Standard") representations from the frontend select element.
+    // Enum.TryParse resolves both; unrecognised values default to Standard.
     public record SchedulingPreviewRequest(
         List<Constraint>? Constraints,
-        QualityTier? QualityTier);
+        string? QualityTier);
 
     public record SchedulingPreviewResponse(
         int TotalOnline,

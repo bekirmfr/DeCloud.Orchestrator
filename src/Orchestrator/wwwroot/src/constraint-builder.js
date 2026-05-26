@@ -110,8 +110,8 @@ function injectStyles() {
         .cb-row--locked .cb-target,
         .cb-row--locked .cb-operator,
         .cb-row--locked .cb-value {
-            background: var(--color-surface-2, #f7fafc);
-            color: var(--color-text-secondary, #718096);
+            background: var(--bg-elevated, rgba(255,255,255,0.04));
+            color: var(--text-muted, #718096);
             cursor: not-allowed;
         }
         .cb-remove--locked {
@@ -119,15 +119,16 @@ function injectStyles() {
             font-size: 1rem; padding: 0 0.25rem; opacity: 0.6;
         }
         .cb-preview {
-            border-top: 1px solid var(--color-border, #e2e8f0);
+            border-top: 1px solid var(--border, rgba(255,255,255,0.12));
             padding-top: 0.4rem; margin-top: 0.25rem;
             font-size: 0.78rem; line-height: 1.5;
-            color: var(--color-text-secondary, #718096);
+            color: var(--text-muted, #718096);
         }
+        .cb-value { flex: 1; min-width: 0; }
         .cb-presets-label {
             display: block; font-size: 0.70rem; font-weight: 600;
             text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--color-text-secondary, #718096);
+            color: var(--text-muted, #718096);
             margin-bottom: 0.35rem;
         }
         .cb-presets-grid {
@@ -136,20 +137,22 @@ function injectStyles() {
         .cb-preset-item {
             display: inline-flex; align-items: center; gap: 0.3rem;
             padding: 0.2rem 0.55rem; border-radius: 999px; cursor: pointer;
-            border: 1px solid var(--color-border, #e2e8f0);
+            border: 1px solid var(--border, rgba(255,255,255,0.12));
             font-size: 0.76rem;
-            background: var(--color-surface, #fff);
+            background: var(--bg-elevated, rgba(255,255,255,0.05));
+            color: var(--text-primary, inherit);
             transition: border-color 0.12s, background 0.12s;
             user-select: none;
         }
-        .cb-preset-item:hover { border-color: var(--color-primary, #4a9eff); }
+        .cb-preset-item:hover { border-color: var(--primary, #4a9eff); }
         .cb-preset-item:has(input:checked) {
-            border-color: var(--color-primary, #4a9eff);
-            background: var(--color-primary-dim, rgba(74,158,255,0.08));
+            border-color: var(--primary, #4a9eff);
+            background: rgba(74,158,255,0.14);
+            color: var(--primary, #4a9eff);
         }
         .cb-preset-item input[type="checkbox"] { margin: 0; cursor: pointer; }
         hr.cb-presets-divider {
-            border: none; border-top: 1px dashed var(--color-border, #e2e8f0);
+            border: none; border-top: 1px dashed var(--border, rgba(255,255,255,0.12));
             margin: 0.45rem 0 0.5rem;
         }
     `;
@@ -480,7 +483,9 @@ export async function mount(containerEl, options = {}) {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
     function syncCount() {
-        const n = rowsEl.querySelectorAll('.cb-row').length;
+        // Count both active preset selections and custom builder rows so the
+        // badge reflects the true total number of active constraints.
+        const n = activePresets.size + rowsEl.querySelectorAll('.cb-row').length;
         countEl.textContent = n;
         countEl.style.display = n > 0 ? 'inline' : 'none';
     }
@@ -516,6 +521,7 @@ export async function mount(containerEl, options = {}) {
                         method: 'POST',
                         body: JSON.stringify({ constraints, qualityTier }),
                     });
+                    if (!res.ok) { updatePreview(preview, null); return; }
                     const d = await res.json();
                     updatePreview(preview, d.data ?? d);
                 } catch (_e) { /* preview is best-effort; swallow errors */ }
