@@ -1455,10 +1455,11 @@ async function createVM() {
     // the backend validates and rejects malformed entries before scheduling.
     const constraints = _cbCreateHandle ? _cbCreateHandle.getConstraints() : [];
 
-    const requestBody = {
-        name,
-        spec: {
-            virtualCpuCores: cpuCores,
+    try {
+        const requestBody = {
+            name,
+            spec: {
+                virtualCpuCores: cpuCores,
                 memoryBytes: memoryMb * (1024 * 1024),
                 diskBytes: diskGb * (1024 * 1024 * 1024),
                 imageId: imageId,
@@ -1467,8 +1468,7 @@ async function createVM() {
                 qualityTier: qualityTier,
                 bandwidthTier: bandwidthTier,
                 replicationFactor: replicationFactor,
-                constraints: constraints.length > 0 ?
-                    constraints : undefined
+                constraints: constraints.length > 0 ? constraints : undefined
             }
         };
 
@@ -1913,7 +1913,7 @@ function parseConstraintValue(raw) {
     if (raw === '') return null;
     if (raw === 'true') return true;
     if (raw === 'false') return false;
-    if (raw.startsWith('[')) { try { return JSON.parse(raw); } catch { /* not valid JSON — fall through */ } }
+    if (raw.startsWith('[')) { try { return JSON.parse(raw); } catch (_e) { /* not valid JSON — fall through */ } }
     if (raw.includes(',')) {
         return raw.split(',').map(s => {
             const t = s.trim();
