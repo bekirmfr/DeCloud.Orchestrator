@@ -828,7 +828,12 @@ public record NodeHeartbeatResponse(
     /// the orchestrator's stored registration hash. Contains a
     /// diagnostic message identifying the mismatch.
     /// </summary>
-    SettingsDriftInfo? SettingsDrift = null
+    SettingsDriftInfo? SettingsDrift = null,
+    /// <summary>
+    /// Operator-controlled scheduling readiness, mirrored from Node.SchedulingReady.
+    /// Allows the agent to sync state without a separate GET /api/nodes/{id} call.
+    /// </summary>
+    bool SchedulingReady = false
 );
 
 /// <summary>

@@ -1254,7 +1254,8 @@ public class NodeService : INodeService
         node.CgnatInfo, invalidVmIds,
         obligationStatesPending.Count > 0 ? obligationStatesPending : null,
         systemTemplatesPending,
-        settingsDrift);
+        settingsDrift,
+        node.SchedulingReady);
     }
 
     /// <summary>
