@@ -1707,41 +1707,47 @@ function onGpuModeChange() {
     updateEstimatedCost();
 }
 
-function updateEstimatedCost() {
+async function updateEstimatedCost() {
     const cpuCores = parseInt(document.getElementById('vm-cpu').value);
     const memoryMb = parseInt(document.getElementById('vm-memory').value);
     const diskGb = parseInt(document.getElementById('vm-disk').value);
-    const tierId = parseInt(document.getElementById('quality-tier').value);
-    const tier = QUALITY_TIERS[tierId];
-    const bwId = parseInt(document.getElementById('bandwidth-tier').value);
-    const bw = BANDWIDTH_TIERS[bwId];
-
-    const computePoints = cpuCores * tier.pointsPerVCpu;
-
-    const baseCpuRate = 0.01;
-    const baseMemoryRate = 0.005;
-    const baseStorageRate = 0.0001;
-
-    const cpuCost = cpuCores * baseCpuRate;
-    const memoryCost = (memoryMb / 1024) * baseMemoryRate;
-    const storageCost = diskGb * baseStorageRate;
-
-    // GPU cost — added outside tierMultiplier, matching VmService.CalculateHourlyRate.
-    // Passthrough: flat DefaultGpuPerHour. Proxied: per-GB DefaultGpuVramPerGbPerHour.
-    const GPU_PASSTHROUGH_RATE = 0.10;
-    const GPU_VRAM_RATE = 0.006;
+    const qualityTier = parseInt(document.getElementById('quality-tier').value);
+    const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
+    const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
     const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
     const gpuVramGb = parseFloat(document.getElementById('vm-gpu-vram')?.value ?? '0');
-    let gpuCost = 0;
-    if (gpuMode === 1) gpuCost = GPU_PASSTHROUGH_RATE;
-    else if (gpuMode === 2 && gpuVramGb) gpuCost = gpuVramGb * GPU_VRAM_RATE;
+    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
+        ? Math.round(gpuVramGb * 1024 ** 3) : null;
 
-    const hourlyTotal = ((cpuCost + memoryCost + storageCost) * tier.priceMultiplier)
-        + bw.hourlyRate
-        + gpuCost;
+    // Compute points display — local, no network needed.
+    const tier = QUALITY_TIERS[qualityTier];
+    document.getElementById('compute-points').textContent =
+        `${cpuCores * (tier?.pointsPerVCpu ?? 1)} points`;
 
-    document.getElementById('compute-points').textContent = `${computePoints} points`;
-    document.getElementById('estimated-cost').textContent = `~$${hourlyTotal.toFixed(4)}/hr (default rates)`;
+    const costEl = document.getElementById('estimated-cost');
+    costEl.textContent = 'Calculating…';
+
+    try {
+        const res = await api('/api/system/pricing/calculate', {
+            method: 'POST',
+            body: JSON.stringify({
+                virtualCpuCores: cpuCores,
+                memoryBytes: memoryMb * 1024 * 1024,
+                diskBytes: diskGb * 1024 * 1024 * 1024,
+                qualityTier,
+                bandwidthTier,
+                replicationFactor,
+                gpuMode,
+                gpuVramBytes,
+            }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const calc = d.data ?? d;
+        costEl.textContent = `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)`;
+    } catch (_e) {
+        costEl.textContent = 'Pricing unavailable';
+    }
 }
 
 // ============================================

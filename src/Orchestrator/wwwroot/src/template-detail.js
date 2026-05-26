@@ -673,49 +673,46 @@ export function onDeployGpuModeChange() {
 }
 
 /**
- * Update cost estimate in deploy modal
+ * Update cost estimate in deploy modal.
+ * Delegates to POST /api/system/pricing/calculate (HourlyRateCalculator)
+ * so replication, bandwidth, and GPU are all factored into the total.
  */
-function updateDeployCostEstimate() {
+async function updateDeployCostEstimate() {
     const cpu = parseInt(document.getElementById('deploy-cpu')?.value || 2);
-    const memory = parseInt(document.getElementById('deploy-memory')?.value || 2048);
-    const disk = parseInt(document.getElementById('deploy-disk')?.value || 20);
-    const qualityTierId = parseInt(document.getElementById('deploy-quality-tier')?.value ?? 1);
-    const bwTierId = parseInt(document.getElementById('deploy-bandwidth-tier')?.value ?? 3);
-
-    const qualityTier = DEPLOY_QUALITY_TIERS[qualityTierId] || DEPLOY_QUALITY_TIERS[1];
-    const bwTier = DEPLOY_BANDWIDTH_TIERS[bwTierId] || DEPLOY_BANDWIDTH_TIERS[3];
-
-    // Cost calculation matching app.js / VmService.CalculateHourlyRate
-    const baseCpuRate = 0.01;   // $0.01 per vCPU per hour
-    const baseMemRate = 0.005;  // $0.005 per GB RAM per hour
-    const baseDiskRate = 0.0001; // $0.0001 per GB disk per hour
-
-    const cpuCost = cpu * baseCpuRate;
-    const memCost = (memory / 1024) * baseMemRate;
-    const diskCost = disk * baseDiskRate;
-
-    const resourceCost = (cpuCost + memCost + diskCost) * qualityTier.priceMultiplier;
-
-    // GPU cost — added outside tierMultiplier, matching VmService.CalculateHourlyRate
-    const GPU_PASSTHROUGH_RATE = 0.10;  // DefaultGpuPerHour
-    const GPU_VRAM_RATE = 0.006; // DefaultGpuVramPerGbPerHour
+    const memoryMb = parseInt(document.getElementById('deploy-memory')?.value || 2048);
+    const diskGb = parseInt(document.getElementById('deploy-disk')?.value || 20);
+    const qualityTier = parseInt(document.getElementById('deploy-quality-tier')?.value ?? 1);
+    const bandwidthTier = parseInt(document.getElementById('deploy-bandwidth-tier')?.value ?? 3);
+    const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
     const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
     const gpuVramGb = parseFloat(document.getElementById('deploy-gpu-vram')?.value ?? '0');
-    let gpuCost = 0;
-    if (gpuMode === 1) gpuCost = GPU_PASSTHROUGH_RATE;
-    else if (gpuMode === 2 && gpuVramGb) gpuCost = gpuVramGb * GPU_VRAM_RATE;
+    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
+        ? Math.round(gpuVramGb * 1024 ** 3) : null;
 
-    const totalHourly = resourceCost + bwTier.hourlyRate + gpuCost;
-
-    const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
-
-    // Update display
     const costDisplay = document.getElementById('deploy-cost-estimate');
-    if (costDisplay) {
-        const replicationNote = replicationFactor > 0
-            ? ` + storage replication (${replicationFactor}×)`
-            : '';
-        costDisplay.textContent = `~$${totalHourly.toFixed(4)}/hr (default rates)${replicationNote}`;
+    if (!costDisplay) return;
+    costDisplay.textContent = 'Calculating…';
+
+    try {
+        const res = await api('/api/system/pricing/calculate', {
+            method: 'POST',
+            body: JSON.stringify({
+                virtualCpuCores: cpu,
+                memoryBytes: memoryMb * 1024 * 1024,
+                diskBytes: diskGb * 1024 * 1024 * 1024,
+                qualityTier,
+                bandwidthTier,
+                replicationFactor,
+                gpuMode,
+                gpuVramBytes,
+            }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const calc = d.data ?? d;
+        costDisplay.textContent = `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)`;
+    } catch (_e) {
+        costDisplay.textContent = 'Pricing unavailable';
     }
 }
 
