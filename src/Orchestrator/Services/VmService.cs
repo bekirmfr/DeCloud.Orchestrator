@@ -86,6 +86,11 @@ public class VmService : IVmService
                 return new CreateVmResponse(string.Empty, VmStatus.Pending,
                     $"Invalid constraint: {constraintError}", "INVALID_CONSTRAINT");
             }
+            // Unwrap JsonElement values (from JSON deserialization) into native
+            // C# types. MongoDB's ObjectSerializer cannot serialize JsonElement
+            // directly. Must run after ValidateSet (which reads Value) and before
+            // any SaveVmAsync call.
+            foreach (var c in request.Spec.Constraints) c.NormalizeValue();
         }
 
         // ════════════════════════════════════════════════════════════════════════

@@ -243,6 +243,8 @@ public class VmsController : ControllerBase
             var validationError = _constraintEvaluator.ValidateSet(incoming);
             if (validationError is not null)
                 return BadRequest(ApiResponse<bool>.Fail("INVALID_CONSTRAINT", validationError));
+            // Unwrap JsonElement values before MongoDB persistence.
+            foreach (var c in incoming) c.NormalizeValue();
         }
 
         vm.Spec.Constraints = incoming.Count > 0 ? incoming : null;

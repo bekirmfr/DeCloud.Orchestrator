@@ -51,13 +51,41 @@ public class Constraint
     /// <para>
     /// Note: when deserialized from JSON, this will be a
     /// <c>JsonElement</c>; when deserialized from MongoDB BSON, a
-    /// <c>BsonValue</c>. The evaluator's normalization layer (Phase B)
-    /// handles wire-format unboxing. For Phase A, callers passing
-    /// already-typed C# objects (string, List&lt;string&gt;, double, bool)
-    /// work directly.
+    /// <c>BsonValue</c>. The evaluator's normalization layer handles
+    /// wire-format unboxing at evaluation time. Call
+    /// <see cref="NormalizeValue"/> before persisting to MongoDB so the
+    /// driver never encounters a <c>JsonElement</c>.
     /// </para>
     /// </summary>
     public required object? Value { get; set; }
+
+    /// <summary>
+    /// Unwrap <see cref="Value"/> from its JSON wire-format box
+    /// (<c>JsonElement</c>) into a native C# type that MongoDB's
+    /// <c>ObjectSerializer</c> can persist (string, bool, double,
+    /// List&lt;object?&gt;). No-op when Value is already a native type
+    /// or null. Call immediately after constraint validation, before
+    /// any <c>SaveVmAsync</c> call.
+    /// </summary>
+    public void NormalizeValue() => Value = Unbox(Value);
+
+    private static object? Unbox(object? value)
+    {
+        if (value is not System.Text.Json.JsonElement el) return value;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => el.GetString(),
+            System.Text.Json.JsonValueKind.True => (object?)true,
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Number =>
+                el.TryGetDouble(out var d) ? d : (object?)el.ToString(),
+            System.Text.Json.JsonValueKind.Array =>
+                el.EnumerateArray().Select(e => Unbox(e)).ToList(),
+            System.Text.Json.JsonValueKind.Null or
+            System.Text.Json.JsonValueKind.Undefined => null,
+            _ => el.ToString()
+        };
+    }
 }
 
 /// <summary>
