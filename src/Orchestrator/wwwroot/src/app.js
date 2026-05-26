@@ -2001,10 +2001,6 @@ async function copyToClipboard(text) {
     }
 }
 
-// escapeHtml moved to utils.js.
-
-
-
 // ============================================
 // EXPOSE FUNCTIONS TO WINDOW (for onclick handlers)
 // ============================================
@@ -2054,4 +2050,3 @@ window.clearNodeFilters = clearNodeFilters;
 // from inline VM actions, so we re-expose them here.
 window.openCustomDomainsModal = openCustomDomainsModal;
 window.closeCustomDomainsModal = closeCustomDomainsModal;
-

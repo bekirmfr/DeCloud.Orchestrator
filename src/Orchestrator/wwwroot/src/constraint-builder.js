@@ -67,6 +67,11 @@ const OP_LABEL = {
 // ── Vocabulary cache (module-level) ──────────────────────────────────────────
 let _vocab = null;
 
+// ── Preset cache (module-level) ───────────────────────────────────────────────
+// Loaded once from /config/constraint-presets.json (a static asset in wwwroot).
+// null = not yet fetched; [] = fetched but empty or failed.
+let _presets = null;
+
 async function loadVocabulary(apiBase) {
     if (_vocab) return _vocab;
     try {
@@ -82,6 +87,17 @@ async function loadVocabulary(apiBase) {
         _vocab = { targets: [], operators: [], targetTypes: {} };
     }
     return _vocab;
+}
+
+async function loadPresets(apiBase) {
+    if (_presets !== null) return _presets;
+    try {
+        const r = await fetch(`${apiBase}/config/constraint-presets.json`);
+        _presets = r.ok ? await r.json() : [];
+    } catch (_e) {
+        _presets = [];
+    }
+    return _presets;
 }
 
 // ── One-time style injection ──────────────────────────────────────────────────
@@ -108,11 +124,82 @@ function injectStyles() {
             font-size: 0.78rem; line-height: 1.5;
             color: var(--color-text-secondary, #718096);
         }
+        .cb-presets-label {
+            display: block; font-size: 0.70rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            color: var(--color-text-secondary, #718096);
+            margin-bottom: 0.35rem;
+        }
+        .cb-presets-grid {
+            display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.1rem;
+        }
+        .cb-preset-item {
+            display: inline-flex; align-items: center; gap: 0.3rem;
+            padding: 0.2rem 0.55rem; border-radius: 999px; cursor: pointer;
+            border: 1px solid var(--color-border, #e2e8f0);
+            font-size: 0.76rem;
+            background: var(--color-surface, #fff);
+            transition: border-color 0.12s, background 0.12s;
+            user-select: none;
+        }
+        .cb-preset-item:hover { border-color: var(--color-primary, #4a9eff); }
+        .cb-preset-item:has(input:checked) {
+            border-color: var(--color-primary, #4a9eff);
+            background: var(--color-primary-dim, rgba(74,158,255,0.08));
+        }
+        .cb-preset-item input[type="checkbox"] { margin: 0; cursor: pointer; }
+        hr.cb-presets-divider {
+            border: none; border-top: 1px dashed var(--color-border, #e2e8f0);
+            margin: 0.45rem 0 0.5rem;
+        }
     `;
     document.head.appendChild(s);
 }
 
-// ── DOM helpers ───────────────────────────────────────────────────────────────
+// ── Preset section ────────────────────────────────────────────────────────────
+// Renders a pill-checkbox grid of curated presets above the custom builder.
+// Toggling a preset adds/removes its constraint set from the combined output.
+// Preset constraints are tracked separately from custom rows — they don't
+// appear in the row editor and don't conflict with it.
+function buildPresetSection(presets, activePresets, onChange) {
+    const wrap = document.createElement('div');
+
+    const lbl = document.createElement('span');
+    lbl.className = 'cb-presets-label';
+    lbl.textContent = 'Common requirements';
+
+    const grid = document.createElement('div');
+    grid.className = 'cb-presets-grid';
+
+    presets.forEach(preset => {
+        const item = document.createElement('label');
+        item.className = 'cb-preset-item';
+        if (preset.description) item.title = preset.description;
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+
+        cb.addEventListener('change', () => {
+            if (cb.checked) activePresets.add(preset.id);
+            else activePresets.delete(preset.id);
+            onChange();
+        });
+
+        const txt = document.createTextNode(
+            (preset.icon ? preset.icon + '\u202f' : '') + preset.label
+        );
+
+        item.appendChild(cb);
+        item.appendChild(txt);
+        grid.appendChild(item);
+    });
+
+    wrap.appendChild(lbl);
+    wrap.appendChild(grid);
+    return wrap;
+}
+
+// ── DOM element factory ──────────────────────────────────────────────────────
 function mkEl(tag, className, attrs) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -326,7 +413,13 @@ export async function mount(containerEl, options = {}) {
 
     const readonly = mode === 'readonly';
     injectStyles();
-    const vocab = await loadVocabulary(apiBase);
+    const [vocab, presets] = await Promise.all([
+        loadVocabulary(apiBase),
+        loadPresets(apiBase),
+    ]);
+    // Active preset IDs — constraints from active presets are included in
+    // collectConstraints() ahead of custom builder rows.
+    const activePresets = new Set();
 
     // ── Scaffold ──────────────────────────────────────────────────────────────
     containerEl.innerHTML = '';
@@ -356,6 +449,17 @@ export async function mount(containerEl, options = {}) {
 
     footer.appendChild(addBtn);
     body.appendChild(hint);
+
+    // Preset pill-grid — only in edit mode, only when presets are available.
+    // fireChange is a hoisted function declaration, so referencing it here
+    // (before it appears in source) is safe.
+    if (!readonly && presets.length > 0) {
+        body.appendChild(buildPresetSection(presets, activePresets, fireChange));
+        const divider = document.createElement('hr');
+        divider.className = 'cb-presets-divider';
+        body.appendChild(divider);
+    }
+
     body.appendChild(rowsEl);
     body.appendChild(footer);
     body.appendChild(preview);
@@ -383,6 +487,12 @@ export async function mount(containerEl, options = {}) {
 
     function collectConstraints() {
         const out = [];
+        // Preset constraints first — stable ordering, independent of custom rows.
+        for (const id of activePresets) {
+            const p = presets.find(x => x.id === id);
+            if (p) out.push(...p.constraints);
+        }
+        // Custom builder rows.
         rowsEl.querySelectorAll('.cb-row').forEach(r => {
             if (typeof r._getConstraint === 'function') {
                 const c = r._getConstraint();
@@ -408,7 +518,7 @@ export async function mount(containerEl, options = {}) {
                     });
                     const d = await res.json();
                     updatePreview(preview, d.data ?? d);
-                } catch { /* preview is best-effort; swallow errors */ }
+                } catch (_e) { /* preview is best-effort; swallow errors */ }
             }, 500);
         } else {
             updatePreview(preview, null);

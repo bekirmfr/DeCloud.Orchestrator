@@ -1,0 +1,92 @@
+[
+  {
+    "id": "eu-only",
+    "label": "EU jurisdiction only",
+    "description": "Deploy only on nodes in EU member states (GDPR / PSD2 compliance)",
+    "icon": "🇪🇺",
+    "category": "Jurisdiction",
+    "constraints": [
+      { "target": "node.locality.jurisdictionTags", "operator": "contains", "value": "EU" }
+    ]
+  },
+  {
+    "id": "nato-only",
+    "label": "NATO countries only",
+    "description": "Restrict to nodes in NATO member countries",
+    "icon": "🔒",
+    "category": "Jurisdiction",
+    "constraints": [
+      { "target": "node.locality.jurisdictionTags", "operator": "contains", "value": "NATO" }
+    ]
+  },
+  {
+    "id": "gpu-required",
+    "label": "GPU required",
+    "description": "Only schedule on nodes that have at least one GPU",
+    "icon": "🎮",
+    "category": "Hardware",
+    "constraints": [
+      { "target": "node.hardware.hasGpu", "operator": "eq", "value": true }
+    ]
+  },
+  {
+    "id": "nvme-storage",
+    "label": "NVMe storage",
+    "description": "Require at least one NVMe drive — low latency for databases and checkpoints",
+    "icon": "⚡",
+    "category": "Hardware",
+    "constraints": [
+      { "target": "node.hardware.hasNvme", "operator": "eq", "value": true }
+    ]
+  },
+  {
+    "id": "high-bandwidth",
+    "label": "High bandwidth (>1 Gbps)",
+    "description": "Nodes with network capacity above 1 Gbps",
+    "icon": "🌐",
+    "category": "Hardware",
+    "constraints": [
+      { "target": "node.hardware.highBandwidth", "operator": "eq", "value": true }
+    ]
+  },
+  {
+    "id": "uptime-99",
+    "label": "≥99% uptime",
+    "description": "Only operators with a 30-day rolling uptime of 99% or above",
+    "icon": "📈",
+    "category": "Reliability",
+    "constraints": [
+      { "target": "node.uptimePercent", "operator": "gte", "value": 99.0 }
+    ]
+  },
+  {
+    "id": "top-reputation",
+    "label": "Top reputation (≥0.90)",
+    "description": "Composite reputation score ≥0.90 — combines uptime and success rate",
+    "icon": "⭐",
+    "category": "Reliability",
+    "constraints": [
+      { "target": "node.reputationScore", "operator": "gte", "value": 0.90 }
+    ]
+  },
+  {
+    "id": "arch-x86",
+    "label": "x86-64 architecture",
+    "description": "Pin to x86-64 nodes — required for templates without ARM builds",
+    "icon": "💻",
+    "category": "Architecture",
+    "constraints": [
+      { "target": "node.architecture", "operator": "eq", "value": "x86_64" }
+    ]
+  },
+  {
+    "id": "arch-arm64",
+    "label": "ARM64 architecture",
+    "description": "Pin to ARM64 nodes — lower cost for compatible workloads",
+    "icon": "🦾",
+    "category": "Architecture",
+    "constraints": [
+      { "target": "node.architecture", "operator": "eq", "value": "aarch64" }
+    ]
+  }
+]
