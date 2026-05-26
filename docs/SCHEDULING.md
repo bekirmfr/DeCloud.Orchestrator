@@ -159,6 +159,88 @@ deploy modal renders `MinimumSpec.Constraints` as locked rows (non-removable),
 `RecommendedSpec.Constraints` as editable defaults, and lets the user
 append their own. See §9 for the unified constraint builder component.
 
+### Path E — Stack deployment
+
+A **stack** is a named multi-VM topology defined in a `StackTemplate`.
+Deploying a stack invokes `StackService`, which is the *only* caller that
+reasons about cross-VM placement. The scheduler itself remains stateless
+and single-VM-per-decision — all multi-VM reasoning happens in
+`StackService` before any `CreateVmAsync` call.
+
+```
+POST /api/marketplace/stacks/{stackId}/deploy
+  → MarketplaceController.DeployStack
+  → StackService.DeployStackAsync
+
+      STEP 1  Load StackTemplate — blocks, connections, placement policies,
+              stackConstraints[].
+
+      STEP 2  Build placement graph.
+                → Group blocks by mutual co-location policy into
+                  PlacementGroups (A co-locates-with B AND B co-locates-with A
+                  → same group, not a cycle).
+                → Identify anti-affinity edges between groups.
+
+      STEP 3  Resolve already-deployed members.
+                → For each PlacementGroup: if any member block is already
+                  running, its NodeId is the group's anchor. Conflicts
+                  (two already-deployed members on different nodes) are
+                  infeasibility errors surfaced here, before any VM is created.
+
+      STEP 4  Compute per-group merged constraint set.
+                MergeConstraints(
+                    stackConstraints,               ← mandatory for every block
+                    block.extraConstraints,         ← block-specific requirements
+                    template.MinimumSpec.Constraints,
+                    template.RecommendedSpec.Constraints
+                )
+                Co-location groups merge the constraints of ALL members —
+                the combined set must be satisfiable by a single node.
+                → Run POST /api/vms/scheduling/preview per group.
+                  Zero eligible nodes = preflight error. No VM is created
+                  until every group is confirmed feasible.
+
+      STEP 5  Deploy in topological order (dependency DAG, leaves first).
+                Anchor block  → Path A (auto-scheduling, merged constraints)
+                Co-located    → Path B (targetNodeId = anchor's NodeId)
+                Anti-affinity → inject ephemeral
+                                { target: "node.id", operator: "not_in",
+                                  value: [nodeIds of avoided blocks] }
+                                into the anchor's spec before CreateVmAsync.
+                                (node.id is never user-authored — see §7.)
+
+      STEP 6  Propagate inter-VM service discovery.
+                → After each block's IP is known, inject
+                  ${STACK_<BLOCK_ID>_IP} and
+                  ${STACK_<BLOCK_ID>_PORT_<N>}
+                  as cloud-init variables for dependent blocks.
+                  Same substitution pipeline as existing ${DECLOUD_*} vars.
+```
+
+**Placement policy fallback tiers.** A `co-locate` policy can fail at
+runtime if the target node is full. Each placement policy carries an
+optional fallback:
+
+| Policy | Fallback options |
+|---|---|
+| `co-locate` | `same-region`, `any`, `fail` |
+| `same-region` | `any`, `fail` |
+| `anti-affinity` | *(no fallback — always enforced via node.id injection)* |
+| `any` | *(no fallback needed)* |
+
+`StackService` tries the primary policy first (Path B for co-locate).
+If the target node fails capacity checks, it falls back: `same-region`
+injects a `node.locality.region eq <anchor.region>` constraint and
+retries Path A; `any` drops the placement constraint entirely; `fail`
+returns a preflight error.
+
+**User-paused blocks.** Blocks marked for later deployment store their
+placement policy in the `StackTemplate` intact. When the user deploys
+them, `StackService` re-runs the resolution — by then more blocks are
+deployed and more node IDs are known. The placement policy is the
+durable design-time record; concrete `node.id` constraints are ephemeral
+computation never persisted on the VM.
+
 ### Marketplace browse — NOT scheduling
 
 ```
@@ -458,9 +540,17 @@ new Constraint { Target = "node.locality.cuntry", Operator = "in", ... }
 | `ConstraintTargets.Node.UptimePercent` | `node.uptimePercent` | `Node.UptimePercentage` | numeric |
 | `ConstraintTargets.Node.ReputationScore` | `node.reputationScore` | `NodeReputation.Compute(node)` | numeric |
 | `ConstraintTargets.Node.Tags` | `node.tags` | `Node.Tags` | string[] |
+| *(system-generated)* | `node.id` | `Node.Id` | string *(internal)* |
 
 `node.country` and `node.locality.country` resolve to the same field.
 Prefer `ConstraintTargets.Node.Locality.Country` in new code.
+
+`node.id` is a **system-generated-only** target. `StackService` injects it
+as an ephemeral anti-affinity constraint before calling `CreateVmAsync` (Path
+E, STEP 5). It is never user-authored, never persisted on the VM, and is not
+exposed in the constraint builder UI or the preset library. Adding it to the
+builder would require the user to know node IDs at design time, which is not
+possible for stacks that mix deployed and not-yet-deployed blocks.
 
 Use `ConstraintTargets.Node.ReputationScore` when the composite reputation
 measure matters; use `ConstraintTargets.Node.UptimePercent` when only
@@ -553,8 +643,14 @@ role.
   `JsonStringEnumConverter` (registered globally). Wire form:
   `"qualityTier": "Guaranteed"`, not `"qualityTier": 1`.
 - `Constraint.Value` arrives as a `JsonElement` from JSON wire input or
-  `BsonValue` from MongoDB. The evaluator's `NormalizeValue` layer
-  unboxes both into native C# types before operator evaluation.
+  `BsonValue` from MongoDB reads. Before any `SaveVmAsync` call,
+  `Constraint.NormalizeValue()` unboxes `JsonElement` into native C#
+  types (`string`, `bool`, `double`, `List<object?>`) so MongoDB's
+  `ObjectSerializer` can persist the document. This is called in
+  `VmService.CreateVmAsync` and `VmsController.UpdateSchedulingConstraints`
+  immediately after `ValidateSet`. The evaluator also normalizes
+  internally at evaluation time; calling `NormalizeValue()` on an
+  already-normalized value is a safe no-op.
 
 ---
 
@@ -585,18 +681,27 @@ is enforced at the controller level.
 |---|---|---|
 | `GET` | `/api/vms/constraint-vocabulary` | Registered target and operator names |
 
-Current response is bare-minimum:
+Response:
 
 ```json
 {
-  "targets":   ["node.architecture", "node.country", ...],
-  "operators": ["adjacent_to", "contains", ...]
+  "targets":     ["node.architecture", "node.country", ...],
+  "targetTypes": { "node.architecture": "String", "node.uptimePercent": "Numeric", "node.hardware.hasGpu": "Boolean", ... },
+  "operators":   ["adjacent_to", "contains", ...]
 }
 ```
 
-Used by the dashboard constraint builder (§9) to populate dropdowns
-without hardcoding the vocabulary. A richer schema (target types, value
-domains, descriptions, units) is planned — see §11.
+`targets` — sorted list of all registered target name strings.  
+`targetTypes` — mapping from target name to value type (`"String"`,
+`"Numeric"`, `"Boolean"`, `"StringList"`). The constraint builder uses
+this to filter operator dropdowns and render the appropriate value input
+without hardcoding metadata client-side. Adding a target in
+`ConstraintEvaluator.BuildTargetRegistry` makes it appear here
+automatically.  
+`operators` — sorted list of all registered operator name strings.
+
+A richer schema (closed-domain enumerations, descriptions, units,
+default operator suggestions) is still planned — see §11.
 
 ### Template deployment
 
@@ -615,12 +720,25 @@ model. Reference endpoints:
 | `GET` | `/api/locality/regions` | Full region list |
 | `GET` | `/api/locality/suggest/{country}` | Suggested region for a country code |
 
-### Planned endpoints
+### Constraint builder preview
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/vms/scheduling/preview` | Eligibility preview — takes a `Constraint[]`, returns count of matching nodes + top rejection reasons. Powers the constraint builder's live match counter. |
-| `GET` | `/api/marketplace/constraint-presets` | Preset library — returns user-facing presets that compile to ordinary constraints. Powers the "Common requirements" section of the builder. |
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/vms/scheduling/preview` | Required | Eligibility preview — accepts `{ constraints, qualityTier? }`, returns count of matching nodes and top rejection reasons (see §9). Uses a minimal VmSpec (1 vCPU / 256 MB / 1 GB, `ComputePointCost=0`) so resource-capacity filters do not mask constraint mismatches. Rejection reasons are normalized by stripping per-node actual values so structurally identical rejections collapse into one count. |
+
+### Preset library
+
+Constraint presets are served as a static file — no controller endpoint
+is required. The file `wwwroot/public/config/constraint-presets.json`
+is copied verbatim into `wwwroot/dist/` by the Vite build and served at
+`/config/constraint-presets.json` by the production static-file
+middleware. In development the Vite dev server serves it from
+`wwwroot/public/` at the same path.
+
+The constraint builder loads it once per page session via a plain
+`fetch('/config/constraint-presets.json')` call (no auth required). If
+the fetch fails the preset section is silently omitted and the builder
+continues to function normally.
 
 ---
 
@@ -653,9 +771,11 @@ the long tail:
 - **Preset library** — one-click toggles for frequently-needed requirements
   ("EU jurisdiction only", "GPU required", "NVMe storage", "≥99% uptime").
   Each preset compiles to one or more ordinary constraints. The list is
-  curated, served from a config file, and validated at orchestrator
-  startup against the live vocabulary (presets referencing unknown
-  targets fail-fast at boot).
+  curated in `wwwroot/public/config/constraint-presets.json` (9 presets
+  across 4 categories: Jurisdiction, Hardware, Reliability, Architecture),
+  loaded by the builder at mount time via a plain `fetch`. No auth
+  required, no startup validation — if the file is missing the section
+  is silently omitted and the builder works normally.
 
 - **Custom builder** — three-column rows (target dropdown, operator
   dropdown filtered by target type, value input rendered based on
@@ -669,10 +789,10 @@ tooltip.
 
 ### Live eligibility preview
 
-While the user edits constraints, the builder debounces and calls
-`POST /api/vms/scheduling/preview` (planned — see §11) with the working
-constraint set. Response includes the count of eligible nodes and the
-top rejection reasons among ineligible ones:
+While the user edits constraints, the builder debounces (500 ms) and
+calls `POST /api/vms/scheduling/preview` with the working constraint
+set. Response includes the count of eligible nodes and the top rejection
+reasons among ineligible ones:
 
 ```json
 {
@@ -713,14 +833,112 @@ from `GET /api/vms/constraint-vocabulary` (cached for the session).
 Adding a new target in `ConstraintEvaluator.BuildTargetRegistry` makes it
 immediately available in the builder UI — no frontend deploy required.
 
-Presets are *data*: a JSON file (planned: `config/constraint-presets.json`)
-loaded at orchestrator startup. Adding a preset is editing a config file.
-Curation (the user-friendly label and category) is a separate concern
-from vocabulary (the machine-readable target/operator/value); adding a
-new target does not auto-create a preset.
+Presets are *data*: `wwwroot/public/config/constraint-presets.json`,
+served as a static asset at `/config/constraint-presets.json`. Adding a
+preset is editing the JSON file and redeploying. Curation (user-friendly
+label and category) is separate from vocabulary (machine-readable
+target/operator/value); adding a new target does not auto-create a
+preset.
 
-Implementation lives in `src/Orchestrator/wwwroot/src/constraint-builder.js`
-(planned).
+Implementation lives in
+`src/Orchestrator/wwwroot/src/constraint-builder.js`.
+
+### Stack composition (visual infrastructure editor)
+
+The constraint builder is embedded within a larger **visual infrastructure
+editor** where multi-VM topologies are composed as node graphs. Each VM
+template becomes a block with typed port connectors; a wire between two
+ports means "block B can reach block A on that port via an internal
+hostname." The editor is the creation interface for `StackTemplate`
+documents.
+
+#### Two vocabularies at design time
+
+The editor exposes two distinct types of block configuration that must
+not be conflated:
+
+**Node requirements** — `spec.Constraints` (vocabulary-based, §7).
+Expressed using the standard constraint builder embedded in each block's
+config panel. These constraints describe what kind of node the block
+*needs*: GPU, NVMe, EU jurisdiction, architecture. They are absolute and
+apply regardless of what other blocks exist.
+
+**Placement policies** — symbolic, reference other *blocks* by name, not
+node IDs. Never reference concrete node IDs (those do not exist at design
+time). Defined in the `StackTemplate`, resolved into concrete scheduling
+decisions by `StackService` at deploy time.
+
+```
+Placement policy vocabulary:
+
+co-locate    with: <blockId>           fallback: same-region | any | fail
+             "This block must run on the same node as <blockId>."
+
+same-region  as: <blockId>            fallback: any | fail
+             "This block must run in the same region as <blockId>."
+
+anti-affinity against: [<blockId>, …]
+             "This block must NOT share a node with any of these blocks."
+
+any          (default — no placement constraint)
+```
+
+Placement policies are design-time intent. The distinction between
+"deployed block" and "not-yet-deployed block" is not relevant to
+policy definition — the policy references a block ID and `StackService`
+resolves it whenever deployment is triggered, reading current node
+assignments from MongoDB for already-deployed members.
+
+#### Preflight feasibility before any VM is created
+
+Before STEP 5 (actual deployment), `StackService` computes the merged
+constraint set for every placement group and submits it to
+`POST /api/vms/scheduling/preview`. The editor surfaces this result
+on the canvas:
+
+- **Each block** shows its individual eligible node count (standard
+  preview counter from the embedded constraint builder).
+- **Each co-location group** shows the merged feasibility: "3 nodes can
+  host both A and B together" — a lower count than either block alone.
+- **Infeasibility** (0 matching nodes) highlights the group in red and
+  lists the conflicting constraints before the user clicks Deploy. No
+  VM is created.
+
+#### Wire coloring (post-deployment)
+
+After a stack is (partially or fully) deployed, wires are colored by
+the actual relationship between the connected VMs' nodes:
+
+| Color | Meaning |
+|---|---|
+| Green | Same node — direct libvirt bridge, negligible latency |
+| Yellow | Same region — intra-region WireGuard, low latency |
+| Orange | Adjacent region — cross-region, higher latency |
+| Red | Cross-continent or high-latency path |
+
+Source: `Node.Locality.Region` from MongoDB for each VM's `NodeId`,
+evaluated through `LocalityService.AreAdjacent` (the adjacency graph
+already used by the `adjacent_to` constraint operator).
+
+#### Constraint merge order in Path E
+
+When a block in a stack is deployed, four constraint sources are merged
+in priority order (highest to lowest):
+
+```
+stackConstraints                    ← mandatory for every block in the stack
+block.extraConstraints              ← block-specific node requirements
+template.MinimumSpec.Constraints    ← template mandatory (non-removable)
+template.RecommendedSpec.Constraints← template defaults (user-overridable)
+```
+
+Same `MergeConstraints` function used by Path D. `StackService` is the
+new outer caller; the merge logic itself is unchanged.
+
+Co-location groups additionally intersect the merged constraint sets of
+*all* members before scheduling the anchor block — the anchor must
+satisfy every block in the group simultaneously.
+
 
 ---
 
@@ -894,11 +1112,14 @@ deploy.
   is designed to support the inverse direction (`constraint, node, vmSpec`),
   but no `Node.Constraints` field exists yet.
 
-- **Affinity / anti-affinity between VMs.** "Place this VM in the same
-  zone as VM-X" or "never co-locate these two VMs on the same node" are
-  valid future concerns but require multi-VM scheduling state the current
-  single-VM-per-decision pipeline does not model. `VmSpec.SchedulingTags`
-  is reserved for this purpose but not consumed by the scheduler today.
+- **Affinity / anti-affinity between VMs.** Implemented at the
+  `StackService` level via placement policies (see §9), not as a scheduler
+  primitive. The scheduler remains stateless and single-VM-per-decision.
+  Co-location is resolved via Path B (`targetNodeId`); anti-affinity is
+  enforced by `StackService` injecting ephemeral `node.id not_in [...]`
+  constraints before each `CreateVmAsync` call. These constraints are never
+  persisted on the VM and are not user-authored.
+  `VmSpec.SchedulingTags` is reserved for future use but not consumed today.
 
 - **Soft constraint composition (OR, NOT groups).** The constraint list is a
   flat AND. Negation is expressible per-constraint (`not_in`,
@@ -916,29 +1137,15 @@ deploy.
   which calls the same filter chain but adds an architecture-stickiness
   constraint.
 
-- **Vocabulary introspection beyond names.** The current
-  `/api/vms/constraint-vocabulary` endpoint returns target and operator
-  names only. A richer schema (target value types, closed-domain
-  enumerations, descriptions, units, default operator suggestions) is
-  needed to give the constraint builder typed value inputs without
-  hardcoding metadata client-side. Planned; the data needed to populate
-  it already lives in `TargetDescriptor` and `OperatorDescriptor`.
-
-- **Eligibility preview at edit time.** The planned
-  `POST /api/vms/scheduling/preview` endpoint accepts a `Constraint[]`
-  and returns the live count of matching nodes plus top rejection
-  reasons. It wraps `IVmSchedulingService.GetScoredNodesForVmAsync` —
-  the underlying capability already exists; what's missing is the public
-  endpoint shape. Users currently discover infeasible constraint sets
-  only at deploy time.
-
-- **Constraint preset library.** The data file
-  (`config/constraint-presets.json`) and the
-  `/api/marketplace/constraint-presets` endpoint that serves it are
-  planned but not yet built. Presets reference only registered
-  vocabulary targets; the constraint builder treats them as
-  pre-composed shortcuts that materialize as ordinary
-  `Constraint[]` entries.
+- **Vocabulary introspection beyond names.** The
+  `/api/vms/constraint-vocabulary` endpoint now returns `targetTypes`
+  (mapping from target name to value type string: `"String"`,
+  `"Numeric"`, `"Boolean"`, `"StringList"`) alongside `targets` and
+  `operators`. The constraint builder uses this to filter operator
+  dropdowns and render typed value inputs. Still deferred: closed-domain
+  enumerations (e.g., valid region codes for `node.locality.region`),
+  per-target descriptions, units, and default operator suggestions.
+  The data lives in `TargetDescriptor` and `OperatorDescriptor`.
 
 - **Resource-threshold constraints (live counters).** The vocabulary
   exposes static node attributes — physical CPU cores, total GPU VRAM,
@@ -970,14 +1177,16 @@ deploy.
 | `src/Orchestrator/Services/NodeCapacityCalculator.cs` | Overcommit math |
 | `src/Orchestrator/Services/NodePerformanceEvaluator.cs` | Tier eligibility |
 | `src/Orchestrator/Services/TemplateService.cs` | `BuildVmRequestFromTemplateAsync` — Path D merge policy |
+| `src/Orchestrator/Services/StackService.cs` | *(planned)* Path E — stack deployment, placement graph solver, constraint merge, anti-affinity injection |
+| `src/Orchestrator/Models/StackTemplate.cs` | *(planned)* `StackTemplate`, `StackBlock`, `StackConnection`, `PlacementPolicy` models |
 | `src/Orchestrator/Controllers/MarketplaceController.cs` | `POST /api/marketplace/templates/{id}/deploy` — Path D entry |
 | `src/Orchestrator/Models/SchedulingConfig.cs` | Config schema |
 | `src/Orchestrator/Models/VirtualMachine.cs` | `VmSpec` (host of `Constraints`) |
 | `src/Orchestrator/Controllers/VmsController.cs` | VM creation, PATCH /scheduling, GET /constraint-vocabulary |
 | `src/Orchestrator/Background/BackgroundServices.cs` | Migration scheduler |
 | `src/Orchestrator/Interfaces/VmScheduling/IVmSchedulingService.cs` | Scheduler contract |
-| `src/Orchestrator/wwwroot/src/constraint-builder.js` | (planned) Global constraint builder UI module |
-| `config/constraint-presets.json` | (planned) Preset library data |
+| `src/Orchestrator/wwwroot/src/constraint-builder.js` | Global constraint builder UI module (ES module, `mount()` API) |
+| `wwwroot/public/config/constraint-presets.json` | Preset library data (9 presets; served as static asset at `/config/constraint-presets.json`) |
 
 **Related docs**
 
