@@ -31,6 +31,12 @@ public class ConstraintEvaluator : IConstraintEvaluator
     public IReadOnlyCollection<string> KnownTargets => _targets.Keys;
     public IReadOnlyCollection<string> KnownOperators => _operators.Keys;
 
+    public IReadOnlyDictionary<string, string> TargetTypes =>
+        _targets.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value.ValueType.ToString(),
+            StringComparer.Ordinal);
+
     // ─── Evaluation hot path ──────────────────────────────────────────
 
     public ConstraintEvaluation Evaluate(Constraint constraint, Node node)

@@ -1,11 +1,12 @@
+using DeCloud.Shared.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
 using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
-using Orchestrator.Services;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace Orchestrator.Controllers;
 
@@ -17,6 +18,7 @@ public class VmsController : ControllerBase
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
     private readonly IConstraintEvaluator _constraintEvaluator;
+    private readonly IVmSchedulingService _schedulingService;
     private readonly DataStore _dataStore;
     private readonly ILogger<VmsController> _logger;
 
@@ -24,12 +26,14 @@ public class VmsController : ControllerBase
         IVmService vmService,
         INodeService nodeService,
         IConstraintEvaluator constraintEvaluator,
+        IVmSchedulingService schedulingService,
         DataStore dataStore,
         ILogger<VmsController> logger)
     {
         _vmService = vmService;
         _nodeService = nodeService;
         _constraintEvaluator = constraintEvaluator;
+        _schedulingService = schedulingService;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -259,16 +263,114 @@ public class VmsController : ControllerBase
     public record UpdateSchedulingRequest(List<Constraint>? Constraints);
 
     /// <summary>
-    /// Returns the registered constraint target and operator names for the
-    /// dashboard constraint builder. The frontend uses this to populate
-    /// dropdowns without hardcoding the vocabulary.
+    /// Live eligibility preview for a constraint set.
+    ///
+    /// Returns the count of currently-online nodes that satisfy the supplied
+    /// constraints at the requested quality tier, plus the top rejection
+    /// reasons among ineligible nodes.
+    ///
+    /// Intentionally uses a minimal VmSpec (1 vCPU / 256 MB / 1 GB) so that
+    /// resource-capacity filters (FILTER 6/7) do not mask constraint results.
+    /// This endpoint answers "how many nodes satisfy my placement requirements"
+    /// — not "how many nodes can host my exact VM right now". The quality tier
+    /// is honoured because it affects FILTER 2 (tier eligibility), which is
+    /// relevant to any deployment.
+    ///
+    /// The constraint builder debounces calls to 500 ms to limit scheduler load.
+    /// Note: each call runs the full filter chain across all online nodes —
+    /// avoid calling in tight loops.
+    /// </summary>
+    [HttpPost("scheduling/preview")]
+    public async Task<ActionResult<ApiResponse<SchedulingPreviewResponse>>> SchedulingPreview(
+        [FromBody] SchedulingPreviewRequest request,
+        CancellationToken ct)
+    {
+        if (request.Constraints is { Count: > 0 })
+        {
+            var validationError = _constraintEvaluator.ValidateSet(request.Constraints);
+            if (validationError is not null)
+                return BadRequest(ApiResponse<SchedulingPreviewResponse>.Fail(
+                    "INVALID_CONSTRAINT", validationError));
+        }
+
+        // Minimal spec: constraints and tier are all that matter for this preview.
+        // ComputePointCost = 0 (default) means the capacity-points check always
+        // passes — resource-based rejections don't mask constraint mismatches.
+        var previewSpec = new VmSpec
+        {
+            VirtualCpuCores = 1,
+            MemoryBytes = 256L * 1024 * 1024,        // 256 MB
+            DiskBytes = 1L * 1024 * 1024 * 1024, // 1 GB
+            QualityTier = request.QualityTier ?? QualityTier.Standard,
+            GpuMode = GpuMode.None,
+            ReplicationFactor = 0,
+            Constraints = request.Constraints
+        };
+
+        var scored = await _schedulingService.GetScoredNodesForVmAsync(
+            previewSpec, previewSpec.QualityTier, ct);
+
+        var totalOnline = scored.Count;
+        var eligible = scored.Count(sn => sn.RejectionReason is null);
+        var rejected = totalOnline - eligible;
+
+        // Normalize rejection reasons by stripping the per-node actual value
+        // so that structurally identical rejections collapse into one count.
+        //   raw:        "node.locality.country (BR) not_in [DE, FR]"
+        //   normalized: "node.locality.country not_in [DE, FR]"
+        // Non-constraint reasons (e.g. "Load average too high: 9.5 (max: 8.0)")
+        // are also normalized: "Load average too high: 9.5"
+        var rejectionReasons = scored
+            .Where(sn => sn.RejectionReason is not null)
+            .Select(sn => NormalizeRejectionReason(sn.RejectionReason!))
+            .GroupBy(r => r, StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count())
+            .Take(5)
+            .Select(g => new RejectionReasonCount(g.Count(), g.Key))
+            .ToList();
+
+        return Ok(ApiResponse<SchedulingPreviewResponse>.Ok(
+            new SchedulingPreviewResponse(totalOnline, eligible, rejected, rejectionReasons)));
+    }
+
+    // Strips " (actual_value)" from the middle of a rejection reason string.
+    private static string NormalizeRejectionReason(string reason) =>
+        Regex.Replace(reason, @"\s*\([^)]+\)", string.Empty).Trim();
+
+    public record SchedulingPreviewRequest(
+        List<Constraint>? Constraints,
+        QualityTier? QualityTier);
+
+    public record SchedulingPreviewResponse(
+        int TotalOnline,
+        int Eligible,
+        int Rejected,
+        List<RejectionReasonCount> RejectionReasons);
+
+    public record RejectionReasonCount(int Count, string Reason);
+
+    /// <summary>
+    /// Returns the registered constraint vocabulary for the dashboard constraint
+    /// builder. The frontend uses this to populate dropdowns and render typed
+    /// value inputs without hardcoding the vocabulary client-side.
+    ///
+    /// <c>targets</c> — sorted list of target name strings (backward-compatible).
+    /// <c>targetTypes</c> — mapping from target name to value type string
+    ///   ("String", "Numeric", "Boolean", "StringList"). Added in the same
+    ///   response so callers don't need a second round-trip.
+    /// <c>operators</c> — sorted list of operator name strings.
+    ///
+    /// Adding a new target in <c>ConstraintEvaluator.BuildTargetRegistry</c>
+    /// makes it available here on the next request — no deploy required.
     /// </summary>
     [HttpGet("constraint-vocabulary")]
+    [AllowAnonymous]
     public IActionResult GetConstraintVocabulary()
     {
         return Ok(new
         {
             targets = _constraintEvaluator.KnownTargets.Order(),
+            targetTypes = _constraintEvaluator.TargetTypes,
             operators = _constraintEvaluator.KnownOperators.Order()
         });
     }

@@ -55,4 +55,13 @@ public interface IConstraintEvaluator
     /// builder UI and for OpenAPI documentation.
     /// </summary>
     IReadOnlyCollection<string> KnownOperators { get; }
+
+    /// <summary>
+    /// Mapping from target name to its value type string ("String", "Numeric",
+    /// "Boolean", "StringList"). Used by the constraint builder to render
+    /// typed value inputs without hardcoding the vocabulary client-side.
+    /// Adding a new target in <see cref="ConstraintEvaluator.BuildTargetRegistry"/>
+    /// makes it automatically available here — no frontend deploy required.
+    /// </summary>
+    IReadOnlyDictionary<string, string> TargetTypes { get; }
 }
