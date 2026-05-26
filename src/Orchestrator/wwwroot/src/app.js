@@ -169,7 +169,14 @@ let connectedAddress = null;
 let appKitModal = null;
 
 // Constraint vocabulary cache (fetched once from /api/vms/constraint-vocabulary)
+// Still used by the legacy attachConstraintBuilder during migration.
 let constraintVocabulary = { targets: [], operators: [] };
+
+// Handles from constraint-builder.js module — one per mounted instance.
+// _cbCreateHandle: create-VM modal
+// _cbUpdateHandle: update-constraints modal (Error-state VM)
+let _cbCreateHandle = null;
+let _cbUpdateHandle = null;
 
 // AppKit unsubscribe functions
 let appKitUnsubscribers = [];
@@ -1317,7 +1324,15 @@ function attachSshKeysTableDelegation(tbody) {
 async function openCreateVMModal() {
     openStaticModal(document.getElementById('create-vm-modal'));
     const container = document.getElementById('constraint-builder-container');
-    if (container) attachConstraintBuilder(container);
+    if (container) {
+        // Destroy the previous instance (modal may be opened multiple times).
+        _cbCreateHandle?.destroy();
+        const { mount } = await import('./constraint-builder.js');
+        _cbCreateHandle = await mount(container, {
+            apiFetch: api,
+            qualityTier: document.getElementById('quality-tier')?.value ?? 'Standard',
+        });
+    }
 }
 
 // Tracks accessibility-cleanup functions per static modal so we can run them
@@ -1426,13 +1441,6 @@ async function createVM() {
     // Get target node ID if user selected a specific node from marketplace
     const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
 
-    // Read constraints — returns null if any row is incomplete
-    const constraints = readConstraints();
-    if (constraints === null) {
-        showToast('Fix constraint errors before creating VM', 'error');
-        return;
-    }
-
     // Client-side name validation (server is the authority, this is for UX)
     const sanitized = sanitizeVmName(name);
     const nameError = validateVmName(sanitized);
@@ -1441,11 +1449,16 @@ async function createVM() {
         return;
     }
 
-    try {
-        const requestBody = {
-            name: name,
-            spec: {
-                virtualCpuCores: cpuCores,
+    // Read constraints — returns null if any row is incomplete
+    // Collect constraints from the module builder.
+    // Incomplete rows (no target or no operator) are silently skipped —
+    // the backend validates and rejects malformed entries before scheduling.
+    const constraints = _cbCreateHandle ? _cbCreateHandle.getConstraints() : [];
+
+    const requestBody = {
+        name,
+        spec: {
+            virtualCpuCores: cpuCores,
                 memoryBytes: memoryMb * (1024 * 1024),
                 diskBytes: diskGb * (1024 * 1024 * 1024),
                 imageId: imageId,
@@ -1496,9 +1509,11 @@ async function createVM() {
             updateTierInfo();
             updateBandwidthInfo();
             updateReplicationInfo();
-            // Reset constraint builder
+            // Reset constraint builder — destroy and remount empty.
             const cbContainer = document.getElementById('constraint-builder-container');
-            if (cbContainer) attachConstraintBuilder(cbContainer);
+            if (cbContainer && _cbCreateHandle) {
+                _cbCreateHandle.setConstraints([]);
+            }
 
             await refreshData();
         } else {
@@ -1953,44 +1968,27 @@ function openUpdateConstraintsModal(vmId, currentConstraintsJson) {
         document.body.appendChild(modal);
     }
 
-    // Attach fresh builder with current constraints
+    // Mount the module builder with the VM's current constraints.
     const builderEl = modal.querySelector('#update-constraints-builder');
-    attachConstraintBuilder(builderEl, currentConstraints);
+    _cbUpdateHandle?.destroy();
+    import('./constraint-builder.js').then(({ mount }) => {
+        mount(builderEl, {
+            initial: currentConstraints,
+            apiFetch: api,
+        }).then(h => { _cbUpdateHandle = h; });
+    });
 
     // Reset UI
     const errorEl = modal.querySelector('#update-constraints-error');
     errorEl.style.display = 'none';
     openStaticModal(modal);
 
-    // Override the save button each time (re-capture vmId in closure)
+    // Override the save button each time (re-capture vmId in closure).
     const saveBtn = modal.querySelector('#update-constraints-save');
     saveBtn.onclick = async () => {
         errorEl.style.display = 'none';
 
-        // Read from the update-modal's rows specifically
-        const modalRows = builderEl.querySelectorAll('.cb-row');
-        const constraints = [];
-        let valid = true;
-
-        modalRows.forEach(row => {
-            const target = row.querySelector('.cb-target')?.value.trim() ?? '';
-            const operator = row.querySelector('.cb-operator')?.value.trim() ?? '';
-            const raw = row.querySelector('.cb-value')?.value.trim() ?? '';
-            row.classList.remove('cb-row--error');
-            row.querySelector('.cb-row-tip')?.remove();
-            if (!target || !operator) {
-                row.classList.add('cb-row--error');
-                const tip = document.createElement('span');
-                tip.className = 'cb-row-tip';
-                tip.textContent = 'Select target and operator';
-                row.appendChild(tip);
-                valid = false;
-                return;
-            }
-            constraints.push({ target, operator, value: parseConstraintValue(raw) });
-        });
-
-        if (!valid) return;
+        const constraints = _cbUpdateHandle ? _cbUpdateHandle.getConstraints() : [];
 
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';

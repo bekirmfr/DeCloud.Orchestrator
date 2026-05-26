@@ -5,7 +5,14 @@
 
 import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing, renderMarkdown } from './utils.js';
 
+// ============================================
+// MODULE STATE
+// ============================================
 let currentTemplate = null;
+
+// Handle from constraint-builder.js mounted in the deploy modal.
+// Destroyed and re-created each time the modal opens.
+let _cbDeployHandle = null;
 
 // ============================================
 // TIER CONFIGURATIONS (must match app.js / backend enums)
@@ -418,14 +425,20 @@ export async function openDeployTemplateModal(template) {
                 : 4;
     }
 
-    // Load available regions
-    await loadAvailableRegions();
-
-    // Reset zone selector
-    const zoneSelect = document.getElementById('deploy-zone');
-    if (zoneSelect) {
-        zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
-        zoneSelect.disabled = true;
+    // Mount the constraint builder.
+    // - lockedRows: template.minimumSpec.constraints — mandatory, non-removable.
+    // - initial:    template.recommendedSpec.constraints — defaults user can override.
+    // Destroyed in closeDeployTemplateModal so each open starts fresh.
+    const cbContainer = document.getElementById('deploy-constraint-builder');
+    if (cbContainer) {
+        _cbDeployHandle?.destroy();
+        const { mount } = await import('./constraint-builder.js');
+        _cbDeployHandle = await mount(cbContainer, {
+            lockedRows: template.minimumSpec?.constraints ?? [],
+            initial: template.recommendedSpec?.constraints ?? [],
+            apiFetch: api,
+            qualityTier: String(document.getElementById('deploy-quality-tier')?.value ?? 'Standard'),
+        });
     }
 
     // Update cost estimate
@@ -444,6 +457,9 @@ export async function openDeployTemplateModal(template) {
  * Close deployment modal
  */
 export function closeDeployTemplateModal() {
+    _cbDeployHandle?.destroy();
+    _cbDeployHandle = null;
+
     const modal = document.getElementById('deploy-template-modal');
     if (modal) {
         if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
@@ -451,82 +467,6 @@ export function closeDeployTemplateModal() {
     }
     const replicationSelect = document.getElementById('deploy-replication-factor');
     if (replicationSelect) replicationSelect.value = '3';
-}
-
-/**
- * Load available regions from online nodes
- */
-async function loadAvailableRegions() {
-    try {
-        const response = await api('/api/nodes/regions?onlineOnly=true');
-        const data = await response.json();
-
-        const regions = data.data || data;
-        const regionSelect = document.getElementById('deploy-region');
-
-        if (!regionSelect) return;
-
-        // Clear existing options except the default
-        regionSelect.innerHTML = '<option value="">Any region (default)</option>';
-
-        // Add region options
-        regions.forEach(region => {
-            const opt = document.createElement('option');
-            opt.value = region.region;
-            opt.textContent = `${region.region} (${region.nodeCount} nodes, ${region.availableComputePoints} compute points)`;
-            regionSelect.appendChild(opt);
-        });
-
-        console.log('[Template Detail] Loaded {0} available regions', regions.length);
-    } catch (error) {
-        console.error('[Template Detail] Failed to load regions:', error);
-    }
-}
-
-/**
- * Handle region change - load zones for selected region
- */
-export async function onRegionChange() {
-    const regionSelect = document.getElementById('deploy-region');
-    const zoneSelect = document.getElementById('deploy-zone');
-
-    if (!regionSelect || !zoneSelect) return;
-
-    const selectedRegion = regionSelect.value;
-
-    // Reset zone selector
-    zoneSelect.innerHTML = '<option value="">Any zone (default)</option>';
-
-    if (!selectedRegion) {
-        zoneSelect.disabled = true;
-        return;
-    }
-
-    // Load zones for selected region
-    try {
-        const response = await api(`/api/nodes/regions/${encodeURIComponent(selectedRegion)}/zones?onlineOnly=true`);
-        const data = await response.json();
-
-        const zones = data.data || data;
-
-        if (zones.length > 0) {
-            zones.forEach(zone => {
-                const opt = document.createElement('option');
-                opt.value = zone.zone;
-                opt.textContent = `${zone.zone} (${zone.nodeCount} nodes, ${zone.availableComputePoints} compute points)`;
-                zoneSelect.appendChild(opt);
-            });
-
-            zoneSelect.disabled = false;
-            console.log('[Template Detail] Loaded {0} zones for region {1}', zones.length, selectedRegion);
-        } else {
-            zoneSelect.disabled = true;
-            console.log('[Template Detail] No zones available for region {0}', selectedRegion);
-        }
-    } catch (error) {
-        console.error('[Template Detail] Failed to load zones:', error);
-        zoneSelect.disabled = true;
-    }
 }
 
 /**
@@ -541,8 +481,6 @@ export async function deployFromTemplate() {
     const qualityTier = parseInt(document.getElementById('deploy-quality-tier').value);
     const bandwidthTier = parseInt(document.getElementById('deploy-bandwidth-tier').value);
     const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
-    const region = document.getElementById('deploy-region')?.value || null;
-    const zone = document.getElementById('deploy-zone')?.value || null;
 
     // GPU — read from the GPU Access section (hidden when template has no GPU requirement)
     const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
@@ -595,24 +533,14 @@ export async function deployFromTemplate() {
     }
 
     try {
-        // Build scheduling constraints from region/zone selections.
-        // VmSpec has no Region or Zone fields — locality requirements are
-        // expressed as Constraint objects (SCHEDULING.md §7).
-        const deployConstraints = [];
-        if (region) {
-            deployConstraints.push({
-                target: 'node.locality.region',
-                operator: 'eq',
-                value: region
-            });
-        }
-        if (zone && zone !== 'default') {
-            deployConstraints.push({
-                target: 'node.locality.zone',
-                operator: 'eq',
-                value: zone
-            });
-        }
+        // Collect scheduling constraints from the builder.
+        // Includes the user's custom rows plus any non-locked template
+        // RecommendedSpec constraints the user didn't override.
+        // Template MinimumSpec constraints are merged server-side
+        // (BuildVmRequestFromTemplateAsync) regardless of what is sent here.
+        const deployConstraints = _cbDeployHandle
+            ? _cbDeployHandle.getConstraints()
+            : [];
 
         const response = await api(`/api/marketplace/templates/${templateId}/deploy`, {
             method: 'POST',
@@ -959,7 +887,6 @@ window.templateDetail = {
     deployFromTemplate,
     updateDeployCostEstimate,
     onDeployGpuModeChange,
-    onRegionChange,
     setReviewRating,
     submitReview
 };
