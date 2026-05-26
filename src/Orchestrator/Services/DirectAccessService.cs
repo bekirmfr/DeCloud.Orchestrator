@@ -2,6 +2,7 @@ using System.Text.Json;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Microsoft.Extensions.Logging;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Services;
 

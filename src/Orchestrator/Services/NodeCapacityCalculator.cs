@@ -5,6 +5,7 @@
 // on node.AllocatedResources (ResourceSnapshot). The calculator applies
 // tier-specific overcommit ratios on top.
 
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;

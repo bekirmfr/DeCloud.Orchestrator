@@ -6,6 +6,7 @@ using Orchestrator.Persistence;
 using System.Security.Cryptography;
 using System.Text;
 using Orchestrator.Interfaces;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Controllers;
 

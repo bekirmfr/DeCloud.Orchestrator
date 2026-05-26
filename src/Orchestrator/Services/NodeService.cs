@@ -1,6 +1,7 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Shared;
 using DeCloud.Shared.Contracts;
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.Extensions.Options;

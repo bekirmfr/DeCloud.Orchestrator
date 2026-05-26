@@ -1,4 +1,5 @@
-﻿using Orchestrator.Models;
+﻿using DeCloud.Shared.Contracts;
+using Orchestrator.Models;
 using Orchestrator.Persistence;
 
 namespace Orchestrator.Services;

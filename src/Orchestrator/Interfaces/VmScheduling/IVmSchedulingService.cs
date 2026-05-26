@@ -1,4 +1,5 @@
-﻿using Orchestrator.Models;
+﻿using DeCloud.Shared.Enums;
+using Orchestrator.Models;
 
 namespace Orchestrator.Interfaces.VmScheduling;
 

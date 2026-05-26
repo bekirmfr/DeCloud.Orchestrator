@@ -1,5 +1,7 @@
+using DeCloud.Shared.Contracts;
+using DeCloud.Shared.Dtos;
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
-using Orchestrator.Models.Payment;
 using Orchestrator.Services;
 
 namespace Orchestrator.Models;
@@ -464,18 +466,6 @@ public class ResourceSnapshot
     public long GpuVramBytes { get; set; }
 }
 
-public class NodeMetrics
-{
-    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-    public double CpuUsagePercent { get; set; }
-    public double MemoryUsagePercent { get; set; }
-    public double StorageUsagePercent { get; set; }
-    public double NetworkInMbps { get; set; }
-    public double NetworkOutMbps { get; set; }
-    public int ActiveVmCount { get; set; }
-    public double LoadAverage { get; set; }
-}
-
 public enum NodeStatus
 {
     Offline,
@@ -577,7 +567,7 @@ public record EvaluateNodeResponse(
     List<string> DhtBootstrapPeers,
     Dictionary<string, ObligationStatePayload> ObligationStates,
     Dictionary<string, SystemVmTemplatePayload>? SystemTemplates = null,
-    List<ObligationDescriptorPayload>? Obligations = null
+    List<ObligationDescriptorDto>? Obligations = null
 );
 
 
@@ -592,302 +582,6 @@ public class NodeDeregisterResponse
     public bool Deregistered { get; set; }
     public int TenantVmsDestroyed { get; set; }
     public string? Message { get; set; }
-}
-
-/// <summary>
-/// Wire DTO for a single obligation pushed to the node agent at registration.
-/// Carries the canonical role name and its dependency list so the node can
-/// populate its local <c>obligation</c> SQLite table without contacting the
-/// orchestrator again.
-/// </summary>
-public class ObligationDescriptorPayload
-{
-    public string Role { get; init; } = string.Empty;
-    public List<string> Deps { get; init; } = [];
-}
-
-public record NodeRegistrationResponse(
-    string NodeId,
-    string ApiKey,
-    string OrchestratorWireGuardPublicKey,
-    TimeSpan HeartbeatInterval,
-    /// <summary>
-    /// VMs on this node whose placement constraints are no longer
-    /// satisfied after a locality change. Empty on first registration.
-    /// </summary>
-    List<NonCompliantVmInfo>? NonCompliantVms = null
-);
-
-
-/// <summary>
-/// Response to POST /api/nodes/{id}/login.
-/// </summary>
-public class NodeLoginResponse
-{
-    /// <summary>True if the node is now scheduling-ready.</summary>
-    public bool SchedulingReady { get; set; }
-
-    /// <summary>
-    /// Non-null when the node's local settings hash (from the most recent
-    /// heartbeat) doesn't match the orchestrator's stored registration state.
-    /// Login is still accepted — scheduling resumes — but the operator
-    /// should investigate and re-register if needed.
-    /// </summary>
-    /// <remarks>
-    /// This is a warning, not a hard rejection. The design considered
-    /// rejecting login on drift, but drift detection belongs in the
-    /// heartbeat loop (continuous) not at login (one-time). The warning
-    /// here is a courtesy so operators see it immediately rather than
-    /// waiting for the next heartbeat cycle.
-    /// </remarks>
-    public string? SettingsDriftWarning { get; set; }
-}
-
-/// <summary>
-/// Response to POST /api/nodes/{id}/logout.
-/// </summary>
-public class NodeLogoutResponse
-{
-    /// <summary>Always false after a successful logout.</summary>
-    public bool SchedulingReady { get; set; }
-
-    /// <summary>Count of VMs still running on this node.</summary>
-    public int ActiveVmCount { get; set; }
-}
-
-/// <summary>
-/// Carries a single role's identity state in the NodeRegistrationResponse.
-/// The orchestrator populates this for every obligation where its stored
-/// StateVersion is greater than what the node reported in the request.
-/// </summary>
-public class ObligationStatePayload
-{
-    /// <summary>JSON-serialised identity state blob (see ObligationStateBase subclasses).</summary>
-    public string StateJson { get; init; } = string.Empty;
-
-    /// <summary>Monotonic version from the orchestrator — used for conflict resolution.</summary>
-    public int Version { get; init; }
-}
-
-
-/// <summary>
-/// Node heartbeat with enhanced VM information
-/// </summary>
-public record NodeHeartbeat(
-    string NodeId,
-    NodeMetrics Metrics,
-    int SchedulingConfigVersion,
-    List<HeartbeatVmInfo>? ActiveVms = null,
-    CgnatNodeInfo? CgnatInfo = null,
-    /// <summary>
-    /// Combined hash of all system VM binaries/templates on this node.
-    /// Null for agents that pre-date this feature — obligations with null
-    /// CurrentBinaryVersion are never redeployed on that basis.
-    /// </summary>
-    Dictionary<string, string>? SystemVmBinaryVersions = null,
-    /// <summary>
-    /// Versions of obligation identity state currently stored in the node
-    /// agent's SQLite database, keyed by canonical role name.
-    /// Allows the orchestrator to detect stale state and signal a pull.
-    /// Absent or zero values mean the node has no state for that role.
-    /// </summary>
-    Dictionary<string, int>? ObligationStateVersions = null,
-    /// <summary>
-    /// Coarse health snapshot for each system VM role this node holds an
-    /// obligation for, keyed by canonical role name ("relay" | "dht" |
-    /// "blockstore"). Values are <see cref="DeCloud.NodeAgent.Core.Models.Reality"/>
-    /// names: "None", "Healthy", or "Unhealthy".
-    ///
-    /// Computed on the node by the matrix's reality projection
-    /// (SYSTEM_VM_DESIGN.md §5.5). Wire-format only in P4 — the
-    /// orchestrator deserialises but does not consume this field. P6
-    /// applies it to <see cref="SystemVmObligation.Status"/> as part of
-    /// the cutover from orchestrator-driven to node-authoritative
-    /// reconciliation. Until then, the existing Status maintained by
-    /// SystemVmReconciliationService remains the source of truth.
-    ///
-    /// Null on agents that pre-date P4. Field is ignored when null.
-    /// </summary>
-    Dictionary<string, string>? ObligationHealth = null,
-    /// <summary>
-    /// Revisions of system templates currently stored in the node agent's
-    /// SQLite system_template table, keyed by canonical role name.
-    /// Parallel to ObligationStateVersions for templates.
-    /// Null on agents that pre-date P9.
-    /// </summary>
-    Dictionary<string, int>? SystemTemplateVersions = null,
-    string? AgentVersion = null,
-    /// <summary>
-    /// SHA-256 hash of the node's local settings (wallet, country, region, zone).
-    /// Compared against the orchestrator's stored registration state to detect
-    /// local edits that weren't committed via re-register.
-    /// Null for agents that pre-date this feature — no drift check performed.
-    /// </summary>
-    string? SettingsHash = null
-);
-
-/// <summary>
-/// VM information included in heartbeat
-/// </summary>
-public class HeartbeatVmInfo
-{
-    public string VmId { get; set; } = string.Empty;
-    public string? Name { get; set; }
-    public string State { get; set; } = string.Empty;  // "Running", "Stopped", etc.
-    /// <summary>VM type — used by the orchestrator to adopt autonomously-created system VMs.</summary>
-    public string? VmType { get; set; }
-    public string OwnerId { get; set; } = string.Empty;  // Owner ID
-    /// <summary>
-    /// Binary version reported by the VM's /diagnostics endpoint.
-    /// Non-null only for running Dht and BlockStore VMs.
-    /// </summary>
-    public string? BinaryVersion { get; set; }
-    public bool IsIpAssigned { get; set; } = false;
-    public string? IpAddress { get; set; }
-    /// <summary>
-    /// MAC address assigned to VM's network interface
-    /// </summary>
-    public string? MacAddress { get; set; }
-    public int? SshPort { get; set; } = 2222;
-    // Complete recovery fields
-    /// <summary>
-    /// VNC port for console access (e.g., "5900")
-    /// </summary>
-    public int? VncPort { get; set; }
-
-    // Resource specifications
-    public int VirtualCpuCores { get; set; }
-    public int QualityTier { get; set; }
-    public int ComputePointCost { get; set; }
-    public long? MemoryBytes { get; set; }
-    public long? DiskBytes { get; set; }
-    /// <summary>GPU access mode: 0=None, 1=Passthrough, 2=Proxied.</summary>
-    public int GpuMode { get; set; }
-    /// <summary>VRAM quota for Proxied VMs. Null = no quota / not a GPU VM.</summary>
-    public long? GpuVramBytes { get; set; }
-    public string? ImageId { get; set; }  // for recovery
-    public DateTime? StartedAt { get; set; }
-
-    /// <summary>
-    /// Per-service readiness statuses reported by node agent's VmReadinessMonitor.
-    /// Updated via qemu-guest-agent checks on the node.
-    /// </summary>
-    public List<HeartbeatServiceInfo>? Services { get; set; }
-}
-
-/// <summary>
-/// Per-service readiness status reported in heartbeat from node agent.
-/// Lightweight DTO — the orchestrator maps this to VmServiceStatus on the VM.
-/// </summary>
-public class HeartbeatServiceInfo
-{
-    public string Name { get; set; } = string.Empty;
-    public int? Port { get; set; }
-    public string? Protocol { get; set; }
-    public string Status { get; set; } = "Pending";  // Pending, Checking, Ready, TimedOut, Failed
-    /// <summary>
-    /// Human-readable explanation from node agent.
-    /// E.g., "cloud-init error: apt-get install failed" or "cloud-init did not finish within 300s"
-    /// </summary>
-    public string? StatusMessage { get; set; }
-    public DateTime? ReadyAt { get; set; }
-}
-
-public record NodeHeartbeatResponse(
-    bool Acknowledged,
-    List<NodeCommand>? PendingCommands,
-    AgentSchedulingConfig? SchedulingConfig,
-    /// <summary>
-    /// Relay configuration if node is behind CGNAT
-    /// </summary>
-    CgnatNodeInfo? CgnatInfo,
-    /// <summary>
-    /// VM IDs the node is running that it should NOT be running.
-    /// NodeAgent must destroy these immediately — they belong to a
-    /// different node, were deleted, or are from a previous registration.
-    /// </summary>
-    List<string>? InvalidVmIds = null,
-    /// <summary>
-    /// Role names ("relay" | "dht" | "blockstore") where the orchestrator
-    /// has a higher StateVersion than the node reported in the heartbeat.
-    /// Node agent must call GET /api/nodes/me/obligations/{role}/state for
-    /// each listed role and persist the result via SaveStateAsync.
-    /// Null or empty = all states current.
-    /// </summary>
-    List<string>? ObligationStatesPending = null,
-    /// <summary>
-    /// Role names ("relay" | "dht" | "blockstore") where the orchestrator has
-    /// a higher template revision than the node reported in the heartbeat.
-    /// Node agent must call GET /api/nodes/me/system-templates/{role} for each
-    /// listed role and persist the result via SaveSystemTemplateAsync.
-    /// Null or empty = all templates current.
-    /// </summary>
-    List<string>? SystemTemplatesPending = null,
-    /// <summary>
-    /// Non-null when the node's reported settings hash doesn't match
-    /// the orchestrator's stored registration hash. Contains a
-    /// diagnostic message identifying the mismatch.
-    /// </summary>
-    SettingsDriftInfo? SettingsDrift = null,
-    /// <summary>
-    /// Operator-controlled scheduling readiness, mirrored from Node.SchedulingReady.
-    /// Allows the agent to sync state without a separate GET /api/nodes/{id} call.
-    /// </summary>
-    bool SchedulingReady = false
-);
-
-/// <summary>
-/// Drift detection result included in heartbeat response when
-/// the node's local settings don't match registered state.
-/// </summary>
-public class SettingsDriftInfo
-{
-    public string Message { get; set; } = string.Empty;
-    public string ExpectedHash { get; set; } = string.Empty;
-    public string ReportedHash { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Included in the registration response when a locality change
-/// makes existing VMs non-compliant with their placement constraints.
-/// </summary>
-public class NonCompliantVmInfo
-{
-    public string VmId { get; set; } = string.Empty;
-    public string VmName { get; set; } = string.Empty;
-    public string Reason { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Command sent from orchestrator to node agent
-/// </summary>
-public record NodeCommand(
-    string CommandId,
-    NodeCommandType Type,
-    string Payload,
-    bool RequiresAck = true,
-    string? TargetResourceId = null
-)
-{
-    /// <summary>
-    /// When this command was queued
-    /// </summary>
-    public DateTime QueuedAt { get; init; } = DateTime.UtcNow;
-
-    /// <summary>
-    /// Optional expiration time for automatic timeout
-    /// </summary>
-    public DateTime? ExpiresAt { get; init; }
-
-    /// <summary>
-    /// Check if this command has expired
-    /// </summary>
-    public bool IsExpired => ExpiresAt.HasValue && DateTime.UtcNow > ExpiresAt.Value;
-
-    /// <summary>
-    /// Get age of this command
-    /// </summary>
-    public TimeSpan Age => DateTime.UtcNow - QueuedAt;
 }
 
 /// <summary>
@@ -915,29 +609,6 @@ public record PendingCommandDto(
     bool IsExpired,
     DateTime? ExpiresAt
 );
-
-public enum NodeCommandType
-{
-    CreateVm,
-    StopVm,
-    StartVm,
-    DeleteVm,
-    MigrateVm,
-    UpdateAgent,
-    CollectDiagnostics,
-    AllocatePort,      // Smart Port Allocation: Allocate public port for VM
-    RemovePort,        // Smart Port Allocation: Remove port mapping
-    ReseedVm,          // Replication recovery: delete lazysync.json to force full reseed
-}
-
-public record CommandAcknowledgment(
-    string CommandId,
-    bool Success,
-    string? ErrorMessage,
-    DateTime CompletedAt,
-    string? Data = null  // JSON-encoded result data (e.g., allocated port info)
-);
-
 
 /// <summary>
 /// Registration record for tracking active commands
@@ -1024,43 +695,6 @@ public class RelayNodeInfo
     public DateTime LastHealthCheck { get; set; } = DateTime.UtcNow;
 }
 
-/// <summary>
-/// Configuration for nodes behind CGNAT
-/// </summary>
-public class CgnatNodeInfo
-{
-    /// <summary>
-    /// ID of the relay node serving this CGNAT node
-    /// </summary>
-    public string AssignedRelayNodeId { get; set; } = string.Empty;
-
-    /// <summary>
-    /// WireGuard tunnel IP assigned to this node
-    /// </summary>
-    public string TunnelIp { get; set; } = string.Empty;
-
-    /// <summary>
-    /// WireGuard configuration for connecting to relay
-    /// </summary>
-    public string? WireGuardConfig { get; set; }
-
-    /// <summary>
-    /// Public endpoint URL for accessing VMs on this node
-    /// Format: https://relay-{region}-{id}.decloud.io
-    /// </summary>
-    public string PublicEndpoint { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Connection status to relay
-    /// </summary>
-    public TunnelStatus TunnelStatus { get; set; } = TunnelStatus.Disconnected;
-
-    /// <summary>
-    /// Last successful handshake with relay
-    /// </summary>
-    public DateTime? LastHandshake { get; set; }
-}
-
 public enum RelayStatus
 {
     Initializing,
@@ -1068,14 +702,6 @@ public enum RelayStatus
     Degraded,
     Offline,
     MaintenanceMode
-}
-
-public enum TunnelStatus
-{
-    Connecting,
-    Connected,
-    Disconnected,
-    Error
 }
 
 /// <summary>

@@ -1,3 +1,5 @@
+using DeCloud.Shared.Contracts;
+using DeCloud.Shared.Enums;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Orchestrator.Models;

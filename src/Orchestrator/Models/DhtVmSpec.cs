@@ -1,3 +1,5 @@
+using DeCloud.Shared.Enums;
+
 namespace Orchestrator.Models;
 
 /// <summary>

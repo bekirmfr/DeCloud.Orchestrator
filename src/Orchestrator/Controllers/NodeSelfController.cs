@@ -1,4 +1,7 @@
 ﻿using DeCloud.Orchestrator.Interfaces.CloudInit;
+using DeCloud.Shared.Contracts;
+using DeCloud.Shared.Dtos;
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using DeCloud.Shared.Utils;
 using Microsoft.AspNetCore.Authorization;
@@ -449,10 +452,10 @@ public class NodeSelfController : ControllerBase
                     .Where(d => d is not null)
                     .Cast<string>()
                     .ToList();
-                return new ObligationDescriptorPayload { Role = roleName, Deps = deps };
+                return new ObligationDescriptorDto { Role = roleName, Deps = deps };
             })
             .Where(o => o is not null)
-            .Cast<ObligationDescriptorPayload>()
+            .Cast<ObligationDescriptorDto>()
             .ToList();
 
         return Ok(new EvaluateNodeResponse(

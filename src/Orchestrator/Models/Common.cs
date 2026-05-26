@@ -1,34 +1,9 @@
+// ApiResponse<T> and ApiError moved to DeCloud.Shared.Contracts.
+// All existing ApiResponse<T>.Ok(...) / ApiResponse<T>.Fail(...) callsites
+// continue to compile unchanged — the static factory methods are identical.
+global using DeCloud.Shared.Contracts;
+
 namespace Orchestrator.Models;
-
-/// <summary>
-/// Standard API response wrapper
-/// </summary>
-public class ApiResponse<T>
-{
-    public bool Success { get; set; }
-    public T? Data { get; set; }
-    public ApiError? Error { get; set; }
-    public Dictionary<string, object>? Metadata { get; set; }
-
-    public static ApiResponse<T> Ok(T data, Dictionary<string, object>? metadata = null) => new()
-    {
-        Success = true,
-        Data = data,
-        Metadata = metadata
-    };
-
-    public static ApiResponse<T> Fail(string code, string message, Dictionary<string, object>? details = null) => new()
-    {
-        Success = false,
-        Error = new ApiError(code, message, details)
-    };
-}
-
-public record ApiError(
-    string Code,
-    string Message,
-    Dictionary<string, object>? Details = null
-);
 
 /// <summary>
 /// Pagination wrapper

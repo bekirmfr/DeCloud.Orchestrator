@@ -1,4 +1,5 @@
-﻿using MongoDB.Bson.Serialization.Attributes;
+﻿using DeCloud.Shared.Enums;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Options;
 using Orchestrator.Models;
 using Orchestrator.Services.VmScheduling;

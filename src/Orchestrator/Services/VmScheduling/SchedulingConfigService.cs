@@ -1,4 +1,5 @@
-﻿using MongoDB.Driver;
+﻿using DeCloud.Shared.Enums;
+using MongoDB.Driver;
 using Orchestrator.Models;
 
 namespace Orchestrator.Services.VmScheduling;

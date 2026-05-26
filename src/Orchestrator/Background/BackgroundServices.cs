@@ -3,6 +3,7 @@ using Orchestrator.Models;
 using System.Text.Json;
 using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Interfaces;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Services;
 
