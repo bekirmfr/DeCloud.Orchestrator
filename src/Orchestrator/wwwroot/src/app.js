@@ -168,10 +168,6 @@ let ethersSigner = null;
 let connectedAddress = null;
 let appKitModal = null;
 
-// Constraint vocabulary cache (fetched once from /api/vms/constraint-vocabulary)
-// Still used by the legacy attachConstraintBuilder during migration.
-let constraintVocabulary = { targets: [], operators: [] };
-
 // Handles from constraint-builder.js module — one per mounted instance.
 // _cbCreateHandle: create-VM modal
 // _cbUpdateHandle: update-constraints modal (Error-state VM)
@@ -194,9 +190,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!sessionRestored) {
         showLogin();
     }
-
-    // Load constraint vocabulary for builder dropdowns
-    loadConstraintVocabulary();
 
     updateTierInfo();
     updateBandwidthInfo();
@@ -1754,177 +1747,6 @@ function updateEstimatedCost() {
 // ============================================
 // CONSTRAINT BUILDER
 // ============================================
-
-/**
- * Fetch constraint vocabulary from the backend once and cache it.
- * Called on DOMContentLoaded so the dropdowns are ready before any modal opens.
- */
-async function loadConstraintVocabulary() {
-    try {
-        const res = await api('/api/vms/constraint-vocabulary');
-        const data = await res.json();
-        if (data?.targets && data?.operators) {
-            constraintVocabulary = data;
-            console.log('[Constraints] Vocabulary loaded:', data.targets.length, 'targets,', data.operators.length, 'operators');
-        }
-    } catch (e) {
-        console.warn('[Constraints] Failed to load vocabulary:', e);
-    }
-}
-
-/**
- * Inject the row-based constraint builder into containerEl.
- * Call each time the deploy modal opens — idempotent, clears previous rows.
- * @param {HTMLElement} containerEl
- * @param {Array} [initial] — pre-populate rows (e.g. from existing VM spec)
- */
-function attachConstraintBuilder(containerEl, initial = []) {
-    containerEl.innerHTML = '';
-
-    const section = document.createElement('div');
-    section.className = 'cb-section';
-    section.innerHTML = `
-        <button type="button" class="cb-toggle" aria-expanded="false">
-            <span class="cb-toggle-label"><span class="cb-icon">⚙</span> Scheduling Constraints</span>
-            <span class="cb-toggle-count" style="display:none"></span>
-            <span class="cb-chevron">›</span>
-        </button>
-        <div class="cb-body" style="display:none">
-            <p class="cb-hint">Each constraint is a hard filter — the VM only lands on nodes where ALL constraints pass. Leave empty to accept any eligible node.</p>
-            <div class="cb-rows"></div>
-            <div class="cb-footer">
-                <button type="button" class="cb-add-btn">+ Add Constraint</button>
-            </div>
-        </div>
-    `;
-    containerEl.appendChild(section);
-
-    const toggle = section.querySelector('.cb-toggle');
-    const body = section.querySelector('.cb-body');
-    const chevron = section.querySelector('.cb-chevron');
-    const rows = section.querySelector('.cb-rows');
-    const addBtn = section.querySelector('.cb-add-btn');
-    const countEl = section.querySelector('.cb-toggle-count');
-
-    toggle.addEventListener('click', () => {
-        const open = body.style.display !== 'none';
-        body.style.display = open ? 'none' : 'flex';
-        toggle.setAttribute('aria-expanded', String(!open));
-        chevron.textContent = open ? '›' : '‹';
-    });
-
-    addBtn.addEventListener('click', () => {
-        rows.appendChild(buildConstraintRow(rows, countEl));
-        updateConstraintCount(rows, countEl);
-    });
-
-    // Pre-populate
-    initial.forEach(c => {
-        const row = buildConstraintRow(rows, countEl);
-        rows.appendChild(row);
-        fillConstraintRow(row, c);
-        updateConstraintCount(rows, countEl);
-    });
-
-    if (initial.length > 0) {
-        body.style.display = 'flex';
-        toggle.setAttribute('aria-expanded', 'true');
-        chevron.textContent = '‹';
-    }
-}
-
-function buildConstraintRow(rowContainer, countEl) {
-    const row = document.createElement('div');
-    row.className = 'cb-row';
-
-    const targetOpts = constraintVocabulary.targets
-        .map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-    const opOpts = constraintVocabulary.operators
-        .map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
-
-    row.innerHTML = `
-        <select class="cb-target">
-            <option value="">— target —</option>${targetOpts}
-        </select>
-        <select class="cb-operator">
-            <option value="">— op —</option>${opOpts}
-        </select>
-        <input type="text" class="cb-value" placeholder="value  (e.g. DE  or  DE,FR  or  99.5)" autocomplete="off">
-        <button type="button" class="cb-remove" title="Remove constraint">✕</button>
-    `;
-    row.querySelector('.cb-remove').addEventListener('click', () => {
-        row.remove();
-        updateConstraintCount(rowContainer, countEl);
-    });
-    return row;
-}
-
-function fillConstraintRow(row, c) {
-    const tgt = row.querySelector('.cb-target');
-    const op = row.querySelector('.cb-operator');
-    const val = row.querySelector('.cb-value');
-    if (tgt) tgt.value = c.target ?? '';
-    if (op) op.value = c.operator ?? '';
-    if (val) {
-        const v = c.value;
-        val.value = Array.isArray(v) ? v.join(', ') : String(v ?? '');
-    }
-}
-
-function updateConstraintCount(rows, countEl) {
-    const n = rows.querySelectorAll('.cb-row').length;
-    countEl.style.display = n > 0 ? 'inline' : 'none';
-    countEl.textContent = n;
-}
-
-/**
- * Read all constraint rows from the create-VM modal.
- * Returns the constraint array, or null if any row has an incomplete target/operator.
- */
-function readConstraints() {
-    const rows = document.querySelectorAll('#constraint-builder-container .cb-row');
-    const result = [];
-    let valid = true;
-
-    rows.forEach(row => {
-        const target = row.querySelector('.cb-target')?.value.trim() ?? '';
-        const operator = row.querySelector('.cb-operator')?.value.trim() ?? '';
-        const raw = row.querySelector('.cb-value')?.value.trim() ?? '';
-
-        row.classList.remove('cb-row--error');
-        row.querySelector('.cb-row-tip')?.remove();
-
-        if (!target || !operator) {
-            row.classList.add('cb-row--error');
-            const tip = document.createElement('span');
-            tip.className = 'cb-row-tip';
-            tip.textContent = 'Select a target and operator';
-            row.appendChild(tip);
-            valid = false;
-            return;
-        }
-        result.push({ target, operator, value: parseConstraintValue(raw) });
-    });
-
-    return valid ? result : null;
-}
-
-function parseConstraintValue(raw) {
-    if (raw === '') return null;
-    if (raw === 'true') return true;
-    if (raw === 'false') return false;
-    if (raw.startsWith('[')) { try { return JSON.parse(raw); } catch (_e) { /* not valid JSON — fall through */ } }
-    if (raw.includes(',')) {
-        return raw.split(',').map(s => {
-            const t = s.trim();
-            const n = Number(t);
-            return isNaN(n) ? t : n;
-        });
-    }
-    const n = Number(raw);
-    if (!isNaN(n) && raw !== '') return n;
-    return raw;
-}
 
 /**
  * Open the Update Scheduling Constraints modal for an Error-state VM.
