@@ -8,6 +8,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{8A
 	ProjectSection(SolutionItems) = preProject
 		src\Orchestrator\wwwroot\.env.example = src\Orchestrator\wwwroot\.env.example
 		src\Orchestrator\wwwroot\config\constraint-presets.json = src\Orchestrator\wwwroot\config\constraint-presets.json
+		src\Orchestrator\wwwroot\public\config\constraint-presets.json = src\Orchestrator\wwwroot\public\config\constraint-presets.json
 		src\Orchestrator\wwwroot\eslint.config.js = src\Orchestrator\wwwroot\eslint.config.js
 		src\Orchestrator\wwwroot\eslintignore = src\Orchestrator\wwwroot\eslintignore
 		src\Orchestrator\wwwroot\file-browser.html = src\Orchestrator\wwwroot\file-browser.html

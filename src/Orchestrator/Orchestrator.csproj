@@ -62,14 +62,28 @@
 		<BuildFrontend Condition="'$(Configuration)' == 'Debug'">false</BuildFrontend>
 	</PropertyGroup>
 
+	<!-- Frontend source files tracked for incremental build.
+	     Defined before the target so MSBuild can evaluate them at target-input time.
+	     Deliberately does NOT include dist/** (circular) or node_modules/**. -->
+	<ItemGroup>
+		<FrontendSource Include="$(FrontendDir)/src/**/*.js" />
+		<FrontendSource Include="$(FrontendDir)/src/**/*.css" />
+		<FrontendSource Include="$(FrontendDir)/public/**" />
+		<FrontendSource Include="$(FrontendDir)/index.html" />
+		<FrontendSource Include="$(FrontendDir)/styles.css" />
+	</ItemGroup>
+
 	<!-- ============================================== -->
 	<!-- TARGET: Install Frontend Dependencies          -->
 	<!-- ============================================== -->
-	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' == 'true'">
+	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' == 'true'"
+	        Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.js;@(FrontendSource)"
+	        Outputs="$(FrontendDir)/dist/index.html">
 		<Message Importance="high" Text="Building frontend..." />
-		<Exec Command="npm install" WorkingDirectory="$(FrontendDir)" />
+		<Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
 		<Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
-		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')" Text="❌ Frontend build failed: dist/index.html not found. Check Vite build errors above." />
+		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')"
+			   Text="❌ Frontend build failed: dist/index.html not found." />
 		<Message Importance="high" Text="✓ Frontend built successfully: wwwroot/dist/" />
 	</Target>
 
@@ -88,7 +102,10 @@
 		<Compile Remove="wwwroot\**" />
 		<Content Remove="$(FrontendDir)/node_modules/**" />
 		<Content Remove="$(FrontendDir)/src/**" />
-		<Content Remove="$(FrontendDir)/*.json" />
+		<Content Remove="$(FrontendDir)/public/**" />
+		<Content Remove="$(FrontendDir)/package.json" />
+		<Content Remove="$(FrontendDir)/package-lock.json" />
+		<Content Remove="$(FrontendDir)/vite.config.js" />
 		<Content Remove="$(FrontendDir)/*.md" />
 	</ItemGroup>
 	<ItemGroup>
