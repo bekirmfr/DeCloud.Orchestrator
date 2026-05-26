@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Orchestrator.Persistence;
+using Microsoft.Extensions.Options;
 using Orchestrator.Models;
+using Orchestrator.Models.Payment;
+using Orchestrator.Persistence;
+using Orchestrator.Services.Payment;
 
 namespace Orchestrator.Controllers;
 
@@ -10,11 +13,16 @@ namespace Orchestrator.Controllers;
 public class SystemController : ControllerBase
 {
     private readonly DataStore _dataStore;
+    private readonly PricingConfig _pricingConfig;
     private readonly ILogger<SystemController> _logger;
 
-    public SystemController(DataStore dataStore, ILogger<SystemController> logger)
+    public SystemController(
+        DataStore dataStore,
+        IOptions<PricingConfig> pricingConfig,
+        ILogger<SystemController> logger)
     {
         _dataStore = dataStore;
+        _pricingConfig = pricingConfig.Value;
         _logger = logger;
     }
 
@@ -96,31 +104,48 @@ public class SystemController : ControllerBase
     }
 
     /// <summary>
-    /// Calculate price for custom configuration
+    /// Calculate estimated price for a VM configuration at platform default rates.
+    /// Reflects the rates a tenant would see on a node with no operator-set
+    /// pricing. Real billing applies the host node's effective rates, which may
+    /// be higher (but never below the platform floor).
+    ///
+    /// The formula mirrors <c>VmService.CalculateHourlyRate</c> but excludes
+    /// the quality-tier multiplier, bandwidth tier surcharge, and storage
+    /// replication cost — those depend on data not present in a stand-alone
+    /// VmSpec estimate.
     /// </summary>
     [HttpPost("pricing/calculate")]
     [AllowAnonymous]
     public ActionResult<ApiResponse<PriceCalculation>> CalculatePrice([FromBody] VmSpec spec)
     {
-        // Simple pricing model
-        decimal cpuRate = 0.005m * spec.VirtualCpuCores;
-        decimal memoryRate = 0.002m * (spec.MemoryBytes / (1024m * 1024m * 1024m)); // per GB
-        decimal storageRate = 0.0001m * (spec.DiskBytes / (1024m * 1024m * 1024m)); // per GB
-        decimal gpuRate = spec.RequiresGpu ? 0.10m : 0;
+        const decimal BYTES_PER_GB = 1024m * 1024m * 1024m;
 
-        var hourlyTotal = cpuRate + memoryRate + storageRate + gpuRate;
-        var dailyTotal = hourlyTotal * 24;
-        var monthlyTotal = dailyTotal * 30;
+        // Resolve platform default effective rates. Passing null for the operator
+        // pricing means: "use platform defaults for every field, clamped to floor."
+        var rates = PricingResolver.Resolve(raw: null, cfg: _pricingConfig);
+
+        var memoryGb = spec.MemoryBytes / BYTES_PER_GB;
+        var diskGb = spec.DiskBytes / BYTES_PER_GB;
+        var gpuVramGb = (spec.GpuVramBytes ?? 0) / BYTES_PER_GB;
+
+        var cpuCost = spec.VirtualCpuCores * rates.CpuPerHour;
+        var memoryCost = memoryGb * rates.MemoryPerGbPerHour;
+        var storageCost = diskGb * rates.StoragePerGbPerHour;
+        var gpuCost = gpuVramGb * rates.GpuVramPerGbPerHour;
+
+        var hourlyTotal = cpuCost + memoryCost + storageCost + gpuCost;
+        var dailyTotal = hourlyTotal * 24m;
+        var monthlyTotal = dailyTotal * 30m;
 
         var calculation = new PriceCalculation(
-            cpuRate,
-            memoryRate,
-            storageRate,
-            gpuRate,
+            cpuCost,
+            memoryCost,
+            storageCost,
+            gpuCost,
             hourlyTotal,
             dailyTotal,
             monthlyTotal,
-            "USDC"
+            rates.Currency
         );
 
         return Ok(ApiResponse<PriceCalculation>.Ok(calculation));
