@@ -24,8 +24,7 @@ namespace Orchestrator.Services.Tenant;
 ///     exercises the merge logic in production at startup.</item>
 ///   <item>Upsert a <see cref="VmTemplate"/> with the composed content,
 ///     declared <c>Variables</c> for every <c>__VARNAME__</c> placeholder,
-///     and three artifacts (<c>decloud-agent-amd64</c>,
-///     <c>decloud-agent-arm64</c>, <c>general-api</c>, <c>general-index</c>).
+///     and two inline artifacts (<c>general-api</c>, <c>general-index</c>).
 ///     Revision-aware: skips if stored revision ≥ seeder revision.</item>
 /// </list>
 ///
@@ -51,8 +50,7 @@ public sealed partial class GeneralVmTemplateSeeder
 
     /// <summary>
     /// Git ref (branch, tag, or commit SHA) used to fetch cloud-init YAML and
-    /// base-tenant.yaml from DeCloud.Builds at seed time. Pin this to the same
-    /// logical version as <see cref="BinaryBaseUrl"/>. Update when the YAML
+    /// base-tenant.yaml from DeCloud.Builds at seed time. Update when the YAML
     /// changes and bump <see cref="GeneralTemplateRevision"/>.
     /// </summary>
     private const string CloudInitRef = "main";
@@ -85,7 +83,7 @@ public sealed partial class GeneralVmTemplateSeeder
     //   bash compute-artifact-constants.sh
     //   cp GeneralVmTemplateSeeder.Artifacts.cs \
     //      ../Orchestrator/src/Orchestrator/Services/TemplateConstants/
-    //   Bump GeneralTemplateRevision below.
+    //   Bump GeneralTemplateRevision above.
 
     // ── Infrastructure ───────────────────────────────────────────────────
 
@@ -136,7 +134,7 @@ public sealed partial class GeneralVmTemplateSeeder
             Slug = "platform-general",
             Name = "General Purpose VM",
             Description =
-                "General-purpose tenant VM with the DeCloud agent pre-installed. " +
+                "General-purpose tenant VM. " +
                 "Suitable for SSH access, custom workloads, and general-purpose computing.",
             Version = "1.0.0",
             Revision = GeneralTemplateRevision,

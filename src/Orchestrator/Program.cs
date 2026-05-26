@@ -146,8 +146,8 @@ builder.Services.AddHttpClient("github-releases");
 
 // Tenant VM template seeder — composes base-tenant.yaml + tenant-vms/general/
 // cloud-init.yaml from DeCloud.Builds, declares Variables, upserts platform-general.
-builder.Services.AddSingleton<GeneralVmTemplateSeeder>();      // ← new
-builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()      // ← new
+builder.Services.AddSingleton<GeneralVmTemplateSeeder>();
+builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 // Cloud-init rendering pipeline
@@ -188,14 +188,7 @@ builder.Services.AddHttpClient("SubdomainProxy")
         AllowAutoRedirect = false,
         UseCookies = false
     });
-builder.Services.AddSingleton<INetworkLatencyTracker, NetworkLatencyTracker>();
 
-// Configure HTTP client for latency tracker
-builder.Services.AddHttpClient("latency-tracker")
-    .ConfigureHttpClient(client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(5);
-    });
 builder.Services.AddPaymentServices(builder.Configuration);
 
 // Configure JSON serialization for all HttpClient JSON extension methods

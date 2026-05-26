@@ -199,7 +199,6 @@ public class VmService : IVmService
             {
                 Hostname = canonicalName
             },
-            NetworkMetrics = VmNetworkMetrics.CreateDefault(),
         };
 
         // ════════════════════════════════════════════════════════════════════════
