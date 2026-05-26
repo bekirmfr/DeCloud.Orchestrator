@@ -631,6 +631,65 @@ public class TemplateService : ITemplateService
     };
 
     /// <summary>
+    /// Merge constraints from three sources with explicit precedence:
+    ///   mandatory  (template.MinimumSpec.Constraints)   — always applied; wins on conflict.
+    ///   user       (customSpec.Constraints)              — applied unless conflicts with mandatory.
+    ///   recommended (template.RecommendedSpec.Constraints) — fills in whatever mandatory
+    ///                                                       and user did not specify.
+    ///
+    /// This implements the Path D merge policy documented in SCHEDULING.md §2.
+    /// </summary>
+    private static List<Constraint>? MergeConstraints(
+        List<Constraint>? mandatory,
+        List<Constraint>? recommended,
+        List<Constraint>? user)
+    {
+        // Fast path: no constraints from any source.
+        if ((mandatory is null || mandatory.Count == 0) &&
+            (recommended is null || recommended.Count == 0) &&
+            (user is null || user.Count == 0))
+            return null;
+
+        var result = new List<Constraint>();
+
+        // 1. Mandatory constraints always apply. They win on any target conflict.
+        if (mandatory is { Count: > 0 })
+            result.AddRange(mandatory);
+
+        var coveredTargets = result
+            .Select(c => c.Target)
+            .ToHashSet(StringComparer.Ordinal);
+
+        // 2. User constraints apply where they don't conflict with mandatory.
+        if (user is { Count: > 0 })
+        {
+            foreach (var c in user)
+            {
+                if (!coveredTargets.Contains(c.Target))
+                {
+                    result.Add(c);
+                    coveredTargets.Add(c.Target);
+                }
+            }
+        }
+
+        // 3. Recommended constraints fill in whatever neither mandatory nor user specified.
+        if (recommended is { Count: > 0 })
+        {
+            foreach (var c in recommended)
+            {
+                if (!coveredTargets.Contains(c.Target))
+                {
+                    result.Add(c);
+                    coveredTargets.Add(c.Target);
+                }
+            }
+        }
+
+        return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>
     /// Verify all artifacts on a template at publish time.
     ///
     /// For HTTPS artifacts: fetches the URL and verifies SHA256.

@@ -16,8 +16,9 @@ public interface IVmSchedulingService
 {
     /// <summary>
     /// Select the best eligible node for a VM.
-    /// All scheduling requirements must be in <c>spec.Constraints</c>
-    /// before calling — see <c>VmService.LowerLegacyFieldsToConstraints</c>.
+    /// All scheduling requirements must be in <c>spec.Constraints</c>.
+    /// See <c>docs/SCHEDULING.md</c> §2 for entry paths, including the
+    /// template marketplace merge policy (Path D).
     /// </summary>
     Task<Node?> SelectBestNodeForVmAsync(
         VmSpec spec,

@@ -187,10 +187,36 @@ public class ConstraintEvaluator : IConstraintEvaluator
             ConstraintTargets.Node.ReputationScore, ConstraintValueType.Numeric,
             (n, _) => (object?)NodeReputation.Compute(n));
 
-        // ─── Operator metadata ──────────────────────────────────
+        // ─── Operator metadata ──────────────────────────────────────────────
         r[ConstraintTargets.Node.Tags] = new TargetDescriptor(
             ConstraintTargets.Node.Tags, ConstraintValueType.StringList,
             (n, _) => (object?)(n.Tags ?? new List<string>()));
+
+        // ─── Hardware capabilities ──────────────────────────────────────────
+        // Static node attributes — reflect hardware spec, not live utilisation.
+        // These power the preset library: "GPU required", "NVMe storage", etc.
+
+        r[ConstraintTargets.Node.Hardware.HasGpu] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.HasGpu, ConstraintValueType.Boolean,
+            (n, _) => (object?)n.HardwareInventory.SupportsGpu);
+
+        r[ConstraintTargets.Node.Hardware.HasNvme] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.HasNvme, ConstraintValueType.Boolean,
+            (n, _) => (object?)n.HardwareInventory.Storage
+                .Any(s => s.Type == StorageType.NVMe));
+
+        r[ConstraintTargets.Node.Hardware.HighBandwidth] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.HighBandwidth, ConstraintValueType.Boolean,
+            (n, _) => (object?)(
+                (n.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000));
+
+        r[ConstraintTargets.Node.Hardware.CpuCores] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.CpuCores, ConstraintValueType.Numeric,
+            (n, _) => (object?)(double)n.HardwareInventory.Cpu.PhysicalCores);
+
+        r[ConstraintTargets.Node.Hardware.GpuVramBytes] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.GpuVramBytes, ConstraintValueType.Numeric,
+            (n, _) => (object?)(double)n.HardwareInventory.Gpus.Sum(g => g.MemoryBytes));
 
         return r;
     }

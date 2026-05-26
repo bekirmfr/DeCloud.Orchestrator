@@ -595,6 +595,25 @@ export async function deployFromTemplate() {
     }
 
     try {
+        // Build scheduling constraints from region/zone selections.
+        // VmSpec has no Region or Zone fields — locality requirements are
+        // expressed as Constraint objects (SCHEDULING.md §7).
+        const deployConstraints = [];
+        if (region) {
+            deployConstraints.push({
+                target: 'node.locality.region',
+                operator: 'eq',
+                value: region
+            });
+        }
+        if (zone && zone !== 'default') {
+            deployConstraints.push({
+                target: 'node.locality.zone',
+                operator: 'eq',
+                value: zone
+            });
+        }
+
         const response = await api(`/api/marketplace/templates/${templateId}/deploy`, {
             method: 'POST',
             body: JSON.stringify({
@@ -611,8 +630,7 @@ export async function deployFromTemplate() {
                     qualityTier: qualityTier,
                     bandwidthTier: bandwidthTier,
                     replicationFactor: replicationFactor,
-                    region: region,
-                    zone: zone
+                    constraints: deployConstraints.length > 0 ? deployConstraints : null
                 }
             })
         });

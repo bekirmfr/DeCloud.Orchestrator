@@ -70,6 +70,51 @@ public static class ConstraintTargets
         // ── Hardware capability ───────────────────────────────────────────
 
         /// <summary>
+        /// Extended hardware capability predicates, evaluated against static
+        /// node attributes (hardware spec, not live utilisation).
+        /// These are the building blocks for the preset library — "GPU required",
+        /// "NVMe storage", "high bandwidth" — each compiles to one of these
+        /// constraints on the wire.
+        /// </summary>
+        public static class Hardware
+        {
+            /// <summary>
+            /// True when the node has at least one GPU.
+            /// Use <c>eq true</c>. For GPU model specificity, use
+            /// <see cref="GpuModel"/> instead.
+            /// </summary>
+            public const string HasGpu = "node.hardware.hasGpu";
+
+            /// <summary>
+            /// True when at least one storage device is of type NVMe.
+            /// Use <c>eq true</c> for latency-sensitive workloads (databases,
+            /// model checkpoints).
+            /// </summary>
+            public const string HasNvme = "node.hardware.hasNvme";
+
+            /// <summary>
+            /// True when the node's declared network bandwidth exceeds 1 Gbps.
+            /// Use <c>eq true</c> for high-throughput workloads.
+            /// </summary>
+            public const string HighBandwidth = "node.hardware.highBandwidth";
+
+            /// <summary>
+            /// Physical CPU core count on the host.
+            /// Use numeric operators (<c>gte</c>, <c>gt</c>) to require a
+            /// minimum host core count. Distinct from vCPU allocation —
+            /// this is the physical hardware.
+            /// </summary>
+            public const string CpuCores = "node.hardware.cpuCores";
+
+            /// <summary>
+            /// Total GPU VRAM in bytes, summed across all GPUs on the host.
+            /// Use <c>gte</c> to require a minimum VRAM pool for large model
+            /// inference (e.g., <c>gte 25769803776</c> for ≥24 GB).
+            /// </summary>
+            public const string GpuVramBytes = "node.hardware.gpuVramBytes";
+        }
+
+        /// <summary>
         /// CPU architecture string, normalised to "x86_64" or "aarch64".
         /// Use <c>eq</c>. Typically only needed for single-arch templates;
         /// multi-arch templates resolve the correct artifact post-scheduling.
