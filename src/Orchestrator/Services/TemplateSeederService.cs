@@ -1,3 +1,4 @@
+using DeCloud.Orchestrator.Services;
 using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
@@ -16,19 +17,44 @@ public class TemplateSeederService
     private readonly SystemVmTemplateSeeder _systemVmTemplateSeeder;
     private readonly GeneralVmTemplateSeeder _generalVmTemplateSeeder;
     private readonly DataStore _dataStore;
+    private readonly HttpClient _httpClient;
     private readonly ILogger<TemplateSeederService> _logger;
+
+    // ── Source pinning for compose-pipeline tenant templates ────────────
+    // See UNIFIED_CLOUDINIT_PIPELINE.md §11 — marketplace templates that
+    // declare Variables opt into the compose pipeline. Each migrated template
+    // adds a {RoleUrl, TemplateRevision} pair below and a Build*TemplateAsync
+    // method in the compose section at the bottom of this file.
+
+    private const string CloudInitRef = "main";
+
+    private const string CloudInitRawBase =
+        $"https://raw.githubusercontent.com/bekirmfr/DeCloud.Builds/{CloudInitRef}";
+
+    private const string BaseTenantUrl =
+        $"{CloudInitRawBase}/base-templates/base-tenant.yaml";
+
+    // Per-template role layer URLs
+    private const string AiChatbotRoleUrl =
+        $"{CloudInitRawBase}/tenant-vms/ai-chatbot/cloud-init.yaml";
+
+    // Per-template revisions — bump when role layer or seeder metadata changes
+    // in a way that should redeploy new VMs created from this template.
+    private const int AiChatbotTemplateRevision = 1;
 
     public TemplateSeederService(
         ITemplateService templateService,
         SystemVmTemplateSeeder systemVmTemplateSeeder,
         GeneralVmTemplateSeeder generalVmTemplateSeeder,
         DataStore dataStore,
+        HttpClient httpClient,
         ILogger<TemplateSeederService> logger)
     {
         _templateService = templateService;
         _systemVmTemplateSeeder = systemVmTemplateSeeder;
         _generalVmTemplateSeeder = generalVmTemplateSeeder;
         _dataStore = dataStore;
+        _httpClient = httpClient;
         _logger = logger;
     }
 
@@ -48,6 +74,7 @@ public class TemplateSeederService
         await TrySeed("marketplace", () => SeedTemplatesAsync(force));
         await TrySeed("system VM", () => _systemVmTemplateSeeder.SeedAsync());
         await TrySeed("tenant general", () => _generalVmTemplateSeeder.SeedAsync());
+        await TrySeed("compose tenant", () => SeedComposeTenantTemplatesAsync());
 
         _logger.LogInformation("Template seeding completed");
     }
@@ -218,7 +245,12 @@ public class TemplateSeederService
             CreatePrivateBrowserTemplate(),
             CreateShadowsocksProxyTemplate(),
             CreateWebProxyBrowserTemplate(),
-            CreateOllamaOpenWebUiTemplate(),
+            // AI Chatbot (Ollama + Open WebUI) migrated to the compose pipeline.
+            // See SeedComposeTenantTemplatesAsync() and BuildAiChatbotTemplateAsync()
+            // at the bottom of this file. Composing base-tenant.yaml +
+            // tenant-vms/ai-chatbot/cloud-init.yaml inherits SSH password auth,
+            // qemu-guest-agent, sshd drop-in, and chpasswd bootcmd from
+            // base-tenant.yaml instead of bypassing them.
             CreateVllmInferenceServerTemplate(),
             CreatePytorchJupyterTemplate(),
             CreateMinecraftTemplate()
@@ -2085,440 +2117,6 @@ final_message: |
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // AI Chatbot (Ollama + Open WebUI) — Self-hosted ChatGPT alternative
-    // ════════════════════════════════════════════════════════════════════════
-
-    private VmTemplate CreateOllamaOpenWebUiTemplate()
-    {
-        return new VmTemplate
-        {
-            Name = "AI Chatbot (Ollama + Open WebUI)",
-            Slug = "ai-chatbot-ollama",
-            Version = "1.0.0",
-            Category = "ai-ml",
-            Description = "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, Gemma) locally with a beautiful chat interface. No data leaves your server.",
-            LongDescription = @"## Your Own Private ChatGPT
-
-Deploy a fully self-hosted AI chatbot that runs entirely on your VM. No API keys, no data sharing, no censorship — just you and the AI.
-
-## Features
-- **Beautiful Chat UI** — Open WebUI provides a ChatGPT-like experience
-- **Multiple Models** — Switch between Llama 3.2, Mistral, Gemma, CodeLlama, and more
-- **100% Private** — All inference runs locally, no data leaves the VM
-- **GPU Accelerated** — Automatically uses NVIDIA GPU if available, falls back to CPU
-- **Model Management** — Pull, delete, and switch models from the web interface
-- **Conversation History** — All chats stored locally on the VM
-- **File Upload** — Attach documents for RAG-style Q&A
-- **Code Generation** — Syntax-highlighted code with copy button
-- **Markdown Rendering** — Rich text formatting in responses
-
-## Getting Started
-1. Wait for initial setup to complete (~5-10 minutes for model download)
-2. Open `https://${DECLOUD_DOMAIN}` in your browser
-3. Log in with username `user` and your generated password
-4. Select **llama3.2:3b** from the model dropdown
-5. Start chatting!
-
-## Pre-installed Model
-- **Llama 3.2 3B** — Fast, capable general-purpose model (2GB download)
-  - Great for conversation, writing, coding assistance
-  - Runs well on both CPU (slower) and GPU (fast)
-
-## Pull More Models via SSH
-```bash
-# Larger, more capable models (require more RAM)
-ollama pull llama3.2        # 3B default
-ollama pull mistral         # 7B, great all-rounder
-ollama pull gemma2:9b       # 9B, Google's model
-ollama pull codellama       # 7B, optimized for code
-ollama pull llama3.1:70b    # 70B, needs 40GB+ RAM + GPU
-
-# List installed models
-ollama list
-```
-
-## GPU vs CPU Performance
-| Model | GPU (RTX 3060) | CPU (8-core) |
-|-------|---------------|-------------|
-| Llama 3.2 3B | ~30 tokens/sec | ~5-8 tokens/sec |
-| Mistral 7B | ~20 tokens/sec | ~2-4 tokens/sec |
-| Gemma 9B | ~15 tokens/sec | ~1-3 tokens/sec |
-
-## Architecture
-```
-nginx (:8080) → Basic Auth → Open WebUI (:3000) → Ollama (:11434)
-```
-
-## Why DeCloud for AI?
-- **Censorship-Free** — No content filters imposed by cloud providers
-- **Privacy** — Your prompts and data never leave the VM
-- **No API Costs** — Run unlimited queries, no per-token billing
-- **Custom Models** — Load any GGUF model, fine-tuned or community
-- **Always Available** — No rate limits, no waitlists, no downtime",
-
-            AuthorId = "platform",
-            AuthorName = "DeCloud",
-            SourceUrl = "https://github.com/open-webui/open-webui",
-            License = "MIT",
-
-            MinimumSpec = new VmSpec
-            {
-                VirtualCpuCores = 4,
-                MemoryBytes = 8L * 1024 * 1024 * 1024,  // 8 GB
-                DiskBytes = 30L * 1024 * 1024 * 1024,    // 30 GB
-                GpuMode = GpuMode.Proxied
-            },
-
-            RecommendedSpec = new VmSpec
-            {
-                VirtualCpuCores = 8,
-                MemoryBytes = 16L * 1024 * 1024 * 1024,  // 16 GB
-                DiskBytes = 50L * 1024 * 1024 * 1024,    // 50 GB
-                GpuMode = GpuMode.Proxied
-            },
-
-            RequiresGpu = true,
-            DefaultGpuMode = GpuMode.Proxied,
-            GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
-            ContainerImage = "ollama/ollama:latest",
-
-            Tags = new List<string> { "ai", "chatbot", "ollama", "open-webui", "llm", "llama", "mistral", "self-hosted", "private-ai", "chatgpt-alternative" },
-
-            CloudInitTemplate = @"#cloud-config
-
-# AI Chatbot (Ollama + Open WebUI) - Self-hosted ChatGPT Alternative
-# DeCloud Template v1.0.0 — GPU auto-detection, Llama 3.2 pre-installed
-
-packages:
-  - curl
-  - wget
-  - nginx
-  - apache2-utils
-  - qemu-guest-agent
-
-runcmd:
-  - systemctl enable --now qemu-guest-agent
-
-  # Install Docker
-  - curl -fsSL https://get.docker.com | sh
-
-  # Create persistent data directories
-  - mkdir -p /opt/ollama /opt/open-webui
-
-# ── GPU Detection & Ollama Install ──
-  - |
-    if lspci | grep -i nvidia > /dev/null 2>&1; then
-      # ── Mode 1: Physical NVIDIA GPU (passthrough / bare-metal) ──
-      echo ""NVIDIA GPU detected — installing container toolkit...""
-      apt-get update
-      apt-get install -y ubuntu-drivers-common
-      ubuntu-drivers autoinstall || true
-
-      if [ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]; then
-        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-          | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-      fi
-      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-      apt-get update
-      apt-get install -y nvidia-container-toolkit
-      nvidia-ctk runtime configure --runtime=docker
-      systemctl restart docker
-
-      # Passthrough: Ollama in Docker with --gpus=all
-      docker run -d \
-        --name ollama \
-        --restart unless-stopped \
-        --gpus=all \
-        -v /opt/ollama:/root/.ollama \
-        -p 11434:11434 \
-        ollama/ollama:latest
-
-      echo ""GPU_MODE=passthrough"" > /opt/ollama/gpu-status
-      echo ""GPU acceleration enabled (passthrough) — Ollama in Docker""
-
-    elif [ -f /usr/local/lib/libcuda.so.1 ] && [ -f /usr/local/lib/libnvidia-ml.so.1 ]; then
-      # ── Mode 2: DeCloud GPU Proxy — Ollama native (NOT Docker) ──
-      # Our driver shim (libcuda.so.1) works natively but Ollama's internal
-      # GPU discovery can't find it inside Docker containers.
-      echo ""DeCloud GPU proxy shims detected — installing Ollama natively...""
-
-      # Install Ollama via official script (creates systemd service)
-      curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.7.0 sh
-
-      # ── Replace bundled NVIDIA libs with our shims (DT_NEEDED fix) ──
-      # libggml-cuda.so has DT_NEEDED: libcudart.so.12, libcublas.so.12, libcublasLt.so.12
-      # The linker resolves these from the SAME DIRECTORY before LD_PRELOAD.
-      # Real cuBLAS (116MB+751MB) calls cuGetExportTable (private NVIDIA internals)
-      # which cannot be proxied → crash. Replace with our shims.
-      #
-      # CRITICAL: libcublas.so.12 MUST use a separately-built stub with correct
-      # @@libcublas.so.12 ELF version tags. Copying the cudart shim gives wrong
-      # tags (@@libcudart.so.12) causing silent dlopen failure of libggml-cuda.so.
-      # See: GPU_PROXY_DEBUGGING_JOURNAL.md, Problem 17 (Day 4)
-      CUDA_DIR=/usr/local/lib/ollama/cuda_v12
-      if [ -d ""$CUDA_DIR"" ] && [ -f /usr/local/lib/libdecloud_cuda_shim.so ]; then
-        # Back up originals (for debugging)
-        for lib in libcudart.so.12 libcublas.so.12 libcublasLt.so.12; do
-          target=""$CUDA_DIR/$lib""
-          if [ -f ""$target"" ] && [ ! -f ""$target.orig"" ]; then
-            mv ""$target"" ""$target.orig""
-            # Remove any symlink targets too
-            real=$(readlink -f ""$target.orig"" 2>/dev/null)
-            [ -n ""$real"" ] && [ ""$real"" != ""$target.orig"" ] && mv ""$real"" ""$real.orig"" 2>/dev/null
-          fi
-        done
-
-        # libcudart.so.12 → our cuda shim (correct @@libcudart.so.12 tags)
-        cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcudart.so.12""
-
-        # libcublas.so.12 → SEPARATE cuBLAS stub with correct @@libcublas.so.12 tags
-        if [ -f /usr/local/lib/libcublas_stub.so ]; then
-          cp /usr/local/lib/libcublas_stub.so ""$CUDA_DIR/libcublas.so.12""
-        else
-          echo ""WARNING: libcublas_stub.so not found — falling back to cuda shim copy (version tags may be wrong)""
-          cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcublas.so.12""
-        fi
-
-        # libcublasLt.so.12 → placeholder (no versioned symbol imports, shim copy works)
-        cp /usr/local/lib/libdecloud_cuda_shim.so ""$CUDA_DIR/libcublasLt.so.12""
-
-        echo ""Replaced bundled CUDA libs in $CUDA_DIR with GPU proxy shims""
-      fi
-
-      # ── Install NVML and libcuda shims to system library paths ──
-      # Ollama's Go code uses dlopen(""libnvidia-ml.so.1"") which searches
-      # system paths, not /usr/local/lib. Must be in /usr/lib/x86_64-linux-gnu/.
-      if [ -f /usr/local/lib/libnvidia-ml.so.1 ]; then
-        cp /usr/local/lib/libnvidia-ml.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
-        ln -sf libnvidia-ml.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-ml.so
-      fi
-      if [ -f /usr/local/lib/libcuda.so.1 ]; then
-        cp /usr/local/lib/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so.1
-        ln -sf libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so
-      fi
-      ldconfig 2>/dev/null || true
-
-      # ── Note: /proc/driver/nvidia/version ──
-      # Cannot be faked because /proc is a kernel procfs (mkdir fails silently).
-      # GPU detection works without it because:
-      #   1. OLLAMA_LLM_LIBRARY=cuda_v12 forces loading the CUDA backend
-      #   2. NVML shim in /usr/lib/x86_64-linux-gnu/ satisfies dlopen discovery
-      #   3. /dev/nvidia* device nodes satisfy existence checks
-      # strace confirmed Ollama never reads this file.
-
-      # ── Inject GPU proxy env vars into the Ollama systemd service ──
-      mkdir -p /etc/systemd/system/ollama.service.d
-      GPCONF=/etc/systemd/system/ollama.service.d/gpu-proxy.conf
-      printf '[Service]\n' > ""$GPCONF""
-      printf 'Environment=""LD_LIBRARY_PATH=/usr/local/lib""\n' >> ""$GPCONF""
-      printf 'Environment=""LD_PRELOAD=/usr/local/lib/libdecloud_cuda_shim.so""\n' >> ""$GPCONF""
-      printf 'Environment=""OLLAMA_HOST=0.0.0.0:11434""\n' >> ""$GPCONF""
-      printf 'Environment=""OLLAMA_LLM_LIBRARY=cuda_v12""\n' >> ""$GPCONF""
-      printf 'Environment=""OLLAMA_FLASH_ATTENTION=0""\n' >> ""$GPCONF""
-      # Keep model loaded indefinitely — prevents UI dropouts after 5min idle
-      printf 'Environment=""OLLAMA_KEEP_ALIVE=-1""\n' >> ""$GPCONF""
-      # Limit concurrency to 1 — prevents memory spikes on proxied GPU path
-      printf 'Environment=""OLLAMA_NUM_PARALLEL=1""\n' >> ""$GPCONF""
-      printf 'Environment=""OLLAMA_MAX_LOADED_MODELS=1""\n' >> ""$GPCONF""
-      # GGML env vars — belt-and-suspenders with shim constructor
-      printf 'Environment=""GGML_CUDA_FORCE_MMQ=1""\n' >> ""$GPCONF""
-      printf 'Environment=""GGML_CUDA_DISABLE_GRAPHS=1""\n' >> ""$GPCONF""
-      printf 'Environment=""GGML_CUDA_NO_PEER_COPY=1""\n' >> ""$GPCONF""
-
-      # Add GPU proxy transport config from the env file
-      if [ -f /etc/decloud/gpu-proxy.env ]; then
-        grep -v '^\s*$' /etc/decloud/gpu-proxy.env | grep -v '^\s*#' | grep -v '^LD_PRELOAD=' | sed 's/^[[:space:]]*//' | while IFS= read -r envline; do
-          printf 'Environment=""%s""\n' ""$envline"" >> ""$GPCONF""
-        done
-      fi
-
-      systemctl daemon-reload
-      systemctl enable ollama
-      systemctl restart ollama
-
-      echo ""GPU_MODE=proxied"" > /opt/ollama/gpu-status
-      echo ""GPU proxy mode enabled — Ollama native with shims""
-
-    else
-      # ── Mode 3: No GPU — Ollama in Docker (CPU-only) ──
-      echo ""No GPU detected — running Ollama in Docker (CPU-only)""
-
-      docker run -d \
-        --name ollama \
-        --restart unless-stopped \
-        -v /opt/ollama:/root/.ollama \
-        -p 11434:11434 \
-        ollama/ollama:latest
-
-      echo ""GPU_MODE=false"" > /opt/ollama/gpu-status
-    fi
-
-    # Wait for Ollama API to be ready (native or Docker)
-    echo ""Waiting for Ollama to start...""
-    for i in $(seq 1 60); do
-      if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
-        echo ""Ollama is ready!""
-        break
-      fi
-      sleep 2
-    done
-
-    # Pull default model (works for both native and Docker)
-    echo ""Pulling llama3.2:3b model (this takes 2-5 minutes)...""
-    export HOME=/root
-    if command -v ollama > /dev/null 2>&1; then
-      ollama pull llama3.2:3b
-    elif docker ps --format '{{.Names}}' | grep -q ollama; then
-      docker exec ollama ollama pull llama3.2:3b
-    fi
-
-  # ── Start Open WebUI container ──
-  - |
-    docker run -d \
-      --name open-webui \
-      --restart unless-stopped \
-      --add-host=host.docker.internal:host-gateway \
-      -v /opt/open-webui:/app/backend/data \
-      -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-      -e WEBUI_AUTH=true \
-      -e WEBUI_SECRET_KEY=${DECLOUD_PASSWORD} \
-      -e ENABLE_SIGNUP=true \
-      -e DEFAULT_MODELS=llama3.2:3b \
-      -e ENABLE_COMMUNITY_SHARING=false \
-      -p 3000:8080 \
-      ghcr.io/open-webui/open-webui:latest
-
-  # ── Nginx reverse proxy with basic auth ──
-  - |
-    cat > /etc/nginx/sites-available/ai-chatbot <<'EOFNGINX'
-
-    server {
-        listen 8080;
-        server_name _;
-        client_max_body_size 100M;
-
-        location /health {
-            proxy_pass http://127.0.0.1:3000/health;
-        }
-
-        location / {
-            proxy_pass http://127.0.0.1:3000;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection ""upgrade"";
-            proxy_buffering off;
-            proxy_read_timeout 600s;
-            proxy_send_timeout 600s;
-        }
-    }
-    EOFNGINX
-
-  - rm -f /etc/nginx/sites-enabled/default
-  - ln -sf /etc/nginx/sites-available/ai-chatbot /etc/nginx/sites-enabled/ai-chatbot
-  - nginx -t && systemctl restart nginx
-  - systemctl enable nginx
-
-  # Create welcome message
-  - |
-    cat > /etc/motd <<'EOF'
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║    AI Chatbot (Ollama + Open WebUI) - DeCloud Template        ║
-    ╠═══════════════════════════════════════════════════════════════╣
-    ║                                                               ║
-    ║  Chat UI:  https://${DECLOUD_DOMAIN}                          ║
-    ║  Web UI:   Sign up on first visit (you become admin)          ║
-    ║                                                               ║
-    ║  SSH:      root / ${DECLOUD_PASSWORD}                         ║
-    ║                                                               ║
-    ║  Default Model: llama3.2:3b                                   ║
-    ║                                                               ║
-    ║  Pull more models:                                            ║
-    ║    ollama pull mistral                                        ║
-    ║    ollama pull codellama                                      ║
-    ║    ollama pull gemma2:9b                                      ║
-    ║                                                               ║
-    ║  Services:                                                    ║
-    ║    systemctl status ollama    (Ollama service)                ║
-    ║    journalctl -u ollama -f    (Ollama logs)                   ║
-    ║    docker logs -f open-webui  (Open WebUI logs)               ║
-    ║                                                               ║
-    ║  100% Private — no data leaves this server.                   ║
-    ║                                                               ║
-    ╚═══════════════════════════════════════════════════════════════╝
-    EOF
-
-final_message: |
-  AI Chatbot is starting up!
-
-  Open WebUI: https://${DECLOUD_DOMAIN}
-  Username: user / Password: ${DECLOUD_PASSWORD}
-
-  Default model: llama3.2:3b (pre-pulled on first boot)
-
-  Pull more models via SSH:
-    ollama pull mistral
-    ollama pull codellama
-
-  No data leaves your server. 100% private AI.",
-
-            DefaultEnvironmentVariables = new Dictionary<string, string>
-            {
-                ["DEFAULT_MODELS"] = "llama3.2:3b",
-                // GPU proxy: application env vars (propagated to /etc/decloud/gpu-proxy.env)
-                ["GGML_CUDA_FORCE_MMQ"] = "1",
-                ["GGML_CUDA_DISABLE_GRAPHS"] = "1",
-                ["GGML_CUDA_NO_PEER_COPY"] = "1",
-                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
-            },
-
-            ExposedPorts = new List<TemplatePort>
-            {
-                new TemplatePort
-                {
-                    Port = 8080,
-                    Protocol = "http",
-                    Description = "Open WebUI Chat Interface",
-                    IsPublic = true,
-                    ReadinessCheck = new ServiceCheck
-                    {
-                        Strategy = CheckStrategy.HttpGet,
-                        HttpPath = "/health",
-                        TimeoutSeconds = 1200 // Docker pull + model download on first boot
-                    }
-                }
-            },
-
-            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}",
-            DefaultUsername = "root",
-            UseGeneratedPassword = true,
-
-            EstimatedCostPerHour = 0.15m, // $0.15/hour — moderate workload
-
-            DefaultBandwidthTier = BandwidthTier.Basic, // AI chat is low bandwidth
-
-            Status = TemplateStatus.Published,
-            Visibility = TemplateVisibility.Public,
-            IsFeatured = true,
-            IsVerified = true,
-            IsCommunity = false,
-            PricingModel = TemplatePricingModel.Free,
-            TemplatePrice = 0,
-            AverageRating = 0,
-            TotalReviews = 0,
-            RatingDistribution = new int[5],
-
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
     // vLLM Inference Server — OpenAI-compatible GPU inference API
     // ════════════════════════════════════════════════════════════════════════
 
@@ -3605,4 +3203,295 @@ write_files:
 runcmd:
   - bash /opt/minecraft/setup.sh
 ";
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Compose-pipeline tenant templates
+    // ════════════════════════════════════════════════════════════════════════
+    // Per UNIFIED_CLOUDINIT_PIPELINE.md §11, marketplace templates that declare
+    // Variables opt into the compose pipeline. Each migrated template:
+    //   1. Has a role layer in DeCloud.Builds/tenant-vms/{slug}/cloud-init.yaml.
+    //   2. Adds a {RoleUrl, TemplateRevision} pair near the top of this file.
+    //   3. Adds a Build*TemplateAsync method here that fetches + composes +
+    //      declares Variables, returning a VmTemplate.
+    //   4. Calls UpsertComposeTemplateAsync from SeedComposeTenantTemplatesAsync.
+    //
+    // Legacy templates (inline string CloudInitTemplate, no declared Variables)
+    // continue to live in GetSeedTemplates() above and use the legacy
+    // ${VARNAME} substitution path in VmService.TryScheduleVmAsync. Migration
+    // is opt-in per template.
+
+    private async Task SeedComposeTenantTemplatesAsync()
+    {
+        var ct = CancellationToken.None;
+
+        // Each template is wrapped in its own try/catch so one fetch/compose
+        // failure (e.g. transient GitHub raw outage) does not block other
+        // compose templates from seeding. Pattern mirrors the outer TrySeed
+        // failure-domain isolation in SeedAsync().
+        await TryUpsertComposeAsync("ai-chatbot-ollama",
+            () => BuildAiChatbotTemplateAsync(ct), ct);
+    }
+
+    private async Task TryUpsertComposeAsync(
+        string slugLabel,
+        Func<Task<VmTemplate>> build,
+        CancellationToken ct)
+    {
+        try
+        {
+            await UpsertComposeTemplateAsync(await build(), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Compose tenant template '{Slug}' seed failed. Other compose " +
+                "templates will continue. Template will not be available until " +
+                "the underlying issue is fixed and the orchestrator is restarted.",
+                slugLabel);
+        }
+    }
+
+    /// <summary>
+    /// Revision-aware upsert for compose-pipeline tenant templates. Mirrors
+    /// GeneralVmTemplateSeeder.SeedTemplateAsync — skip if stored revision is
+    /// ≥ seeder revision; preserve MongoDB _id on update so deployments using
+    /// this template see the new revision via the normal cache invalidation.
+    /// </summary>
+    private async Task UpsertComposeTemplateAsync(VmTemplate template, CancellationToken ct)
+    {
+        var existing = await _dataStore.GetTemplateBySlugAsync(template.Slug);
+
+        if (existing is not null && existing.Revision >= template.Revision)
+        {
+            _logger.LogDebug(
+                "Compose tenant template '{Slug}' r{Stored} ≥ seeder r{New} — skipping",
+                template.Slug, existing.Revision, template.Revision);
+            return;
+        }
+
+        if (existing is not null)
+        {
+            template.Id = existing.Id;  // preserve MongoDB _id — update in-place
+            _logger.LogInformation(
+                "Updating compose tenant template '{Slug}': r{Old} → r{New}",
+                template.Slug, existing.Revision, template.Revision);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Seeding new compose tenant template '{Slug}' r{Rev}",
+                template.Slug, template.Revision);
+        }
+
+        await _dataStore.SaveTemplateAsync(template);
+
+        _logger.LogInformation(
+            "✓ Compose tenant template '{Slug}' seeded " +
+            "(r{Rev}, {VarCount} declared variables)",
+            template.Slug,
+            template.Revision,
+            template.Variables.Count);
+    }
+
+    // ── AI Chatbot (Ollama + Open WebUI) ─────────────────────────────────
+
+    /// <summary>
+    /// Build the AI Chatbot (Ollama + Open WebUI) template by composing
+    /// base-tenant.yaml + tenant-vms/ai-chatbot/cloud-init.yaml. The role
+    /// layer carries only Ollama-specific content; SSH password auth,
+    /// qemu-guest-agent, sshd_config drop-in, and chpasswd bootcmd are
+    /// provided by base-tenant.yaml.
+    /// </summary>
+    private async Task<VmTemplate> BuildAiChatbotTemplateAsync(CancellationToken ct)
+    {
+        var baseLayer = await _httpClient.GetStringAsync(BaseTenantUrl, ct);
+        var roleLayer = await _httpClient.GetStringAsync(AiChatbotRoleUrl, ct);
+
+        var composed = TemplateComposer.Compose(
+            baseLayer, roleLayer,
+            baseName: "base-tenant.yaml",
+            roleName: "tenant-vms/ai-chatbot/cloud-init.yaml");
+
+        return new VmTemplate
+        {
+            Slug = "ai-chatbot-ollama",
+            Name = "AI Chatbot (Ollama + Open WebUI)",
+            Version = "2.0.0",
+            Revision = AiChatbotTemplateRevision,
+            Category = "ai-ml",
+
+            Description =
+                "Self-hosted ChatGPT alternative. Run AI models (Llama, Mistral, " +
+                "Gemma) locally with a beautiful chat interface. No data leaves " +
+                "your server.",
+
+            LongDescription = @"## Your Own Private ChatGPT
+
+Deploy a fully self-hosted AI chatbot that runs entirely on your VM. No API keys, no data sharing, no censorship — just you and the AI.
+
+## Features
+- **Beautiful Chat UI** — Open WebUI provides a ChatGPT-like experience
+- **Multiple Models** — Switch between Llama 3.2, Mistral, Gemma, CodeLlama, and more
+- **100% Private** — All inference runs locally, no data leaves the VM
+- **GPU Accelerated** — Automatically uses NVIDIA GPU if available, falls back to CPU
+- **Model Management** — Pull, delete, and switch models from the web interface
+- **Conversation History** — All chats stored locally on the VM
+- **File Upload** — Attach documents for RAG-style Q&A
+
+## Getting Started
+1. Wait for initial setup to complete (~5-10 minutes for model download)
+2. Open `https://__DECLOUD_DOMAIN__` in your browser
+3. Sign up on first visit — you become admin
+4. Select **llama3.2:3b** from the model dropdown
+5. Start chatting!
+
+## Pull More Models via SSH
+```bash
+ollama pull mistral         # 7B, great all-rounder
+ollama pull gemma2:9b       # 9B, Google's model
+ollama pull codellama       # 7B, optimized for code
+ollama list                 # show installed models
+```
+
+## Architecture
+nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/open-webui/open-webui",
+            License = "MIT",
+
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                DiskBytes = 30L * 1024 * 1024 * 1024,
+                GpuMode = GpuMode.Proxied
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                GpuMode = GpuMode.Proxied
+            },
+
+            RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Proxied,
+            GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
+            ContainerImage = "ollama/ollama:latest",
+
+            Tags = new List<string>
+            {
+                "ai", "chatbot", "ollama", "open-webui", "llm", "llama",
+                "mistral", "self-hosted", "private-ai", "chatgpt-alternative"
+            },
+
+            CloudInitTemplate = composed,
+            Variables = BuildAiChatbotVariables(),
+
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["DEFAULT_MODELS"] = "llama3.2:3b",
+                // GPU proxy: application env vars (propagated to /etc/decloud/gpu-proxy.env
+                // by LibvirtVmManager.EnsureGpuProxyShim()).
+                ["GGML_CUDA_FORCE_MMQ"] = "1",
+                ["GGML_CUDA_DISABLE_GRAPHS"] = "1",
+                ["GGML_CUDA_NO_PEER_COPY"] = "1",
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+            },
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new TemplatePort
+                {
+                    Port = 8080,
+                    Protocol = "http",
+                    Description = "Open WebUI Chat Interface",
+                    IsPublic = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/health",
+                        TimeoutSeconds = 1200
+                    }
+                }
+            },
+
+            DefaultAccessUrl = "https://__DECLOUD_DOMAIN__",
+            DefaultUsername = "root",
+            UseGeneratedPassword = true,
+
+            EstimatedCostPerHour = 0.15m,
+            DefaultBandwidthTier = BandwidthTier.Basic,
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Declared Variables for the AI Chatbot composed template. Every
+    /// <c>__VARNAME__</c> placeholder in the composed cloud-init must appear
+    /// here or CloudInitValidator will throw. Mirrors
+    /// <see cref="GeneralVmTemplateSeeder"/>'s declared set plus
+    /// <c>DECLOUD_DOMAIN</c> (used in motd and final_message).
+    /// </summary>
+    private static List<TemplateVariable> BuildAiChatbotVariables() => new()
+    {
+        // Identity (resolved from ctx.Vm)
+        new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier (UUID)." },
+        new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
+                Description = "VM display name." },
+        new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname for the VM (currently equals VM_NAME)." },
+
+        // Platform context
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "URL the VM uses to reach the orchestrator." },
+
+        // SSH / password (resolved from ctx.Vm.Spec.SshPublicKey, UserSuppliedStatics)
+        new() { Name = "CA_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk listing user SSH public keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for chpasswd.users (cloud-init 22.3+ format)." },
+        new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description =
+                    "Plaintext root password. Set via UserSuppliedStatics " +
+                    "[\"ADMIN_PASSWORD\"] at deploy time. Used by base-tenant.yaml's " +
+                    "bootcmd chpasswd and by the role layer for WEBUI_SECRET_KEY " +
+                    "and motd display." },
+        new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static,
+                DefaultValue = "false",
+                Description =
+                    "'true' or 'false' string for cloud-init's ssh_pwauth. " +
+                    "Derived from ADMIN_PASSWORD presence." },
+
+        // Role-layer-only addition
+        new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description =
+                    "Default subdomain assigned by ingress (e.g. " +
+                    "ai-chatbot-0887.vms.stackfi.tech). Resolved from " +
+                    "UserSuppliedStatics[\"DECLOUD_DOMAIN\"], populated by " +
+                    "TemplateService.GetAvailableVariables(). Used in motd and " +
+                    "final_message display." },
+    };
 }

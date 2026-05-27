@@ -150,6 +150,13 @@ builder.Services.AddSingleton<GeneralVmTemplateSeeder>();
 builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
+// TemplateSeederService also fetches compose-pipeline tenant role layers
+// (e.g. tenant-vms/ai-chatbot/cloud-init.yaml) from DeCloud.Builds. Wire an
+// HttpClient so the singleton seeder can fetch — pattern matches
+// GeneralVmTemplateSeeder / SystemVmTemplateSeeder registrations above.
+builder.Services.AddHttpClient<TemplateSeederService>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+
 // Cloud-init rendering pipeline
 builder.Services.AddVariableResolverRegistry();
 builder.Services.AddPlatformCommonResolvers();
