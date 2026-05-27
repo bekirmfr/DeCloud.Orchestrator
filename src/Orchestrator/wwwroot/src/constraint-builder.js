@@ -38,7 +38,8 @@
 // When a new operator is added to the registry, add it here too.
 const TYPE_OPERATORS = {
     String:     ['eq', 'neq', 'in', 'not_in',
-                 'adjacent_to', 'same_continent_as', 'has_jurisdiction_tag'],
+                'starts_with', 'ends_with', 'includes',
+                'adjacent_to', 'same_continent_as', 'has_jurisdiction_tag'],
     Numeric:    ['eq', 'neq', 'in', 'not_in', 'gte', 'lte', 'gt', 'lt'],
     Boolean:    ['eq', 'neq'],
     StringList: ['contains', 'not_contains', 'contains_all', 'contains_any', 'contains_none'],
@@ -59,6 +60,9 @@ const OP_LABEL = {
     contains_all:         'contains all',
     contains_any:         'contains any',
     contains_none:        'contains none',
+    starts_with:          'starts with',
+    ends_with:            'ends with',
+    includes:             'includes (substring)',
     adjacent_to:          'adjacent to',
     same_continent_as:    'same continent as',
     has_jurisdiction_tag: 'has jurisdiction tag',

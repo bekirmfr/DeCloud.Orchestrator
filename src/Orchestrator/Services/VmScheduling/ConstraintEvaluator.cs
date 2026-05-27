@@ -366,6 +366,46 @@ public class ConstraintEvaluator : IConstraintEvaluator
                     .Contains(tag, StringComparer.OrdinalIgnoreCase);
             });
 
+        // ── String matching (scalar string targets only) ───────────────────
+        // starts_with / ends_with / includes form a matched set.
+        // None accepts StringList targets — use contains_* for those.
+
+        r[ConstraintOperators.StartsWith] = new OperatorDescriptor(
+            ConstraintOperators.StartsWith,
+            t => t == ConstraintValueType.String,
+            (_, v) => ValidateScalar(ConstraintValueType.String, v),
+            (actual, configured, _) =>
+            {
+                var s = actual as string;
+                var prefix = configured as string;
+                if (s is null || prefix is null) return false;
+                return s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+            });
+
+        r[ConstraintOperators.EndsWith] = new OperatorDescriptor(
+            ConstraintOperators.EndsWith,
+            t => t == ConstraintValueType.String,
+            (_, v) => ValidateScalar(ConstraintValueType.String, v),
+            (actual, configured, _) =>
+            {
+                var s = actual as string;
+                var suffix = configured as string;
+                if (s is null || suffix is null) return false;
+                return s.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
+            });
+
+        r[ConstraintOperators.Includes] = new OperatorDescriptor(
+            ConstraintOperators.Includes,
+            t => t == ConstraintValueType.String,
+            (_, v) => ValidateScalar(ConstraintValueType.String, v),
+            (actual, configured, _) =>
+            {
+                var s = actual as string;
+                var substring = configured as string;
+                if (s is null || substring is null) return false;
+                return s.Contains(substring, StringComparison.OrdinalIgnoreCase);
+            });
+
         return r;
     }
 

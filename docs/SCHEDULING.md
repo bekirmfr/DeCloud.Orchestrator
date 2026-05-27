@@ -582,6 +582,9 @@ Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 | `ConstraintOperators.Lte` | `lte` | Less than or equal | numeric |
 | `ConstraintOperators.Gt` | `gt` | Strictly greater than | numeric |
 | `ConstraintOperators.Lt` | `lt` | Strictly less than | numeric |
+| `ConstraintOperators.StartsWith` | `starts_with` | Target string starts with the configured prefix, case-insensitive. Primary use: hierarchical region codes — `node.locality.region starts_with "na"` matches `na-central`, `na-east`, `na-west`. | string |
+| `ConstraintOperators.EndsWith` | `ends_with` | Target string ends with the configured suffix, case-insensitive. Example: `node.locality.region ends_with "central"` matches `na-central`, `eu-central`, `ap-central`. | string |
+| `ConstraintOperators.Includes` | `includes` | Target string contains the configured substring, case-insensitive. Named `includes` to avoid collision with `contains` (which checks list membership). Example: `node.gpuModel includes "3090"` matches `RTX 3090`, `RTX 3090 Ti`. | string |
 | `ConstraintOperators.AdjacentTo` | `adjacent_to` | Node's region is adjacent to configured region per `region-adjacency.json` | string (region) |
 | `ConstraintOperators.SameContinentAs` | `same_continent_as` | Node's region shares a continent with configured region | string (region) |
 | `ConstraintOperators.HasJurisdictionTag` | `has_jurisdiction_tag` | Node's country carries the configured supranational tag | string (country) |

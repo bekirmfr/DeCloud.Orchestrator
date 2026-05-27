@@ -253,10 +253,38 @@ public static class ConstraintOperators
     public const string SameContinentAs = "same_continent_as";
 
     /// <summary>
-    /// Node's country carries the configured supranational tag
-    /// (e.g. "EU", "NATO"). Lets a country target ask "is this country
-    /// in the EU?" without enumerating member states.
-    /// Only valid against string targets (country).
+    /// Node's country carries the configured supranational tag.
+    /// Only valid against country targets.
     /// </summary>
     public const string HasJurisdictionTag = "has_jurisdiction_tag";
+
+    // ── String matching (scalar string targets only) ──────────────────────
+    // These three operators form a matched set for pattern matching on
+    // string scalars. None applies to StringList targets — use the
+    // contains_* family for those.
+
+    /// <summary>
+    /// Target string starts with the configured prefix (case-insensitive).
+    /// Primary use: hierarchical region codes where the prefix encodes a
+    /// geographic tier.
+    ///   <c>node.locality.region starts_with "na"</c> → na-central, na-east …
+    ///   <c>node.locality.region starts_with "eu"</c> → eu-west, eu-central …
+    /// </summary>
+    public const string StartsWith = "starts_with";
+
+    /// <summary>
+    /// Target string ends with the configured suffix (case-insensitive).
+    ///   <c>node.locality.region ends_with "central"</c> → na-central,
+    ///   eu-central, ap-central …
+    /// </summary>
+    public const string EndsWith = "ends_with";
+
+    /// <summary>
+    /// Target string contains the configured substring (case-insensitive).
+    /// Named <c>includes</c> to avoid collision with <see cref="Contains"/>,
+    /// which checks whether a <em>list</em> target contains a scalar value.
+    ///   <c>node.gpuModel includes "3090"</c> → RTX 3090, RTX 3090 Ti …
+    ///   <c>node.locality.region includes "central"</c> → any -central region
+    /// </summary>
+    public const string Includes = "includes";
 }
