@@ -34,24 +34,51 @@ const DEPLOY_BANDWIDTH_TIERS = {
     3: { name: 'Unmetered', hourlyRate: 0.040 }
 };
 
-// Variables that are always resolved by registered platform resolvers.
-// Any Static variable NOT in this set and without a resolverKey is user-supplied
-// and must be collected from the user before deployment.
-const PLATFORM_VARIABLE_NAMES = new Set([
-    'HOSTNAME', 'VM_ID', 'VM_NAME', 'NODE_ID', 'ORCHESTRATOR_URL',
-    'SSH_AUTHORIZED_KEYS_BLOCK', 'CA_PUBLIC_KEY',
-    'PASSWORD_CONFIG_BLOCK', 'SSH_PASSWORD_AUTH', 'ADMIN_PASSWORD',
-    'DECLOUD_ROLE', 'HOST_MACHINE_ID', 'PUBLIC_IP',
-    'VARIABLE_SCOPES_BLOCK', 'TIMESTAMP',
-]);
+// Platform-resolved variable names — fetched from the orchestrator's resolver
+// registry via GET /api/marketplace/platform-variables. Cached for the page
+// lifetime; full reload re-fetches. Single source of truth lives in C# (the
+// IVariableResolver DI registrations); see UNIFIED_CLOUDINIT_PIPELINE.md §2.4.
+//
+// Any declared Static variable whose (resolverKey ?? name) appears in this set
+// is platform-resolved and hidden from the deploy form. Variables not in the
+// set surface in the Template Configuration section as user-supplied input.
+let _platformStaticKeys = null;
+
+async function getPlatformStaticKeys() {
+    if (_platformStaticKeys !== null) return _platformStaticKeys;
+    try {
+        const response = await api('/api/marketplace/platform-variables');
+        const data = await response.json();
+        // Response shape: { static: [...], dynamic: [...] }
+        // PascalCase from C# is camelCased by ConfigureHttpJsonOptions in Program.cs.
+        const list = Array.isArray(data?.static) ? data.static : [];
+        _platformStaticKeys = new Set(list);
+    } catch (error) {
+        console.error('[Template Detail] Failed to load platform variables. ' +
+            'Deploy form will surface every declared Static — user ' +
+            'may see fields the platform actually fills. Hard-refresh ' +
+            'or check orchestrator availability.', error);
+        // Empty set: when the fetch fails, fall open (show everything) rather
+        // than fall closed (hide everything). A surfaced field is recoverable
+        // by the user; a hidden required field would block deployment silently.
+        _platformStaticKeys = new Set();
+    }
+    return _platformStaticKeys;
+}
 
 // VariableKind enum: 0=Static, 1=Dynamic
-function getUserVariables(template) {
+async function getUserVariables(template) {
     if (!Array.isArray(template.variables)) return [];
-    return template.variables.filter(v =>
-        (v.kind === 0 || v.kind === 'Static') &&     // Static only (int or string enum)
-        !PLATFORM_VARIABLE_NAMES.has(v.name)         // not platform-resolved
-    );
+    const platformKeys = await getPlatformStaticKeys();
+    return template.variables.filter(v => {
+        const isStatic = v.kind === 0 || v.kind === 'Static';
+        if (!isStatic) return false;
+        // Mirror CloudInitRenderer's Pass 1 lookup key: ResolverKey ?? Name.
+        // A variable declared as { name: 'EGRESS_IP', resolverKey: 'PUBLIC_IP' }
+        // is platform-bound via PUBLIC_IP's resolver, not via EGRESS_IP.
+        const lookupKey = v.resolverKey || v.name;
+        return !platformKeys.has(lookupKey);
+    });
 }
 
 /**
@@ -443,8 +470,10 @@ export async function openDeployTemplateModal(template) {
 
     // Update cost estimate
     updateDeployCostEstimate();
-    // Render user-supplied variable inputs (template configuration section)
-    renderDeployVariables(template);
+    // Render user-supplied variable inputs (template configuration section).
+    // Awaited so the modal opens with the correct visibility — without await,
+    // the section would briefly flash visible before the async filter resolves.
+    await renderDeployVariables(template);
 
 
     // Show modal
@@ -614,13 +643,14 @@ export async function deployFromTemplate() {
 /**
  * Render user-supplied variable inputs into #deploy-variables-section.
  * Called each time the deploy modal opens — clears and rebuilds the section.
+ * Async because the platform-variables fetch may need to run on first call.
  */
-function renderDeployVariables(template) {
+async function renderDeployVariables(template) {
     const section = document.getElementById('deploy-variables-section');
     const list = document.getElementById('deploy-variables-list');
     if (!section || !list) return;
 
-    const userVars = getUserVariables(template);
+    const userVars = await getUserVariables(template);
 
     if (userVars.length === 0) {
         section.style.display = 'none';

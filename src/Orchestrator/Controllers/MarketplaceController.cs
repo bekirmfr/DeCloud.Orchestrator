@@ -1,3 +1,4 @@
+using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,6 +24,7 @@ public class MarketplaceController : ControllerBase
     private readonly IBalanceService _balanceService;
     private readonly TemplateSeederService _seederService;
     private readonly INodeService _nodeService;
+    private readonly IEnumerable<IVariableResolver> _variableResolvers;
     private readonly ILogger<MarketplaceController> _logger;
 
     public MarketplaceController(
@@ -32,6 +34,7 @@ public class MarketplaceController : ControllerBase
         IBalanceService balanceService,
         TemplateSeederService seederService,
         INodeService nodeService,
+        IEnumerable<IVariableResolver> variableResolvers,
         ILogger<MarketplaceController> logger)
     {
         _templateService = templateService;
@@ -40,6 +43,7 @@ public class MarketplaceController : ControllerBase
         _balanceService = balanceService;
         _seederService = seederService;
         _nodeService = nodeService;
+        _variableResolvers = variableResolvers;
         _logger = logger;
     }
 
@@ -978,10 +982,6 @@ public class MarketplaceController : ControllerBase
     }
 
 
-    // ════════════════════════════════════════════════════════════════════════
-    // Categories
-    // ════════════════════════════════════════════════════════════════════════
-
     [HttpGet("categories")]
     [AllowAnonymous]
     public async Task<ActionResult<List<TemplateCategory>>> GetCategories()
@@ -997,6 +997,63 @@ public class MarketplaceController : ControllerBase
             return StatusCode(500, new { error = "Failed to retrieve categories" });
         }
     }
+
+    /// <summary>
+    /// List variable names that the orchestrator's resolver registry resolves
+    /// at render time. The marketplace deploy form uses this as its source of
+    /// truth for "platform-bound vs user-supplied" — any declared Static
+    /// variable whose <c>ResolverKey ?? Name</c> appears in <c>static</c> is
+    /// resolved by the platform and never surfaced in the form's Template
+    /// Configuration section (UNIFIED_CLOUDINIT_PIPELINE.md §2.4).
+    ///
+    /// <para>
+    /// Response is split by <see cref="VariableKind"/> so future callers
+    /// (validators, doc generators) can address Static and Dynamic resolvers
+    /// independently. The same logical name may appear in both lists when
+    /// distinct Static and Dynamic resolvers are registered for it.
+    /// </para>
+    ///
+    /// <para>
+    /// Public — resolver keys are not secrets (they appear in seeded template
+    /// metadata and base/role YAMLs). Read-only — derived from DI singletons,
+    /// no state mutation.
+    /// </para>
+    /// </summary>
+    [HttpGet("platform-variables")]
+    [AllowAnonymous]
+    public ActionResult<PlatformVariablesResponse> GetPlatformVariables()
+    {
+        try
+        {
+            var statics = _variableResolvers
+                .Where(r => r.Kind == VariableKind.Static)
+                .Select(r => r.ResolverKey)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(k => k, StringComparer.Ordinal)
+                .ToList();
+
+            var dynamics = _variableResolvers
+                .Where(r => r.Kind == VariableKind.Dynamic)
+                .Select(r => r.ResolverKey)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(k => k, StringComparer.Ordinal)
+                .ToList();
+
+            return Ok(new PlatformVariablesResponse(statics, dynamics));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list platform variables");
+            return StatusCode(500, new { error = "Failed to retrieve platform variables" });
+        }
+    }
+
+    /// <summary>
+    /// Response shape for <c>GET /api/marketplace/platform-variables</c>.
+    /// </summary>
+    public sealed record PlatformVariablesResponse(
+        IReadOnlyList<string> Static,
+        IReadOnlyList<string> Dynamic);
 
 
     // ════════════════════════════════════════════════════════════════════════
