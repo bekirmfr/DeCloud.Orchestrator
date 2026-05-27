@@ -67,6 +67,8 @@
 
 **Next task:** None. Migration is complete. Ongoing maintenance now happens through normal commit cycles outside this plan's scope. New work should reference `UNIFIED_CLOUDINIT_PIPELINE.md` (design doc) for architectural changes, not this implementation document.
 
+**Post-closure additions:** §2 has live entries beyond migration closure when material pipeline-shape decisions are made (e.g. 2026-05-27 — compose-pipeline tenant template centralisation pattern).
+
 **Pre-Phase-3 user action items:**
 - ~~Cut a `binaries/v1.1.0` release for the updated BlockStore binary.~~ **Done 2026-05-05.** Tag pushed to `bekirmfr/DeCloud.Builds`; CI built dht-node + blockstore-node; decloud-agent files copied from v1.0.0 manually (bit-identical SHAs preserved). **Strategy B applied:** orchestrator updated to point all three seeders (`SystemVmTemplateSeeder` for relay/DHT/BlockStore, `GeneralVmTemplateSeeder` for decloud-agent) at `binaries/v1.1.0` — single release tag for all binaries.
 
@@ -296,6 +298,14 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   **Generic-scanner proposal evaluated and declined.** User asked about a generic post-fetch scanner that would walk all artifact paths and substitute `{{*}}` placeholders. Per design philosophy: convention beats infrastructure when you have one current consumer that needs the fix and a clean alternative pattern (consumer reads its own values from existing endpoints / env vars). DHT and BlockStore dashboards demonstrate the working pattern: server-side templating at request time. Welcome page now follows the same pattern. Future template authors create their own variable-serving endpoints for static assets when needed; no generic scanner introduced.
 
 - **2026-05-07 / Migration closure** — Phases 0–4 all marked complete. Unified cloud-init pipeline is the single authoritative path. ~470 lines of legacy substitution / merge / template-service code removed across `LibvirtVmManager`, `Program.cs`, deleted files. Final deploys validated end-to-end on both relay and CGNAT nodes for all three system VM roles plus tenant general VM and marketplace template VM. Plan transitions from active execution document to historical record + reference for the design doc update.
+
+- **2026-05-27 / AI Chatbot (Ollama + Open WebUI) opt-in migration; compose-pipeline tenant templates centralised in TemplateSeederService.** Marketplace template `ai-chatbot-ollama` migrated from inline `TemplateSeederService.CreateOllamaOpenWebUiTemplate()` (legacy `${VARNAME}` path) to the compose pipeline. Root cause: deployed AI Chatbot VMs were failing the browser terminal proxy with "No suitable authentication method" because the inline template bypassed `base-tenant.yaml`, which carries the sshd_config drop-in (`99-decloud-password-auth.conf`) and the `chpasswd` bootcmd. Migration is the §11 opt-in path. New role layer at `DeCloud.Builds/tenant-vms/ai-chatbot/cloud-init.yaml`; `${DECLOUD_PASSWORD}` → `__ADMIN_PASSWORD__`, `${DECLOUD_DOMAIN}` → `__DECLOUD_DOMAIN__`. Ollama pinned to 0.7.0 per GPU_PROXY_DEBUGGING_JOURNAL.md Session 16 (Bug 23 — `ggml_backend_cuda_graph_reserve` aborts on shim's `cudaErrorNotSupported`).
+
+  **Pattern decision:** compose-pipeline tenant templates centralised in `TemplateSeederService` rather than per-template seeder classes. Mirrors `SystemVmTemplateSeeder`'s shape (one class, many roles, shared compose/upsert helpers) on the tenant side. Adding the next marketplace template to the pipeline now requires: a role layer in `DeCloud.Builds`, a `{RoleUrl, TemplateRevision}` pair, a `Build*TemplateAsync` method, and a call site in `SeedComposeTenantTemplatesAsync`. No new file, no new DI registration. `GeneralVmTemplateSeeder` retained as a standalone for now because of its `partial class` artifact-constants pairing; absorbing it into `TemplateSeederService` is a tractable follow-up.
+
+  **Resolver registry impact:** none. All declared statics (VM_ID, VM_NAME, HOSTNAME, ORCHESTRATOR_URL, CA_PUBLIC_KEY, SSH_AUTHORIZED_KEYS_BLOCK, PASSWORD_CONFIG_BLOCK, ADMIN_PASSWORD, SSH_PASSWORD_AUTH) resolve via existing platform-common resolvers; DECLOUD_DOMAIN falls back to `UserSuppliedStatics["DECLOUD_DOMAIN"]` populated by `TemplateService.GetAvailableVariables`.
+
+  **First post-Phase-4 §2 entry.** Confirms the impl plan remains a live decision log for material pipeline-shape choices after migration closure, per §1's "ongoing maintenance now happens through normal commit cycles" — entries here when the choice would surprise a future maintainer.
 
 ---
 
