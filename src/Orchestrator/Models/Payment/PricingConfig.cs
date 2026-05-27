@@ -41,8 +41,8 @@ public class PricingConfig
     //
     // Default: $0.000001 per 1 MB block per hour per replica.
     // A VM with 4,000 × 1 MB blocks at N=3 costs: 4000 × 3 × $0.000001 = $0.012/hr.
-    public decimal FloorStoragePerMbPerHour { get; set; } = 0.0000005m;
-    public decimal DefaultStoragePerMbPerHour { get; set; } = 0.000001m;
+    public decimal FloorReplicationPerMbPerHour { get; set; } = 0.0000005m;
+    public decimal DefaultReplicationPerMbPerHour { get; set; } = 0.000001m;
 
     // ── Bandwidth tier rates (platform-set, not operator-overridable) ─────────
     public decimal BandwidthBasicPerHour { get; set; } = 0.002m;       // 10 Mbps

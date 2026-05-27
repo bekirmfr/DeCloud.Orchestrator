@@ -159,7 +159,7 @@ public static class HourlyRateCalculator
         blockCount = Math.Max(blockCount, 1); // at least 1 block
 
         // cost_per_mb = StoragePerMbPerHour (platform floor, not operator rate)
-        var costPerMb = Math.Max(cfg.DefaultStoragePerMbPerHour, cfg.FloorStoragePerMbPerHour);
+        var costPerMb = Math.Max(cfg.DefaultReplicationPerMbPerHour, cfg.FloorReplicationPerMbPerHour);
 
         // blockSizeMb = blockSizeKb / 1024 (e.g., 1.0 for VmOverlay, 64.0 for ModelShard)
         var blockSizeMb = (decimal)effectiveBlockSizeKb / 1024m;
