@@ -99,6 +99,15 @@ public static class ConstraintTargets
             public const string HighBandwidth = "node.hardware.highBandwidth";
 
             /// <summary>
+            /// True when the node has a direct public IP address (NatType.None —
+            /// no NAT, no CGNAT). Required for workloads that must be reachable
+            /// from the internet without relay tunnelling, e.g. web proxy templates
+            /// where the ingress path depends on direct connectivity.
+            /// Use <c>eq true</c>.
+            /// </summary>
+            public const string HasPublicIp = "node.network.hasPublicIp";
+
+            /// <summary>
             /// Physical CPU core count on the host.
             /// Use numeric operators (<c>gte</c>, <c>gt</c>) to require a
             /// minimum host core count. Distinct from vCPU allocation —

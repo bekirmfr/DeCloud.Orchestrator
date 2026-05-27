@@ -1098,9 +1098,17 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
-                MemoryBytes = 2L * 1024 * 1024 * 1024,  // 2 GB
-                DiskBytes = 15L * 1024 * 1024 * 1024,   // 15 GB
-                QualityTier = QualityTier.Burstable
+                MemoryBytes = 1024L * 1024 * 1024,
+                DiskBytes = 10L * 1024 * 1024 * 1024,
+                Constraints = new List<Constraint>
+                {
+                    new()
+                    {
+                        Target   = ConstraintTargets.Node.Hardware.HasPublicIp,
+                        Operator = ConstraintOperators.Eq,
+                        Value    = true
+                    }
+                }
             },
 
             RecommendedSpec = new VmSpec

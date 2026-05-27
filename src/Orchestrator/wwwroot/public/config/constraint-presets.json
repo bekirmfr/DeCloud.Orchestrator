@@ -60,7 +60,25 @@
     "icon": "⭐",
     "category": "Reliability",
     "constraints": [
-      { "target": "node.reputationScore", "operator": "gte", "value": 0.90 }
+      {
+        "target": "node.reputationScore",
+        "operator": "gte",
+        "value": 0.90
+      }
+    ]
+  },
+  {
+    "id": "public-ip",
+    "label": "Public IP required",
+    "description": "Only nodes with a direct public IP (no NAT/CGNAT). Required for workloads that must be internet-reachable without relay tunnelling.",
+    "icon": "🌍",
+    "category": "Network",
+    "constraints": [
+      {
+        "target": "node.network.hasPublicIp",
+        "operator": "eq",
+        "value": true
+      }
     ]
   }
 ]

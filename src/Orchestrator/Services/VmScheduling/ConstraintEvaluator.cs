@@ -216,6 +216,13 @@ public class ConstraintEvaluator : IConstraintEvaluator
             (n, _) => (object?)(
                 (n.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000));
 
+        // NatType.None = public IP matches private IP = direct internet connection,
+        // no NAT or CGNAT in the path. Any other NatType (Unknown, FullCone, etc.)
+        // means the node is behind NAT and accessed via relay.
+        r[ConstraintTargets.Node.Hardware.HasPublicIp] = new TargetDescriptor(
+            ConstraintTargets.Node.Hardware.HasPublicIp, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.HardwareInventory.Network.NatType == NatType.None));
+
         r[ConstraintTargets.Node.Hardware.CpuCores] = new TargetDescriptor(
             ConstraintTargets.Node.Hardware.CpuCores, ConstraintValueType.Numeric,
             (n, _) => (object?)(double)n.HardwareInventory.Cpu.PhysicalCores);
