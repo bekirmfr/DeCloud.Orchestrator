@@ -29,6 +29,7 @@ public static class PlatformCommonResolvers
         services.AddSingleton<IVariableResolver, PasswordConfigBlockResolver>();
         services.AddSingleton<IVariableResolver, SshPasswordAuthResolver>();
         services.AddSingleton<IVariableResolver, AdminPasswordResolver>();
+        services.AddSingleton<IVariableResolver, DeCloudDomainResolver>();
         services.AddSingleton<IVariableResolver, TimestampResolver>();
         services.AddSingleton<IVariableResolver, VariableScopesBlockResolver>();
         services.AddSingleton<IVariableResolver, DeCloudRoleResolver>();

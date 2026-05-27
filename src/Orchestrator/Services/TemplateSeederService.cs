@@ -3493,14 +3493,19 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                     "'true' or 'false' string for cloud-init's ssh_pwauth. " +
                     "Derived from ADMIN_PASSWORD presence." },
 
-        // Role-layer-only addition
+        // Role-layer addition — resolved by DeCloudDomainResolver
+        // (Resolvers/PlatformCommon/DeCloudDomainResolver.cs). Registering a
+        // resolver — rather than relying on UserSuppliedStatics fallback —
+        // makes the variable platform-bound per design §2.4, so the deploy
+        // form correctly hides the field.
         new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static,
-                DefaultValue = "",
+                Required = true,
                 Description =
-                    "Default subdomain assigned by ingress (e.g. " +
-                    "ai-chatbot-0887.vms.stackfi.tech). Resolved from " +
-                    "UserSuppliedStatics[\"DECLOUD_DOMAIN\"], populated by " +
-                    "TemplateService.GetAvailableVariables(). Used in motd and " +
-                    "final_message display." },
+                    "Default subdomain assigned by central ingress " +
+                    "(e.g. ai-chatbot-0887.vms.stackfi.tech). Resolved by " +
+                    "DeCloudDomainResolver from Vm.IngressConfig.DefaultSubdomain " +
+                    "with fallback to {vm.Id}.{ingressService.BaseDomain}. " +
+                    "Used in the motd block (final_message body is intentionally " +
+                    "absent — see TemplateComposer block-scalar workaround note)." },
     };
 }
