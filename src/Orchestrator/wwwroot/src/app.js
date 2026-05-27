@@ -1744,7 +1744,16 @@ async function updateEstimatedCost() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const d = await res.json();
         const calc = d.data ?? d;
-        costEl.textContent = `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)`;
+        const daily = Number(calc.dailyTotal);
+        const weekly = daily * 7;
+        const monthly = Number(calc.monthlyTotal);
+        costEl.innerHTML =
+            `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)` +
+            `<br><span style="font-size:0.8em;opacity:0.6">` +
+            `~$${daily.toFixed(2)}/day&nbsp;&nbsp;·&nbsp;&nbsp;` +
+            `~$${weekly.toFixed(2)}/week&nbsp;&nbsp;·&nbsp;&nbsp;` +
+            `~$${monthly.toFixed(2)}/month` +
+            `</span>`;
     } catch (_e) {
         costEl.textContent = 'Pricing unavailable';
     }
