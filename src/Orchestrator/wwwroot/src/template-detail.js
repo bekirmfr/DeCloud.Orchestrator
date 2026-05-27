@@ -754,7 +754,6 @@ async function updateDeployCostEstimate() {
         costDisplay.textContent = 'Pricing unavailable';
     }
 }
-}
 
 /**
  * Helper: Get category icon
