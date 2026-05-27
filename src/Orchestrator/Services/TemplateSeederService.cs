@@ -3365,14 +3365,6 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,
                 DiskBytes = 30L * 1024 * 1024 * 1024,
-                GpuMode = GpuMode.Proxied
-            },
-
-            RecommendedSpec = new VmSpec
-            {
-                VirtualCpuCores = 8,
-                MemoryBytes = 16L * 1024 * 1024 * 1024,
-                DiskBytes = 50L * 1024 * 1024 * 1024,
                 GpuMode = GpuMode.Proxied,
                 Constraints = new List<Constraint>
                 {
@@ -3383,6 +3375,14 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                         Value    = true
                     }
                 }
+            },
+
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 16L * 1024 * 1024 * 1024,
+                DiskBytes = 50L * 1024 * 1024 * 1024,
+                GpuMode = GpuMode.Passthrough
             },
 
             RequiresGpu = true,
