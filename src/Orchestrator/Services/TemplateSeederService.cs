@@ -1099,16 +1099,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, which provides 
             {
                 VirtualCpuCores = 2,
                 MemoryBytes = 1024L * 1024 * 1024,
-                DiskBytes = 10L * 1024 * 1024 * 1024,
-                Constraints = new List<Constraint>
-                {
-                    new()
-                    {
-                        Target   = ConstraintTargets.Node.Hardware.HasPublicIp,
-                        Operator = ConstraintOperators.Eq,
-                        Value    = true
-                    }
-                }
+                DiskBytes = 10L * 1024 * 1024 * 1024
             },
 
             RecommendedSpec = new VmSpec
@@ -1616,7 +1607,16 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enoug
                 MemoryBytes = 512 * 1024 * 1024,  // 512 MB
                 DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
                 ImageId = "ubuntu-22.04",
-                QualityTier = QualityTier.Burstable
+                QualityTier = QualityTier.Burstable,
+                Constraints = new List<Constraint>
+                {
+                    new()
+                    {
+                        Target   = ConstraintTargets.Node.Hardware.HasPublicIp,
+                        Operator = ConstraintOperators.Eq,
+                        Value    = true
+                    }
+                }
             },
 
             RecommendedSpec = new VmSpec
