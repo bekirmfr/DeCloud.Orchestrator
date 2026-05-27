@@ -47,9 +47,6 @@ public class NodeAdvertisement
     public int TotalVmsHosted { get; set; }
     public int SuccessfulVmCompletions { get; set; }
     public DateTime RegisteredAt { get; set; }
-    
-    // Pricing
-    public decimal BasePrice { get; set; }
     public NodePricing Pricing { get; set; } = new();
 
     // Availability

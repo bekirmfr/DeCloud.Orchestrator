@@ -226,17 +226,6 @@ public class Node
     public List<string> Tags { get; set; } = new();
 
     /// <summary>
-    /// Base pricing in USDC per compute point per hour.
-    /// </summary>
-    /// <remarks>
-    /// Deprecated — never read by the billing pipeline. Preserved only for
-    /// backward-compatible deserialization of existing MongoDB documents.
-    /// Use <see cref="Pricing"/> for all rate logic.
-    /// </remarks>
-    [Obsolete("Not used in billing. Read Pricing instead.")]
-    public decimal BasePrice { get; set; } = 0.01m;
-
-    /// <summary>
     /// Per-resource pricing set by the node operator.
     /// Rates must be >= platform floor rates (enforced by orchestrator).
     /// If null or zero rates, platform defaults are used.

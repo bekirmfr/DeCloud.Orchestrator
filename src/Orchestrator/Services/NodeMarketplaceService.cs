@@ -86,7 +86,13 @@ public class NodeMarketplaceService : INodeMarketplaceService
         // Filter by price
         if (criteria.MaxPricePerPoint.HasValue)
         {
-            nodes = nodes.Where(n => n.BasePrice <= criteria.MaxPricePerPoint.Value);
+            // Filter on the effective CPU rate (the primary per-unit cost operators set).
+            // Node.BasePrice is deprecated and frozen at registration — it does not
+            // reflect PATCH /api/nodes/me/pricing updates. PricingResolver.Resolve
+            // applies operator rates, floor enforcement, and platform defaults.
+            nodes = nodes.Where(n =>
+                PricingResolver.Resolve(n.Pricing, _pricingConfig).CpuPerHour
+                    <= criteria.MaxPricePerPoint.Value);
         }
 
         // Filter by available capacity
@@ -118,9 +124,9 @@ public class NodeMarketplaceService : INodeMarketplaceService
         // Sort
         advertisements = criteria.SortBy?.ToLower() switch
         {
-            "price" => criteria.SortDescending 
-                ? advertisements.OrderByDescending(a => a.BasePrice).ToList()
-                : advertisements.OrderBy(a => a.BasePrice).ToList(),
+            "price" => criteria.SortDescending
+                ? advertisements.OrderByDescending(a => a.Pricing.CpuPerHour).ToList()
+                : advertisements.OrderBy(a => a.Pricing.CpuPerHour).ToList(),
             "uptime" => criteria.SortDescending
                 ? advertisements.OrderByDescending(a => a.UptimePercentage).ToList()
                 : advertisements.OrderBy(a => a.UptimePercentage).ToList(),
@@ -192,11 +198,6 @@ public class NodeMarketplaceService : INodeMarketplaceService
             node.Tags = update.Tags;
         }
 
-        if (update.BasePrice.HasValue && update.BasePrice.Value > 0)
-        {
-            node.BasePrice = update.BasePrice.Value;
-        }
-
         if (update.Pricing != null)
         {
             // Enforce floor rates
@@ -261,8 +262,6 @@ public class NodeMarketplaceService : INodeMarketplaceService
             TotalVmsHosted = node.TotalVmsHosted,
             SuccessfulVmCompletions = node.SuccessfulVmCompletions,
             RegisteredAt = node.RegisteredAt,
-
-            BasePrice = node.BasePrice,
             Pricing = PricingResolver.Resolve(node.Pricing, _pricingConfig),
 
             IsOnline = node.Status == NodeStatus.Online,
@@ -285,6 +284,5 @@ public class NodeProfileUpdate
     public string? Name { get; set; }
     public string? Description { get; set; }
     public List<string>? Tags { get; set; }
-    public decimal? BasePrice { get; set; }
     public NodePricing? Pricing { get; set; }
 }

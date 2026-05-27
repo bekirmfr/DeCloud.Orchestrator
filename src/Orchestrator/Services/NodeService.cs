@@ -3065,7 +3065,7 @@ public class NodeService : INodeService
         // Filter by price
         if (criteria.MaxPricePerPoint.HasValue)
         {
-            nodes = nodes.Where(n => n.BasePrice <= criteria.MaxPricePerPoint.Value);
+            nodes = nodes.Where(n => n.Pricing.CpuPerHour <= criteria.MaxPricePerPoint.Value);
         }
 
         /// Filter by available capacity
@@ -3098,8 +3098,8 @@ public class NodeService : INodeService
         advertisements = criteria.SortBy?.ToLower() switch
         {
             "price" => criteria.SortDescending
-                ? advertisements.OrderByDescending(a => a.BasePrice).ToList()
-                : advertisements.OrderBy(a => a.BasePrice).ToList(),
+                ? advertisements.OrderByDescending(a => a.Pricing.CpuPerHour).ToList()
+                : advertisements.OrderBy(a => a.Pricing.CpuPerHour).ToList(),
             "uptime" => criteria.SortDescending
                 ? advertisements.OrderByDescending(a => a.UptimePercentage).ToList()
                 : advertisements.OrderBy(a => a.UptimePercentage).ToList(),
@@ -3198,8 +3198,6 @@ public class NodeService : INodeService
             TotalVmsHosted = node.TotalVmsHosted,
             SuccessfulVmCompletions = node.SuccessfulVmCompletions,
             RegisteredAt = node.RegisteredAt,
-
-            BasePrice = node.BasePrice,
             Pricing = node.Pricing,
 
             IsOnline = node.Status == NodeStatus.Online,
