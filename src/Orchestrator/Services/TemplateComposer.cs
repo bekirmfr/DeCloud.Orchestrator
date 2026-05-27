@@ -22,12 +22,21 @@ namespace DeCloud.Orchestrator.Services;
 /// <b>Composition rules:</b>
 /// <list type="bullet">
 ///   <item><b>Scalars</b> (hostname, manage_etc_hosts, package_update,
-///     package_upgrade, disable_root, ssh_pwauth, final_message): role wins
-///     if present; base wins otherwise.</item>
+///     package_upgrade, disable_root, ssh_pwauth, final_message): exactly
+///     one layer may declare each. If both declare the same scalar,
+///     <see cref="Compose"/> throws — see <see cref="CheckScalarCollisions"/>.
+///     The partition is: base owns platform invariants (hostname, ssh_pwauth,
+///     disable_root, package_update/upgrade); role owns workload-specific
+///     scalars (final_message). A collision means someone got the partition
+///     wrong, and the failure is louder than silent override of a platform
+///     guarantee. If a role genuinely needs to influence a platform scalar,
+///     declare it as a <c>TemplateVariable</c> with a resolver — see
+///     UNIFIED_CLOUDINIT_PIPELINE.md §2.4.</item>
 ///   <item><b>packages</b>: union with deduplication. Base order preserved;
 ///     role-only items appended.</item>
 ///   <item><b>bootcmd, runcmd, write_files</b>: concatenation. Base items
-///     emitted first, then role items.</item>
+///     emitted first, then role items. Lists are intentionally additive —
+///     no collision concept applies.</item>
 ///   <item><b>Top-level placeholders</b> (e.g., <c>__SSH_AUTHORIZED_KEYS_BLOCK__</c>):
 ///     preserved verbatim at their position in the base file's source order.
 ///     <see cref="CloudInitRenderer"/> substitutes them at render time.</item>
@@ -97,12 +106,19 @@ public static class TemplateComposer
     /// <returns>The composed cloud-init document, terminated with a single newline.</returns>
     /// <exception cref="InvalidOperationException">
     /// Thrown if either input has a column-0 line that is neither a recognized
-    /// key (<c>identifier:</c>) nor a placeholder (<c>__NAME__</c>).
+    /// key (<c>identifier:</c>) nor a placeholder (<c>__NAME__</c>). Also thrown
+    /// if both layers declare the same scalar key — see
+    /// <see cref="CheckScalarCollisions"/> for the rationale.
     /// </exception>
     public static string Compose(string baseLayer, string roleLayer, string baseName, string roleName)
     {
         var baseSections = ParseSections(baseLayer);
         var roleSections = ParseSections(roleLayer);
+
+        // Detect and reject scalar collisions BEFORE emitting any output.
+        // Lists (packages, runcmd, write_files, bootcmd) are intentionally
+        // additive and not subject to this check.
+        CheckScalarCollisions(baseSections, roleSections, baseName, roleName);
 
         // Index role sections by key for quick lookup.
         var roleByKey = roleSections
@@ -148,6 +164,102 @@ public static class TemplateComposer
         }
 
         return TrimTrailingBlankLines(sb.ToString()) + "\n";
+    }
+
+    /// <summary>
+    /// Throw if both layers declare the same scalar key. Lists (packages,
+    /// runcmd, bootcmd, write_files) are intentionally additive — they're
+    /// not subject to this check.
+    ///
+    /// <para>
+    /// Accumulates ALL collisions before throwing so multi-collision authors
+    /// see the full list in one round trip — mirrors
+    /// <c>CloudInitValidator</c>'s three-bucket pattern (design §3.4),
+    /// avoiding whack-a-mole iteration.
+    /// </para>
+    ///
+    /// <para>
+    /// The error message names both source files (via <paramref name="baseName"/>
+    /// and <paramref name="roleName"/>) so the author can identify which file
+    /// to edit. Caught by <c>TemplateSeederService.TryUpsertComposeAsync</c>'s
+    /// per-template failure isolation — other templates continue seeding.
+    /// </para>
+    /// </summary>
+    private static void CheckScalarCollisions(
+        IReadOnlyList<Section> baseSections,
+        IReadOnlyList<Section> roleSections,
+        string baseName,
+        string roleName)
+    {
+        var baseByKey = baseSections
+            .Where(s => s.Kind == SectionKind.Key)
+            .ToDictionary(s => s.Key!, StringComparer.Ordinal);
+
+        var collisions = new List<(string Key, string BaseValue, string RoleValue)>();
+        foreach (var roleSection in roleSections.Where(s => s.Kind == SectionKind.Key))
+        {
+            var key = roleSection.Key!;
+            // Only scalars throw on collision. Lists merge additively by design.
+            var mode = Modes.TryGetValue(key, out var m) ? m : MergeMode.ScalarRoleWins;
+            if (mode != MergeMode.ScalarRoleWins) continue;
+            if (!baseByKey.TryGetValue(key, out var baseSection)) continue;
+
+            collisions.Add((
+                key,
+                FormatSectionValue(baseSection),
+                FormatSectionValue(roleSection)));
+        }
+
+        if (collisions.Count == 0) return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Scalar key collision in TemplateComposer.");
+        sb.AppendLine();
+        sb.AppendLine(
+            "Both layers declare the following scalar(s), which the composer does not allow:");
+        sb.AppendLine();
+        foreach (var (key, baseValue, roleValue) in collisions)
+        {
+            sb.AppendLine($"  - {key}");
+            sb.AppendLine($"      base: {baseName}  (value: {baseValue})");
+            sb.AppendLine($"      role: {roleName}  (value: {roleValue})");
+            sb.AppendLine();
+        }
+        sb.AppendLine(
+            "Base layers own platform invariants; role layers own workload-specific");
+        sb.AppendLine(
+            "content. Remove the colliding scalar(s) from the role layer. If you need");
+        sb.AppendLine(
+            "to influence a platform scalar, declare it as a TemplateVariable and have");
+        sb.AppendLine(
+            "a resolver compute it — see UNIFIED_CLOUDINIT_PIPELINE.md §2.4.");
+
+        throw new InvalidOperationException(sb.ToString());
+    }
+
+    /// <summary>
+    /// Render a section's value for the collision error message. Handles both
+    /// inline scalars (<c>key: value</c>) and block scalars (<c>key: |</c>
+    /// followed by indented body). Block bodies are previewed by their first
+    /// non-blank line, trimmed of leading indentation, so the error stays
+    /// readable when the colliding value spans multiple lines.
+    /// </summary>
+    private static string FormatSectionValue(Section s)
+    {
+        if (s.InlineValue is not null && s.BlockLines.Count == 0)
+            return s.InlineValue;
+
+        if (s.BlockLines.Count > 0)
+        {
+            var firstNonBlank = s.BlockLines.FirstOrDefault(
+                l => !string.IsNullOrWhiteSpace(l)) ?? "";
+            var preview = firstNonBlank.Trim();
+            return s.InlineValue is not null
+                ? $"{s.InlineValue} {preview}"   // block-scalar indicator + body preview
+                : preview;
+        }
+
+        return s.InlineValue ?? "<empty>";
     }
 
     private enum SectionKind { Key, Placeholder }

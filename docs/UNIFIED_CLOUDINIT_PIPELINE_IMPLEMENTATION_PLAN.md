@@ -306,7 +306,23 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   **Resolver registry impact:** none. All declared statics (VM_ID, VM_NAME, HOSTNAME, ORCHESTRATOR_URL, CA_PUBLIC_KEY, SSH_AUTHORIZED_KEYS_BLOCK, PASSWORD_CONFIG_BLOCK, ADMIN_PASSWORD, SSH_PASSWORD_AUTH) resolve via existing platform-common resolvers; DECLOUD_DOMAIN falls back to `UserSuppliedStatics["DECLOUD_DOMAIN"]` populated by `TemplateService.GetAvailableVariables`.
 
   **First post-Phase-4 §2 entry.** Confirms the impl plan remains a live decision log for material pipeline-shape choices after migration closure, per §1's "ongoing maintenance now happens through normal commit cycles" — entries here when the choice would surprise a future maintainer.
-
+- **2026-05-28 / TemplateComposer: scalar collisions throw instead of silent role-wins.**
+  The Phase-0 implementation merged scalars with "role wins if both declare the
+  same key". No current template (general, ai-chatbot, relay, dht, blockstore)
+  exercises that case — no scalar collision exists in the shipped set. The
+  silent-override semantic was a latent footgun: a community template author
+  could downgrade `ssh_pwauth: false` from `base-system.yaml` to `true` and
+  the composer would silently emit the role's value. After this change,
+  `CheckScalarCollisions` accumulates all colliding scalar keys and throws
+  `InvalidOperationException` with both layer names + per-collision base/role
+  values + design §2.4 reference. Lists (`packages` union, `runcmd`/`bootcmd`/
+  `write_files` concat) are unaffected — they're intentionally additive.
+  Caught by `TemplateSeederService.TryUpsertComposeAsync`'s per-template
+  failure isolation, so a broken template doesn't block other seeds.
+  Composed output for the existing template set is byte-identical pre/post
+  change (no collisions to fire on). The change tightens behavior for future
+  templates — especially community-authored ones — without affecting current
+  ones.
 ---
 
 ## §3. Pre-flight — must complete before Phase 0
