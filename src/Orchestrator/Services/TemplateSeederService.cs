@@ -3373,7 +3373,16 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                 VirtualCpuCores = 8,
                 MemoryBytes = 16L * 1024 * 1024 * 1024,
                 DiskBytes = 50L * 1024 * 1024 * 1024,
-                GpuMode = GpuMode.Proxied
+                GpuMode = GpuMode.Proxied,
+                Constraints = new List<Constraint>
+                {
+                    new()
+                    {
+                        Target   = ConstraintTargets.Node.Hardware.HasGpu,
+                        Operator = ConstraintOperators.Eq,
+                        Value    = true
+                    }
+                }
             },
 
             RequiresGpu = true,
