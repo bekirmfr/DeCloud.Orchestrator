@@ -21,17 +21,18 @@ namespace DeCloud.Orchestrator.Services;
 /// <para>
 /// <b>Composition rules:</b>
 /// <list type="bullet">
-///   <item><b>Scalars</b> (hostname, manage_etc_hosts, package_update,
-///     package_upgrade, disable_root, ssh_pwauth, final_message): exactly
-///     one layer may declare each. If both declare the same scalar,
+///   <item><b>Exclusive scalars</b> (hostname, manage_etc_hosts,
+///     package_update, package_upgrade, disable_root, ssh_pwauth): exactly
+///     one layer may declare each. If both declare the same key,
 ///     <see cref="Compose"/> throws — see <see cref="CheckScalarCollisions"/>.
-///     The partition is: base owns platform invariants (hostname, ssh_pwauth,
-///     disable_root, package_update/upgrade); role owns workload-specific
-///     scalars (final_message). A collision means someone got the partition
-///     wrong, and the failure is louder than silent override of a platform
-///     guarantee. If a role genuinely needs to influence a platform scalar,
+///     These are platform invariants (security posture, orchestrator
+///     monitoring contracts, update policy); silent role-override would be
+///     a regression. If a role genuinely needs to influence one of these,
 ///     declare it as a <c>TemplateVariable</c> with a resolver — see
 ///     UNIFIED_CLOUDINIT_PIPELINE.md §2.4.</item>
+///   <item><b>Overridable scalars</b> (final_message): base provides a
+///     sensible default; role wins if both declare. Use for ergonomic
+///     scalars where no platform contract is at stake.</item>
 ///   <item><b>packages</b>: union with deduplication. Base order preserved;
 ///     role-only items appended.</item>
 ///   <item><b>bootcmd, runcmd, write_files</b>: concatenation. Base items
@@ -41,6 +42,15 @@ namespace DeCloud.Orchestrator.Services;
 ///     preserved verbatim at their position in the base file's source order.
 ///     <see cref="CloudInitRenderer"/> substitutes them at render time.</item>
 /// </list>
+/// </para>
+///
+/// <para>
+/// <b>Adding a new scalar:</b> default mode for unrecognized scalars is
+/// <see cref="MergeMode.ScalarExclusive"/> (safe-by-default — unknown
+/// scalars throw on collision rather than silently merging). To make a
+/// new scalar overridable, add it to the <c>Modes</c> dictionary as
+/// <see cref="MergeMode.ScalarRoleWins"/> with a comment justifying why
+/// silent override is acceptable.
 /// </para>
 ///
 /// <para>
@@ -75,20 +85,47 @@ public static class TemplateComposer
 
     private enum MergeMode
     {
+        /// <summary>
+        /// Scalar where role wins if both layers declare. Use for sensible
+        /// defaults — base provides a fallback, role provides specificity.
+        /// Example: <c>final_message</c>. No platform contract at stake;
+        /// override is a feature, not a bug.
+        /// </summary>
         ScalarRoleWins,
+
+        /// <summary>
+        /// Scalar where exactly one layer may declare. Throws via
+        /// <see cref="CheckScalarCollisions"/> if both declare. Use for
+        /// platform invariants — security posture (<c>ssh_pwauth</c>,
+        /// <c>disable_root</c>), orchestrator monitoring contracts
+        /// (<c>hostname</c>), cloud-init behavior (<c>manage_etc_hosts</c>),
+        /// update policy (<c>package_update</c>, <c>package_upgrade</c>).
+        /// Silent role-override would be a regression; loud failure is correct.
+        /// </summary>
+        ScalarExclusive,
+
         ListConcat,
         ListUnion,
     }
 
+    // Per-key merge policy. Keys not present here default to ScalarExclusive
+    // (safe-by-default — see Compose's default-mode fallback). When adding a
+    // new scalar that's safe to override, list it here as ScalarRoleWins with
+    // a justifying comment.
     private static readonly Dictionary<string, MergeMode> Modes = new(StringComparer.Ordinal)
     {
-        ["hostname"] = MergeMode.ScalarRoleWins,
-        ["manage_etc_hosts"] = MergeMode.ScalarRoleWins,
-        ["package_update"] = MergeMode.ScalarRoleWins,
-        ["package_upgrade"] = MergeMode.ScalarRoleWins,
-        ["disable_root"] = MergeMode.ScalarRoleWins,
-        ["ssh_pwauth"] = MergeMode.ScalarRoleWins,
-        ["final_message"] = MergeMode.ScalarRoleWins,
+        // ── Platform invariants — exclusive (collision throws) ──────────
+        ["hostname"] = MergeMode.ScalarExclusive,  // orchestrator monitoring contract
+        ["manage_etc_hosts"] = MergeMode.ScalarExclusive,  // cloud-init behavior contract
+        ["disable_root"] = MergeMode.ScalarExclusive,  // security posture
+        ["ssh_pwauth"] = MergeMode.ScalarExclusive,  // security posture
+        ["package_update"] = MergeMode.ScalarExclusive,  // update policy (system VMs: false)
+        ["package_upgrade"] = MergeMode.ScalarExclusive,  // update policy (system VMs: false)
+
+        // ── Workload-customizable defaults — role wins on collision ─────
+        ["final_message"] = MergeMode.ScalarRoleWins,   // display text; base default OK
+
+        // ── Lists — always additive ─────────────────────────────────────
         ["packages"] = MergeMode.ListUnion,
         ["bootcmd"] = MergeMode.ListConcat,
         ["write_files"] = MergeMode.ListConcat,
@@ -150,7 +187,12 @@ public static class TemplateComposer
             if (rs is not null)
                 consumedRoleKeys.Add(key);
 
-            var mode = Modes.TryGetValue(key, out var m) ? m : MergeMode.ScalarRoleWins;
+            // Unknown scalars default to ScalarExclusive — safe-by-default.
+            // A future template that introduces an uncategorized scalar gets
+            // a loud collision throw rather than silent role-override of
+            // something potentially important. Add the new scalar to Modes
+            // with a justifying comment to opt it into ScalarRoleWins.
+            var mode = Modes.TryGetValue(key, out var m) ? m : MergeMode.ScalarExclusive;
             EmitMerged(sb, bs, rs, key, mode);
         }
 
@@ -159,7 +201,7 @@ public static class TemplateComposer
         {
             if (consumedRoleKeys.Contains(rs.Key!))
                 continue;
-            var mode = Modes.TryGetValue(rs.Key!, out var m) ? m : MergeMode.ScalarRoleWins;
+            var mode = Modes.TryGetValue(rs.Key!, out var m) ? m : MergeMode.ScalarExclusive;
             EmitMerged(sb, baseSection: null, rs, rs.Key!, mode);
         }
 
@@ -199,9 +241,12 @@ public static class TemplateComposer
         foreach (var roleSection in roleSections.Where(s => s.Kind == SectionKind.Key))
         {
             var key = roleSection.Key!;
-            // Only scalars throw on collision. Lists merge additively by design.
-            var mode = Modes.TryGetValue(key, out var m) ? m : MergeMode.ScalarRoleWins;
-            if (mode != MergeMode.ScalarRoleWins) continue;
+            // Only ScalarExclusive throws on collision. ScalarRoleWins is the
+            // "base provides a default, role can override" case — both layers
+            // declaring is by design, not a bug. Lists merge additively by
+            // design as well.
+            var mode = Modes.TryGetValue(key, out var m) ? m : MergeMode.ScalarExclusive;
+            if (mode != MergeMode.ScalarExclusive) continue;
             if (!baseByKey.TryGetValue(key, out var baseSection)) continue;
 
             collisions.Add((
@@ -353,7 +398,12 @@ public static class TemplateComposer
     {
         switch (mode)
         {
+            // Both scalar modes share emission logic: pick whichever section
+            // exists, role takes precedence when both do. They differ only at
+            // collision-detection time — ScalarExclusive throws via
+            // CheckScalarCollisions BEFORE this dispatch fires.
             case MergeMode.ScalarRoleWins:
+            case MergeMode.ScalarExclusive:
                 EmitScalar(sb, roleSection ?? baseSection);
                 break;
             case MergeMode.ListConcat:
@@ -369,7 +419,20 @@ public static class TemplateComposer
     {
         if (section is null) return;
         var key = section.Key!;
-        if (section.InlineValue is not null)
+
+        // YAML block-scalar header (|, >, |+, |-, |2-, etc.): ParseSections's
+        // KeyRegex captures the indicator into InlineValue, and the actual body
+        // lives in BlockLines. Without this branch, the plain "InlineValue is
+        // not null" path below would emit `key: |\n` and silently drop the
+        // body — surfaced during the AI Chatbot migration when a role layer's
+        // `final_message: |` text went missing from the composed output.
+        if (IsBlockScalar(section))
+        {
+            sb.Append(key).Append(": ").AppendLine(section.InlineValue);
+            foreach (var line in TrimTrailingBlanks(section.BlockLines))
+                sb.AppendLine(line);
+        }
+        else if (section.InlineValue is not null)
         {
             sb.Append(key).Append(": ").AppendLine(section.InlineValue);
         }
@@ -386,6 +449,28 @@ public static class TemplateComposer
         }
         sb.AppendLine();
     }
+
+    /// <summary>
+    /// True when a section's content is a YAML block scalar — i.e., the line
+    /// after the key is a block-scalar header (<c>|</c> literal or <c>&gt;</c>
+    /// folded, with optional chomping/indent modifiers) and the actual body
+    /// lives in <see cref="Section.BlockLines"/>.
+    ///
+    /// <para>
+    /// Guard <c>BlockLines.Count &gt; 0</c> ensures a malformed bare
+    /// <c>key: |</c> with no body falls through to the inline emit branch
+    /// instead of producing a dangling indicator. The composer is a producer
+    /// not a validator: if the source's chomping/indent suffix is syntactically
+    /// odd (e.g., <c>|banana</c>), the composer reproduces it faithfully and
+    /// cloud-init surfaces the error at deploy time. Per YAML 1.2 §8.1.1.1
+    /// the full grammar is <c>(|&gt;)([+-]?\d*|\d*[+-]?)</c>; this check is
+    /// deliberately looser.
+    /// </para>
+    /// </summary>
+    private static bool IsBlockScalar(Section section) =>
+        section.InlineValue is { Length: > 0 } iv
+        && (iv[0] == '|' || iv[0] == '>')
+        && section.BlockLines.Count > 0;
 
     private static void EmitListConcat(
         StringBuilder sb, Section? baseSection, Section? roleSection, string key)

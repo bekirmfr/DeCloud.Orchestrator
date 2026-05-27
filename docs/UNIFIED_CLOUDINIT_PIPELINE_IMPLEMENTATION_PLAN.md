@@ -323,6 +323,27 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   change (no collisions to fire on). The change tightens behavior for future
   templates — especially community-authored ones — without affecting current
   ones.
+- **2026-05-28 / TemplateComposer: EmitScalar block-scalar handling.**
+  `EmitScalar` previously emitted `key: |\n` and silently dropped
+  `BlockLines` when a scalar section's `InlineValue` was a YAML block-scalar
+  indicator (`|`, `>`, `|+`, `|-`, `>+`, `>-`, `|N`, etc.). Surfaced during
+  the AI Chatbot migration when the role layer's `final_message: |` body
+  went missing from the composed output; worked around by inlining
+  `final_message` as a quoted string. Fixed by adding an `IsBlockScalar`
+  branch ahead of the plain inline emit — when `InlineValue` starts with
+  `|`/`>` and `BlockLines` is non-empty, emit the indicator followed by
+  the body. Guard `BlockLines.Count > 0` keeps malformed bare `key: |`
+  with no body falling through to the inline branch instead of producing
+  a dangling indicator. Composer remains a producer not a validator: the
+  full YAML 1.2 chomping/indent grammar isn't strictly validated; syntactic
+  oddities pass through to cloud-init which surfaces them at deploy time.
+  No existing template exercised the bad path after the workaround landed,
+  so composed output for the shipped set is byte-identical pre/post fix —
+  the change unblocks future role layers that want multi-line block-scalar
+  values at top-level role-wins merge points (`final_message`,
+  `package_update`, etc.). System VMs use block scalars inside `write_files`
+  items, which already worked correctly (those are list items processed
+  by `EmitListConcat`, not top-level scalars).
 ---
 
 ## §3. Pre-flight — must complete before Phase 0
