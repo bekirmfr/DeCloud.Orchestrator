@@ -98,9 +98,7 @@ public class NodePerformanceEvaluator
                     MinimumBenchmark = tierConfig.MinimumBenchmark,
                     RequiredPointsPerVCpu = requiredPointsPerVCpu,
                     NodePointsPerCore = pointsPerCore,
-                    // Max vCPUs this node can host of this tier across all cores,
-                    // not per-core (totalPoints / cost per vCPU).
-                    MaxVCpusPerCore = (int)(evaluation.TotalComputePoints / requiredPointsPerVCpu),
+                    MaxVCpus = (int)(evaluation.TotalComputePoints / requiredPointsPerVCpu),
                     PriceMultiplier = tierConfig.PriceMultiplier,
                     Description = tierConfig.Description,
                     IsEligible = true
@@ -108,8 +106,21 @@ public class NodePerformanceEvaluator
             }
             else
             {
-                var gap = requiredPointsPerVCpu - pointsPerCore;
-                var percentageGap = (gap / requiredPointsPerVCpu) * 100;
+                // Report which gate(s) failed with correct units for each.
+                var reasons = new List<string>();
+
+                if (!meetsPerformance)
+                    reasons.Add(
+                        $"benchmark {benchmarkScore} below tier minimum {tierConfig.MinimumBenchmark}");
+
+                if (!meetsCapacity)
+                {
+                    var capacityGap = requiredPointsPerVCpu - evaluation.TotalComputePoints;
+                    var capacityGapPct = (capacityGap / requiredPointsPerVCpu) * 100;
+                    reasons.Add(
+                        $"node total {evaluation.TotalComputePoints:F0} pts below {requiredPointsPerVCpu:F2} pts required for 1 vCPU " +
+                        $"(short by {capacityGap:F2} pts, {capacityGapPct:F1}%)");
+                }
 
                 evaluation.TierCapabilities[tier] = new TierCapability
                 {
@@ -119,9 +130,7 @@ public class NodePerformanceEvaluator
                     NodePointsPerCore = pointsPerCore,
                     PriceMultiplier = tierConfig.PriceMultiplier,
                     IsEligible = false,
-                    IneligibilityReason = $"Node provides {pointsPerCore:F2} points/core, " +
-                                         $"tier requires {requiredPointsPerVCpu:F2} points/vCPU " +
-                                         $"(gap: {gap:F2} points, {percentageGap:F1}% below minimum)"
+                    IneligibilityReason = string.Join("; ", reasons)
                 };
             }
         }
@@ -181,10 +190,10 @@ public class NodePerformanceEvaluator
             if (capability.IsEligible)
             {
                 _logger.LogInformation(
-                    "  ✓ {Tier,-12} | {Points:F2} pts/vCPU | Max {MaxVCpus}:1 overcommit | ${Price}x pricing",
+                    "  ✓ {Tier,-12} | {Points:F2} pts/vCPU | Max {MaxVCpus} vCPUs | ${Price}x pricing",
                     tier,
                     capability.RequiredPointsPerVCpu,
-                    capability.MaxVCpusPerCore,
+                    capability.MaxVCpus,
                     capability.PriceMultiplier);
             }
             else
@@ -249,7 +258,7 @@ public class TierCapability
     public int MinimumBenchmark { get; set; }
     public double RequiredPointsPerVCpu { get; set; }
     public double NodePointsPerCore { get; set; }
-    public int MaxVCpusPerCore { get; set; }
+    public int MaxVCpus { get; set; }
     public decimal PriceMultiplier { get; set; }
     public string Description { get; set; } = string.Empty;
     public bool IsEligible { get; set; }
