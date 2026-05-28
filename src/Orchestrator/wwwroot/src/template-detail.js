@@ -441,10 +441,23 @@ export async function openDeployTemplateModal(template) {
 
         if (gpuModeSelect) gpuModeSelect.value = String(defaultGpuMode);
 
+        // Show VRAM input for any GPU mode (Passthrough or Proxied), hide for None.
         if (gpuVramRow)
-            gpuVramRow.style.display = defaultGpuMode === 2 ? 'flex' : 'none';
+            gpuVramRow.style.display = defaultGpuMode !== 0 ? 'flex' : 'none';
 
-        // Pre-fill VRAM from recommended spec, fall back to minimum, then 4 GB
+        // Label differs by mode: Passthrough uses minimum VRAM for scheduling +
+        // billing estimate; Proxied uses it as the exact allocation quota.
+        const gpuVramLabel = document.getElementById('deploy-gpu-vram-label');
+        if (gpuVramLabel) {
+            gpuVramLabel.textContent = defaultGpuMode === 1
+                ? 'Min. VRAM (GB)  ·  estimate only'
+                : 'VRAM (GB)';
+        }
+
+        // Pre-fill VRAM from recommended spec, fall back to minimum, then 4 GB.
+        // For Passthrough this is the minimum scheduling requirement and
+        // the billing estimate floor — actual cost reflects the assigned GPU's
+        // full VRAM, which may be higher.
         const recGpuVram = recSpec.gpuVramBytes || minSpec.gpuVramBytes || 0;
         if (gpuVramInput)
             gpuVramInput.value = recGpuVram > 0
@@ -514,9 +527,8 @@ export async function deployFromTemplate() {
     // GPU — read from the GPU Access section (hidden when template has no GPU requirement)
     const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
     const gpuVramGb = parseFloat(document.getElementById('deploy-gpu-vram')?.value ?? '0');
-    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
-        ? Math.round(gpuVramGb * 1024 ** 3)
-        : null;
+    const gpuVramBytes = gpuMode !== 0 && gpuVramGb > 0
+        ? Math.round(gpuVramGb * 1024 ** 3) : null;
 
     // Client-side name validation (mirrors server-side VmNameService)
     const sanitized = window.sanitizeVmName ? window.sanitizeVmName(vmName) : vmName;
@@ -698,7 +710,13 @@ function collectDeployVariables() {
 export function onDeployGpuModeChange() {
     const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
     const gpuVramRow = document.getElementById('deploy-gpu-vram-row');
-    if (gpuVramRow) gpuVramRow.style.display = gpuMode === 2 ? 'flex' : 'none';
+    const gpuVramLabel = document.getElementById('deploy-gpu-vram-label');
+    if (gpuVramRow) gpuVramRow.style.display = gpuMode !== 0 ? 'flex' : 'none';
+    if (gpuVramLabel) {
+        gpuVramLabel.textContent = gpuMode === 1
+            ? 'Min. VRAM (GB)  ·  estimate only'
+            : 'VRAM (GB)';
+    }
     updateDeployCostEstimate();
 }
 
@@ -716,7 +734,12 @@ async function updateDeployCostEstimate() {
     const replicationFactor = parseInt(document.getElementById('deploy-replication-factor')?.value ?? '3');
     const gpuMode = parseInt(document.getElementById('deploy-gpu-mode')?.value ?? '0');
     const gpuVramGb = parseFloat(document.getElementById('deploy-gpu-vram')?.value ?? '0');
-    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
+    // For Proxied: GpuVramBytes is the exact VRAM quota allocated from the pool.
+    // For Passthrough: GpuVramBytes is the minimum VRAM the workload needs —
+    // actual billing post-scheduling uses the assigned GPU's full VRAM, which
+    // may be higher. This value drives both the scheduler (minimum requirement)
+    // and the pre-deployment cost estimate (floor).
+    const gpuVramBytes = gpuMode !== 0 && gpuVramGb > 0
         ? Math.round(gpuVramGb * 1024 ** 3) : null;
 
     const costDisplay = document.getElementById('deploy-cost-estimate');
@@ -743,13 +766,18 @@ async function updateDeployCostEstimate() {
         const daily = Number(calc.dailyTotal);
         const weekly = daily * 7;
         const monthly = Number(calc.monthlyTotal);
+        const isPassthrough = gpuMode === 1;
+        const passthroughNote = isPassthrough
+            ? `<br><span style="font-size:0.75em;opacity:0.5">` +
+            `GPU estimate based on minimum VRAM — actual cost reflects assigned GPU</span>`
+            : '';
         costDisplay.innerHTML =
             `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)` +
             `<br><span style="font-size:0.8em;opacity:0.6">` +
             `~$${daily.toFixed(2)}/day&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${weekly.toFixed(2)}/week&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${monthly.toFixed(2)}/month` +
-            `</span>`;
+            `~$${weekly.toFixed(2)}/wk&nbsp;&nbsp;·&nbsp;&nbsp;` +
+            `~$${monthly.toFixed(2)}/mo` +
+            `</span>` + passthroughNote;
     } catch (_e) {
         costDisplay.textContent = 'Pricing unavailable';
     }

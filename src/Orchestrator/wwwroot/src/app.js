@@ -1497,6 +1497,7 @@ async function createVM() {
             document.getElementById('replication-factor').value = '3';
             const gpuModeEl = document.getElementById('vm-gpu-mode');
             if (gpuModeEl) gpuModeEl.value = '0';
+
             const gpuVramRow = document.getElementById('vm-gpu-vram-row');
             if (gpuVramRow) gpuVramRow.style.display = 'none';
             updateTierInfo();
@@ -1703,7 +1704,15 @@ function updateReplicationInfo() {
 function onGpuModeChange() {
     const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
     const gpuVramRow = document.getElementById('vm-gpu-vram-row');
-    if (gpuVramRow) gpuVramRow.style.display = gpuMode === 2 ? 'flex' : 'none';
+    const gpuVramLabel = document.getElementById('vm-gpu-vram-label');
+    if (gpuVramRow) gpuVramRow.style.display = gpuMode !== 0 ? 'flex' : 'none';
+    // For Passthrough the label clarifies this is a minimum scheduling requirement,
+    // not an exact allocation. Actual billing uses the assigned GPU's full VRAM.
+    if (gpuVramLabel) {
+        gpuVramLabel.textContent = gpuMode === 1
+            ? 'Min. VRAM (GB)  ·  estimate only'
+            : 'VRAM (GB)';
+    }
     updateEstimatedCost();
 }
 
@@ -1747,13 +1756,18 @@ async function updateEstimatedCost() {
         const daily = Number(calc.dailyTotal);
         const weekly = daily * 7;
         const monthly = Number(calc.monthlyTotal);
+        const isPassthrough = gpuMode === 1;
+        const passthroughNote = isPassthrough
+            ? `<br><span style="font-size:0.75em;opacity:0.5">` +
+            `GPU estimate based on minimum VRAM — actual cost reflects assigned GPU</span>`
+            : '';
         costEl.innerHTML =
             `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)` +
             `<br><span style="font-size:0.8em;opacity:0.6">` +
             `~$${daily.toFixed(2)}/day&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${weekly.toFixed(2)}/week&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${monthly.toFixed(2)}/month` +
-            `</span>`;
+            `~$${weekly.toFixed(2)}/wk&nbsp;&nbsp;·&nbsp;&nbsp;` +
+            `~$${monthly.toFixed(2)}/mo` +
+            `</span>` + passthroughNote;
     } catch (_e) {
         costEl.textContent = 'Pricing unavailable';
     }
