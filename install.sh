@@ -113,26 +113,30 @@ JWT_SECRET_KEY=""                   # Will be auto-generated if not provided
 # rates above the floor via: decloud pricing --cpu 0.012 ...
 
 # CPU
-PRICING_FLOOR_CPU=0.005             # $0.005 per core per hour (minimum)
-PRICING_DEFAULT_CPU=0.01            # $0.01 per core per hour (platform default)
+PRICING_FLOOR_CPU=0.002                 # per core per hour (minimum)
+PRICING_DEFAULT_CPU=0.004               # per core per hour (platform default)
 
 # Memory
-PRICING_FLOOR_MEMORY=0.0025         # $0.0025 per GB per hour (minimum)
-PRICING_DEFAULT_MEMORY=0.005        # $0.005 per GB per hour (platform default)
+PRICING_FLOOR_MEMORY=0.001              # per GB per hour (minimum)
+PRICING_DEFAULT_MEMORY=0.002            # per GB per hour (platform default)
 
 # Storage (disk allocation)
-PRICING_FLOOR_STORAGE=0.00005       # $0.00005 per GB per hour (minimum)
-PRICING_DEFAULT_STORAGE=0.0001      # $0.0001 per GB per hour (platform default)
+PRICING_FLOOR_STORAGE=0.00002           # per GB per hour (minimum)
+PRICING_DEFAULT_STORAGE=0.00005         # per GB per hour (platform default)
 
 # GPU VRAM (both Passthrough and Proxied modes, per GB of VRAM)
-PRICING_FLOOR_GPU_VRAM=0.003        # $0.003 per GB per hour (minimum)
-PRICING_DEFAULT_GPU_VRAM=0.006      # $0.006 per GB per hour (platform default)
+PRICING_FLOOR_GPU_VRAM=0.001            # per GB per hour (minimum)
+PRICING_DEFAULT_GPU_VRAM=0.003          # per GB per hour (platform default)
+
+# Replication storage (disk allocation for replica sets)
+PRICING_FLOOR_REPLICATION=0.0000005     # per MB per hour (minimum)
+PRICING_DEFAULT_REPLICATION=0.0000001   # per MB per hour (platform default)
 
 # Bandwidth tiers (platform-set, not operator-overridable)
-PRICING_BW_BASIC=0.002              # $0.002/hr — Basic (10 Mbps)
-PRICING_BW_STANDARD=0.008           # $0.008/hr — Standard (50 Mbps)
-PRICING_BW_PERFORMANCE=0.020        # $0.020/hr — Performance (200 Mbps)
-PRICING_BW_UNMETERED=0.040          # $0.040/hr — Unmetered
+PRICING_BW_BASIC=0.001                  # Basic (10 Mbps)
+PRICING_BW_STANDARD=0.005               # Standard (50 Mbps)
+PRICING_BW_PERFORMANCE=0.0201           # Performance (200 Mbps)
+PRICING_BW_UNMETERED=0.002              # Unmetered
 
 # Central Ingress (Caddy)
 INSTALL_CADDY=false
@@ -1482,6 +1486,8 @@ create_configuration() {
     "DefaultStoragePerGbPerHour": ${PRICING_DEFAULT_STORAGE},
     "FloorGpuVramPerGbPerHour": ${PRICING_FLOOR_GPU_VRAM},
     "DefaultGpuVramPerGbPerHour": ${PRICING_DEFAULT_GPU_VRAM},
+    "FloorReplicationPerMbPerHour": ${PRICING_FLOOR_REPLICATION},
+    "DefaultReplicationPerMbPerHour": ${PRICING_DEFAULT_REPLICATION},
     "BandwidthBasicPerHour": ${PRICING_BW_BASIC},
     "BandwidthStandardPerHour": ${PRICING_BW_STANDARD},
     "BandwidthPerformancePerHour": ${PRICING_BW_PERFORMANCE},
