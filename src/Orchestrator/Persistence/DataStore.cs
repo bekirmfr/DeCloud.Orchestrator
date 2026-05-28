@@ -650,8 +650,13 @@ public class DataStore
 
         try
         {
+            // Re-verify confirmed-but-idle manifests too: a replica peer can be wiped while
+            // the VM is idle (Version == ConfirmedVersion), and the loss would otherwise go
+            // unnoticed until the next write. Re-audit anything not checked in the last 30 min.
+            var staleCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(30);
             return await ManifestsCollection!
-                .Find(m => m.Version > m.ConfirmedVersion && m.ReplicationFactor > 0)
+                .Find(m => m.ReplicationFactor > 0 &&
+                           (m.Version > m.ConfirmedVersion || m.LastAuditedAt == null || m.LastAuditedAt < staleCutoff))
                 .SortBy(m => m.RegisteredAt)
                 .Limit(limit)
                 .ToListAsync();

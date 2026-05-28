@@ -34,6 +34,7 @@ public class LazysyncManager : BackgroundService
     private static readonly TimeSpan AuditInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
     private const int MaxCidsPerManifestPerCycle = 20;
+    private static readonly TimeSpan ReannounceCooldown = TimeSpan.FromMinutes(15);
 
     public LazysyncManager(
         IServiceProvider serviceProvider,
@@ -95,16 +96,22 @@ public class LazysyncManager : BackgroundService
 
     private async Task AuditManifestAsync(ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
     {
-        // Audit the cumulative sample — covers full history, not just the latest delta.
-        // Falls back to ChangedBlockCids for manifests registered before this field existed.
-        var auditPool = manifest.CumulativeBlockCids.Count > 0
-            ? manifest.CumulativeBlockCids
-            : manifest.ChangedBlockCids;
+        // Migration fetches the FULL ConfirmedChunkMap, so confirmation must verify the FULL
+        // current block set — not a sample of the recently-changed CumulativeBlockCids window.
+        // Auditing the capped (200) changed-CID pool let early-seeded, never-re-changed blocks
+        // (e.g. the offset-0 boot block) ride into a "confirmed" manifest with zero remote
+        // replicas. Content addressing means a confirmed CID stays confirmed across version
+        // bumps, so confirmation is tracked incrementally and ConfirmedVersion advances only
+        // when ConfirmedCids covers every CID in CurrentChunkMap.
+        var currentCids = manifest.CurrentChunkMap.Values
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .ToList();
 
-        if (auditPool.Count == 0)
+        if (currentCids.Count == 0)
         {
             _logger.LogDebug(
-                "VM {VmId} manifest v{Version}: no CIDs to audit — skipping",
+                "VM {VmId} v{Version}: empty chunk map — skipping",
                 manifest.VmId, manifest.Version);
             return;
         }
@@ -118,73 +125,90 @@ public class LazysyncManager : BackgroundService
             return;
         }
 
-        // Sample randomly from the cumulative pool so every audit cycle
-        // checks a different cross-section of the full block history.
-        var cidsToCheck = auditPool
-            .OrderBy(_ => Random.Shared.Next())
+        // Drop confirmations for CIDs no longer in the map (block changed → new CID at offset).
+        manifest.ConfirmedCids.IntersectWith(currentCids);
+        manifest.LastAuditedAt = DateTime.UtcNow;
+
+        // Spend the per-cycle budget on unconfirmed CIDs first; use any remainder to re-verify
+        // already-confirmed ones so a silently-wiped remote (a redeployed blockstore) is caught
+        // instead of trusted forever.
+        var toCheck = currentCids
+            .Where(c => !manifest.ConfirmedCids.Contains(c))
             .Take(MaxCidsPerManifestPerCycle)
             .ToList();
+        if (toCheck.Count < MaxCidsPerManifestPerCycle)
+            toCheck.AddRange(currentCids
+                .Where(manifest.ConfirmedCids.Contains)
+                .OrderBy(_ => Random.Shared.Next())
+                .Take(MaxCidsPerManifestPerCycle - toCheck.Count));
 
         var underReplicated = new List<string>();
 
-        foreach (var cid in cidsToCheck)
+        foreach (var cid in toCheck)
         {
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested)
+            {
+                await dataStore.SaveManifestAsync(manifest);
+                return;
+            }
 
             try
             {
-                // Count only REMOTE providers — local blockstore on the
-                // hosting node is never counted as replication. A block
-                // sitting only on the same machine as the VM it protects
-                // provides zero node-failure resilience.
+                // Count only REMOTE providers — the local blockstore on the hosting node
+                // provides zero node-failure resilience and is never counted.
                 var providers = await GetProvidersAsync(dhtApiUrl, cid, ct);
                 var remoteCount = string.IsNullOrEmpty(localPeerId)
                     ? providers.Count
                     : providers.Count(p => p != localPeerId);
 
-                if (remoteCount == 0)
-                    underReplicated.Add(cid); // treat zero as under-replicated for counting
-
-                else if (remoteCount < manifest.ReplicationFactor)
+                if (remoteCount > 0 && remoteCount >= manifest.ReplicationFactor)
+                    manifest.ConfirmedCids.Add(cid);
+                else
+                {
+                    manifest.ConfirmedCids.Remove(cid); // regression: was confirmed, now isn't
                     underReplicated.Add(cid);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex,
-                    "Provider check failed for CID {Cid} (VM {VmId}) — skipping cycle",
+                    "Provider check failed for CID {Cid} (VM {VmId}) — saving partial progress",
                     cid[..Math.Min(12, cid.Length)], manifest.VmId);
+                await dataStore.SaveManifestAsync(manifest);
                 return;
             }
         }
 
-        // Total loss: all sampled CIDs have zero or insufficient providers AND
-        // blocks were previously confirmed (ConfirmedVersion > 0).
-        // Guards against false positives during initial seeding and transient
-        // DHT routing failures affecting only a subset of CIDs.
-        if (manifest.ConfirmedVersion > 0
-            && underReplicated.Count == cidsToCheck.Count
-            && cidsToCheck.Count > 0)
+        // Total loss: previously confirmed, but the confirmed set has fully drained.
+        if (manifest.ConfirmedVersion > 0 && manifest.ConfirmedCids.Count == 0)
         {
             _logger.LogWarning(
-                "VM {VmId}: all {Count} sampled CIDs under-replicated or missing " +
-                "(ConfirmedVersion={Version}) — total loss detected, triggering reseed",
-                manifest.VmId, cidsToCheck.Count, manifest.ConfirmedVersion);
+                "VM {VmId}: confirmed set drained — total loss detected, triggering full reseed",
+                manifest.VmId);
             await TriggerReseedAsync(manifest, dataStore, ct);
             return;
         }
 
-        if (underReplicated.Count > 0)
+        // Not yet fully replicated — persist progress, nudge repair, wait for next cycle.
+        if (!currentCids.All(manifest.ConfirmedCids.Contains))
         {
-            _logger.LogDebug(
-                "VM {VmId} v{Version}: {Under}/{Total} CIDs under-replicated " +
-                "(need {N} remote providers, local excluded) — will retry next cycle",
-                manifest.VmId, manifest.Version,
-                underReplicated.Count, cidsToCheck.Count,
-                manifest.ReplicationFactor);
+            var confirmed = currentCids.Count(manifest.ConfirmedCids.Contains);
+            _logger.LogInformation(
+                "VM {VmId} v{Version}: {Confirmed}/{Total} blocks ≥{N}x remote — not yet migration-ready",
+                manifest.VmId, manifest.Version, confirmed, currentCids.Count, manifest.ReplicationFactor);
+
+            await dataStore.SaveManifestAsync(manifest);
+
+            // Single-homed historical blocks never scatter on their own — ongoing lazysync only
+            // announces deltas. Re-announce the full set so a rejoined/wiped peer can back-fill
+            // them. Throttled because the daemon re-pushes every block.
+            if (underReplicated.Count > 0)
+                await MaybeTriggerReannounceAsync(manifest, dataStore, ct);
+
             return;
         }
 
-        // All sampled CIDs confirmed — advance ConfirmedVersion
+        // Full coverage — every block in the current map has ≥RF remote providers.
         manifest.ConfirmedVersion = manifest.Version;
         manifest.ConfirmedRootCid = manifest.RootCid;
         manifest.ConfirmedChunkMap = manifest.CurrentChunkMap;
@@ -290,6 +314,44 @@ public class LazysyncManager : BackgroundService
             return $"http://{node.CgnatInfo.TunnelIp}:{port}";
 
         return $"http://{node.PublicIp}:{port}";
+    }
+
+    /// <summary>
+    /// Repair for persistently single-homed blocks: re-announce the full block set so a
+    /// rejoined/wiped peer can back-fill blocks it missed (ongoing lazysync only announces
+    /// deltas). Reuses the host-side ReseedVm — the daemon re-pushes + re-announces ALL
+    /// blocks. Unlike TriggerReseedAsync this does NOT reset Version/ConfirmedCids: the
+    /// manifest is still evolving and the incremental audit keeps its progress. Throttled.
+    /// </summary>
+    private async Task MaybeTriggerReannounceAsync(
+        ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
+    {
+        if (manifest.LastReannounceAt is { } last && DateTime.UtcNow - last < ReannounceCooldown)
+            return; // nudged recently — give bitswap time to back-fill
+
+        var vm = await dataStore.GetVmAsync(manifest.VmId);
+        if (vm == null || string.IsNullOrEmpty(vm.NodeId))
+            return;
+
+        manifest.LastReannounceAt = DateTime.UtcNow;
+        await dataStore.SaveManifestAsync(manifest);
+
+        using var scope = _serviceProvider.CreateScope();
+        var commandSvc = scope.ServiceProvider.GetRequiredService<INodeCommandService>();
+
+        var reseedId = Guid.NewGuid().ToString();
+        dataStore.RegisterCommand(reseedId, manifest.VmId, vm.NodeId, NodeCommandType.ReseedVm);
+        var reseedCmd = new NodeCommand(
+            reseedId,
+            NodeCommandType.ReseedVm,
+            System.Text.Json.JsonSerializer.Serialize(new { vmId = manifest.VmId }),
+            RequiresAck: false,
+            TargetResourceId: manifest.VmId);
+        await commandSvc.DeliverCommandAsync(vm.NodeId, reseedCmd);
+
+        _logger.LogInformation(
+            "VM {VmId}: re-announce reseed dispatched to host node {NodeId} — lagging blocks pending replication",
+            manifest.VmId, vm.NodeId);
     }
 
     private async Task TriggerReseedAsync(

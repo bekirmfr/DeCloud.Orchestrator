@@ -1,5 +1,6 @@
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -121,6 +122,25 @@ public class ManifestRecord
 
     /// <summary>Per-VM replication factor. 0 = ephemeral (no replication).</summary>
     public int ReplicationFactor { get; set; } = 3;
+
+    /// <summary>
+    /// CIDs from CurrentChunkMap verified to have ≥ReplicationFactor REMOTE providers.
+    /// Built incrementally by the audit loop. ConfirmedVersion advances only when this
+    /// set covers every CID in CurrentChunkMap. Pruned to the current map each cycle; a
+    /// CID dropped here on a failed re-check (wiped/rejoined peer) blocks confirmation
+    /// until it re-replicates. Serializes as a BSON array by default.
+    /// </summary>
+    public HashSet<string> ConfirmedCids { get; set; } = [];
+
+    /// <summary>Throttle timestamp for repair re-announce (reseed re-pushes all blocks).</summary>
+    public DateTime? LastReannounceAt { get; set; }
+
+    /// <summary>
+    /// When this manifest was last audited. Lets the audit loop re-verify confirmed-but-idle
+    /// manifests (Version == ConfirmedVersion) so a replica peer wiped while the VM is idle
+    /// is detected instead of trusted until the next write. Null = never audited.
+    /// </summary>
+    public DateTime? LastAuditedAt { get; set; }
 }
 
 /// <summary>
