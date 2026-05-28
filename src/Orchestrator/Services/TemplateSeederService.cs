@@ -3365,7 +3365,7 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                 VirtualCpuCores = 4,
                 MemoryBytes = 8L * 1024 * 1024 * 1024,
                 DiskBytes = 30L * 1024 * 1024 * 1024,
-                GpuMode = GpuMode.Proxied,
+                GpuVramBytes = 4L * 1024 * 1024 * 1024,
                 Constraints = new List<Constraint>
                 {
                     new()
@@ -3382,11 +3382,11 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                 VirtualCpuCores = 8,
                 MemoryBytes = 16L * 1024 * 1024 * 1024,
                 DiskBytes = 50L * 1024 * 1024 * 1024,
-                GpuMode = GpuMode.Passthrough
+                GpuVramBytes = 8L * 1024 * 1024 * 1024
             },
 
             RequiresGpu = true,
-            DefaultGpuMode = GpuMode.Proxied,
+            DefaultGpuMode = GpuMode.Passthrough,
             GpuRequirement = "Optional — NVIDIA GPU with CUDA dramatically improves inference speed",
             ContainerImage = "ollama/ollama:latest",
 

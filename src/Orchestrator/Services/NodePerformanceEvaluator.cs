@@ -70,12 +70,23 @@ public class NodePerformanceEvaluator
         foreach (var (tier, tierConfig) in config.Tiers
             .OrderByDescending(kvp => kvp.Value.MinimumBenchmark))
         {
+            // Performance-weighted capacity cost of one vCPU at this tier.
+            // Units: same as totalPoints (performance-weighted capacity).
             var requiredPointsPerVCpu = tierConfig.GetPointsPerVCpu(
                 config.BaselineBenchmark,
                 baselineOvercommitRatio);
 
-            // Simple comparison: can this node provide enough points?
-            var isEligible = pointsPerCore >= requiredPointsPerVCpu;
+            // Gate 1 — Performance: is this node's CPU fast enough for the tier?
+            // Compares benchmark scores — same units, apples to apples.
+            var meetsPerformance = benchmarkScore >= tierConfig.MinimumBenchmark;
+
+            // Gate 2 — Capacity: does this node have enough total performance-weighted
+            // capacity to host at least one vCPU of this tier?
+            // Compares totalPoints (physicalCores × benchmarkScore/baseline) against
+            // the tier's per-vCPU cost in the same unit — apples to apples.
+            var meetsCapacity = evaluation.TotalComputePoints >= requiredPointsPerVCpu;
+
+            var isEligible = meetsPerformance && meetsCapacity;
 
             if (isEligible)
             {
@@ -87,7 +98,9 @@ public class NodePerformanceEvaluator
                     MinimumBenchmark = tierConfig.MinimumBenchmark,
                     RequiredPointsPerVCpu = requiredPointsPerVCpu,
                     NodePointsPerCore = pointsPerCore,
-                    MaxVCpusPerCore = (int)(pointsPerCore / requiredPointsPerVCpu),
+                    // Max vCPUs this node can host of this tier across all cores,
+                    // not per-core (totalPoints / cost per vCPU).
+                    MaxVCpusPerCore = (int)(evaluation.TotalComputePoints / requiredPointsPerVCpu),
                     PriceMultiplier = tierConfig.PriceMultiplier,
                     Description = tierConfig.Description,
                     IsEligible = true
