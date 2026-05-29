@@ -214,7 +214,7 @@ public class VmService : IVmService
         // Phase 2: Custom cloud-init (overrides template)
         if (!string.IsNullOrEmpty(request.CustomCloudInit))
         {
-            vm.Spec.CloudinitUserData = request.CustomCloudInit;
+            vm.Spec.CloudInitUserData = request.CustomCloudInit;
 
             // Store environment variables for substitution
             if (request.EnvironmentVariables != null && request.EnvironmentVariables.Any())
@@ -252,7 +252,7 @@ public class VmService : IVmService
                 if (!string.IsNullOrEmpty(template.CloudInitTemplate))
                 {
                     // Store raw template and variables for later processing
-                    vm.Spec.CloudinitUserData = template.CloudInitTemplate;
+                    vm.Spec.CloudInitUserData = template.CloudInitTemplate;
                     vm.Labels["template:cloud-init-vars"] = JsonSerializer.Serialize(mergedEnvVars);
                 }
 
@@ -917,13 +917,13 @@ public class VmService : IVmService
         // because Pass 1b substitutes from UserSuppliedStatics, and Pass 2
         // handles artifacts. No separate code path needed.
 
-        string? processedCloudinitUserData = vm.Spec.CloudinitUserData;
+        string? processedCloudinitUserData = vm.Spec.CloudInitUserData;
 
         VmTemplate? template = !string.IsNullOrEmpty(vm.TemplateId)
             ? await _templateService.GetTemplateByIdAsync(vm.TemplateId)
             : null;
 
-        if (!string.IsNullOrEmpty(vm.Spec.CloudinitUserData))
+        if (!string.IsNullOrEmpty(vm.Spec.CloudInitUserData))
         {
             try
             {
@@ -1017,7 +1017,7 @@ public class VmService : IVmService
                     template ?? new VmTemplate
                     {
                         Slug = "custom",
-                        CloudInitTemplate = vm.Spec.CloudinitUserData!,
+                        CloudInitTemplate = vm.Spec.CloudInitUserData!,
                         Variables = new(),
                         Artifacts = new(),
                     },

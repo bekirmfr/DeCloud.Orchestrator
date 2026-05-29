@@ -342,7 +342,7 @@ public class VmSpec
     public string? WalletEncryptedPassword { get; set; }
 
     // Cloud-init / user data
-    public string? CloudinitUserData { get; set; }
+    public string? CloudInitUserData { get; set; }
 
     public int MaxConnections { get; set; } = -1; // -1 = unlimited
 

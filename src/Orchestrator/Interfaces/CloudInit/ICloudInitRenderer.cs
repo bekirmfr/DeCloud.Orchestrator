@@ -7,7 +7,7 @@ namespace DeCloud.Orchestrator.Interfaces.CloudInit;
 /// <summary>
 /// Renders a <see cref="VmTemplate"/>'s <c>CloudInitTemplate</c> to a fully
 /// substituted cloud-init document, ready to ship to a node as
-/// <c>VmSpec.UserData</c> (tenant) or <c>SystemVmTemplate.CloudInitContent</c>
+/// <c>VmSpec.CloudInitUserData</c> (tenant) or <c>SystemVmTemplate.CloudInitContent</c>
 /// (system).
 ///
 /// <para>
