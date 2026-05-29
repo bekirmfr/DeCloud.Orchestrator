@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using DeCloud.Shared.Enums;
+using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Collections.Concurrent;

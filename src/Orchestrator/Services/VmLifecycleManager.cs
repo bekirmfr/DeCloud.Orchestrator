@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;

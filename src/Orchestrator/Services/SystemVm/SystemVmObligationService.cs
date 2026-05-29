@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
@@ -342,7 +343,7 @@ public class SystemVmObligationService : BackgroundService
         {
             var bsVms = await _dataStore.GetVmsByNodeAsync(node.Id);
             var bsCandidate = bsVms.FirstOrDefault(v =>
-                v.Spec.VmType == VmType.BlockStore &&
+                v.Role == VmRole.BlockStore &&
                 v.Status == VmStatus.Running &&
                 v.IsFullyReady &&
                 v.Services.Any(s => s.LastCheckAt.HasValue &&
@@ -375,7 +376,7 @@ public class SystemVmObligationService : BackgroundService
         // DHT VM recovery
         var nodeVms = await _dataStore.GetVmsByNodeAsync(node.Id);
         var candidate = nodeVms.FirstOrDefault(v =>
-            v.Spec.VmType == VmType.Dht &&
+            v.Role == VmRole.Dht &&
             v.Status == VmStatus.Running &&
             v.IsFullyReady &&
             v.Services.Any(s => s.LastCheckAt.HasValue &&

@@ -66,15 +66,6 @@ public static class HourlyRateCalculator
         int? manifestBlockCount = null,
         int manifestBlockSizeKb = BlockSizeConstants.VmOverlayKb)
     {
-        // System VMs: flat platform rate, everything else zero.
-        if (spec.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore)
-            return new HourlyRateBreakdown(
-                CpuCost: 0m, MemoryCost: 0m, StorageCost: 0m,
-                TierMultiplier: 1m,
-                BandwidthCost: 0m, GpuCost: 0m, ReplicationCost: 0m,
-                Total: SystemVmFlatRate,
-                Currency: "USDC");
-
         // Resolve effective rates: operator's pricing where set, platform
         // defaults where not, every field clamped to floor. PricingResolver
         // is the single source of truth for this rule across the orchestrator

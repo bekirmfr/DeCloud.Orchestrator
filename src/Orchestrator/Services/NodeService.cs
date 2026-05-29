@@ -317,7 +317,7 @@ public class NodeService : INodeService
             AgentPort = request.AgentPort,
             Status = NodeStatus.Online,
             // Target lifecycle: operator calls login separately after evaluate.
-            SchedulingReady = false,
+            IsSchedulingReady = false,
             HardwareInventory = request.HardwareInventory,
             TotalResources = existingNode?.TotalResources ?? new ResourceSnapshot(),
             ReservedResources = new ResourceSnapshot(),
@@ -407,7 +407,7 @@ public class NodeService : INodeService
         // Check for running tenant VMs
         var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
         var tenantVms = nodeVms.Where(v =>
-            v.VmType == VmType.General &&
+            v.Role == VmRole.General &&
             (v.Status == VmStatus.Running || v.Status == VmStatus.Provisioning))
             .ToList();
 
@@ -527,7 +527,7 @@ public class NodeService : INodeService
         // -----------------------------------------------------------------
         // Activate scheduling — no computation, just a gate
         // -----------------------------------------------------------------
-        node.SchedulingReady = true;
+        node.IsSchedulingReady = true;
         await _dataStore.SaveNodeAsync(node);
 
         _logger.LogInformation(
@@ -551,7 +551,7 @@ public class NodeService : INodeService
         var node = await _dataStore.GetNodeAsync(nodeId)
             ?? throw new KeyNotFoundException($"Node {nodeId} not found");
 
-        node.SchedulingReady = false;
+        node.IsSchedulingReady = false;
         await _dataStore.SaveNodeAsync(node);
 
         // Count VMs still running on this node so the operator knows
@@ -1178,12 +1178,18 @@ public class NodeService : INodeService
             {
                 var vm = await _dataStore.GetVmAsync(reported.VmId);
 
+                if (vm == null)
+                {
+                    invalid.Add(reported.VmId);
+                    continue;
+                }
+
                 // System VMs (Relay, DHT, BlockStore) are autonomously managed by the
                 // node's SystemVmReconciler. The orchestrator is not their control plane
                 // and must never flag them as invalid — doing so creates an infinite
                 // create → destroy loop. Health is reported separately via ObligationHealth.
-                var reportedType = Enum.TryParse<VmType>(reported.VmType, out var t) ? t : (VmType?)null;
-                if (reportedType is VmType.Relay or VmType.Dht or VmType.BlockStore)
+                var reportedType = Enum.TryParse<VmRole>(reported.Role, out var t) ? t : (VmRole?)null;
+                if (vm.Category == VmCategory.System)
                 {
                     // Adopt VmId into the obligation if not yet stamped.
                     // Relay is stamped via its callback; DHT and BlockStore
@@ -1192,9 +1198,9 @@ public class NodeService : INodeService
                     // avoids stamping Active on a VM that is still starting up.
                     var role = reportedType switch
                     {
-                        VmType.Relay => SystemVmRole.Relay,
-                        VmType.Dht => SystemVmRole.Dht,
-                        VmType.BlockStore => SystemVmRole.BlockStore,
+                        VmRole.Relay => SystemVmRole.Relay,
+                        VmRole.Dht => SystemVmRole.Dht,
+                        VmRole.BlockStore => SystemVmRole.BlockStore,
                         _ => (SystemVmRole?)null
                     };
 
@@ -1256,7 +1262,7 @@ public class NodeService : INodeService
         obligationStatesPending.Count > 0 ? obligationStatesPending : null,
         systemTemplatesPending,
         settingsDrift,
-        node.SchedulingReady);
+        node.IsSchedulingReady);
     }
 
     /// <summary>
@@ -2299,7 +2305,7 @@ public class NodeService : INodeService
                     // VM is still running and healthy, reconstruct DhtInfo from the VM.
                     // The VM being present in heartbeat ActiveVms + IsFullyReady is proof
                     // of life — the node agent is actively health-checking it.
-                    if (vm.Spec.VmType == VmType.Dht && node != null)
+                    if (vm.Role == VmRole.Dht && node != null)
                     {
                         var dhtInfoChanged = false;
 
@@ -2546,7 +2552,7 @@ public class NodeService : INodeService
         foreach (var vm in nodeVms)
         {
             // Only check tenant VMs that are running or provisioning
-            if (vm.VmType != VmType.General)
+            if (vm.Role != VmRole.General)
                 continue;
 
             if (vm.Status != VmStatus.Running && vm.Status != VmStatus.Provisioning)
@@ -3201,7 +3207,7 @@ public class NodeService : INodeService
             Pricing = node.Pricing,
 
             IsOnline = node.Status == NodeStatus.Online,
-            SchedulingReady = node.SchedulingReady,
+            SchedulingReady = node.IsSchedulingReady,
             AllocatedComputePoints = node.AllocatedResources.ComputePoints,
             AvailableComputePoints = Math.Max(0, node.AllocatedResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
             AllocatedMemoryBytes = node.AllocatedResources.MemoryBytes,

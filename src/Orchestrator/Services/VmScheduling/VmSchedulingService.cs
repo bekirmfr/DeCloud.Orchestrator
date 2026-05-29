@@ -298,7 +298,7 @@ public class VmSchedulingService : IVmSchedulingService
         // This is the natural boundary for the logout → configure →
         // register → login settings-change flow.
         // =====================================================
-        if (!node.SchedulingReady)
+        if (!node.IsSchedulingReady)
             return "Node not scheduling-ready (operator logged out)";
 
         // =====================================================
@@ -322,10 +322,10 @@ public class VmSchedulingService : IVmSchedulingService
         if (spec.GpuMode == GpuMode.Passthrough)
         {
             // Passthrough requires IOMMU-enabled node with an available GPU for VFIO
-            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.GpuCount == 0)
+            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
                 return "VM requires GPU passthrough but node has no GPU";
 
-            if (!node.HardwareInventory.HasIommuCapableGpu)
+            if (!node.HardwareInventory.HasPassthroughCapableGpu)
                 return "VM requires GPU passthrough but node has no IOMMU-capable GPU";
 
             if (!node.HardwareInventory.HasPassthroughCapableGpu)
@@ -333,7 +333,7 @@ public class VmSchedulingService : IVmSchedulingService
         }
         else if (spec.GpuMode == GpuMode.Proxied)
         {
-            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.GpuCount == 0)
+            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
                 return "VM requires proxied GPU but node has no GPU";
 
             if (!node.HardwareInventory.HasProxiedCapableGpu)

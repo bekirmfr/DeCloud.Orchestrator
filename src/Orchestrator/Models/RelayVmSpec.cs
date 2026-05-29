@@ -12,7 +12,6 @@ public static class RelayVmSpec
     /// </summary>
     public static VmSpec Basic => new()
     {
-        VmType = VmType.Relay,
         VirtualCpuCores = 1,
         MemoryBytes = 1024L * 1024 * 1024,
         DiskBytes = 5L * 1024 * 1024 * 1024,
@@ -27,7 +26,6 @@ public static class RelayVmSpec
     /// </summary>
     public static VmSpec Standard => new()
     {
-        VmType = VmType.Relay,
         VirtualCpuCores = 1,
         MemoryBytes = 2L * 1024 * 1024 * 1024,
         DiskBytes = 6L * 1024 * 1024 * 1024,
@@ -56,7 +54,6 @@ public static class RelayVmSpec
     /// </summary>
     public static VmSpec Premium => new()
     {
-        VmType = VmType.Relay,
         VirtualCpuCores = 2,
         MemoryBytes = 4L * 1024 * 1024 * 1024,
         DiskBytes = 8L * 1024 * 1024 * 1024,

@@ -1,6 +1,7 @@
 ﻿// src/Orchestrator/Services/Payment/BillingService.cs
 // Updated: Uses BalanceService for balance validation (breaks circular dependency)
 
+using DeCloud.Shared.Enums;
 using Microsoft.Extensions.Options;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
@@ -176,7 +177,7 @@ public class BillingService : BackgroundService
         }
 
         // Skip system VMss
-        if (vm.Spec.VmType != VmType.General)
+        if (vm.Category == VmCategory.System)
         {
             return;
         }

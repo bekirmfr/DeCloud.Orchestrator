@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Orchestrator.Services;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Controllers;
 

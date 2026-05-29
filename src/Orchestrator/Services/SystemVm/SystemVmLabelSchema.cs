@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using Orchestrator.Models;
 
 namespace Orchestrator.Services.SystemVm;
@@ -10,9 +11,9 @@ namespace Orchestrator.Services.SystemVm;
 /// </summary>
 public static class SystemVmLabelSchema
 {
-    private static readonly Dictionary<VmType, string[]> RequiredLabels = new()
+    private static readonly Dictionary<VmRole, string[]> RequiredLabels = new()
     {
-        [VmType.BlockStore] = [
+        [VmRole.BlockStore] = [
             "role",
             "blockstore-listen-port",
             "blockstore-api-port",
@@ -23,14 +24,14 @@ public static class SystemVmLabelSchema
             // are optional — resolved by BlockStoreService.ResolveWireGuardLabels
             // when a relay is available.
         ],
-        [VmType.Relay] = [
+        [VmRole.Relay] = [
             "role",
             "wireguard-private-key",
             "relay-region",
             "node-public-ip",
             "relay-subnet",
         ],
-        [VmType.Dht] = [
+        [VmRole.Dht] = [
             "role",
             "dht-listen-port",
             "dht-api-port",
@@ -47,7 +48,7 @@ public static class SystemVmLabelSchema
     /// Validate that all required labels are present and non-empty for the given VM type.
     /// Returns null if valid, or an error message listing missing labels.
     /// </summary>
-    public static string? Validate(VmType vmType, Dictionary<string, string>? labels)
+    public static string? Validate(VmRole vmType, Dictionary<string, string>? labels)
     {
         if (!RequiredLabels.TryGetValue(vmType, out var required))
             return null; // No schema defined for this type — skip validation

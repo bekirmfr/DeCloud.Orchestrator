@@ -347,7 +347,7 @@ public class NodeSelfController : ControllerBase
     [ProducesResponseType(404)]
     public async Task<ActionResult<EvaluateNodeResponse>> Evaluate(
         CancellationToken ct,
-        [FromBody] HardwareInventory inventory)
+        [FromBody] DeCloud.Shared.Models.HardwareInventory inventory)
     {
         var nodeId = GetNodeIdFromToken();
         if (string.IsNullOrEmpty(nodeId))

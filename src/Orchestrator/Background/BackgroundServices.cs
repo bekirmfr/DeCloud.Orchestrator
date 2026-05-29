@@ -184,7 +184,7 @@ public class VmSchedulerService : BackgroundService
             .Where(v =>
                 v.NonCompliantSince != null &&
                 v.Status == VmStatus.Running &&
-                v.VmType == VmType.General &&
+                v.Role == VmRole.General &&
                 string.IsNullOrEmpty(v.ActiveCommandId))
             .ToList();
 
@@ -400,7 +400,7 @@ public class VmSchedulerService : BackgroundService
                 VmId = fresh.Id,
                 Name = fresh.Name,
                 OwnerId = fresh.OwnerId ?? "",
-                VmType = (int)(fresh.Spec.VmType ?? VmType.General),
+                VmType = (int)(fresh.Role),
                 VirtualCpuCores = fresh.Spec.VirtualCpuCores,
                 QualityTier = (int)fresh.Spec.QualityTier,
                 ComputePointCost = fresh.Spec.ComputePointCost,

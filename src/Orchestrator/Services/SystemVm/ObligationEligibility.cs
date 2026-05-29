@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using Orchestrator.Models;
 
 namespace Orchestrator.Services.SystemVm;

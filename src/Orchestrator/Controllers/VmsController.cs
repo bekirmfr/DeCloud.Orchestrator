@@ -1,4 +1,5 @@
 using DeCloud.Shared.Enums;
+using DeCloud.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
@@ -91,7 +92,7 @@ public class VmsController : ControllerBase
         var queryParams = new ListQueryParams(page, pageSize, sortBy, sortDesc, search, filters);
         var result = await _vmService.ListVmsAsync(userId, queryParams);
 
-        return Ok(ApiResponse<PagedResult<VmSummary>>.Ok(result));
+        return Ok(ApiResponse<PagedResult<VmSummaryDto>>.Ok(result));
     }
 
     /// <summary>

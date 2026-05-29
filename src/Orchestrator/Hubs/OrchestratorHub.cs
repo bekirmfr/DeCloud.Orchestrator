@@ -4,6 +4,7 @@ using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Orchestrator.Services;
 using Orchestrator.Interfaces;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Hubs;
 

@@ -1,6 +1,7 @@
 ﻿using System.Net.WebSockets;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Middleware;
 

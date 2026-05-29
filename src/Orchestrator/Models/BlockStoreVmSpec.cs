@@ -37,7 +37,6 @@ public static class BlockStoreVmSpec
     /// </summary>
     public static VmSpec Create(long nodeStorageTotalBytes) => new()
     {
-        VmType = VmType.BlockStore,
         VirtualCpuCores = 1,
         MemoryBytes = 512L * 1024 * 1024,                               // 512 MB
         DiskBytes = (long)(nodeStorageTotalBytes * StorageDutyFraction), // 5% duty

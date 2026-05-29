@@ -1,4 +1,5 @@
 using DeCloud.Shared.Enums;
+using DeCloud.Shared.Models;
 using MongoDB.Bson.Serialization.Attributes;
 using Orchestrator.Models.Payment;
 using Orchestrator.Services;
@@ -13,7 +14,8 @@ public class VirtualMachine
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = string.Empty;
-    public VmType VmType { get; set; } = VmType.General;
+    public VmCategory Category { get; set; } = VmCategory.Tenant;
+    public VmRole Role { get; set; } = VmRole.General;
 
     /// <summary>
     /// Subdomain tier: Free (suffixed) or Premium (exact vanity name).
@@ -212,7 +214,6 @@ public class VirtualMachine
 
 public class VmSpec
 {
-    public VmType? VmType { get; set; } = Models.VmType.General;
     public int VirtualCpuCores { get; set; } = 1;
     public long MemoryBytes { get; set; } = 2 * 1024L * 1024L * 1024L; // 2 GB
     //[BsonIgnore]
@@ -451,38 +452,11 @@ public class VmMetrics
     public long NetworkTxBytes { get; set; }
 }
 
-public enum VmStatus
-{
-    Pending,        // 0 - Waiting to be scheduled
-    Scheduling,     // 1 - Finding a node
-    Provisioning,   // 2 - Being created on node
-    Running,        // 3 - Active and running
-    Stopping,       // 4 - Being stopped
-    Stopped,        // 5 - Stopped but resources reserved
-    Deleting,       // 6 - Deletion in progress, waiting for node confirmation
-    Migrating,      // 7 - Being moved to another node
-    Error,          // 8 - Something went wrong
-    Deleted         // 9 - Deletion confirmed, resources freed
-}
-
 public enum VmPowerState
 {
     Off,
     Running,
     Paused
-}
-
-public enum VmType
-{
-    General,
-    Compute,
-    Memory,
-    Storage,
-    Gpu,
-    Relay,
-    Dht,
-    Inference,
-    BlockStore  // Distributed block storage duty (5% of node storage)
 }
 
 /// <summary>
@@ -602,7 +576,8 @@ public enum LazysyncStatus
 public record CreateVmRequest(
     string Name,
     VmSpec Spec,
-    VmType VmType = VmType.General,
+    VmCategory Category = VmCategory.Tenant,
+    VmRole Role = VmRole.General,
     string? NodeId = null,
     Dictionary<string, string>? Labels = null,
     string? TemplateId = null,
@@ -634,13 +609,13 @@ public enum VmAction
 }
 
 public record VmListResponse(
-    List<VmSummary> Vms,
+    List<VmSummaryDto> Vms,
     int TotalCount,
     int Page,
     int PageSize
 );
 
-public record VmSummary(
+public record VmSummaryDto(
     string Id,
     string Name,
     SubdomainTier SubdomainTier,

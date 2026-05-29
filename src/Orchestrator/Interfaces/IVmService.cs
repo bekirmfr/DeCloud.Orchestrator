@@ -1,4 +1,6 @@
-﻿using Orchestrator.Models;
+﻿using DeCloud.Shared.Enums;
+using DeCloud.Shared.Models;
+using Orchestrator.Models;
 
 namespace Orchestrator.Interfaces;
 
@@ -6,7 +8,7 @@ public interface IVmService
 {
     Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null);
     Task<List<VirtualMachine>> GetVmsByUserAsync(string userId, VmStatus? statusFilter = null);
-    Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams);
+    Task<PagedResult<VmSummaryDto>> ListVmsAsync(string? userId, ListQueryParams queryParams);
     Task<bool> PerformVmActionAsync(string vmId, VmAction action, string? userId = null);
 
     Task<bool> DeleteVmAsync(string vmId, string? userId = null);

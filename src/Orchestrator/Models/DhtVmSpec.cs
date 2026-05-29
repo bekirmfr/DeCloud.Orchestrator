@@ -16,7 +16,6 @@ public static class DhtVmSpec
     /// </summary>
     public static VmSpec Standard => new()
     {
-        VmType = VmType.Dht,
         VirtualCpuCores = 1,
         MemoryBytes = 512L * 1024 * 1024,         // 512 MB
         DiskBytes = 2L * 1024 * 1024 * 1024,      // 2 GB

@@ -1,4 +1,5 @@
-﻿using MongoDB.Bson;
+﻿using DeCloud.Shared.Enums;
+using MongoDB.Bson;
 using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Services.Locality;

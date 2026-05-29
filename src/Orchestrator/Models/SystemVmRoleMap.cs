@@ -1,4 +1,5 @@
-﻿using DeCloud.Shared.Models;
+﻿using DeCloud.Shared.Enums;
+using DeCloud.Shared.Models;
 
 namespace Orchestrator.Models;
 
@@ -27,7 +28,7 @@ namespace Orchestrator.Models;
 /// BOUNDARY
 /// ────────
 /// This class lives in the Orchestrator because <see cref="SystemVmRole"/>,
-/// <see cref="VmType"/>, and the VmSpec static classes are all Orchestrator
+/// <see cref="VmRole"/>, and the VmSpec static classes are all Orchestrator
 /// types. String ↔ string mappings (e.g. role name → template slug) that
 /// the node agent also needs live in <see cref="ObligationRole"/> in Shared.
 /// </summary>
@@ -119,11 +120,11 @@ public static class SystemVmRoleMap
     /// (where the equivalent mapping uses string constants — kept there to
     /// avoid a Shared → Orchestrator dependency).
     /// </summary>
-    public static VmType? ToVmType(SystemVmRole role) => role switch
+    public static VmRole? ToVmType(SystemVmRole role) => role switch
     {
-        SystemVmRole.Relay => VmType.Relay,
-        SystemVmRole.Dht => VmType.Dht,
-        SystemVmRole.BlockStore => VmType.BlockStore,
+        SystemVmRole.Relay => VmRole.Relay,
+        SystemVmRole.Dht => VmRole.Dht,
+        SystemVmRole.BlockStore => VmRole.BlockStore,
         _ => null,
     };
 

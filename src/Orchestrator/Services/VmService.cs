@@ -66,7 +66,7 @@ public class VmService : IVmService
 
     public async Task<CreateVmResponse> CreateVmAsync(string userId, CreateVmRequest request, string? targetNodeId = null)
     {
-        var isSystemVm = request.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore;
+        var isSystemVm = request.Role is VmRole.Relay or VmRole.Dht or VmRole.BlockStore;
 
         // ════════════════════════════════════════════════════════════════════════
         // Validate scheduling constraints (Phase B). Reject malformed constraints
@@ -160,7 +160,7 @@ public class VmService : IVmService
         // deliberate conservatism for Phase 2 — a transient seed failure shouldn't
         // break tenant deploys. Phase 4 cleanup removes the legacy path entirely.
         if (!isSystemVm
-            && request.VmType == VmType.General
+            && request.Role == VmRole.General
             && string.IsNullOrEmpty(request.TemplateId)
             && string.IsNullOrEmpty(request.CustomCloudInit))
         {
@@ -186,7 +186,7 @@ public class VmService : IVmService
         {
             Id = Guid.NewGuid().ToString(),
             Name = canonicalName,
-            VmType = request.VmType,
+            Role = request.Role,
             SubdomainTier = SubdomainTier.Free,
             OwnerId = isSystemVm ? null : userId,
             OwnerWallet = isSystemVm ? null : user?.WalletAddress,
@@ -327,12 +327,12 @@ public class VmService : IVmService
         // missing labels cause silent failures on the node.
         if (isSystemVm)
         {
-            var labelError = SystemVmLabelSchema.Validate(vm.VmType, vm.Labels);
+            var labelError = SystemVmLabelSchema.Validate(vm.Role, vm.Labels);
             if (labelError != null)
             {
                 _logger.LogError(
                     "System VM {VmId} ({VmType}) failed label validation: {Error}",
-                    vm.Id, vm.VmType, labelError);
+                    vm.Id, vm.Role, labelError);
                 return new CreateVmResponse(string.Empty, VmStatus.Pending,
                     labelError, "INVALID_LABELS");
             }
@@ -409,7 +409,7 @@ public class VmService : IVmService
         return vms;
     }
 
-    public async Task<PagedResult<VmSummary>> ListVmsAsync(string? userId, ListQueryParams queryParams)
+    public async Task<PagedResult<VmSummaryDto>> ListVmsAsync(string? userId, ListQueryParams queryParams)
     {
         var query = (await _dataStore.GetAllVMsAsync()).AsEnumerable();
 
@@ -502,11 +502,11 @@ public class VmService : IVmService
                 }
             }
 
-            return new VmSummary(
+            return new VmSummaryDto (
                 Id: v.Id,
                 Name: v.Name,
-                SubdomainTier: v.SubdomainTier,
                 Status: v.Status,
+                SubdomainTier: v.SubdomainTier,
                 PowerState: v.PowerState,
                 NodeId: v.NodeId,
                 NodePublicIp: networkConfig.SshJumpHost,
@@ -522,7 +522,7 @@ public class VmService : IVmService
 
         var items = await Task.WhenAll(itemTasks);
 
-        return new PagedResult<VmSummary>
+        return new PagedResult<VmSummaryDto>
         {
             Items = items.ToList(),
             TotalCount = totalCount,
@@ -740,9 +740,10 @@ public class VmService : IVmService
         // ========================================
         var config = await _configService.GetConfigAsync();// .TierRequirements[vm.Spec.QualityTier];
         var tierConfig = config.Tiers[vm.Spec.QualityTier];
-        var isSystemVmScheduling = vm.Spec.VmType is VmType.Relay or VmType.Dht;
-        var pointCost = isSystemVmScheduling ? vm.Spec.ComputePointCost : vm.Spec.VirtualCpuCores *
-            (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
+        var isSystemVmScheduling = vm.Category is VmCategory.System;
+        var pointCost = isSystemVmScheduling 
+            ? vm.Spec.ComputePointCost 
+            : vm.Spec.VirtualCpuCores * (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
 
         // CRITICAL: Store point cost in VM spec before scheduling
         vm.Spec.ComputePointCost = pointCost;
@@ -765,7 +766,7 @@ public class VmService : IVmService
             // User VMs must pass all hard filters even when the user picked a node
             // directly from the marketplace — blockstore readiness, KVM, tier
             // eligibility, architecture, and resource headroom all apply.
-            var isSystemVm = vm.VmType is VmType.Relay or VmType.Dht or VmType.BlockStore;
+            var isSystemVm = vm.Role is VmRole.Relay or VmRole.Dht or VmRole.BlockStore;
             if (!isSystemVm && selectedNode != null)
             {
                 var rejectionReason = await _schedulingService.ValidateNodeForVmAsync(
@@ -786,7 +787,7 @@ public class VmService : IVmService
 
             _logger.LogInformation(
                 "Using target node {NodeId} for VM {VmId} ({VmType} deployment)",
-                targetNodeId, vm.Id, vm.VmType);
+                targetNodeId, vm.Id, vm.Role);
         }
         else
         {
@@ -1091,7 +1092,7 @@ public class VmService : IVmService
             {
                 VmId = vm.Id,
                 Name = vm.Name,
-                VmType = (int) vm.VmType,
+                VmType = (int) vm.Role,
                 OwnerId = vm.OwnerId,
                 OwnerWallet = vm.OwnerWallet,
                 VirtualCpuCores = vm.Spec.VirtualCpuCores,
@@ -1163,7 +1164,7 @@ public class VmService : IVmService
         await _dataStore.SaveVmAsync(vm);
 
         _logger.LogInformation(
-            "{VmType} VM {VmId} scheduled on node {NodeId}", vm.VmType, vm.Id, selectedNode.Id);
+            "{VmType} VM {VmId} scheduled on node {NodeId}", vm.Role, vm.Id, selectedNode.Id);
 
         await _eventService.EmitAsync(new OrchestratorEvent
         {

@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Microsoft.Extensions.Options;
 using Orchestrator.Models;
@@ -265,7 +266,7 @@ public class NodeMarketplaceService : INodeMarketplaceService
             Pricing = PricingResolver.Resolve(node.Pricing, _pricingConfig),
 
             IsOnline = node.Status == NodeStatus.Online,
-            SchedulingReady = node.SchedulingReady,
+            SchedulingReady = node.IsSchedulingReady,
             AllocatedComputePoints = node.AllocatedResources.ComputePoints,
             AvailableComputePoints = Math.Max(0, node.AllocatedResources.ComputePoints - node.UsedResources.ComputePoints - node.ReservedResources.ComputePoints),
             AllocatedMemoryBytes = node.AllocatedResources.MemoryBytes,

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Orchestrator.Persistence;
 using Orchestrator.Models;
 using Orchestrator.Interfaces;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Services;
 
