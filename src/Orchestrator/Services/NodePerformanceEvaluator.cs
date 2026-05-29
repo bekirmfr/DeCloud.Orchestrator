@@ -61,7 +61,7 @@ public class NodePerformanceEvaluator
             PerformanceMultiplier = (double)benchmarkScore / baselineBenchmark,
             CappedPerformanceMultiplier = pointsPerCore,
             EligibleTiers = new List<QualityTier>(),
-            TierCapabilities = new Dictionary<QualityTier, TierCapability>()
+            TierCapabilities = new List<TierCapability>()
         };
 
         // Get baseline overcommit ratio from Burstable tier
@@ -93,7 +93,7 @@ public class NodePerformanceEvaluator
             {
                 evaluation.EligibleTiers.Add(tier);
 
-                evaluation.TierCapabilities[tier] = new TierCapability
+                evaluation.TierCapabilities.Add(new TierCapability
                 {
                     Tier = tier,
                     MinimumBenchmark = tierConfig.MinimumBenchmark,
@@ -103,7 +103,7 @@ public class NodePerformanceEvaluator
                     PriceMultiplier = tierConfig.PriceMultiplier,
                     Description = tierConfig.Description,
                     IsEligible = true
-                };
+                });
             }
             else
             {
@@ -123,7 +123,7 @@ public class NodePerformanceEvaluator
                         $"(short by {capacityGap:F2} pts, {capacityGapPct:F1}%)");
                 }
 
-                evaluation.TierCapabilities[tier] = new TierCapability
+                evaluation.TierCapabilities.Add(new TierCapability
                 {
                     Tier = tier,
                     MinimumBenchmark = tierConfig.MinimumBenchmark,
@@ -132,7 +132,7 @@ public class NodePerformanceEvaluator
                     PriceMultiplier = tierConfig.PriceMultiplier,
                     IsEligible = false,
                     IneligibilityReason = string.Join("; ", reasons)
-                };
+                });
             }
         }
 
@@ -185,14 +185,14 @@ public class NodePerformanceEvaluator
             string.Join(", ", evaluation.EligibleTiers));
         _logger.LogInformation("Highest Tier:   {Tier}", evaluation.HighestTier);
 
-        foreach (var (tier, capability) in evaluation.TierCapabilities
-            .OrderByDescending(kvp => kvp.Value.MinimumBenchmark))
+        foreach (var capability in evaluation.TierCapabilities
+            .OrderByDescending(c => c.MinimumBenchmark))
         {
             if (capability.IsEligible)
             {
                 _logger.LogInformation(
                     "  ✓ {Tier,-12} | {Points:F2} pts/vCPU | Max {MaxVCpus} vCPUs | ${Price}x pricing",
-                    tier,
+                    capability.Tier,
                     capability.RequiredPointsPerVCpu,
                     capability.MaxVCpus,
                     capability.PriceMultiplier);
@@ -201,7 +201,7 @@ public class NodePerformanceEvaluator
             {
                 _logger.LogDebug(
                     "  ✗ {Tier,-12} | {Reason}",
-                    tier,
+                    capability.Tier,
                     capability.IneligibilityReason);
             }
         }
