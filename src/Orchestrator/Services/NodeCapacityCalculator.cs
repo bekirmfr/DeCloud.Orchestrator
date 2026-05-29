@@ -122,9 +122,8 @@ public class NodeCapacityCalculator
         {
             var reason = evaluation == null
                 ? "Node not evaluated"
-                : evaluation.TierCapabilities.TryGetValue(tier, out var cap)
-                    ? cap.IneligibilityReason ?? $"Not eligible for tier {tier}"
-                    : $"Not eligible for tier {tier}";
+                : evaluation.TierCapabilities.Find(c => c.Tier == tier)?.IneligibilityReason
+                    ?? $"Not eligible for tier {tier}";
 
             return new TierSpecificCapacity
             {
