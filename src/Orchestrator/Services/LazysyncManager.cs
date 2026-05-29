@@ -143,6 +143,7 @@ public class LazysyncManager : BackgroundService
                 .Take(MaxCidsPerManifestPerCycle - toCheck.Count));
 
         var underReplicated = new List<string>();
+        var checkFailures = 0;
 
         foreach (var cid in toCheck)
         {
@@ -169,13 +170,24 @@ public class LazysyncManager : BackgroundService
                     underReplicated.Add(cid);
                 }
             }
-            catch (Exception ex)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                _logger.LogWarning(ex,
-                    "Provider check failed for CID {Cid} (VM {VmId}) — saving partial progress",
-                    cid[..Math.Min(12, cid.Length)], manifest.VmId);
                 await dataStore.SaveManifestAsync(manifest);
                 return;
+            }
+            catch (Exception ex)
+            {
+                // A provider lookup that THROWS (host DHT FindProviders timing out) is
+                // INDETERMINATE, not confirmed under-replication. Do NOT erode an existing
+                // confirmation — a transient DHT outage must not drain ConfirmedCids and
+                // trigger a spurious total-loss reseed. But an unreachable DHT is exactly when
+                // a re-announce helps, so count it toward firing repair, and keep processing
+                // the rest of the batch instead of aborting the whole cycle.
+                checkFailures++;
+                _logger.LogDebug(ex,
+                    "Provider check indeterminate for CID {Cid} (VM {VmId}) — will nudge repair",
+                    cid[..Math.Min(12, cid.Length)], manifest.VmId);
+                continue;
             }
         }
 
@@ -193,16 +205,21 @@ public class LazysyncManager : BackgroundService
         if (!currentCids.All(manifest.ConfirmedCids.Contains))
         {
             var confirmed = currentCids.Count(manifest.ConfirmedCids.Contains);
+            if (checkFailures > 0)
+                _logger.LogWarning(
+                    "VM {VmId}: {Failures}/{Checked} provider lookups failed this cycle — host DHT may be " +
+                    "unreachable or overloaded; confirmation will stall until it recovers",
+                    manifest.VmId, checkFailures, toCheck.Count);
             _logger.LogInformation(
                 "VM {VmId} v{Version}: {Confirmed}/{Total} blocks ≥{N}x remote — not yet migration-ready",
                 manifest.VmId, manifest.Version, confirmed, currentCids.Count, manifest.ReplicationFactor);
 
             await dataStore.SaveManifestAsync(manifest);
 
-            // Single-homed historical blocks never scatter on their own — ongoing lazysync only
-            // announces deltas. Re-announce the full set so a rejoined/wiped peer can back-fill
-            // them. Throttled because the daemon re-pushes every block.
-            if (underReplicated.Count > 0)
+            // Re-announce the full set so a rejoined/wiped peer can back-fill blocks it missed,
+            // AND when the host DHT is failing provider lookups (checkFailures) — that is exactly
+            // when records need re-publishing. Throttled because the daemon re-pushes every block.
+            if (underReplicated.Count > 0 || checkFailures > 0)
                 await MaybeTriggerReannounceAsync(manifest, dataStore, ct);
 
             return;
