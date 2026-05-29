@@ -1176,27 +1176,20 @@ public class NodeService : INodeService
             var invalid = new List<string>();
             foreach (var reported in heartbeat.ActiveVms)
             {
-                var vm = await _dataStore.GetVmAsync(reported.VmId);
-
-                if (vm == null)
-                {
-                    invalid.Add(reported.VmId);
-                    continue;
-                }
-
                 // System VMs (Relay, DHT, BlockStore) are autonomously managed by the
                 // node's SystemVmReconciler. The orchestrator is not their control plane
                 // and must never flag them as invalid — doing so creates an infinite
                 // create → destroy loop. Health is reported separately via ObligationHealth.
-                var reportedType = Enum.TryParse<VmRole>(reported.Role, out var t) ? t : (VmRole?)null;
-                if (vm.Category == VmCategory.System)
+                VmCategory? reportedcategory = Enum.TryParse<VmCategory>(reported.Category, out var c) ? c : null;
+                if (reportedcategory == VmCategory.System)
                 {
                     // Adopt VmId into the obligation if not yet stamped.
                     // Relay is stamped via its callback; DHT and BlockStore
                     // have no callback so the heartbeat is the adoption path.
                     // Only promote to Active when ObligationHealth confirms Healthy —
                     // avoids stamping Active on a VM that is still starting up.
-                    var role = reportedType switch
+                    VmRole? reportedRole = Enum.TryParse<VmRole>(reported.Role, out var r) ? r : null;
+                    var role = reportedRole switch
                     {
                         VmRole.Relay => SystemVmRole.Relay,
                         VmRole.Dht => SystemVmRole.Dht,
@@ -1230,6 +1223,8 @@ public class NodeService : INodeService
 
                     continue;
                 }
+
+                var vm = await _dataStore.GetVmAsync(reported.VmId);
 
                 // VM exists but belongs to a different node
                 if (vm == null || vm.NodeId != nodeId)
