@@ -3230,9 +3230,9 @@ public class NodeService : INodeService
             if (service == null)
                 continue;
 
-            var newStatus = Enum.TryParse<ServiceReadiness>(reported.Status, true, out var parsed)
+            var newStatus = Enum.TryParse<ServiceStatus>(reported.Status, true, out var parsed)
                 ? parsed
-                : ServiceReadiness.Pending;
+                : ServiceStatus.Pending;
 
             // Always update StatusMessage (may change even if status stays the same)
             if (service.StatusMessage != reported.StatusMessage)
@@ -3247,8 +3247,8 @@ public class NodeService : INodeService
                 // This prevents a race where the node agent's timeout fires after the
                 // service already reached Ready (e.g., cloud-init done at 298s, but the
                 // node's 300s timer expired before the next heartbeat reported Ready).
-                if (service.Status == ServiceReadiness.Ready &&
-                    newStatus == ServiceReadiness.TimedOut)
+                if (service.Status == ServiceStatus.Ready &&
+                    newStatus == ServiceStatus.TimedOut)
                 {
                     _logger.LogDebug(
                         "VM {VmId} service '{ServiceName}' ignoring TimedOut — already Ready (ReadyAt: {ReadyAt})",
@@ -3260,12 +3260,12 @@ public class NodeService : INodeService
                 service.Status = newStatus;
                 service.LastCheckAt = DateTime.UtcNow;
 
-                if (newStatus == ServiceReadiness.Ready && service.ReadyAt == null)
+                if (newStatus == ServiceStatus.Ready && service.ReadyAt == null)
                 {
                     service.ReadyAt = reported.ReadyAt ?? DateTime.UtcNow;
                 }
 
-                if (newStatus is ServiceReadiness.Failed or ServiceReadiness.TimedOut && reported.StatusMessage != null)
+                if (newStatus is ServiceStatus.Failed or ServiceStatus.TimedOut && reported.StatusMessage != null)
                 {
                     _logger.LogWarning(
                         "VM {VmId} service '{ServiceName}' readiness: {OldStatus} → {NewStatus} — {Message}",

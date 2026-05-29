@@ -111,7 +111,7 @@ public class SystemController : ControllerBase
     /// platform floor.
     ///
     /// Delegates to <see cref="HourlyRateCalculator"/>, which is also the
-    /// formula used by <see cref="VmService"/> at scheduling time. Passing
+    /// formula used by <see cref="VmServiceModel"/> at scheduling time. Passing
     /// <c>nodePricing = null</c> yields the platform-default version.
     /// </summary>
     [HttpPost("pricing/calculate")]

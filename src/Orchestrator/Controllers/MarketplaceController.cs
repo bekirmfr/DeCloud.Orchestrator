@@ -1,4 +1,5 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
+using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;

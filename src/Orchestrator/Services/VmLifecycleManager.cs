@@ -330,7 +330,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         {
             foreach (var service in vm.Services)
             {
-                service.Status = ServiceReadiness.Pending;
+                service.Status = ServiceStatus.Pending;
                 service.StatusMessage = null;
                 service.ReadyAt = null;
                 service.LastCheckAt = null;

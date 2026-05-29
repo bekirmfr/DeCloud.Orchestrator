@@ -1,5 +1,6 @@
 using MongoDB.Bson.Serialization.Attributes;
 using DeCloud.Shared.Models;
+using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Models;
 

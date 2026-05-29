@@ -210,18 +210,18 @@ public class VmService : IVmService
         // ════════════════════════════════════════════════════════════════════════
         // Cloud-Init Processing (Priority: Custom > Template > None)
         // ════════════════════════════════════════════════════════════════════════
-        
+
         // Phase 2: Custom cloud-init (overrides template)
         if (!string.IsNullOrEmpty(request.CustomCloudInit))
         {
-            vm.Spec.UserData = request.CustomCloudInit;
-            
+            vm.Spec.CloudinitUserData = request.CustomCloudInit;
+
             // Store environment variables for substitution
             if (request.EnvironmentVariables != null && request.EnvironmentVariables.Any())
             {
                 vm.Labels["custom:cloud-init-vars"] = JsonSerializer.Serialize(request.EnvironmentVariables);
             }
-            
+
             _logger.LogInformation(
                 "VM {VmId} created with custom cloud-init ({Length} bytes)",
                 vm.Id, request.CustomCloudInit.Length);
@@ -252,7 +252,7 @@ public class VmService : IVmService
                 if (!string.IsNullOrEmpty(template.CloudInitTemplate))
                 {
                     // Store raw template and variables for later processing
-                    vm.Spec.UserData = template.CloudInitTemplate;
+                    vm.Spec.CloudinitUserData = template.CloudInitTemplate;
                     vm.Labels["template:cloud-init-vars"] = JsonSerializer.Serialize(mergedEnvVars);
                 }
 
@@ -268,7 +268,7 @@ public class VmService : IVmService
                     {
                         // Use central ingress service to generate subdomain (respects configured base domain)
                         var subdomain = _ingressService.GenerateSubdomain(vm);
-                        
+
                         vm.IngressConfig = new VmIngressConfig
                         {
                             DefaultSubdomain = subdomain,
@@ -502,7 +502,7 @@ public class VmService : IVmService
                 }
             }
 
-            return new VmSummaryDto (
+            return new VmSummaryDto(
                 Id: v.Id,
                 Name: v.Name,
                 Status: v.Status,
@@ -741,8 +741,8 @@ public class VmService : IVmService
         var config = await _configService.GetConfigAsync();// .TierRequirements[vm.Spec.QualityTier];
         var tierConfig = config.Tiers[vm.Spec.QualityTier];
         var isSystemVmScheduling = vm.Category is VmCategory.System;
-        var pointCost = isSystemVmScheduling 
-            ? vm.Spec.ComputePointCost 
+        var pointCost = isSystemVmScheduling
+            ? vm.Spec.ComputePointCost
             : vm.Spec.VirtualCpuCores * (int)tierConfig.GetPointsPerVCpu(config.BaselineBenchmark, config.BaselineOvercommitRatio);
 
         // CRITICAL: Store point cost in VM spec before scheduling
@@ -917,13 +917,13 @@ public class VmService : IVmService
         // because Pass 1b substitutes from UserSuppliedStatics, and Pass 2
         // handles artifacts. No separate code path needed.
 
-        string? processedUserData = vm.Spec.UserData;
+        string? processedCloudinitUserData = vm.Spec.CloudinitUserData;
 
         VmTemplate? template = !string.IsNullOrEmpty(vm.TemplateId)
             ? await _templateService.GetTemplateByIdAsync(vm.TemplateId)
             : null;
 
-        if (!string.IsNullOrEmpty(vm.Spec.UserData))
+        if (!string.IsNullOrEmpty(vm.Spec.CloudinitUserData))
         {
             try
             {
@@ -1013,11 +1013,11 @@ public class VmService : IVmService
                 // declared Variables get full validation.
                 bool strict = template is { Variables.Count: > 0 };
 
-                processedUserData = await _cloudInitRenderer.RenderAsync(
+                processedCloudinitUserData = await _cloudInitRenderer.RenderAsync(
                     template ?? new VmTemplate
                     {
                         Slug = "custom",
-                        CloudInitTemplate = vm.Spec.UserData!,
+                        CloudInitTemplate = vm.Spec.CloudinitUserData!,
                         Variables = new(),
                         Artifacts = new(),
                     },
@@ -1085,59 +1085,73 @@ public class VmService : IVmService
         // STEP 8: Create command with ALL required fields
         // ========================================
 
+        // Typed wire contract — single source of truth for the CreateVm payload.
+        // Enum encoding (string vs int) is owned by the enum types' [JsonConverter]
+        // attributes, so it is symmetric with the node's typed deserialization;
+        // we no longer hand-cast to int here.
+        var createPayload = new CreateVmPayload
+        {
+            VmId = vm.Id,
+            Name = vm.Name,
+            Category = vm.Category,
+            Role = vm.Role,
+
+            OwnerId = vm.OwnerId,
+            OwnerWallet = vm.OwnerWallet,
+
+            VirtualCpuCores = vm.Spec.VirtualCpuCores,
+            MemoryBytes = vm.Spec.MemoryBytes,
+            DiskBytes = vm.Spec.DiskBytes,
+            QualityTier = vm.Spec.QualityTier,
+            ComputePointCost = vm.Spec.ComputePointCost,
+
+            // GPU scheduling: orchestrator sets GpuMode explicitly (node agent no longer auto-detects)
+            GpuMode = resolvedGpuMode,
+            GpuPciAddress = gpuPciAddress,
+            GpuVramBytes = vm.Spec.GpuVramBytes,
+
+            DeploymentMode = deploymentMode,
+            ContainerImage = vm.Spec.ContainerImage,
+            BaseImageUrl = imageUrl,
+            // Cloud-init template (variables already substituted). Property name
+            // now matches the node's VmSpec.CloudInitUserData — fixes the previous
+            // CloudinitUserData/UserData wire mismatch that silently dropped it.
+            CloudInitUserData = processedCloudinitUserData,
+            SshPublicKey = sshPublicKey ?? "",
+            // EnvironmentVariables intentionally not set here: the orchestrator
+            // delivers container/cloud-init env via the "custom:cloud-init-vars"
+            // label, not as a wire dict. Left null to preserve existing behavior.
+
+            // Transient secrets — stripped from the orchestrator record after delivery.
+            Password = password,
+            Labels = vm.Labels,
+
+            ReplicationFactor = vm.Spec.ReplicationFactor,
+            TargetNodeId = vm.TargetNodeId,
+
+            // Per-service readiness definitions for VmReadinessMonitor on the node agent.
+            // CheckType travels as a string (matches SystemVmServiceDeclaration's convention).
+            Services = vm.Services.Select(s => new VmServiceDefinition
+            {
+                Name = s.Name,
+                Port = s.Port,
+                Protocol = s.Protocol,
+                CheckType = s.CheckType.ToString(),
+                HttpPath = s.HttpPath,
+                ExecCommand = s.ExecCommand,
+                TimeoutSeconds = s.TimeoutSeconds
+            }).ToList(),
+
+            // P2.5 — node-side IVmDeploymentPipeline prefetches these into the
+            // local artifact cache before VM creation. Empty list when no template
+            // (custom cloud-init, container, or template-less). Pipeline arch-filters internally.
+            Artifacts = template?.Artifacts ?? new List<TemplateArtifact>()
+        };
+
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             NodeCommandType.CreateVm,
-            JsonSerializer.Serialize(new
-            {
-                VmId = vm.Id,
-                Name = vm.Name,
-                VmType = (int) vm.Role,
-                OwnerId = vm.OwnerId,
-                OwnerWallet = vm.OwnerWallet,
-                VirtualCpuCores = vm.Spec.VirtualCpuCores,
-                MemoryBytes = vm.Spec.MemoryBytes,
-                DiskBytes = vm.Spec.DiskBytes,
-                QualityTier = (int)vm.Spec.QualityTier,
-                ComputePointCost = vm.Spec.ComputePointCost,
-                BaseImageUrl = imageUrl,
-                SshPublicKey = sshPublicKey ?? "",
-                // GPU scheduling: orchestrator sets gpuMode explicitly (node agent no longer auto-detects)
-                GpuMode = (int)resolvedGpuMode,
-                GpuPciAddress = gpuPciAddress,
-                GpuVramBytes = vm.Spec.GpuVramBytes,
-                DeploymentMode = (int)deploymentMode,
-                ContainerImage = vm.Spec.ContainerImage,
-                Network = new
-                {
-                    MacAddress = "",
-                    IpAddress = vm.NetworkConfig.PrivateIp,
-                    Gateway = "",
-                    VxlanVni = 0,
-                    AllowedPorts = new List<int>()
-                },
-                Password = password,
-                UserData = processedUserData, // Cloud-init template (with variables substituted)
-                Labels = vm.Labels,
-                // Per-service readiness definitions for VmReadinessMonitor on node agent
-                ReplicationFactor = vm.Spec.ReplicationFactor,
-                TargetNodeId = vm.TargetNodeId,
-                Services = vm.Services.Select(s => new
-                {
-                    s.Name,
-                    s.Port,
-                    s.Protocol,
-                    CheckType = s.CheckType.ToString(),
-                    s.HttpPath,
-                    s.ExecCommand,
-                    s.TimeoutSeconds
-                }).ToList(),
-                // P2.5 — node-side IVmDeploymentPipeline prefetches these into
-                // the local artifact cache before VM creation. Empty list when
-                // no template (custom cloud-init, container, or template-less).
-                // The pipeline arch-filters internally.
-                Artifacts = template?.Artifacts ?? new List<TemplateArtifact>()
-            }),
+            JsonSerializer.Serialize(createPayload),
             RequiresAck: true,
             TargetResourceId: vm.Id
         );
@@ -1228,16 +1242,16 @@ public class VmService : IVmService
     /// Always includes the implicit "System" (cloud-init) service as the first entry.
     /// Check strategies are inferred from port protocol unless explicitly overridden.
     /// </summary>
-    private static List<VmServiceStatus> BuildServiceList(VmTemplate template)
+    private static List<VmServiceModel> BuildServiceList(VmTemplate template)
     {
-        var services = new List<VmServiceStatus>
+        var services = new List<VmServiceModel>
         {
             // Implicit "System" service — cloud-init completion check
-            new VmServiceStatus
+            new VmServiceModel
             {
                 Name = "System",
                 CheckType = CheckType.CloudInitDone,
-                Status = ServiceReadiness.Pending,
+                Status = ServiceStatus.Pending,
                 TimeoutSeconds = 300
             }
         };
@@ -1247,12 +1261,12 @@ public class VmService : IVmService
 
         foreach (var port in template.ExposedPorts)
         {
-            var service = new VmServiceStatus
+            var service = new VmServiceModel
             {
                 Name = string.IsNullOrEmpty(port.Description) ? $"Port {port.Port}" : port.Description,
                 Port = port.Port,
                 Protocol = port.Protocol,
-                Status = ServiceReadiness.Pending
+                Status = ServiceStatus.Pending
             };
 
             if (port.ReadinessCheck != null)
@@ -1289,15 +1303,15 @@ public class VmService : IVmService
     /// Default service list for VMs without a template (bare VMs).
     /// Only the System (cloud-init) service.
     /// </summary>
-    private static List<VmServiceStatus> BuildDefaultServiceList()
+    private static List<VmServiceModel> BuildDefaultServiceList()
     {
-        return new List<VmServiceStatus>
+        return new List<VmServiceModel>
         {
-            new VmServiceStatus
+            new VmServiceModel
             {
                 Name = "System",
                 CheckType = CheckType.CloudInitDone,
-                Status = ServiceReadiness.Pending,
+                Status = ServiceStatus.Pending,
                 TimeoutSeconds = 300
             }
         };

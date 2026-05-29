@@ -136,13 +136,13 @@ public class VirtualMachine
     /// Additional entries come from template ExposedPorts.
     /// Updated via heartbeat from node agent.
     /// </summary>
-    public List<VmServiceStatus> Services { get; set; } = new();
+    public List<VmServiceModel> Services { get; set; } = new();
 
     /// <summary>
     /// True when all services (including System) report Ready.
     /// </summary>
     [BsonIgnore]
-    public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceReadiness.Ready);
+    public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceStatus.Ready);
 
     // =========================================================================
     // Lazysync & Replication State (updated each lazysync cycle)
@@ -342,7 +342,7 @@ public class VmSpec
     public string? WalletEncryptedPassword { get; set; }
 
     // Cloud-init / user data
-    public string? UserData { get; set; }
+    public string? CloudinitUserData { get; set; }
 
     public int MaxConnections { get; set; } = -1; // -1 = unlimited
 
@@ -457,42 +457,6 @@ public enum VmPowerState
     Off,
     Running,
     Paused
-}
-
-/// <summary>
-/// How a workload is deployed on a node.
-/// VirtualMachine: KVM/QEMU VM via libvirt (default, full isolation)
-/// Container: Docker container with GPU sharing (for nodes without IOMMU, e.g. WSL2)
-/// </summary>
-public enum DeploymentMode
-{
-    VirtualMachine = 0,
-    Container = 1
-}
-
-/// <summary>
-/// GPU access mode for a VM, set by the orchestrator during scheduling.
-/// The node agent no longer auto-detects GPU mode — the orchestrator decides
-/// based on node capabilities (IOMMU, GPU availability) and user preference.
-/// </summary>
-public enum GpuMode
-{
-    /// <summary>No GPU access</summary>
-    None = 0,
-
-    /// <summary>
-    /// VFIO passthrough — dedicated GPU assigned to a single VM.
-    /// Requires IOMMU enabled on the host node.
-    /// Best performance, exclusive access to the GPU.
-    /// </summary>
-    Passthrough = 1,
-
-    /// <summary>
-    /// GPU proxy daemon — shared GPU over virtio-vsock.
-    /// No IOMMU required; multiple VMs can share one GPU.
-    /// Cost-effective, slightly lower performance.
-    /// </summary>
-    Proxied = 2
 }
 
 /// <summary>
@@ -629,135 +593,10 @@ public record VmSummaryDto(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     string? TemplateId = null,
-    List<VmServiceStatus>? Services = null
+    List<VmServiceModel>? Services = null
 );
 
 public record VmDetailResponse(
     VirtualMachine Vm,
     Node? HostNode
 );
-
-// =========================================================================
-// Service Readiness Tracking
-// =========================================================================
-
-/// <summary>
-/// Tracks the readiness status of a single service inside a VM.
-/// The "System" service (cloud-init completion) is always present.
-/// Additional services come from template ExposedPorts.
-/// Checked via qemu-guest-agent from the node agent (hypervisor channel).
-/// </summary>
-public class VmServiceStatus
-{
-    /// <summary>
-    /// Service display name (e.g., "System", "PostgreSQL", "VS Code Server")
-    /// </summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Port number for this service. Null for "System" (cloud-init).
-    /// </summary>
-    public int? Port { get; set; }
-
-    /// <summary>
-    /// Protocol (tcp, http, udp, etc.). Null for "System".
-    /// </summary>
-    public string? Protocol { get; set; }
-
-    /// <summary>
-    /// How this service is checked for readiness
-    /// </summary>
-    public CheckType CheckType { get; set; } = CheckType.CloudInitDone;
-
-    /// <summary>
-    /// For HttpGet: URL path to check
-    /// </summary>
-    public string? HttpPath { get; set; }
-
-    /// <summary>
-    /// For ExecCommand: command to run inside VM
-    /// </summary>
-    public string? ExecCommand { get; set; }
-
-    /// <summary>
-    /// Current readiness status
-    /// </summary>
-    public ServiceReadiness Status { get; set; } = ServiceReadiness.Pending;
-    /// <summary>
-    /// When true, this service is periodically re-verified after reaching
-    /// Ready. A failed re-check reverts Ready → Failed. Default: false.
-    /// </summary>
-    public bool LivenessCheck { get; set; } = false;
-
-    /// <summary>
-    /// Human-readable explanation of current status.
-    /// Set on TimedOut/Failed (e.g., "cloud-init error: apt-get install failed"),
-    /// cleared when service recovers to Ready.
-    /// </summary>
-    public string? StatusMessage { get; set; }
-
-    /// <summary>
-    /// When the service was first detected as ready
-    /// </summary>
-    public DateTime? ReadyAt { get; set; }
-
-    /// <summary>
-    /// When the last check was performed
-    /// </summary>
-    public DateTime? LastCheckAt { get; set; }
-
-    /// <summary>
-    /// Max seconds to wait before marking TimedOut
-    /// </summary>
-    public int TimeoutSeconds { get; set; } = 300;
-}
-
-/// <summary>
-/// How a service readiness check is performed via qemu-guest-agent
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum CheckType
-{
-    /// <summary>
-    /// Implicit "System" check: cloud-init status == done.
-    /// Always the first service checked; all others gate on this.
-    /// </summary>
-    CloudInitDone,
-
-    /// <summary>
-    /// TCP connect: nc -zv -w2 localhost {port}
-    /// </summary>
-    TcpPort,
-
-    /// <summary>
-    /// HTTP GET: curl -sf -o /dev/null localhost:{port}{path}
-    /// </summary>
-    HttpGet,
-
-    /// <summary>
-    /// Arbitrary command: execute inside VM, exit code 0 = ready
-    /// </summary>
-    ExecCommand
-}
-
-/// <summary>
-/// Readiness state of a single service inside a VM
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum ServiceReadiness
-{
-    /// <summary>Waiting for System (cloud-init) to complete first</summary>
-    Pending,
-
-    /// <summary>Actively being probed</summary>
-    Checking,
-
-    /// <summary>Check passed — service is accepting traffic</summary>
-    Ready,
-
-    /// <summary>Timeout expired without the check passing</summary>
-    TimedOut,
-
-    /// <summary>Cloud-init reported error (System service only)</summary>
-    Failed
-}
