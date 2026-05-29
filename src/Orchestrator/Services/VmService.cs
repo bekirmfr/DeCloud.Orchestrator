@@ -1139,6 +1139,7 @@ public class VmService : IVmService
                 CheckType = s.CheckType.ToString(),
                 HttpPath = s.HttpPath,
                 ExecCommand = s.ExecCommand,
+                LivenessCheck = s.LivenessCheck,
                 TimeoutSeconds = s.TimeoutSeconds
             }).ToList(),
 
