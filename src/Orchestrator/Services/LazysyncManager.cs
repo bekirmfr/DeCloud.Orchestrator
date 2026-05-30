@@ -1,6 +1,7 @@
 ﻿using DeCloud.Shared.Enums;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace Orchestrator.Services;
@@ -28,12 +29,18 @@ public class LazysyncManager : BackgroundService
     private readonly ILogger<LazysyncManager> _logger;
     private readonly HttpClient _httpClient;
 
-    // Audit every 5 minutes. Each /providers/{cid} call does a 30s DHT walk —
-    // a manifest with 500 changed blocks would take ~2.5h to audit serially,
-    // so we cap at 20 CIDs per manifest per cycle and revisit next cycle.
+    // Audit every 5 minutes. All unconfirmed CIDs are checked each cycle by a fixed
+    // worker pool (Parallel.ForEachAsync, MaxConcurrentProviderChecks wide). A provider
+    // check is a lightweight Kademlia FindProviders walk — the same class as the
+    // blockstore's reannounce, so the degree mirrors ReannounceWorkers (16) rather than
+    // the data-transfer fetch pool (4). Walks self-throttle under DHT stress because the
+    // HTTP call blocks. The audit loop processes manifests serially, so this degree is
+    // also the system-wide bound on concurrent DHT walks. MaxReVerifyPerCycle confirmed
+    // CIDs are spot-checked each cycle to catch a silently wiped/redeployed remote.
     private static readonly TimeSpan AuditInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
-    private const int MaxCidsPerManifestPerCycle = 20;
+    private const int MaxConcurrentProviderChecks = 16;
+    private const int MaxReVerifyPerCycle = 20;
     private static readonly TimeSpan ReannounceCooldown = TimeSpan.FromMinutes(15);
 
     public LazysyncManager(
@@ -129,65 +136,80 @@ public class LazysyncManager : BackgroundService
         manifest.ConfirmedCids.IntersectWith(currentCids);
         manifest.LastAuditedAt = DateTime.UtcNow;
 
-        // Spend the per-cycle budget on unconfirmed CIDs first; use any remainder to re-verify
-        // already-confirmed ones so a silently-wiped remote (a redeployed blockstore) is caught
-        // instead of trusted forever.
-        var toCheck = currentCids
+        // Check ALL unconfirmed CIDs this cycle — no per-cycle cap — plus a random sample of
+        // confirmed ones so a silently wiped/redeployed remote is caught. The worker pool pulls
+        // a CID, runs the walk, pulls the next; degree is fixed at MaxConcurrentProviderChecks.
+        var unconfirmed = currentCids
             .Where(c => !manifest.ConfirmedCids.Contains(c))
-            .Take(MaxCidsPerManifestPerCycle)
             .ToList();
-        if (toCheck.Count < MaxCidsPerManifestPerCycle)
-            toCheck.AddRange(currentCids
-                .Where(manifest.ConfirmedCids.Contains)
-                .OrderBy(_ => Random.Shared.Next())
-                .Take(MaxCidsPerManifestPerCycle - toCheck.Count));
+        var reVerify = currentCids
+            .Where(manifest.ConfirmedCids.Contains)
+            .OrderBy(_ => Random.Shared.Next())
+            .Take(MaxReVerifyPerCycle)
+            .ToList();
+        var toCheck = unconfirmed.Concat(reVerify).ToList();
 
+        // Workers write results to a thread-safe sink; ConfirmedCids (a HashSet) is mutated
+        // serially afterwards, never from inside the pool.
+        var results = new ConcurrentBag<(string Cid, bool Confirmed, bool Failed)>();
+        try
+        {
+            await Parallel.ForEachAsync(
+                toCheck,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = MaxConcurrentProviderChecks,
+                    CancellationToken = ct
+                },
+                async (cid, token) =>
+                {
+                    try
+                    {
+                        // Count only REMOTE providers — the local blockstore on the hosting
+                        // node provides zero node-failure resilience and is never counted.
+                        var providers = await GetProvidersAsync(dhtApiUrl, cid, token);
+                        var remoteCount = string.IsNullOrEmpty(localPeerId)
+                            ? providers.Count
+                            : providers.Count(p => p != localPeerId);
+                        results.Add((cid, remoteCount >= manifest.ReplicationFactor, false));
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw; // cancel the batch; the outer catch saves and returns
+                    }
+                    catch (Exception ex)
+                    {
+                        // INDETERMINATE (host DHT FindProviders timing out) — NOT confirmed
+                        // under-replication. Do not erode an existing confirmation; a transient
+                        // DHT outage must not drain ConfirmedCids and trigger a spurious reseed.
+                        // Count it toward firing repair (re-announce helps exactly here).
+                        _logger.LogDebug(ex,
+                            "Provider check indeterminate for CID {Cid} (VM {VmId}) — will nudge repair",
+                            cid[..Math.Min(12, cid.Length)], manifest.VmId);
+                        results.Add((cid, false, true));
+                    }
+                });
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await dataStore.SaveManifestAsync(manifest);
+            return;
+        }
+
+        // Fold results into ConfirmedCids serially — HashSet is not thread-safe.
         var underReplicated = new List<string>();
         var checkFailures = 0;
 
-        foreach (var cid in toCheck)
+        foreach (var (cid, confirmed, failed) in results)
         {
-            if (ct.IsCancellationRequested)
-            {
-                await dataStore.SaveManifestAsync(manifest);
-                return;
-            }
-
-            try
-            {
-                // Count only REMOTE providers — the local blockstore on the hosting node
-                // provides zero node-failure resilience and is never counted.
-                var providers = await GetProvidersAsync(dhtApiUrl, cid, ct);
-                var remoteCount = string.IsNullOrEmpty(localPeerId)
-                    ? providers.Count
-                    : providers.Count(p => p != localPeerId);
-
-                if (remoteCount > 0 && remoteCount >= manifest.ReplicationFactor)
-                    manifest.ConfirmedCids.Add(cid);
-                else
-                {
-                    manifest.ConfirmedCids.Remove(cid); // regression: was confirmed, now isn't
-                    underReplicated.Add(cid);
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                await dataStore.SaveManifestAsync(manifest);
-                return;
-            }
-            catch (Exception ex)
-            {
-                // A provider lookup that THROWS (host DHT FindProviders timing out) is
-                // INDETERMINATE, not confirmed under-replication. Do NOT erode an existing
-                // confirmation — a transient DHT outage must not drain ConfirmedCids and
-                // trigger a spurious total-loss reseed. But an unreachable DHT is exactly when
-                // a re-announce helps, so count it toward firing repair, and keep processing
-                // the rest of the batch instead of aborting the whole cycle.
+            if (failed)
                 checkFailures++;
-                _logger.LogDebug(ex,
-                    "Provider check indeterminate for CID {Cid} (VM {VmId}) — will nudge repair",
-                    cid[..Math.Min(12, cid.Length)], manifest.VmId);
-                continue;
+            else if (confirmed)
+                manifest.ConfirmedCids.Add(cid);
+            else
+            {
+                manifest.ConfirmedCids.Remove(cid); // regression: was confirmed, now isn't
+                underReplicated.Add(cid);
             }
         }
 
