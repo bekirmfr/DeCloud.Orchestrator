@@ -392,43 +392,51 @@ public class VmSchedulerService : BackgroundService
         fresh.Spec.SshPublicKey = sshPublicKey;
 
         // ── CreateVm command ─────────────────────────────────────────────────
+        // Build through the CreateVmPayload contract — the single source of truth
+        // for orchestrator→node CreateVm (same shape VmService uses for fresh
+        // creates). The migration is signalled to the node implicitly by
+        // ManifestRootCid + ChunkMap being set; LibvirtVmManager STEP 6 supplies
+        // the minimal migration cloud-init when CloudInitUserData is null, so we
+        // deliberately leave it unset here. Enum encoding is owned by the enum
+        // [JsonConverter]s — do not hand-cast to int.
+        var createPayload = new CreateVmPayload
+        {
+            VmId = fresh.Id,
+            Name = fresh.Name,
+            Category = fresh.Category,
+            Role = fresh.Role,
+
+            OwnerId = fresh.OwnerId,
+            OwnerWallet = fresh.OwnerWallet,
+
+            VirtualCpuCores = fresh.Spec.VirtualCpuCores,
+            MemoryBytes = fresh.Spec.MemoryBytes,
+            DiskBytes = fresh.Spec.DiskBytes,
+            QualityTier = fresh.Spec.QualityTier,
+            ComputePointCost = fresh.Spec.ComputePointCost,
+
+            GpuMode = fresh.Spec.GpuMode,
+            GpuVramBytes = fresh.Spec.GpuVramBytes,
+
+            DeploymentMode = fresh.Spec.DeploymentMode,
+            ContainerImage = fresh.Spec.ContainerImage,
+            // BaseImageUrl left null: the node's ResolveImageUrlAsync falls back
+            // to the registered default. CloudInitUserData left null: migration
+            // cloud-init is synthesised node-side (LibvirtVmManager STEP 6).
+            SshPublicKey = sshPublicKey ?? "",
+
+            ReplicationFactor = fresh.Spec.ReplicationFactor,
+            TargetNodeId = targetNode.Id,
+
+            // Migration inputs — reconstruct the overlay from the CONFIRMED map.
+            ManifestRootCid = manifest.ConfirmedRootCid,
+            ChunkMap = manifest.ChunkMap,
+        };
+
         var command = new NodeCommand(
             CommandId: commandId,
             Type: NodeCommandType.CreateVm,
-            Payload: JsonSerializer.Serialize(new
-            {
-                VmId = fresh.Id,
-                Name = fresh.Name,
-                OwnerId = fresh.OwnerId ?? "",
-                VmType = (int)(fresh.Role),
-                VirtualCpuCores = fresh.Spec.VirtualCpuCores,
-                QualityTier = (int)fresh.Spec.QualityTier,
-                ComputePointCost = fresh.Spec.ComputePointCost,
-                MemoryBytes = fresh.Spec.MemoryBytes,
-                DiskBytes = fresh.Spec.DiskBytes,
-                ImageId = fresh.Spec.ImageId,
-                BaseImageUrl = (string?)null,
-                SshPublicKey = sshPublicKey,
-                GpuMode = (int)fresh.Spec.GpuMode,
-                GpuPciAddress = (string?)null,
-                ContainerImage = fresh.Spec.ContainerImage,
-                Network = new
-                {
-                    MacAddress = "",
-                    IpAddress = (string?)null,
-                    Gateway = "",
-                    VxlanVni = 0,
-                    AllowedPorts = new List<int>()
-                },
-                Password = (string?)null,
-                IsMigration = true,
-                ManifestRootCid = manifest.ConfirmedRootCid,
-                ConfirmedVersion = manifest.ConfirmedVersion,
-                SourceNodeId = sourceNodeId,
-                ChunkMap = manifest.ChunkMap,
-                TargetNodeId = targetNode.Id,
-                ReplicationFactor = fresh.Spec.ReplicationFactor
-            }),
+            Payload: JsonSerializer.Serialize(createPayload),
             RequiresAck: true,
             TargetResourceId: fresh.Id
         );
