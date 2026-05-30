@@ -150,7 +150,13 @@ public class VmSchedulerService : BackgroundService
                 v.Spec.ReplicationFactor > 0 &&
                 !string.IsNullOrEmpty(v.NodeId) &&
                 offlineNodeIds.Contains(v.NodeId) &&
-                string.IsNullOrEmpty(v.ActiveCommandId))
+                string.IsNullOrEmpty(v.ActiveCommandId) &&
+                // Unrecoverable is a terminal, deliberate classification (no confirmed
+                // replica), written only by ClassifyOfflineVm and MigrateVmAsync — never
+                // on the volatile manifest-push/audit path. Excluding it here is safe
+                // (unlike the other LazysyncStatus values) and makes the existing
+                // "exits the filter permanently" contract in MigrateVmAsync actually true.
+                v.LazysyncStatus != LazysyncStatus.Unrecoverable)
             .ToList();
 
         if (candidates.Count == 0) return;
@@ -348,9 +354,15 @@ public class VmSchedulerService : BackgroundService
             manifest.ConfirmedVersion, migrationStatus);
 
         // ── Atomic authority transfer ────────────────────────────────────────
+        // NodeId is advanced to the target optimistically so the target's
+        // success-heartbeat is adopted (orchestrator ownership check) rather than
+        // flagged as a zombie. MigrationSourceNodeId records the origin so the
+        // transfer can be rolled back if the create fails — see the failure
+        // branch in ProcessCommandAcknowledgmentAsync and CleanupExpiredCommands.
         var sourceNodeId = fresh.NodeId;
         var commandId = Guid.NewGuid().ToString();
 
+        fresh.MigrationSourceNodeId = sourceNodeId;
         fresh.NodeId = targetNode.Id;
         fresh.TargetNodeId = targetNode.Id;
         fresh.Status = VmStatus.Provisioning;
@@ -392,13 +404,11 @@ public class VmSchedulerService : BackgroundService
         fresh.Spec.SshPublicKey = sshPublicKey;
 
         // ── CreateVm command ─────────────────────────────────────────────────
-        // Build through the CreateVmPayload contract — the single source of truth
-        // for orchestrator→node CreateVm (same shape VmService uses for fresh
-        // creates). The migration is signalled to the node implicitly by
-        // ManifestRootCid + ChunkMap being set; LibvirtVmManager STEP 6 supplies
-        // the minimal migration cloud-init when CloudInitUserData is null, so we
-        // deliberately leave it unset here. Enum encoding is owned by the enum
-        // [JsonConverter]s — do not hand-cast to int.
+        // Build through CreateVmPayload — the single source of truth, mirroring
+        // VmService.CreateVmAsync. The migration is signalled implicitly by
+        // ManifestRootCid + ChunkMap; cloud-init is left null so LibvirtVmManager
+        // STEP 6 synthesises the minimal migration config. Enum encoding is owned
+        // by the enum [JsonConverter]s — no hand-casting to int.
         var createPayload = new CreateVmPayload
         {
             VmId = fresh.Id,
@@ -420,15 +430,11 @@ public class VmSchedulerService : BackgroundService
 
             DeploymentMode = fresh.Spec.DeploymentMode,
             ContainerImage = fresh.Spec.ContainerImage,
-            // BaseImageUrl left null: the node's ResolveImageUrlAsync falls back
-            // to the registered default. CloudInitUserData left null: migration
-            // cloud-init is synthesised node-side (LibvirtVmManager STEP 6).
             SshPublicKey = sshPublicKey ?? "",
 
             ReplicationFactor = fresh.Spec.ReplicationFactor,
             TargetNodeId = targetNode.Id,
 
-            // Migration inputs — reconstruct the overlay from the CONFIRMED map.
             ManifestRootCid = manifest.ConfirmedRootCid,
             ChunkMap = manifest.ChunkMap,
         };
@@ -527,6 +533,25 @@ public class CleanupService : BackgroundService
                     _logger.LogWarning(
                         "Marked VM {VmId} as Error due to command timeout",
                         vm.Id);
+
+                    // Roll back a migration authority transfer that timed out with no
+                    // ack (target went silent). Treat as retryable: restore NodeId to
+                    // the source so the scan re-evaluates next cycle. Re-fetch after
+                    // TransitionAsync to avoid a stale overwrite.
+                    var timedOutVm = await dataStore.GetVmAsync(vm.Id);
+                    if (timedOutVm != null &&
+                        !string.IsNullOrEmpty(timedOutVm.MigrationSourceNodeId))
+                    {
+                        timedOutVm.NodeId = timedOutVm.MigrationSourceNodeId;
+                        timedOutVm.TargetNodeId = null;
+                        timedOutVm.MigrationSourceNodeId = null;
+                        timedOutVm.PushMessage(
+                            $"Migration timed out with no acknowledgment. " +
+                            "Returned to the migration queue.",
+                            VmMessageLevel.Warning, "migration");
+                        timedOutVm.UpdatedAt = DateTime.UtcNow;
+                        await dataStore.SaveVmAsync(timedOutVm);
+                    }
                 }
 
                 // Always clear ActiveCommandId after timeout — regardless of prior status.

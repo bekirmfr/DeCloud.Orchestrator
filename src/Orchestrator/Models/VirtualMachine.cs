@@ -34,7 +34,17 @@ public class VirtualMachine
     // Placement
     public string NodeId { get; set; }                        // Which node it's running on
     public string? TargetNodeId { get; set; }                  // For migrations
-    
+
+    /// <summary>
+    /// Source node of an in-flight migration. Set at dispatch in MigrateVmAsync
+    /// when NodeId is optimistically advanced to the target; read on any
+    /// migration-create failure (terminal ack, retryable ack, or timeout) to
+    /// roll NodeId back to the source so the migration scan can re-evaluate.
+    /// Cleared on successful migration and on rollback. Null when no migration
+    /// is in flight.
+    /// </summary>
+    public string? MigrationSourceNodeId { get; set; }
+
     // Specification
     public VmSpec Spec { get; set; } = new();
     

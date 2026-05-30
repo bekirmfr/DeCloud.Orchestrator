@@ -1544,11 +1544,52 @@ public class NodeService : INodeService
             }
             else if (affectedVm.Status == VmStatus.Provisioning)
             {
+                // A terminal failure (e.g. malformed payload — see HandleCreateVmAsync)
+                // cannot succeed on re-issue; a retryable failure can.
+                var isTerminal = (ack.ErrorMessage ?? "")
+                    .Contains("TERMINAL:", StringComparison.Ordinal);
+
                 await failLifecycleManager.TransitionAsync(
                     affectedVm.Id,
                     VmStatus.Error,
                     TransitionContext.CommandFailed(commandId, nodeId,
                         $"Creation failed: {ack.ErrorMessage ?? "Unknown error"}"));
+
+                // Roll back the migration authority transfer. The create never
+                // succeeded, so restore NodeId to the source node and clear the
+                // target. Without this the VM is orphaned off the migration scan
+                // with NodeId pointing at a node that never received it.
+                // Re-fetch after TransitionAsync — the lifecycle manager persists
+                // internally; writing the stale object would overwrite it.
+                var rolledBack = await _dataStore.GetVmAsync(affectedVm.Id);
+                if (rolledBack != null &&
+                    !string.IsNullOrEmpty(rolledBack.MigrationSourceNodeId))
+                {
+                    rolledBack.NodeId = rolledBack.MigrationSourceNodeId;
+                    rolledBack.TargetNodeId = null;
+                    rolledBack.MigrationSourceNodeId = null;
+
+                    if (isTerminal)
+                    {
+                        // Re-issuing the identical command cannot help. Mark
+                        // Unrecoverable so the scan does not loop on it.
+                        rolledBack.LazysyncStatus = LazysyncStatus.Unrecoverable;
+                        rolledBack.PushMessage(
+                            $"Migration failed terminally: {ack.ErrorMessage}. " +
+                            "Automatic retry cannot help — redeployment required.",
+                            VmMessageLevel.Error, "migration");
+                    }
+                    else
+                    {
+                        rolledBack.PushMessage(
+                            $"Migration to {nodeId} failed: {ack.ErrorMessage ?? "unknown"}. " +
+                            "Returned to the migration queue.",
+                            VmMessageLevel.Warning, "migration");
+                    }
+
+                    rolledBack.UpdatedAt = DateTime.UtcNow;
+                    await _dataStore.SaveVmAsync(rolledBack);
+                }
             }
             else if (affectedVm.Status == VmStatus.Stopping)
             {
@@ -1678,6 +1719,9 @@ public class NodeService : INodeService
                     // Replicating = blocks in blockstore, awaiting DHT confirmation.
                     // LazysyncManager will advance to Protected once RF providers confirmed.
                     postMigration.LazysyncStatus = LazysyncStatus.Replicating;
+                    // Migration committed — clear the rollback source. (Only ever
+                    // non-null for an in-flight migration; fresh creates never set it.)
+                    postMigration.MigrationSourceNodeId = null;
                     postMigration.UpdatedAt = DateTime.UtcNow;
                     postMigration.PushMessage(
                         "Migration complete — manifest re-audit and reseed triggered. " +
