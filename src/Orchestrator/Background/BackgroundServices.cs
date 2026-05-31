@@ -463,6 +463,14 @@ public class VmSchedulerService : BackgroundService
 
             DeploymentMode = fresh.Spec.DeploymentMode,
             ContainerImage = fresh.Spec.ContainerImage,
+            // Forward the base image identity recorded at first deploy. URL is
+            // the fetch hint; hash is the contract the target enforces. Empty
+            // hash means the source's first deploy predated content-addressed
+            // base images — the target will still verify the URL download as
+            // best it can, but cross-node byte identity is not guaranteed.
+            // See BASE_IMAGE_DESIGN.md §4.2.
+            BaseImageUrl = fresh.Spec.BaseImageUrl,
+            BaseImageHash = fresh.Spec.BaseImageHash,
             SshPublicKey = sshPublicKey ?? "",
 
             ReplicationFactor = fresh.Spec.ReplicationFactor,

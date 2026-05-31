@@ -900,9 +900,16 @@ public class VmService : IVmService
         vm.Spec.SshPublicKey = sshPublicKey;
 
         // ========================================
-        // STEP 6: Get image URL
+        // STEP 6: Resolve base image (URL + SHA256)
         // ========================================
-        string? imageUrl = GetImageUrl(vm.Spec.ImageId);
+        // Both URL and hash travel together so the target node can verify the
+        // bytes it downloads. Empty hash is permissive: node downloads, hashes,
+        // reports back via heartbeat. See BASE_IMAGE_DESIGN.md §4.
+        var imageDescriptor = GetImageDescriptor(
+            vm.Spec.ImageId,
+            selectedNode.HardwareInventory?.Cpu?.Architecture);
+        string? imageUrl = imageDescriptor?.Url;
+        string imageHash = imageDescriptor?.Sha256 ?? string.Empty;
 
         // ════════════════════════════════════════════════════════════════════════
         // STEP 6.5: Render cloud-init (unified pipeline)
@@ -1113,6 +1120,7 @@ public class VmService : IVmService
             DeploymentMode = deploymentMode,
             ContainerImage = vm.Spec.ContainerImage,
             BaseImageUrl = imageUrl,
+            BaseImageHash = imageHash,
             // Cloud-init template (variables already substituted). Property name
             // now matches the node's VmSpec.CloudInitUserData — fixes the previous
             // CloudinitUserData/UserData wire mismatch that silently dropped it.
@@ -1212,24 +1220,17 @@ public class VmService : IVmService
         return $"10.100.0.{random}";
     }
 
-    private string? GetImageUrl(string imageId)
+    /// <summary>
+    /// Resolve a tenant VM imageId + node architecture to a base image
+    /// descriptor (URL + SHA256). Delegates to <see cref="BaseImageUrlResolver"/>
+    /// — the single source of truth for orchestrator-curated base images.
+    /// Returns null if the imageId is not in the catalogue or the node's
+    /// architecture is not supported.
+    /// See BASE_IMAGE_DESIGN.md §4.1.
+    /// </summary>
+    private static BaseImageDescriptor? GetImageDescriptor(string imageId, string? nodeArchitecture)
     {
-        if (!_dataStore.Images.TryGetValue(imageId, out var image))
-            return null;
-
-        return imageId switch
-        {
-            "ubuntu-24.04" => "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-            "ubuntu-22.04" => "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-            "debian-12" => "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-            "fedora-40" => "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
-            "alpine-3.19" => "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/alpine-virt-3.19.0-x86_64.qcow2",
-            // System VMs use Debian 12 (~2 GiB) — smaller than Ubuntu (~3.5 GiB), systemd-compatible
-            // so cloud-init templates work as-is. Both share the same cached base image.
-            "debian-12-dht" or "debian-12-relay" or "debian-12-blockstore" =>
-                "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-            _ => null
-        };
+        return BaseImageUrlResolver.Resolve(imageId, nodeArchitecture);
     }
 
     // SettleTemplateFeeAsync and AutoAllocateTemplatePortsAsync moved to VmLifecycleManager.cs

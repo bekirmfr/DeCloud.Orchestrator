@@ -807,10 +807,17 @@ public class NodeService : INodeService
         var imageId = systemRole.HasValue
             ? SystemVmRoleMap.ToBaseImageId(systemRole.Value)
             : string.Empty;
-        
-        var baseImageUrl = !string.IsNullOrEmpty(imageId)
-            ? BaseImageUrlResolver.Resolve(imageId, nodeArchitecture) ?? string.Empty
-            : string.Empty;
+
+        // Resolve to the (URL, SHA256) descriptor — both travel together so
+        // the node can verify the bytes it downloads match what the
+        // orchestrator authorised. Empty hash is permissive on first use; the
+        // node reports the computed hash back via heartbeat.
+        // See BASE_IMAGE_DESIGN.md §4.1.
+        var descriptor = !string.IsNullOrEmpty(imageId)
+            ? BaseImageUrlResolver.Resolve(imageId, nodeArchitecture)
+            : null;
+        var baseImageUrl = descriptor?.Url ?? string.Empty;
+        var baseImageHash = descriptor?.Sha256 ?? string.Empty;
 
         return new SystemVmTemplate
         {
@@ -826,7 +833,7 @@ public class NodeService : INodeService
             QualityTier = (int)(template.RecommendedSpec?.QualityTier ?? QualityTier.Burstable),
             ComputePointCost = template.RecommendedSpec?.ComputePointCost ?? 1,
             BaseImageUrl = baseImageUrl,
-            BaseImageHash = string.Empty,
+            BaseImageHash = baseImageHash,
             Services = template.ExposedPorts.Select(p => new SystemVmServiceDeclaration
             {
                 Name = p.Description ?? p.Port.ToString(),
@@ -2295,6 +2302,39 @@ public class NodeService : INodeService
                 // All metadata (LastHeartbeatAt, IP, services) goes on the fresh object.
                 vm = await _dataStore.GetVmAsync(vmId);
                 if (vm == null) continue;
+
+                // ── Base image identity round-trip ──────────────────────────────
+                // The node computes the SHA256 of the cached base image bytes on first
+                // download and reports it back here. The orchestrator stores it in
+                // vm.Spec so future migration dispatches carry the hash. A non-empty
+                // mismatch is a tamper / drift signal — surfaced as a warning, no
+                // automatic remediation. See BASE_IMAGE_DESIGN.md §4.5.
+                if (!string.IsNullOrEmpty(reported.BaseImageHash))
+                {
+                    var localHash = vm.Spec.BaseImageHash ?? string.Empty;
+                    if (string.IsNullOrEmpty(localHash))
+                    {
+                        vm.Spec.BaseImageHash = reported.BaseImageHash;
+                        if (!string.IsNullOrEmpty(reported.BaseImageUrl) &&
+                            string.IsNullOrEmpty(vm.Spec.BaseImageUrl))
+                        {
+                            vm.Spec.BaseImageUrl = reported.BaseImageUrl;
+                        }
+                        _logger.LogInformation(
+                            "VM {VmId}: adopted base image hash {Hash} from heartbeat (first-deploy discovery)",
+                            vmId, reported.BaseImageHash[..Math.Min(16, reported.BaseImageHash.Length)]);
+                    }
+                    else if (!string.Equals(localHash, reported.BaseImageHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogWarning(
+                            "VM {VmId}: base image hash mismatch — orchestrator has {Expected}, " +
+                            "node reports {Actual}. Either the node's cache was tampered with, or the " +
+                            "orchestrator's recorded hash changed mid-flight. Investigate.",
+                            vmId,
+                            localHash[..Math.Min(16, localHash.Length)],
+                            reported.BaseImageHash[..Math.Min(16, reported.BaseImageHash.Length)]);
+                    }
+                }
 
                 // Stamp alive signal and IP on the fresh object, then save.
                 // LastHeartbeatAt is the sole heartbeat freshness signal for VerifyActiveAsync.

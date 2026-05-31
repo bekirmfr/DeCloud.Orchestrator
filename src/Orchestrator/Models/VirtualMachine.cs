@@ -334,7 +334,26 @@ public class VmSpec
     // IMAGE & ACCESS
     // ========================================
     public string ImageId { get; set; } = string.Empty;       // e.g., "ubuntu-22.04"
-    
+
+    /// <summary>
+    /// HTTPS URL the node downloaded the base image from. Populated at first
+    /// deploy by the orchestrator (via BaseImageUrlResolver) and round-tripped
+    /// from the node's heartbeat. Carried into the migration CreateVmPayload
+    /// so the target node fetches from the same source. See BASE_IMAGE_DESIGN.md §4.
+    /// </summary>
+    public string BaseImageUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SHA256 of the cached base image bytes the source overlay was authored
+    /// against (lowercase hex, 64 chars). Empty at first deploy if the
+    /// resolver has no recorded hash for this image yet — the node computes
+    /// it on first download and reports back via heartbeat
+    /// (SyncVmStateFromHeartbeatAsync adopts it). Non-empty when carried into
+    /// a migration CreateVmPayload: the target MUST verify strictly.
+    /// See BASE_IMAGE_DESIGN.md §4.
+    /// </summary>
+    public string BaseImageHash { get; set; } = string.Empty;
+
     // SSH key for access
     public string? SshPublicKey { get; set; }
 
