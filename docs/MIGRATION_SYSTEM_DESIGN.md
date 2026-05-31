@@ -1,7 +1,7 @@
 # Block Store System VM — Design & Implementation Plan
 
-**Date:** 2026-02-16 (Updated: 2026-04-20)
-**Status:** Phase A–E complete. Item 32 (DHT proximity endpoint) implemented. All core items done. Items 39–41 (network fencing, assignment version, integration test) optional.
+**Date:** 2026-02-16 (Updated: 2026-05-31)
+**Status:** Phase A–F complete. Mesh-driven self-healing replication active across the blockstore fabric; orchestrator audit demoted to sentinel cadence and migration authority. Items 39–41 (network fencing, assignment version, integration test) optional.
 
 ## Implementation Status
 
@@ -13,6 +13,7 @@
 | D — Lazysync & Migration | ✅ Production-verified 2026-04-20 | Items 25–37: lazysync daemon, LazysyncManager, migration planner, source-offline alerting, disk reconstruction, end-to-end test confirmed. Item 32 (DHT proximity endpoint) implemented. All items complete. |
 | D-fixes — Replication reliability | ✅ Production-verified 2026-04-08 | Overlay-only fix, bitswap peer targeting, concurrency cap, port firewall, retry queue |
 | E — Split-Brain Prevention | ✅ Complete | Items 34–38 done. InvalidVmIds push model + TargetNodeId pre-check + owner block cleanup + manifest POST NodeId fence. Items 39–41 optional. |
+| F — Self-Healing Replication | ✅ Complete 2026-05-31 | Phases F-A through F-D. RF on the wire (owner meta), reactive repair via `needs-replica` topic, proactive presence-loss + survey loops, orchestrator audit demoted to 6h sentinel, migration pre-flight DHT walk. Mesh handles eviction, replica-offline, and silent-wipe failures without orchestrator polling. |
 **Depends on:** DHT system VMs (production-verified 2026-02-15)
 **Follows patterns from:** Relay VMs, DHT VMs
 
@@ -872,7 +873,12 @@ can only host ephemeral (`replicationFactor=0`) VMs.
 | Source-offline alerting | `replicationFactor=0` → LOST (by design, no alert); `>0` → UNRECOVERABLE / RECOVERING / MIGRATING |
 | Dashboard | Show replication factor + "Ephemeral" badge when factor=0 |
 
-### Phase D+1: Replication-Aware GC (Priority Eviction of Confirmed Blocks)
+### Phase D+1: Replication-Aware GC (Priority Eviction of Confirmed Blocks) — ✅ Implemented (extended in Phase F)
+
+**Status:** The priority-eviction model below is implemented as designed. Phase F extended both GC paths
+with `needs-replica` GossipSub signaling immediately before each eviction, and aligned the LRU path with
+the confirmed-evict path by adding the previously-missing `dht.Provide(c, false)` provider-record
+withdrawal. See §6.8 "Mesh-Driven Self-Healing" for the signaling layer.
 
 **Context:** The local blockstore on the VM's hosting node is a transit buffer, not a
 durable store. The VM overlay disk itself is the primary copy. The local blockstore
@@ -919,7 +925,7 @@ the local copy; provider records are withdrawn so peers route requests elsewhere
 **Dependency:** Requires stable `ConfirmedVersion` audit loop (Phase D) and the
 `reannounceExistingBlocks` startup fix (Phase D+1 — see item below).
 
-### Phase D+1: Startup Re-announce (Provider Record Recovery)
+### Phase D+1: Startup Re-announce (Provider Record Recovery) — ✅ Implemented
 
 **Problem:** When the blockstore binary restarts, `dht.Provide()` is only called for
 newly written blocks. Existing blocks on FlatFS are loaded into the LRU cache but
@@ -962,7 +968,17 @@ node.connectBootstrapPeers(ctx)
 go node.reannounceExistingBlocks(ctx)  // ← add this line
 ```
 
-### Phase D+1: DHT Neighborhood Scan (General Block Recovery)
+### Phase D+1: DHT Neighborhood Scan (General Block Recovery) — ⚠ Superseded by Phase F Survey
+
+**Resolution:** The neighborhood-scan cold path was superseded by Phase F's **owner-index survey**
+(§6.8). The survey achieves the same goal — discovering under-replicated blocks the GossipSub
+notification missed — but uses presence-mesh owner-index diffs instead of DHT walks. The owner index
+is per-VM authoritative, locally cached, and refreshed on each 5-minute survey cycle, so the survey
+runs at constant cost (1 HTTP call per peer per local VM) rather than scaling with DHT keyspace
+breadth. The DHT proximity endpoint (item 32) is retained for diagnostics; it is no longer on a
+durability code path.
+
+The original neighborhood-scan plan is kept below for historical context.
 
 **Problem:** The GossipSub fetch retry queue (item 31b) recovers blocks where the
 notification arrived but the bitswap fetch failed. It cannot recover blocks where the
@@ -1285,6 +1301,7 @@ Source block store (Node A) pushes new block:
   1. Store block locally
   2. Announce provider record to DHT
   3. Publish CID to GossipSub topic "decloud/blockstore/new-blocks"
+     (carries replicationFactor + manifestVersion — Phase F)
 
 Receiving block stores (Nodes B, C, D, ...):
   1. Receive GossipSub message with new CID
@@ -1292,11 +1309,18 @@ Receiving block stores (Nodes B, C, D, ...):
   3. If close enough (adaptive threshold) → add to bitswap want list
   4. Bitswap fetches block from Node A (or any other provider)
   5. Store locally, announce provider record
+  6. Persist replicationFactor → owners/{vmId}.meta for future self-healing (Phase F)
 
 Time from push to replication: seconds (not minutes)
 ```
 
-For nodes that missed the GossipSub message (offline, network partition), periodic DHT neighborhood scans serve as the durable fallback. No orchestrator commands are needed — blocks scatter across the network autonomously.
+**Phase F additions** — three further GossipSub topics carry repair signals:
+
+- `decloud/blockstore/needs-replica` (Phase F): GC publishes here before evicting (both LRU and confirmed-evict paths); the presence-loss monitor publishes here when a peer goes silent. Recipients holding the CID re-publish on `new-blocks`, triggering XOR-close peers to absorb.
+- `decloud/blockstore/presence` (existing, Phase F use): heartbeats now feed a shared `presenceState` consumed by the presence-loss monitor and the replication survey.
+- `decloud/blockstore/vm-deleted` (existing Phase E): retained unchanged.
+
+For nodes that missed a GossipSub message (offline, network partition), the **replication survey** (§6.8) serves as the durable fallback: every 5 minutes it fetches each presence peer's owner index and compares against local CIDs to identify under-replicated blocks. No orchestrator commands are needed — blocks scatter and self-heal across the network autonomously.
 
 ### 6.6 Handling "Scatter Window" Data Loss
 
@@ -1348,6 +1372,13 @@ For each VM on the dead node:
 
 This is the honest approach: the scatter window is small (seconds to minutes) and cannot be eliminated without synchronous replication (which would add latency to every write). The mitigation is visibility — the orchestrator tracks the gap between `currentVersion` and `confirmedVersion` and alerts when it matters.
 
+**Phase F note:** mesh-driven repair (§6.8) shortens the recovery latency for blocks that have already
+scattered past `confirmedVersion`. If a replica peer dies AFTER a manifest version has been confirmed,
+the presence-loss monitor + survey loop restore `RF` within minutes — without orchestrator
+intervention. The scatter-window hazard itself (the gap between push and first scatter) is unchanged,
+because no amount of post-hoc repair can help a block that never left the source node before it died.
+The `confirmedVersion` discipline remains the right mitigation for that window.
+
 ### 6.7 DHT Proximity Endpoint
 
 The block store binary needs to evaluate its position in Kademlia XOR space relative to a given CID. The block store has its own persistent peer ID and can compute `xor(myPeerId, cid)` locally — this is a trivial bitwise operation.
@@ -1374,6 +1405,152 @@ For the **normal fast path** (GossipSub announce → pull decision), the block s
 - Dashboard visualization of block distribution
 
 This endpoint is added to the DHT VM's existing localhost HTTP API (port 5080), alongside `/health`, `/peers`, `/connect`, and `/publish`.
+
+### 6.8 Mesh-Driven Self-Healing (Phase F)
+
+Pre-Phase-F durability relied on the orchestrator's `LazysyncManager` audit loop running every 5 minutes
+and dispatching `ReseedVm` commands when provider counts dropped below `replicationFactor`. This put the
+orchestrator on the durability critical path: a block evicted by GC was un-replicated until the next
+audit cycle, a peer going silent surfaced as under-replication 5+ minutes later, and every repair was a
+round-trip through MongoDB and the command channel.
+
+Phase F moves all routine repair onto the blockstore mesh itself, leaving the orchestrator with only
+the roles its centralised authority requires: advancing `ConfirmedVersion` from zero on initial seeding,
+escalating to `TriggerReseedAsync` when every replica is genuinely gone, and authority-transferring
+`NodeId` on migration.
+
+#### Failure classes and where they're handled
+
+| Failure | Detector | Repairer | Latency |
+|---------|----------|----------|---------|
+| LRU / capacity eviction | GC pre-delete signal | XOR-close peers via `needs-replica` response | seconds |
+| Replica node offline | Presence heartbeat timeout (180 s) | Cached owner-index → `needs-replica` fanout | minutes |
+| Silent FlatFS wipe / TTL drift | Survey owner-index diff | Surveying peer publishes `new-blocks` directly | minutes |
+| TTL provider record expiry | `reannounceExistingBlocks` (every 10 min, existing) | Self via `dht.Provide` | minutes |
+| Catastrophic total loss (mesh fully failed) | Orchestrator sentinel audit | `TriggerReseedAsync` (irreducible escape hatch) | up to 6 h |
+| Source node offline (migration) | Orchestrator heartbeat timeout | Authority transfer + pre-flight DHT check | minutes |
+
+Each failure class has exactly one primary handler. Pathways do not contend.
+
+#### Wire format: replication factor on every announcement
+
+The orchestrator's `vm.Spec.ReplicationFactor` flows through three places so the mesh can act on it
+without round-trips:
+
+1. `ResourceManifest` (HTTP `POST /manifests` body): `replicationFactor int json:"replicationFactor,omitempty"`.
+2. `NewBlockAnnouncement` (GossipSub `decloud/blockstore/new-blocks` payload): same field.
+3. `owners/{vmId}.meta` (local atomic JSON file, tmp+rename): `{replicationFactor, manifestVersion, lastUpdated}`.
+
+Wire backward compatibility is preserved via `omitempty` — pre-Phase-F peers omit the field, which
+post-Phase-F peers treat as "unknown RF" (skipped by RF-aware logic, same as ephemeral).
+
+`LazysyncDaemon.NotifyBlockstoreManifestAsync` passes `vm.Spec.ReplicationFactor` on every push. The
+blockstore's `handleManifests POST` writes `owners/{vmId}.meta` for VMOverlay manifests. Receivers of
+`new-blocks` announcements write meta on first pull (under a version guard to avoid rewrite churn).
+`publishNewBlock` reads meta when publishing, so each announcement carries the publisher's current view
+of RF.
+
+#### Phase F-B: Reactive repair via `needs-replica`
+
+A new GossipSub topic `decloud/blockstore/needs-replica` carries advance notice of evictions:
+
+```go
+type NeedsReplicaAnnouncement struct {
+    CID          string `json:"cid"`
+    VMId         string `json:"vmId,omitempty"`
+    Reason       string `json:"reason,omitempty"` // "lru_evict" | "confirmed_evict" | "presence_loss"
+    SourcePeerID string `json:"sourcePeerId,omitempty"`
+    Timestamp    string `json:"timestamp"`
+}
+```
+
+`runGC()` builds a one-shot CID→vmIds inverted index (`buildCIDOwnerIndex`) at the top of each pass,
+then for every block it's about to evict:
+
+1. **Before** calling `DeleteBlock`, publish `needs-replica` per owning VM (cross-VM dedup handled by
+   iterating the inverted index entry).
+2. Call `DeleteBlock`.
+3. Call `dht.Provide(c, false)` to withdraw the provider record.
+
+Step 3 closes a long-standing bug: the LRU path previously did not withdraw, leaving stranded provider
+records that lied about block availability for up to 24 h (the DHT record TTL).
+
+Receivers (`handleNeedsReplica`) check `bstore.Has(cid)`. If they hold it and a per-CID 60-second
+response cooldown has elapsed, they re-publish on `new-blocks` — at which point the existing XOR-
+threshold pull machinery scatters the block to XOR-close peers via bitswap. The cooldown prevents
+thundering-herd responses when many peers observe the same eviction signal.
+
+#### Phase F-C: Proactive repair via presence-loss and survey
+
+The presence subscription was refactored to populate a shared `presenceState` rather than a per-
+goroutine map. Two background loops consume it:
+
+**Presence-loss monitor** (`startPresenceLossMonitor`, 30 s tick):
+
+- Identifies peers with `lastHeartbeat > 180 s ago` (3× heartbeat interval).
+- Removes them from `presenceState` and, for each `(vmId, cid)` in their cached owner index, publishes
+  `needs-replica` with `reason="presence_loss"`.
+- The cache is populated by the replication survey below, so a peer that joined and died within a
+  single survey cycle yields no signals — the next survey detects the gap via `cidCount` instead.
+
+**Replication survey** (`startReplicationSurvey`, 5 min cadence, 60 s startup delay):
+
+- For every local VM with `owners/{vmId}.meta.replicationFactor > 0`:
+  - Fetch `/owners/{vmId}` from every presence peer (parallel, capped at `SurveyConcurrency = 16`).
+  - Cache results in `presenceState.peers[*].ownerCids` — this feeds the presence-loss monitor.
+  - Build a per-CID count of remote peers holding the block.
+  - For each local CID with `cidCount < RF`, call `publishNewBlock` directly (subject to per-CID
+    publisher cooldown).
+
+Survey uses `publishNewBlock` rather than `needs-replica` because the surveyor itself holds the block —
+direct advertise is one mesh hop shorter than the needs-replica indirection. The publisher-side
+cooldown (`PublishCooldown = 15 min`) prevents the 5-minute survey from re-publishing the same CID on
+every cycle while the network catches up. A separate hourly sweep loop bounds memory growth of the
+cooldown sync.Maps.
+
+#### Phase F-D: Orchestrator demotion
+
+With reactive (F-B) and proactive (F-C) repair active, `LazysyncManager` no longer needs to drive
+repair. Three changes implement the demotion:
+
+1. **Audit cadence split** (`DataStore.GetPendingAuditManifestsAsync`):
+   - `Version > ConfirmedVersion`: always audit (the orchestrator is the sole writer of
+     `ConfirmedVersion`; initial confirmation must progress on the 5-minute audit cadence).
+   - `ConfirmedVersion == 0 && stale > 30 min`: tight cadence retained — VMs cannot migrate until
+     `ConfirmedVersion > 0`.
+   - `ConfirmedVersion > 0 && stale > 6 h`: sentinel backstop. Was 30 min pre-Phase-F.
+
+2. **`MaybeTriggerReannounceAsync` removed**: its call site in `AuditManifestAsync`, the function
+   definition, and the `ReannounceCooldown` constant are all deleted. Partial coverage no longer
+   triggers any orchestrator action — the mesh handles it. The `ConfirmedCids.Count == 0` drain
+   detection (and the resulting `TriggerReseedAsync`) is retained as the catastrophic-loss escape
+   hatch.
+
+3. **Migration pre-flight** (`MigrationPreflightAsync` in `VmSchedulerService`): inserted between
+   target selection and authority transfer in `MigrateVmAsync`. Samples 50 random CIDs from
+   `manifest.ChunkMap`, walks the **target node's** DHT via `/providers/{cid}` (port 8080), and aborts
+   the migration cycle (no authority transfer, retry on next 5-minute scan) if fewer than 90 % of
+   sampled CIDs have at least one provider. HTTP failures (including 503 cold-DHT) are excluded from
+   both numerator and denominator — same indeterminate-result semantics as `LazysyncManager`'s audit
+   math. The pre-flight closes the gap created by the 6 h sentinel cadence: the ConfirmedChunkMap
+   snapshot can be up to 6 h stale at migration time, and the pre-flight verifies the chunks are
+   still actually fetchable from the target's view before committing to authority transfer.
+
+#### Steady-state load profile
+
+| Metric | Pre-Phase-F | Post-Phase-F |
+|--------|-------------|--------------|
+| Orchestrator DHT walks per VM per hour (steady state) | ~2 (30 min cadence) | ~0.17 (6 h cadence) |
+| `MaybeTriggerReannounceAsync` log entries | per-VM, on every partial-coverage cycle | zero (function removed) |
+| Repair latency, LRU eviction | next 5-min audit | seconds (mesh) |
+| Repair latency, replica offline | 5–10 min (audit + reseed) | 3.5 min worst case (180 s timeout + 30 s tick + propagation) |
+| Repair latency, silent wipe | next audit detects via DHT walk | next 5-min survey detects via owner-index diff |
+| Repair latency, total mesh loss | 5–10 min | up to 6 h (sentinel) — fallback only |
+| Migration safety against stale ConfirmedChunkMap | none | pre-flight DHT walk |
+
+The 6 h sentinel cadence is the price paid for moving orchestrator DHT load off the steady-state
+critical path. The migration pre-flight compensates by re-validating immediately before authority
+transfer, the moment it actually matters.
 
 ---
 
@@ -1977,15 +2154,171 @@ private List<string> GetInvalidVmsForNode(string nodeId, List<string> reportedRu
 41. 🔲 **Integration test** — simulate node failure, migration, node return, verify zombie
     destroyed and blockstore blocks cleaned up end-to-end.
 
+### Phase F: Self-Healing Replication — ✅ Complete 2026-05-31
+
+**Goal:** Move routine replication repair off the orchestrator's audit critical path and onto the
+blockstore mesh, leaving the orchestrator with only the responsibilities its centralised authority
+requires (advancing `ConfirmedVersion`, catastrophic-loss escape hatch, migration authority transfer).
+
+**Foundation:** All four sub-phases are wire-compatible with pre-Phase-F nodes. Mixed-version meshes
+are safe during rollout — pre-Phase-F peers neither publish nor subscribe to `needs-replica`, do not
+run the survey loop, and their `replicationFactor` field is `omitempty`-omitted on the wire.
+Self-healing improves monotonically as the upgraded fraction grows.
+
+**End-to-end:** With Phases F-A+F-B+F-C+F-D deployed, the orchestrator's `MaybeTriggerReannounceAsync`
+log entries vanish entirely from steady-state operation (the function is removed); the mesh handles
+all three pre-existing failure classes (LRU eviction, replica offline, silent wipe) within seconds
+to minutes; and the orchestrator's audit DHT load drops ~12× at steady state (30 min → 6 h cadence
+for confirmed manifests).
+
+#### Phase F-A: Replication factor on the wire — ✅ Complete
+
+42. ✅ **`ResourceManifest.ReplicationFactor` field** — `int json:"replicationFactor,omitempty"`
+    added to the manifest struct in `system-vms/blockstore/src/main.go`. Carried in `POST /manifests`
+    payloads.
+
+43. ✅ **`NewBlockAnnouncement.ReplicationFactor` field** — same field added to the GossipSub
+    `new-blocks` payload. Lets receivers persist the RF policy locally on first pull.
+
+44. ✅ **`ownerMetadata` + `loadOwnerMeta` + `saveOwnerMeta`** — new per-VM JSON file
+    `owners/{vmId}.meta` storing `{replicationFactor, manifestVersion, lastUpdated}`. Atomic write
+    via tmp+rename. Read path returns `(meta, false)` for missing files so callers conflate
+    "ephemeral" and "pre-Phase-F" safely.
+
+45. ✅ **`handleManifests POST` writes meta** — on every `POST /manifests` for
+    `ResourceType=VMOverlay`, `saveOwnerMeta` persists the RF policy. No-op when RF ≤ 0 (avoids
+    stale meta files for ephemeral VMs).
+
+46. ✅ **`publishNewBlock` reads meta** — block announcements now look up RF from
+    `owners/{vmId}.meta` and populate `NewBlockAnnouncement.ReplicationFactor`. Backward compatible:
+    if no meta exists, the field stays zero and `omitempty` omits it from the wire.
+
+47. ✅ **`handleNewBlockAnnouncement` persists meta on receiver side** — when an inbound announcement
+    has `ReplicationFactor > 0` and `ManifestVersion > existing`, the receiver writes its own
+    `owners/{vmId}.meta`. Version guard avoids rewrite churn during a large seeding burst.
+
+48. ✅ **`LazysyncDaemon.NotifyBlockstoreManifestAsync` signature** — accepts a new
+    `int replicationFactor` parameter and includes it in the manifest payload. Call site passes
+    `vm.Spec.ReplicationFactor`. File:
+    `src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs`.
+
+#### Phase F-B: Reactive repair (GC eviction → `needs-replica`) — ✅ Complete
+
+49. ✅ **`GossipSubNeedsReplicaTopic = "decloud/blockstore/needs-replica"`** — new constant in
+    `main.go` alongside existing topic constants.
+
+50. ✅ **`NeedsReplicaAnnouncement` struct** — wire format documented in §6.8. `Reason` is one of
+    `lru_evict | confirmed_evict | presence_loss` (the `survey` case uses `new-blocks` directly).
+
+51. ✅ **`needsReplicaTopic` + `needsReplicaCooldown` struct fields on `BlockNode`** — topic
+    reference held on struct so `publishNeedsReplica` (called from `runGC`, not a goroutine) can
+    publish without re-joining. Cooldown is a `sync.Map` (per-CID timestamps) preventing receive-
+    side thundering-herd responses.
+
+52. ✅ **`publishNeedsReplica` + `shouldRespondToNeedsReplica` + `startNeedsReplicaSubscription` +
+    `handleNeedsReplica`** — full publisher/subscriber pair. Receive-side flow: decode CID,
+    `bstore.Has(cid)`, check per-CID 60 s cooldown, re-publish on `new-blocks`. Topic is joined
+    synchronously in `main()` before the GC loop starts (otherwise the first eviction burst would
+    publish to a nil topic).
+
+53. ✅ **`buildCIDOwnerIndex` helper** — single O(total CIDs) inverted-index scan at the top of
+    every `runGC` pass. Replaces what would otherwise be O(evicted × VMs) repeated owner-file
+    scans during bulk eviction.
+
+54. ✅ **`runGC` Priority 1 (confirmed evict) publishes needs-replica before delete** — per-owning-
+    VM fanout from `buildCIDOwnerIndex` lookup. Empty owners slice (cross-VM dedup race) → publish
+    with `vmId=""`.
+
+55. ✅ **`runGC` Priority 2 (LRU evict) publishes needs-replica + withdraws DHT provider** — same
+    signaling pattern as Priority 1, PLUS the previously-missing `dht.Provide(c, false)` call.
+    Pre-Phase-F LRU left stranded provider records until 24 h TTL, causing `FindProviders` to lie
+    about block availability — this gap is closed alongside the self-healing addition.
+
+#### Phase F-C: Proactive repair (presence loss + survey) — ✅ Complete
+
+56. ✅ **`presencePeer` + `presenceState` types** — shared mesh-liveness view. `presencePeer`
+    carries `{apiURL, lastHeartbeat, ownerCids map[vmId]map[cid]}`. `presenceState` is a
+    `sync.RWMutex`-protected map of peer IDs to `*presencePeer`.
+
+57. ✅ **`BlockNode.presenceState + publishCooldown` fields** — `presenceState` populated by the
+    presence subscription on every heartbeat. `publishCooldown` is a `sync.Map` of per-CID
+    publisher-side timestamps (15 min window) used by both presence-loss and survey publishes.
+
+58. ✅ **`startPresenceTopic` refactored** — receiver goroutine now writes to the shared
+    `presenceState` instead of a per-goroutine `seenPeerURLs` map. Catchup is still triggered only
+    on new-peer or URL-changed events; repeat heartbeats just refresh the timestamp silently.
+
+59. ✅ **`startPresenceLossMonitor` (30 s tick)** — `PresenceTimeout = 180 s` (3× heartbeat
+    interval), `PresenceCheckInterval = 30 s`. Peers timing out are removed under write lock; their
+    cached `ownerCids` are then signaled via `publishNeedsReplica` with `reason="presence_loss"`
+    outside the lock. Cache-empty case (peer joined and died inside one survey cycle) is the
+    survey's responsibility — see item 60.
+
+60. ✅ **`startReplicationSurvey` (5 min cadence, 60 s startup delay)** — for each local VM with
+    `owners/{vmId}.meta.replicationFactor > 0`:
+    - Snapshot presence peers under read lock to avoid holding the lock during HTTP fetches.
+    - Parallel-fetch `/owners/{vmId}` from every presence peer (`SurveyConcurrency = 16`,
+      `fetchPeerOwnerCIDs`).
+    - Cache fetched CID sets in `presenceState.peers[*].ownerCids` (`cacheOwnerCIDs`) — feeds the
+      presence-loss monitor.
+    - Build per-CID remote count; for each local CID with `cidCount < RF`, call `publishNewBlock`
+      directly (subject to the publisher cooldown).
+
+61. ✅ **`startCooldownCleanup` (hourly sweep)** — `sweepCooldown` walks each `sync.Map` via
+    `Range`, deletes entries with `timestamp < now − 2 × window`. Bounded memory on long-uptime
+    nodes; no functional effect (entries past 2× window already cannot suppress anything).
+
+62. ✅ **`main()` wires all three goroutines** — `startPresenceLossMonitor`,
+    `startReplicationSurvey`, `startCooldownCleanup` launched after the synchronous
+    `startNeedsReplicaSubscription` join.
+
+#### Phase F-D: Orchestrator demotion — ✅ Complete
+
+63. ✅ **`GetPendingAuditManifestsAsync` predicate split** — initial-confirmation 30 min vs sentinel
+    6 h. See §6.8 for the exact branch logic. File: `src/Orchestrator/Persistence/DataStore.cs`.
+
+64. ✅ **`MaybeTriggerReannounceAsync` removed** — call site deleted from `AuditManifestAsync`,
+    function definition deleted, `ReannounceCooldown` constant deleted. The mesh handles partial-
+    coverage signaling now. `TriggerReseedAsync` (drain-detection escape hatch) is retained
+    unchanged. File: `src/Orchestrator/Services/LazysyncManager.cs`.
+
+    `ManifestRecord.LastReannounceAt` field is dormant post-Phase-F (no code writes it). Left in
+    the schema for forward compatibility; removable in a future cleanup once live records have
+    aged out.
+
+65. ✅ **`MigrationPreflightAsync` added** — `private async Task<bool>` helper on
+    `VmSchedulerService`, inserted into `MigrateVmAsync` as Step 2.5 between target selection and
+    atomic authority transfer. Sample size 50, pass threshold 90 %, per-CID timeout 10 s, total
+    concurrency cap 8. Returns:
+    - `true` (allow) when target has no DHT VM — degrade to existing behaviour.
+    - `false` (defer) when every sampled CID returns indeterminate — target DHT unreachable.
+    - `passRate >= 0.90` otherwise.
+
+    On defer, pushes a status message to the VM and returns without authority transfer; next scan
+    cycle retries. File: `src/Orchestrator/Background/BackgroundServices.cs`.
+
+#### Phase F file inventory
+
+- **`system-vms/blockstore/src/main.go`** — all blockstore-side changes (F-A wire fields, F-A meta
+  helpers, F-B `needs-replica` subsystem, F-B GC signaling, F-C presenceState refactor, F-C
+  presence-loss monitor, F-C survey, F-C cooldown sweep, main goroutine wiring).
+- **`src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs`** —
+  `NotifyBlockstoreManifestAsync` signature + payload (F-A).
+- **`src/Orchestrator/Persistence/DataStore.cs`** — `GetPendingAuditManifestsAsync` predicate (F-D).
+- **`src/Orchestrator/Services/LazysyncManager.cs`** — `MaybeTriggerReannounceAsync` removal (F-D).
+- **`src/Orchestrator/Background/BackgroundServices.cs`** — `MigrationPreflightAsync` helper and
+  Step 2.5 call site in `MigrateVmAsync` (F-D).
+
 ---
 
 ## 9. How This Connects to Future Features
 
-### Built-In (Phase A-E)
+### Built-In (Phase A-F)
 - **Continuous VM disk replication (lazysync)** — Core feature, not optional
 - **Live migration on node failure** — Core feature, the primary purpose of the block store
 - **Template image distribution** — Distribute base images via block store (dedup across nodes)
 - **Split-brain prevention** — Zero-config zombie VM detection and cleanup
+- **Mesh-driven self-healing** — Reactive `needs-replica` signaling + proactive presence-loss + survey loops keep replication ≥ RF without orchestrator involvement
 
 ### Near-Term Extensions
 - **On-demand VM migration** — User-initiated, not just failure-driven
@@ -2107,6 +2440,44 @@ LevelDB is only used for metadata (access times, block index, stats).
 - Eliminates lease renewal complexity and potential lease expiration edge cases
 - Already used throughout the codebase for VM-to-node association
 
+### Decision 14: Replication factor on the wire (Phase F)
+**Why:** Pre-Phase-F, the per-VM replication factor lived only in the orchestrator's `VmSpec.ReplicationFactor`. Every mesh-side repair decision required an orchestrator round-trip to read it — making truly autonomous self-healing impossible. Carrying RF on the manifest POST + the `new-blocks` GossipSub announcement, persisted locally as `owners/{vmId}.meta`, closes that gap:
+- Each blockstore now knows the RF of every VM whose blocks it holds, without orchestrator round-trips
+- The `omitempty` JSON tag preserves backward compatibility with pre-Phase-F peers (mixed-version mesh safe)
+- The receiver-side meta write is gated on `ManifestVersion > existing` to avoid rewrite churn during seeding bursts
+- The atomic tmp+rename write protects concurrent readers from torn JSON
+- Once persisted, the value is queryable by the survey and needs-replica handlers in O(1) local file read
+- Ephemeral VMs (RF=0) are naturally excluded — `saveOwnerMeta` is a no-op for non-positive RF, so no stale meta files accumulate
+
+### Decision 15: Mesh-driven repair (not orchestrator-polled) (Phase F)
+**Why:** Pre-Phase-F, every failure class — capacity eviction, replica offline, silent wipe — surfaced as under-replication during the orchestrator's 5-minute audit cycle, which then dispatched a `ReseedVm` command. This put the orchestrator on the critical path for routine durability events. The blockstore mesh already had the local information needed to detect each failure class directly:
+- **Reactive (Phase F-B):** GC knows when it's about to evict. Publishing `needs-replica` BEFORE the delete gives XOR-close peers maximum time to absorb. Receivers re-publish on `new-blocks` if they hold the block, triggering the existing XOR-pull machinery. Per-CID receive cooldown (60s) prevents thundering-herd responses.
+- **Proactive — presence (Phase F-C):** The presence topic already broadcasts heartbeats. A 30s monitor detects peers timing out (180s threshold) and signals `needs-replica` for their cached owner indexes.
+- **Proactive — survey (Phase F-C):** Every 5 minutes, fetch each presence peer's `/owners/{vmId}` and compare against local CIDs. CIDs with remote count below RF get re-published on `new-blocks`. This is the cold path: catches silent wipes, TTL drift, and the case where presence-loss signaled an empty cache.
+
+Each failure class has exactly one primary handler. Pathways do not contend. Per-CID publisher cooldown (15min) prevents survey republish storms. Repair latency drops from "next 5-min audit" to seconds (reactive) or single-digit minutes (proactive).
+
+### Decision 16: Sentinel audit cadence (orchestrator as backstop) (Phase F)
+**Why:** With reactive and proactive repair on the mesh, the orchestrator audit no longer needs to fire every 5 minutes for confirmed manifests. But it cannot be removed entirely — only the orchestrator can advance `ConfirmedVersion` (the field lives in MongoDB; the mesh has no write authority over it), and only the orchestrator can detect catastrophic total-loss (every replica gone simultaneously, mesh signals lost). The Phase F predicate splits the cadence:
+- **`Version > ConfirmedVersion` (active progress):** 5-minute cadence retained. Initial confirmation must progress quickly because VMs cannot migrate until `ConfirmedVersion > 0`.
+- **`ConfirmedVersion == 0 + stale > 30 min`:** 30-minute cadence retained. Defensive — initial confirmation should not stall.
+- **`ConfirmedVersion > 0 + stale > 6 h`:** 6-hour sentinel backstop. The mesh handles routine repair; the audit only fires if the mesh has failed catastrophically.
+
+DHT load on host nodes drops ~12× at steady state. `MaybeTriggerReannounceAsync` and `ReannounceCooldown` are deleted — the mesh's `needs-replica` topic plus survey-driven `new-blocks` re-publish replace this function's role entirely.
+
+### Decision 17: Migration pre-flight DHT check (Phase F)
+**Why:** The slower sentinel cadence (6 h vs 30 min) creates a window where the orchestrator's `ConfirmedChunkMap` snapshot may be up to 6 h stale at migration time. If the mesh lost replicas in that window — or never recovered — committing to authority transfer would result in a partially-reconstructed VM on the target. The pre-flight is a one-shot DHT walk against the target node's view, immediately before authority transfer:
+- Samples 50 random CIDs from `manifest.ChunkMap` (statistically meaningful for typical 10K–100K-CID manifests)
+- 90% pass threshold — bitswap retry on the target handles modest gaps; below 90% the manifest is genuinely degraded
+- Indeterminate results (HTTP 503 from cold DHT, network errors, timeouts) are excluded from both numerator and denominator — same semantics as the existing audit math
+- Three outcomes:
+  - **Pass:** proceed with authority transfer (NodeId reassignment, CreateVm dispatch)
+  - **Defer:** under threshold → push status message to VM, return without authority transfer; next 5-minute scan cycle retries
+  - **Tolerant pass:** target has no DHT VM at all → proceed optimistically rather than blocking on missing telemetry
+- Uses the TARGET's DHT VM (the source is offline by definition) — also the most accurate predictor of what the target's bitswap will actually see
+
+This trades a few hundred milliseconds of pre-flight latency for failed-fast migration safety. Aborting on the orchestrator side is far cheaper than committing to a partial reconstruction on the target.
+
 ---
 
 ## 11. Risk Assessment
@@ -2114,13 +2485,15 @@ LevelDB is only used for metadata (access times, block index, stats).
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
 | Block store VM crash | Medium | Low | Self-healing reconciliation redeploys; blocks scattered across many providers |
-| Node storage full | Medium | Low | Quota enforcement (hard refuse at 95%); LRU GC naturally trims excess as nodes fill up |
-| Source offline before scatter | Low | Medium | GossipSub + bitswap propagation completes in seconds; window is small. Orchestrator alerts on confirmedVersion=0 + node failure. Cannot be fully eliminated without synchronous replication |
-| GossipSub message loss | Low | Low | GossipSub fetch retry queue recovers failed fetches within 60s (hot path); DHT neighborhood scan (Phase D+1) catches entirely missed messages within 10 minutes (cold path) |
+| Node storage full | Medium | Low | Quota enforcement (hard refuse at 95%); LRU GC naturally trims excess as nodes fill up; Phase F `needs-replica` signal preserves replica count by triggering XOR-close peers to absorb before delete |
+| Source offline before scatter | Low | Medium | GossipSub + bitswap propagation completes in seconds; window is small. Orchestrator alerts on confirmedVersion=0 + node failure. Phase F mesh repair shortens post-scatter recovery further but cannot eliminate the unscattered-window itself. Cannot be fully eliminated without synchronous replication |
+| GossipSub message loss | Low | Low | GossipSub fetch retry queue recovers failed fetches within 60s (hot path); Phase F replication survey (5min cadence) catches entirely missed messages via owner-index diff against presence peers (cold path) — replaces the original Phase D+1 DHT neighborhood scan |
 | Ephemeral VM data loss (N=0) | N/A | N/A | By design — user explicitly chose N=0. Dashboard shows ephemeral status. No alert on node failure |
 | Split-brain / zombie VM | Medium | High | NodeId authority enforcement, reconciliation on startup/heartbeat, lazysync fencing, optional network fencing |
 | False positive zombie detection | Low | High | Conservative approach: keep running if orchestrator unreachable; version tracking for edge cases |
 | Reconciliation delays | Low | Medium | Multiple reconciliation triggers (startup, heartbeat, reconnection); InvalidVmIds in heartbeat response for proactive notification |
+| Stale ConfirmedChunkMap at migration (6h sentinel window) | Low | Medium | Phase F migration pre-flight: 50-CID DHT walk against target before authority transfer; defers migration cycle if <90% of sampled CIDs have providers. Closes the gap created by the slower sentinel cadence |
+| Catastrophic mesh failure (all replicas of a CID gone simultaneously) | Very Low | High | Orchestrator sentinel audit (6h cadence) detects `ConfirmedCids.Count == 0` drain, triggers `TriggerReseedAsync` — irreducible escape hatch |
 
 ---
 
@@ -2280,3 +2653,51 @@ timeout, so goroutines queue rather than drop. File: `main.go`.
 - ✅ Stale manifest pushes from zombie nodes rejected with HTTP 403 — `BlockStoreController` NodeId fence active
 - 🔲 Network fencing (item 39, optional) — WireGuard revocation for defense-in-depth
 - 🔲 NodeAssignmentVersion (item 40, optional) — fencing token for A→B→A migration edge case
+
+### Phase F (Self-Healing Replication) — ✅ Complete 2026-05-31
+
+**Foundation:** Phase A (RF on the wire) provides the per-VM RF policy at every blockstore. Phases B–C
+add reactive + proactive repair on the blockstore mesh. Phase D demotes the orchestrator audit to
+sentinel cadence and adds migration safety.
+
+- ✅ **Replication factor reaches every peer locally** — `owners/{vmId}.meta` persists `{RF, version}`
+  on both publisher (write from `POST /manifests`) and receivers (write from `new-blocks`
+  announcement, version-guarded). No orchestrator round-trip required for any RF-aware mesh decision.
+- ✅ **GC eviction no longer silently shrinks RF** — `runGC` publishes `needs-replica` BEFORE every
+  `DeleteBlock`, on both confirmed-evict and LRU paths. Cross-VM dedup respected via the
+  `buildCIDOwnerIndex` single-pass inverted scan. Receivers re-publish on `new-blocks` if they hold
+  the CID and per-CID 60s cooldown has elapsed; XOR-close peers absorb via existing bitswap path.
+  Repair latency: seconds.
+- ✅ **LRU eviction now correctly withdraws DHT provider records** — `dht.Provide(c, false)` aligned
+  with the confirmed-evict path. Closes a long-standing bug where LRU evictions left stranded
+  provider records for up to 24h, causing `FindProviders` to lie about block availability.
+- ✅ **Replica node offline detected from heartbeat alone** — `startPresenceLossMonitor` (30s tick)
+  identifies peers whose last heartbeat is older than 180s, removes them from shared `presenceState`,
+  and signals `needs-replica` for their cached owner indexes. No orchestrator polling. Repair
+  latency: under 4 minutes worst case (180s timeout + 30s tick + GossipSub propagation + bitswap
+  fetch).
+- ✅ **Silent FlatFS wipes detected proactively** — `startReplicationSurvey` (5min cadence) fetches
+  `/owners/{vmId}` from every presence peer, counts remote replicas per CID, re-publishes
+  under-replicated CIDs directly on `new-blocks` (subject to 15min per-CID publisher cooldown).
+  Repair latency: next survey cycle.
+- ✅ **Cooldown maps bounded** — `startCooldownCleanup` (hourly) sweeps stale entries from both
+  `needsReplicaCooldown` (60s receive window, 2×=120s retention) and `publishCooldown` (15min
+  publish window, 2×=30min retention) via `sync.Map.Range`.
+- ✅ **Orchestrator DHT load drops ~12× at steady state** — `GetPendingAuditManifestsAsync` predicate
+  splits confirmed-manifest staleness from 30min to 6h; `Version > ConfirmedVersion` still audits
+  every 5min so initial confirmation progresses without delay.
+- ✅ **`MaybeTriggerReannounceAsync` and `ReannounceCooldown` removed** — orchestrator no longer
+  dispatches `ReseedVm` on partial coverage. `TriggerReseedAsync` (drain-detection escape hatch)
+  retained unchanged.
+- ✅ **Migration pre-flight catches stale `ConfirmedChunkMap`** — 50-sample DHT walk against target
+  node's view (port 8080) immediately before authority transfer in `MigrateVmAsync`. Defers
+  migration cycle (no NodeId reassignment) if <90% of sampled CIDs have providers. Indeterminate
+  results (HTTP 503 cold DHT, timeouts) excluded from both numerator and denominator.
+- ✅ **Mixed-version mesh safe during rollout** — `replicationFactor` field uses `omitempty` JSON tag;
+  pre-Phase-F peers don't subscribe to `needs-replica` and don't run the survey loop. They neither
+  publish nor respond to the new signals. Self-healing improves monotonically as the upgraded
+  fraction grows.
+- ✅ **Compilation and end-to-end signals verified** — `go build ./...` clean on
+  `system-vms/blockstore/`; orchestrator `dotnet build` clean; `/diagnostics` event log on
+  upgraded blockstore shows `needs_replica_publish`, `needs_replica_response`,
+  `replication_survey`, `presence_loss_detected`, `cooldown_sweep` events firing as designed.

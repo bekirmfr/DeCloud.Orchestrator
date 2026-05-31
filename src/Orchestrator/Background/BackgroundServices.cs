@@ -488,17 +488,23 @@ public class VmSchedulerService : BackgroundService
     }
 
     /// <summary>
-    /// Phase D pre-flight: walks a random sample of ChunkMap CIDs against the
-    /// target node's DHT VM. Returns true if ≥90% of CIDs we could check have at
-    /// least one provider. Indeterminate results (HTTP 503 from cold DHT, network
-    /// errors, timeouts) are excluded from both numerator and denominator — we
-    /// measure observable misses, not transient availability.
-    ///
-    /// Sample of 50 is statistically meaningful for typical manifests (10K-100K
-    /// CIDs). At a 90% pass threshold, the false-positive rate (deferring a
+    /// Pre-flight DHT walk against the migration target. Samples 50 random CIDs
+    /// from the ChunkMap and verifies the target's DHT VM can FindProviders for
+    /// each. At a 90% pass threshold, the false-positive rate (deferring a
     /// healthy manifest) is negligible; the false-negative rate (allowing a
     /// degraded manifest through) is bounded by what bitswap retry can absorb
     /// during target-side reconstruction.
+    ///
+    /// Step 1 (added 2026-05-31): Before the DHT walk, ask the target's
+    /// blockstore directly which CIDs it already holds for this VM. Phase B/C
+    /// mesh replication writes /owners/{vmId} on every receiver, so this is the
+    /// authoritative source for "does the target have the blocks." If the
+    /// target already holds the ChunkMap CIDs locally, no DHT lookup is needed
+    /// — bitswap reconstruction on the target is a local read. This path is
+    /// essential when the mesh collapses to two nodes and the source dies: the
+    /// surviving target's DHT routing table empties (Finding 1 then returns
+    /// HTTP 503 on /providers), and the DHT walk would defer the migration
+    /// indefinitely even though the target holds every required block.
     ///
     /// Returns true (allow) if the target has no DHT VM at all — we'd rather
     /// migrate optimistically than block on missing infrastructure metadata.
@@ -514,6 +520,28 @@ public class VmSchedulerService : BackgroundService
         const int SampleSize = 50;
         const double MinPassRate = 0.90;
 
+        var allCids = chunkMap.Values
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .ToList();
+
+        if (allCids.Count == 0)
+        {
+            return true; // empty manifest — let downstream handle it
+        }
+
+        // ── Step 1: Direct blockstore inventory check ──────────────────────────
+        // Authoritative ground truth: the target's blockstore knows what it has.
+        // Short-circuits the DHT walk in cases where the DHT view is degraded
+        // but Phase B/C replication has already placed the blocks on the target.
+        var localOk = await TryDirectBlockstorePreflightAsync(
+            targetNode, allCids, vmId, MinPassRate, ct);
+        if (localOk == true)
+        {
+            return true;
+        }
+
+        // ── Step 2: DHT walk fallback (original logic) ─────────────────────────
         if (targetNode.DhtInfo == null || string.IsNullOrEmpty(targetNode.DhtInfo.ListenAddress))
         {
             _logger.LogWarning(
@@ -525,17 +553,10 @@ public class VmSchedulerService : BackgroundService
         var ip = targetNode.DhtInfo.ListenAddress.Split(':')[0];
         var dhtApiUrl = $"http://{ip}:8080"; // dht-dashboard.py proxy
 
-        var cids = chunkMap.Values
-            .Where(c => !string.IsNullOrEmpty(c))
-            .Distinct()
+        var cids = allCids
             .OrderBy(_ => Random.Shared.Next())
             .Take(SampleSize)
             .ToList();
-
-        if (cids.Count == 0)
-        {
-            return true; // empty manifest — let downstream handle it
-        }
 
         using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
         var passed = 0;
@@ -578,9 +599,6 @@ public class VmSchedulerService : BackgroundService
         var checkedTotal = passed + failed;
         if (checkedTotal == 0)
         {
-            // All checks returned indeterminate — the target DHT can't answer.
-            // Better to defer than commit to a migration we can't validate;
-            // the next scan cycle will retry once the DHT warms up.
             _logger.LogWarning(
                 "VM {VmId}: pre-flight all {Count} sampled CIDs indeterminate — " +
                 "target DHT unreachable",
@@ -594,6 +612,93 @@ public class VmSchedulerService : BackgroundService
             vmId, passed, checkedTotal, indeterminate, passRate);
 
         return passRate >= MinPassRate;
+    }
+
+    /// <summary>
+    /// Asks the target's blockstore directly which CIDs it already holds for this VM,
+    /// via GET /owners/{vmId} on the blockstore HTTP API. Returns true if the target
+    /// holds at least minPassRate of the ChunkMap CIDs locally — a stronger signal
+    /// than DHT FindProviders for the "can target reconstruct" question, because it
+    /// removes the DHT lookup as a dependency in exactly the case where the DHT has
+    /// collapsed but the target still has the data.
+    ///
+    /// Returns false if the blockstore is reachable but coverage is below threshold,
+    /// or null if the blockstore is unreachable / BlockStoreInfo is missing.
+    /// In both non-true cases the caller falls through to the DHT walk.
+    /// </summary>
+    private async Task<bool?> TryDirectBlockstorePreflightAsync(
+        Node targetNode,
+        List<string> chunkMapCids,
+        string vmId,
+        double minPassRate,
+        CancellationToken ct)
+    {
+        if (targetNode.BlockStoreInfo == null
+            || string.IsNullOrEmpty(targetNode.BlockStoreInfo.ListenAddress))
+        {
+            return null;
+        }
+
+        var ip = targetNode.BlockStoreInfo.ListenAddress.Split(':')[0];
+        var port = targetNode.BlockStoreInfo.ApiPort > 0
+            ? targetNode.BlockStoreInfo.ApiPort
+            : 5090;
+        var url = $"http://{ip}:{port}/owners/{Uri.EscapeDataString(vmId)}";
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var response = await httpClient.GetAsync(url, cts.Token);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogInformation(
+                    "VM {VmId}: target blockstore has no owner index — falling through to DHT walk",
+                    vmId);
+                return false;
+            }
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+            if (!json.TryGetProperty("cids", out var cidsEl)
+                || cidsEl.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var targetHas = new HashSet<string>(cidsEl.EnumerateArray()
+                .Select(c => c.GetString() ?? string.Empty)
+                .Where(c => !string.IsNullOrEmpty(c)));
+
+            var held = chunkMapCids.Count(c => targetHas.Contains(c));
+            var holdRate = (double)held / chunkMapCids.Count;
+
+            if (holdRate >= minPassRate)
+            {
+                _logger.LogInformation(
+                    "VM {VmId}: pre-flight passed via direct blockstore check — " +
+                    "target holds {Held}/{Total} ChunkMap CIDs locally ({Rate:P0})",
+                    vmId, held, chunkMapCids.Count, holdRate);
+                return true;
+            }
+
+            _logger.LogInformation(
+                "VM {VmId}: target blockstore holds {Held}/{Total} ChunkMap CIDs " +
+                "locally ({Rate:P0}, threshold {MinRate:P0}) — falling through to DHT walk",
+                vmId, held, chunkMapCids.Count, holdRate, minPassRate);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "VM {VmId}: target blockstore pre-flight unreachable at {Url} — " +
+                "falling through to DHT walk",
+                vmId, url);
+            return null;
+        }
     }
 }
 
