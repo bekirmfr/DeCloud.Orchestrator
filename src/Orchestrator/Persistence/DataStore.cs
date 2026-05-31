@@ -650,13 +650,29 @@ public class DataStore
 
         try
         {
-            // Re-verify confirmed-but-idle manifests too: a replica peer can be wiped while
-            // the VM is idle (Version == ConfirmedVersion), and the loss would otherwise go
-            // unnoticed until the next write. Re-audit anything not checked in the last 30 min.
-            var staleCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(30);
+            // Phase D: split the staleness threshold based on confirmation state.
+            //   - Version > ConfirmedVersion: ALWAYS audit. The orchestrator owns
+            //     the ManifestRecord; only it can advance ConfirmedVersion. Tight
+            //     5-minute audit cadence stays so the manifest becomes migratable
+            //     as soon as the mesh has accumulated RF replicas.
+            //   - LastAuditedAt == null: defensive — never audited at all.
+            //   - ConfirmedVersion == 0 + 30min stale: initial confirmation must
+            //     progress quickly; without it the VM can never migrate.
+            //   - ConfirmedVersion > 0 + 6h stale: sentinel backstop. The blockstore
+            //     mesh (Phase B GC eviction signaling + Phase C presence-loss diff +
+            //     periodic survey) is the primary durability detector now. This
+            //     audit only fires if all three mesh paths missed (catastrophic
+            //     network partition, GossipSub message loss across the entire mesh,
+            //     or a coordinated peer-set failure). Was 30min pre-Phase-D, when
+            //     the orchestrator was on the durability critical path.
+            var initialCutoff = DateTime.UtcNow - TimeSpan.FromMinutes(30);
+            var sentinelCutoff = DateTime.UtcNow - TimeSpan.FromHours(6);
             return await ManifestsCollection!
                 .Find(m => m.ReplicationFactor > 0 &&
-                           (m.Version > m.ConfirmedVersion || m.LastAuditedAt == null || m.LastAuditedAt < staleCutoff))
+                           (m.Version > m.ConfirmedVersion ||
+                            m.LastAuditedAt == null ||
+                            (m.ConfirmedVersion == 0 && m.LastAuditedAt < initialCutoff) ||
+                            (m.ConfirmedVersion > 0 && m.LastAuditedAt < sentinelCutoff)))
                 .SortBy(m => m.RegisteredAt)
                 .Limit(limit)
                 .ToListAsync();

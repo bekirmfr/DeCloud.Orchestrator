@@ -41,7 +41,6 @@ public class LazysyncManager : BackgroundService
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
     private const int MaxConcurrentProviderChecks = 16;
     private const int MaxReVerifyPerCycle = 20;
-    private static readonly TimeSpan ReannounceCooldown = TimeSpan.FromMinutes(15);
 
     public LazysyncManager(
         IServiceProvider serviceProvider,
@@ -238,11 +237,13 @@ public class LazysyncManager : BackgroundService
 
             await dataStore.SaveManifestAsync(manifest);
 
-            // Re-announce the full set so a rejoined/wiped peer can back-fill blocks it missed,
-            // AND when the host DHT is failing provider lookups (checkFailures) — that is exactly
-            // when records need re-publishing. Throttled because the daemon re-pushes every block.
-            if (underReplicated.Count > 0 || checkFailures > 0)
-                await MaybeTriggerReannounceAsync(manifest, dataStore, ct);
+            // Phase D: no orchestrator-side reseed on partial coverage. The blockstore
+            // mesh handles repair signaling reactively (Phase B GC eviction → needs-replica;
+            // Phase C presence-loss → needs-replica; Phase C survey → new-blocks). The
+            // orchestrator simply advances ConfirmedCids each cycle as the mesh
+            // re-publishes and other peers absorb the blocks. If the mesh has failed
+            // catastrophically (all replicas gone), the drain detection above triggers
+            // TriggerReseedAsync — the orchestrator's irreducible escape hatch.
 
             return;
         }
@@ -358,44 +359,6 @@ public class LazysyncManager : BackgroundService
             return $"http://{node.CgnatInfo.TunnelIp}:{port}";
 
         return $"http://{node.PublicIp}:{port}";
-    }
-
-    /// <summary>
-    /// Repair for persistently single-homed blocks: re-announce the full block set so a
-    /// rejoined/wiped peer can back-fill blocks it missed (ongoing lazysync only announces
-    /// deltas). Reuses the host-side ReseedVm — the daemon re-pushes + re-announces ALL
-    /// blocks. Unlike TriggerReseedAsync this does NOT reset Version/ConfirmedCids: the
-    /// manifest is still evolving and the incremental audit keeps its progress. Throttled.
-    /// </summary>
-    private async Task MaybeTriggerReannounceAsync(
-        ManifestRecord manifest, DataStore dataStore, CancellationToken ct)
-    {
-        if (manifest.LastReannounceAt is { } last && DateTime.UtcNow - last < ReannounceCooldown)
-            return; // nudged recently — give bitswap time to back-fill
-
-        var vm = await dataStore.GetVmAsync(manifest.VmId);
-        if (vm == null || string.IsNullOrEmpty(vm.NodeId))
-            return;
-
-        manifest.LastReannounceAt = DateTime.UtcNow;
-        await dataStore.SaveManifestAsync(manifest);
-
-        using var scope = _serviceProvider.CreateScope();
-        var commandSvc = scope.ServiceProvider.GetRequiredService<INodeCommandService>();
-
-        var reseedId = Guid.NewGuid().ToString();
-        dataStore.RegisterCommand(reseedId, manifest.VmId, vm.NodeId, NodeCommandType.ReseedVm);
-        var reseedCmd = new NodeCommand(
-            reseedId,
-            NodeCommandType.ReseedVm,
-            System.Text.Json.JsonSerializer.Serialize(new { vmId = manifest.VmId }),
-            RequiresAck: false,
-            TargetResourceId: manifest.VmId);
-        await commandSvc.DeliverCommandAsync(vm.NodeId, reseedCmd);
-
-        _logger.LogInformation(
-            "VM {VmId}: re-announce reseed dispatched to host node {NodeId} — lagging blocks pending replication",
-            manifest.VmId, vm.NodeId);
     }
 
     private async Task TriggerReseedAsync(

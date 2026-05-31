@@ -331,6 +331,39 @@ public class VmSchedulerService : BackgroundService
             return;
         }
 
+        // ── Step 2.5: Pre-flight DHT check (Phase D) ─────────────────────────
+        // The blockstore mesh handles ongoing repair (Phase B + C), but the
+        // orchestrator's audit now runs on a 6-hour sentinel cadence for steady-
+        // state manifests. By migration time, the ConfirmedChunkMap snapshot
+        // could be up to 6h stale — some CIDs we expect to fetch might have
+        // lost all providers without the orchestrator noticing. A one-shot DHT
+        // walk before authority transfer catches this and defers the migration
+        // cleanly rather than committing to a partial reconstruction on the target.
+        //
+        // Uses the TARGET's DHT VM (the source is offline by definition). The
+        // target's DHT walk is also the most accurate predictor of what its
+        // blockstore will see when fetching via bitswap.
+        var preflightOk = await MigrationPreflightAsync(
+            targetNode, manifest.ChunkMap, vm.Id, ct);
+        if (!preflightOk)
+        {
+            _logger.LogWarning(
+                "VM {VmId}: pre-flight DHT check failed — too many ChunkMap CIDs " +
+                "have no remote providers. Deferring migration to next scan cycle.",
+                vm.Id);
+            var deferred = await dataStore.GetVmAsync(vm.Id);
+            if (deferred != null)
+            {
+                deferred.PushMessage(
+                    "Pre-flight check failed: too many block CIDs have no remote providers. " +
+                    "The blockstore mesh may not have repaired in time. Retrying next cycle.",
+                    VmMessageLevel.Warning, "scheduler");
+                deferred.UpdatedAt = DateTime.UtcNow;
+                await dataStore.SaveVmAsync(deferred);
+            }
+            return;
+        }
+
         var migrationStatus = manifest.ConfirmedVersion == manifest.CurrentVersion
             ? "Ready"
             : "ReadyWithDataLoss";
@@ -452,6 +485,115 @@ public class VmSchedulerService : BackgroundService
         _logger.LogInformation(
             "Migration command {CommandId} delivered to node {NodeId} for VM {VmId}",
             commandId, targetNode.Id, fresh.Id);
+    }
+
+    /// <summary>
+    /// Phase D pre-flight: walks a random sample of ChunkMap CIDs against the
+    /// target node's DHT VM. Returns true if ≥90% of CIDs we could check have at
+    /// least one provider. Indeterminate results (HTTP 503 from cold DHT, network
+    /// errors, timeouts) are excluded from both numerator and denominator — we
+    /// measure observable misses, not transient availability.
+    ///
+    /// Sample of 50 is statistically meaningful for typical manifests (10K-100K
+    /// CIDs). At a 90% pass threshold, the false-positive rate (deferring a
+    /// healthy manifest) is negligible; the false-negative rate (allowing a
+    /// degraded manifest through) is bounded by what bitswap retry can absorb
+    /// during target-side reconstruction.
+    ///
+    /// Returns true (allow) if the target has no DHT VM at all — we'd rather
+    /// migrate optimistically than block on missing infrastructure metadata.
+    /// Returns false (defer) if every sampled CID returns indeterminate — we
+    /// can't validate at all, so committing to authority transfer is unsafe.
+    /// </summary>
+    private async Task<bool> MigrationPreflightAsync(
+        Node targetNode,
+        Dictionary<long, string> chunkMap,
+        string vmId,
+        CancellationToken ct)
+    {
+        const int SampleSize = 50;
+        const double MinPassRate = 0.90;
+
+        if (targetNode.DhtInfo == null || string.IsNullOrEmpty(targetNode.DhtInfo.ListenAddress))
+        {
+            _logger.LogWarning(
+                "VM {VmId}: target node {NodeId} has no DHT VM — skipping pre-flight",
+                vmId, targetNode.Id);
+            return true;
+        }
+
+        var ip = targetNode.DhtInfo.ListenAddress.Split(':')[0];
+        var dhtApiUrl = $"http://{ip}:8080"; // dht-dashboard.py proxy
+
+        var cids = chunkMap.Values
+            .Where(c => !string.IsNullOrEmpty(c))
+            .Distinct()
+            .OrderBy(_ => Random.Shared.Next())
+            .Take(SampleSize)
+            .ToList();
+
+        if (cids.Count == 0)
+        {
+            return true; // empty manifest — let downstream handle it
+        }
+
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
+        var passed = 0;
+        var failed = 0;
+        var indeterminate = 0;
+
+        await Parallel.ForEachAsync(
+            cids,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
+            async (cid, token) =>
+            {
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    cts.CancelAfter(TimeSpan.FromSeconds(10));
+
+                    var url = $"{dhtApiUrl}/providers/{Uri.EscapeDataString(cid)}";
+                    using var response = await httpClient.GetAsync(url, cts.Token);
+                    response.EnsureSuccessStatusCode();
+
+                    var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
+                    var hasProviders = json.TryGetProperty("providers", out var providersEl)
+                        && providersEl.ValueKind == JsonValueKind.Array
+                        && providersEl.GetArrayLength() > 0;
+
+                    if (hasProviders)
+                        Interlocked.Increment(ref passed);
+                    else
+                        Interlocked.Increment(ref failed);
+                }
+                catch
+                {
+                    // HTTP failure (including 503 cold-DHT from Finding 1).
+                    // Excluded from both numerator and denominator — same
+                    // semantic as LazysyncManager's indeterminate path.
+                    Interlocked.Increment(ref indeterminate);
+                }
+            });
+
+        var checkedTotal = passed + failed;
+        if (checkedTotal == 0)
+        {
+            // All checks returned indeterminate — the target DHT can't answer.
+            // Better to defer than commit to a migration we can't validate;
+            // the next scan cycle will retry once the DHT warms up.
+            _logger.LogWarning(
+                "VM {VmId}: pre-flight all {Count} sampled CIDs indeterminate — " +
+                "target DHT unreachable",
+                vmId, indeterminate);
+            return false;
+        }
+
+        var passRate = (double)passed / checkedTotal;
+        _logger.LogInformation(
+            "VM {VmId}: pre-flight {Passed}/{Checked} passed ({Indeterminate} indeterminate, {Rate:P0})",
+            vmId, passed, checkedTotal, indeterminate, passRate);
+
+        return passRate >= MinPassRate;
     }
 }
 
