@@ -248,9 +248,14 @@ public class LazysyncManager : BackgroundService
         }
 
         // Full coverage — every block in the current map has ≥RF remote providers.
+        // Defensive copy: ConfirmedChunkMap is a snapshot at the moment of confirmation
+        // and must not alias the live CurrentChunkMap. Currently CurrentChunkMap is
+        // only replaced (not mutated) by RegisterManifestAsync, so a shared reference
+        // would survive — but the snapshot semantics belong here, not as an invariant
+        // maintained in another file.
         manifest.ConfirmedVersion = manifest.Version;
         manifest.ConfirmedRootCid = manifest.RootCid;
-        manifest.ConfirmedChunkMap = manifest.CurrentChunkMap;
+        manifest.ConfirmedChunkMap = new Dictionary<long, string>(manifest.CurrentChunkMap);
         await dataStore.SaveManifestAsync(manifest);
 
         var vm = await dataStore.GetVmAsync(manifest.VmId);
@@ -422,16 +427,24 @@ public class LazysyncManager : BackgroundService
         try
         {
             var commandService = _serviceProvider.GetRequiredService<INodeCommandService>();
+            // Register before dispatch so ProcessCommandAcknowledgmentAsync can
+            // match the ack to a tracked command. Aligns this path with the other
+            // two ReseedVm dispatch sites (MaybeTriggerReannounceAsync and the
+            // post-migration reseed in NodeService) — every RequiresAck command
+            // must call RegisterCommand first or the ack arrives orphaned.
+            var reseedId = Guid.NewGuid().ToString();
+            dataStore.RegisterCommand(reseedId, manifest.VmId, node.Id, NodeCommandType.ReseedVm);
             var command = new NodeCommand(
-                Guid.NewGuid().ToString(),
+                reseedId,
                 NodeCommandType.ReseedVm,
                 JsonSerializer.Serialize(new { vmId = manifest.VmId }),
-                RequiresAck: true
+                RequiresAck: true,
+                TargetResourceId: manifest.VmId
             );
             await commandService.DeliverCommandAsync(node.Id, command, ct);
             _logger.LogInformation(
-                "VM {VmId}: ReseedVm command delivered to node {NodeId}",
-                manifest.VmId, node.Id);
+                "VM {VmId}: ReseedVm command {CommandId} delivered to node {NodeId}",
+                manifest.VmId, reseedId, node.Id);
         }
         catch (Exception ex)
         {
