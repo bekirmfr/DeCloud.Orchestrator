@@ -668,7 +668,7 @@ public class NodeSelfController : ControllerBase
             $"No template assigned for role '{canonical}' yet. Ensure obligation is fulfilled and template deployed.");
 
         var arch = node.HardwareInventory?.Cpu?.Architecture;
-        var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template, arch);
+        var systemTemplate = NodeService.BuildSystemVmTemplate(canonical, template, arch, _dataStore);
 
         // F4: render declared statics if the template has any. Skip strict
         // validation — system templates only declare WG_DESCRIPTION and

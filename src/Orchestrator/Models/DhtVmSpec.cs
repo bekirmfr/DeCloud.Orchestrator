@@ -20,7 +20,7 @@ public static class DhtVmSpec
         MemoryBytes = 512L * 1024 * 1024,         // 512 MB
         DiskBytes = 2L * 1024 * 1024 * 1024,      // 2 GB
         QualityTier = QualityTier.Burstable,
-        ImageId = "debian-12-dht",
+        ImageId = "debian-12",
         ComputePointCost = 1,
     };
 

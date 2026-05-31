@@ -1,4 +1,3 @@
-using DeCloud.Shared.Contracts;
 using DeCloud.Shared.Enums;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -1254,84 +1253,135 @@ public class DataStore
 
     private void SeedDefaultData()
     {
-        // Default VM images
+        // ════════════════════════════════════════════════════════════════
+        // Platform image registry — single source of truth.
+        //
+        // Each entry carries display metadata (Name, OsFamily, etc.) and
+        // per-arch (URL, SHA256) under ByArchitecture. Both are consulted
+        // by the same lookup path; they cannot diverge.
+        //
+        // System VMs (Relay, DHT, BlockStore) all use "debian-12" — the
+        // role-specific identity lives in the cloud-init template, not in
+        // the image. SystemVmRoleMap.ToBaseImageId returns "debian-12"
+        // for all three roles.
+        //
+        // SHA256 ROLLOUT: hashes are empty in the initial seed; the node
+        // computes on first download and reports back via heartbeat
+        // (SyncVmStateFromHeartbeatAsync adopts). Populate hashes by
+        // editing this seed and dropping the `images` Mongo collection.
+        // See BASE_IMAGE_DESIGN.md §4.6 and §7.
+        //
+        // URL pinning: prefer versioned dated builds over "latest"/"current"
+        // tags. Bumping a URL requires bumping the SHA256 in the same PR
+        // (or clearing it to opt back into permissive download-and-record).
+        // ════════════════════════════════════════════════════════════════
         var images = new[]
         {
             new VmImage
             {
                 Id = "ubuntu-24.04",
                 Name = "Ubuntu 24.04 LTS",
-                Description = "Ubuntu Noble Numbat - Long Term Support",
+                Description = "Ubuntu Noble Numbat — Long Term Support",
                 OsFamily = "linux",
                 OsName = "ubuntu",
                 Version = "24.04",
                 SizeGb = 4,
                 IsPublic = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                ByArchitecture = new()
+                {
+                    ["amd64"] = new(
+                        "https://cloud-images.ubuntu.com/releases/noble/release-20260518/noble-server-cloudimg-amd64.img",
+                        ""),
+                    ["arm64"] = new(
+                        "https://cloud-images.ubuntu.com/releases/noble/release-20260518/noble-server-cloudimg-arm64.img",
+                        ""),
+                },
             },
             new VmImage
             {
                 Id = "ubuntu-22.04",
                 Name = "Ubuntu 22.04 LTS",
-                Description = "Ubuntu Jammy Jellyfish - Long Term Support",
+                Description = "Ubuntu Jammy Jellyfish — Long Term Support",
                 OsFamily = "linux",
                 OsName = "ubuntu",
                 Version = "22.04",
                 SizeGb = 3,
                 IsPublic = true,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                ByArchitecture = new()
+                {
+                    ["amd64"] = new(
+                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260515/jammy-server-cloudimg-amd64.img",
+                        ""),
+                    ["arm64"] = new(
+                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260515/jammy-server-cloudimg-arm64.img",
+                        ""),
+                },
             },
             new VmImage
             {
                 Id = "debian-12",
                 Name = "Debian 12 (Bookworm)",
-                Description = "Debian Bookworm - Stable Release",
+                Description = "Debian Bookworm — Stable Release. Also the base for system VMs (Relay, DHT, BlockStore).",
                 OsFamily = "linux",
                 OsName = "debian",
                 Version = "12",
                 SizeGb = 3,
                 IsPublic = true,
-                CreatedAt = DateTime.UtcNow
-            },
-            // System VM images — role-specific config injected via cloud-init at deploy time.
-            // DHT uses Debian 12 (~2 GiB) instead of Ubuntu 24.04 (~3.5 GiB) to avoid
-            // overlay-smaller-than-backing boot failures and reduce download/storage overhead.
-            new VmImage
-            {
-                Id = "debian-12-dht",
-                Name = "Debian 12 (DHT Node)",
-                Description = "Base image for DHT system VMs — libp2p/Kademlia node deployed via cloud-init",
-                OsFamily = "linux",
-                OsName = "debian",
-                Version = "12",
-                SizeGb = 2,
-                IsPublic = false,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                ByArchitecture = new()
+                {
+                    ["amd64"] = new(
+                        "https://cloud.debian.org/images/cloud/bookworm/20260518-2482/debian-12-generic-amd64-20260518-2482.qcow2",
+                        ""),
+                    ["arm64"] = new(
+                        "https://cloud.debian.org/images/cloud/bookworm/20260518-2482/debian-12-generic-arm64-20260518-2482.qcow2",
+                        ""),
+                },
             },
             new VmImage
             {
-                Id = "debian-12-relay",
-                Name = "Debian 12 (Relay Node)",
-                Description = "Base image for Relay system VMs — WireGuard relay deployed via cloud-init",
+                Id = "fedora-40",
+                Name = "Fedora 40",
+                Description = "Fedora 40 Cloud Base Generic",
                 OsFamily = "linux",
-                OsName = "debian",
-                Version = "12",
-                SizeGb = 2,
-                IsPublic = false,
-                CreatedAt = DateTime.UtcNow
+                OsName = "fedora",
+                Version = "40",
+                SizeGb = 5,
+                IsPublic = true,
+                CreatedAt = DateTime.UtcNow,
+                ByArchitecture = new()
+                {
+                    ["amd64"] = new(
+                        "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2",
+                        ""),
+                    ["arm64"] = new(
+                        "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-40-1.14.aarch64.qcow2",
+                        ""),
+                },
             },
             new VmImage
             {
-                Id = "debian-12-blockstore",
-                Name = "Debian 12 (Block Store Node)",
-                Description = "Base image for Block Store system VMs — libp2p/bitswap node deployed via cloud-init",
+                Id = "alpine-3.19",
+                Name = "Alpine Linux 3.19",
+                Description = "Alpine Linux 3.19 NoCloud cloud-init image — small footprint (~50 MB)",
                 OsFamily = "linux",
-                OsName = "debian",
-                Version = "12",
-                SizeGb = 2,
-                IsPublic = false,
-                CreatedAt = DateTime.UtcNow
-            }
+                OsName = "alpine",
+                Version = "3.19",
+                SizeGb = 1,
+                IsPublic = true,
+                CreatedAt = DateTime.UtcNow,
+                ByArchitecture = new()
+                {
+                    ["amd64"] = new(
+                        "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-x86_64-bios-cloudinit-r0.qcow2",
+                        ""),
+                    ["arm64"] = new(
+                        "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-aarch64-uefi-cloudinit-r0.qcow2",
+                        ""),
+                },
+            },
         };
 
         foreach (var image in images)

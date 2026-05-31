@@ -41,7 +41,7 @@ public static class BlockStoreVmSpec
         MemoryBytes = 512L * 1024 * 1024,                               // 512 MB
         DiskBytes = (long)(nodeStorageTotalBytes * StorageDutyFraction), // 5% duty
         QualityTier = QualityTier.Burstable,
-        ImageId = "debian-12-blockstore",
+        ImageId = "debian-12",
         ComputePointCost = 1,
     };
 }

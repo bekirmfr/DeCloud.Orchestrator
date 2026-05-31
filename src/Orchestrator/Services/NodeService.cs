@@ -732,7 +732,7 @@ public class NodeService : INodeService
 
             // Build the lightweight SystemVmTemplate from the full VmTemplate.
             var arch = node.HardwareInventory?.Cpu?.Architecture;
-            var systemTemplate = BuildSystemVmTemplate(roleName, template, arch);
+            var systemTemplate = BuildSystemVmTemplate(roleName, template, arch, _dataStore);
 
             // F4: render declared statics if the template has any. Same logic as
             // NodeSelfController.GetSystemTemplate; both call sites need to render
@@ -793,11 +793,15 @@ public class NodeService : INodeService
     /// <summary>
     /// Extract the deployment-relevant subset of a full VmTemplate into a
     /// SystemVmTemplate for delivery to the node agent.
+    ///
+    /// Resolves the base image (URL + SHA256) from the consolidated image
+    /// registry (<c>DataStore.Images</c>) — see BASE_IMAGE_DESIGN.md §7.
     /// </summary>
     internal static SystemVmTemplate BuildSystemVmTemplate(
         string role,
         VmTemplate template,
-        string? nodeArchitecture)
+        string? nodeArchitecture,
+        DataStore dataStore)
     {
         var canonical = ObligationRole.Canonicalise(role);
         var systemRole = canonical is not null
@@ -808,14 +812,15 @@ public class NodeService : INodeService
             ? SystemVmRoleMap.ToBaseImageId(systemRole.Value)
             : string.Empty;
 
-        // Resolve to the (URL, SHA256) descriptor — both travel together so
-        // the node can verify the bytes it downloads match what the
-        // orchestrator authorised. Empty hash is permissive on first use; the
-        // node reports the computed hash back via heartbeat.
-        // See BASE_IMAGE_DESIGN.md §4.1.
-        var descriptor = !string.IsNullOrEmpty(imageId)
-            ? BaseImageUrlResolver.Resolve(imageId, nodeArchitecture)
-            : null;
+        // Resolve (URL, SHA256) for the node's architecture. Empty hash is
+        // permissive on first use; the node reports the computed hash back
+        // via heartbeat. See BASE_IMAGE_DESIGN.md §4.5.
+        var archTag = VmImage.NormaliseArchTag(nodeArchitecture) ?? "amd64";
+        var descriptor =
+            !string.IsNullOrEmpty(imageId) &&
+            dataStore.Images.TryGetValue(imageId, out var image)
+                ? image.ByArchitecture.GetValueOrDefault(archTag)
+                : null;
         var baseImageUrl = descriptor?.Url ?? string.Empty;
         var baseImageHash = descriptor?.Sha256 ?? string.Empty;
 

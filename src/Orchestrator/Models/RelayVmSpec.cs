@@ -16,7 +16,7 @@ public static class RelayVmSpec
         MemoryBytes = 1024L * 1024 * 1024,
         DiskBytes = 5L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Burstable,
-        ImageId = "debian-12-relay", // Custom relay image
+        ImageId = "debian-12",
         ComputePointCost = 1, // Minimal cost
         MaxConnections = 20,
     };
@@ -30,7 +30,7 @@ public static class RelayVmSpec
         MemoryBytes = 2L * 1024 * 1024 * 1024,
         DiskBytes = 6L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Balanced,
-        ImageId = "debian-12-relay", // Custom relay image
+        ImageId = "debian-12",
         ComputePointCost = 2, // Minimal cost
         MaxConnections = 40,
     };
@@ -44,7 +44,7 @@ public static class RelayVmSpec
         MemoryBytes = 3L * 1024 * 1024 * 1024,
         DiskBytes = 7L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Balanced,
-        ImageId = "debian-12-relay",
+        ImageId = "debian-12",
         ComputePointCost = 4,
         MaxConnections = 80,
     };
@@ -58,7 +58,7 @@ public static class RelayVmSpec
         MemoryBytes = 4L * 1024 * 1024 * 1024,
         DiskBytes = 8L * 1024 * 1024 * 1024,
         QualityTier = QualityTier.Standard, // Upgraded tier
-        ImageId = "debian-12-relay",
+        ImageId = "debian-12",
         ComputePointCost = 13,
         MaxConnections = 100,
     };

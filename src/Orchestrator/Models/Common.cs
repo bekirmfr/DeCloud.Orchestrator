@@ -143,22 +143,74 @@ public record ComponentHealth(
 );
 
 /// <summary>
-/// Available VM images
+/// Descriptor for an orchestrator-curated base image: the URL the node
+/// should download from, and the SHA256 the downloaded bytes must hash to.
+///
+/// CONTENT ADDRESSING
+/// The hash is the authoritative identity of the image. Two nodes that
+/// resolve the same (imageId, arch) receive identical (Url, Sha256) and
+/// must converge to byte-identical cached files. The URL is a fetch hint;
+/// the hash is the contract.
+///
+/// EMPTY HASH IS PERMISSIVE
+/// When <see cref="Sha256"/> is empty, the node downloads from
+/// <see cref="Url"/>, computes the SHA256, records it into VmSpec, and
+/// reports it back to the orchestrator via heartbeat. Subsequent
+/// migrations of that VM carry the discovered hash and enforce strictly.
+/// </summary>
+/// <param name="Url">HTTPS download URL. Should be a stable, versioned
+///   URL — avoid "latest" / "current" tags that drift between builds.</param>
+/// <param name="Sha256">Lower-case hex SHA256 (64 chars), or empty for
+///   permissive download-and-record mode.</param>
+public sealed record BaseImageDescriptor(string Url, string Sha256);
+
+/// <summary>
+/// Available VM image — single authoritative registry entry.
+///
+/// CARRIES BOTH catalog display metadata (Name, OsFamily, etc.) and
+/// deployment-time resolution (<see cref="ByArchitecture"/>). The
+/// catalog and the deployment table cannot diverge because they ARE
+/// the same record. See BASE_IMAGE_DESIGN.md §7.
 /// </summary>
 public class VmImage
 {
+    // ── Identity ─────────────────────────────────────────────────────
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string OsFamily { get; set; } = string.Empty;        // linux, windows
     public string OsName { get; set; } = string.Empty;          // ubuntu, debian, etc.
     public string Version { get; set; } = string.Empty;
-    public string Architecture { get; set; } = "x86_64";
-    public long SizeGb { get; set; }
-    public string? ChecksumSha256 { get; set; }
-    public string? DownloadUrl { get; set; }
-    public bool IsPublic { get; set; } = true;
+    public long SizeGb { get; set; }                            // informational; rough upstream size
+    public bool IsPublic { get; set; } = true;                  // marketplace visibility
     public DateTime CreatedAt { get; set; }
+
+    // ── Deployment data — per-arch (URL, SHA256) ─────────────────────
+    /// <summary>
+    /// Outer key: normalized arch tag from <see cref="NormaliseArchTag"/>
+    /// — "amd64" | "arm64". Value: the descriptor the node uses to
+    /// download and verify. Populated for every architecture this image
+    /// supports.
+    /// </summary>
+    public Dictionary<string, BaseImageDescriptor> ByArchitecture { get; set; } = new();
+
+    // ── Helpers ──────────────────────────────────────────────────────
+    /// <summary>
+    /// Normalise a raw architecture string (as reported by the node
+    /// agent's ResourceDiscoveryService) to the short tag used as the
+    /// key in <see cref="ByArchitecture"/>.
+    ///
+    /// Returns <c>null</c> for unrecognised architectures — callers
+    /// should fall back to <c>"amd64"</c> for nodes that pre-date the
+    /// Architecture field (null Architecture on CpuInfo).
+    /// </summary>
+    public static string? NormaliseArchTag(string? rawArchitecture) =>
+        rawArchitecture?.Trim().ToLowerInvariant() switch
+        {
+            "x86_64" or "amd64" or "x64" => "amd64",
+            "aarch64" or "arm64" => "arm64",
+            _ => null,
+        };
 }
 
 /// <summary>

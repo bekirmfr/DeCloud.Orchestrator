@@ -1222,15 +1222,17 @@ public class VmService : IVmService
 
     /// <summary>
     /// Resolve a tenant VM imageId + node architecture to a base image
-    /// descriptor (URL + SHA256). Delegates to <see cref="BaseImageUrlResolver"/>
-    /// — the single source of truth for orchestrator-curated base images.
+    /// descriptor (URL + SHA256) from the consolidated image registry.
     /// Returns null if the imageId is not in the catalogue or the node's
-    /// architecture is not supported.
-    /// See BASE_IMAGE_DESIGN.md §4.1.
+    /// architecture is not supported by that image.
+    /// See BASE_IMAGE_DESIGN.md §7.
     /// </summary>
-    private static BaseImageDescriptor? GetImageDescriptor(string imageId, string? nodeArchitecture)
+    private BaseImageDescriptor? GetImageDescriptor(string imageId, string? nodeArchitecture)
     {
-        return BaseImageUrlResolver.Resolve(imageId, nodeArchitecture);
+        if (!_dataStore.Images.TryGetValue(imageId, out var image))
+            return null;
+        var archTag = VmImage.NormaliseArchTag(nodeArchitecture) ?? "amd64";
+        return image.ByArchitecture.GetValueOrDefault(archTag);
     }
 
     // SettleTemplateFeeAsync and AutoAllocateTemplatePortsAsync moved to VmLifecycleManager.cs
