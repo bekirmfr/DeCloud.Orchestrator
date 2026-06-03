@@ -651,37 +651,37 @@ public class VmSchedulerService : BackgroundService
         var port = targetNode.BlockStoreInfo.ApiPort > 0
             ? targetNode.BlockStoreInfo.ApiPort
             : 5090;
-        var url = $"http://{ip}:{port}/owners/{Uri.EscapeDataString(vmId)}";
+        var hasUrl = $"http://{ip}:{port}/blocks/has";
 
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            cts.CancelAfter(TimeSpan.FromSeconds(20));
 
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            using var response = await httpClient.GetAsync(url, cts.Token);
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
 
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            // POST /blocks/has: raw CID presence check independent of ownership
+            // metadata. Blocks fetched via reconstruction (GET /blocks/{cid}?owner=)
+            // or bitswap are physically present even if not indexed under /owners/{vmId}.
+            var requestBody = JsonContent.Create(new { cids = chunkMapCids });
+            using var response = await httpClient.PostAsync(hasUrl, requestBody, cts.Token);
+
+            if (!response.IsSuccessStatusCode)
             {
-                _logger.LogInformation(
-                    "VM {VmId}: target blockstore has no owner index — falling through to DHT walk",
-                    vmId);
-                return false;
+                _logger.LogDebug(
+                    "VM {VmId}: /blocks/has returned {Status} — falling through to DHT walk",
+                    vmId, response.StatusCode);
+                return null;
             }
-            response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cts.Token);
-            if (!json.TryGetProperty("cids", out var cidsEl)
-                || cidsEl.ValueKind != JsonValueKind.Array)
+            if (!json.TryGetProperty("present", out var presentEl)
+                || presentEl.ValueKind != JsonValueKind.Array)
             {
                 return null;
             }
 
-            var targetHas = new HashSet<string>(cidsEl.EnumerateArray()
-                .Select(c => c.GetString() ?? string.Empty)
-                .Where(c => !string.IsNullOrEmpty(c)));
-
-            var held = chunkMapCids.Count(c => targetHas.Contains(c));
+            var held = presentEl.GetArrayLength();
             var holdRate = (double)held / chunkMapCids.Count;
 
             if (holdRate >= minPassRate)
@@ -704,7 +704,7 @@ public class VmSchedulerService : BackgroundService
             _logger.LogDebug(ex,
                 "VM {VmId}: target blockstore pre-flight unreachable at {Url} — " +
                 "falling through to DHT walk",
-                vmId, url);
+                vmId, hasUrl);
             return null;
         }
     }
