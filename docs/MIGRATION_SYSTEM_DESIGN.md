@@ -1,7 +1,7 @@
 # Block Store System VM — Design & Implementation Plan
 
 **Date:** 2026-02-16 (Updated: 2026-05-31)
-**Status:** Phase A–F complete. Mesh-driven self-healing replication active across the blockstore fabric; orchestrator audit demoted to sentinel cadence and migration authority. Items 39–41 (network fencing, assignment version, integration test) optional.
+**Status:** Phase A–F complete. Mesh-driven self-healing replication active across the blockstore fabric; orchestrator audit demoted to sentinel cadence and migration authority. Items 39–41 (network fencing, assignment version, integration test) optional. **Phase G (overlay snapshot consistency)** scoped after live-migration test exposed crash-consistent torn writes on the migrated overlay — application-consistent capture via guest fsfreeze pending implementation.
 
 ## Implementation Status
 
@@ -14,6 +14,7 @@
 | D-fixes — Replication reliability | ✅ Production-verified 2026-04-08 | Overlay-only fix, bitswap peer targeting, concurrency cap, port firewall, retry queue |
 | E — Split-Brain Prevention | ✅ Complete | Items 34–38 done. InvalidVmIds push model + TargetNodeId pre-check + owner block cleanup + manifest POST NodeId fence. Items 39–41 optional. |
 | F — Self-Healing Replication | ✅ Complete 2026-05-31 | Phases F-A through F-D. RF on the wire (owner meta), reactive repair via `needs-replica` topic, proactive presence-loss + survey loops, orchestrator audit demoted to 6h sentinel, migration pre-flight DHT walk. Mesh handles eviction, replica-offline, and silent-wipe failures without orchestrator polling. |
+| G — Overlay Snapshot Consistency | 🟡 Pending | Application-consistent capture via `guest-fsfreeze-freeze`/`thaw` around qcow2 reads. Closes a torn-write failure mode exposed by live-migration testing on 2026-05-31 where dpkg-installed `.pyc` files migrated with zero-padded tails. See §6.1.4. |
 **Depends on:** DHT system VMs (production-verified 2026-02-15)
 **Follows patterns from:** Relay VMs, DHT VMs
 
@@ -1128,26 +1129,41 @@ Compare this to full-disk seeding: a 100 GB disk would require 100,000 chunks re
 
 ### 6.1.2 QEMU Integration
 
-The lazysync daemon requires integration with the hypervisor layer via QEMU's QMP (QEMU Machine Protocol):
+The lazysync daemon requires integration with the hypervisor layer via QEMU's QMP (QEMU Machine Protocol) and, for application-consistent capture, the QEMU Guest Agent (QGA):
 
 ```
-QEMU QMP commands used:
+QEMU QMP commands used (qemu-monitor-command):
 
 1. block-dirty-bitmap-add
    → Creates a persistent dirty bitmap on the VM's drive
    → Called once when a VM is enrolled in lazysync
 
 2. drive-backup sync=incremental bitmap=lazysync-N
-   → Exports dirty blocks to a temp file (crash-consistent)
+   → Exports dirty blocks to a temp file
    → VM continues running — QEMU handles CoW internally
    → Returns the dirty regions for chunking
 
 3. block-dirty-bitmap-clear
    → Resets the bitmap after successful export
    → Called after blocks are confirmed pushed to block store
+
+QEMU Guest Agent commands used (qemu-agent-command, Phase G):
+
+4. guest-ping
+   → Cheap (~2 s timeout) liveness check on the agent
+   → Used to decide whether to attempt fsfreeze at all
+
+5. guest-fsfreeze-freeze
+   → Drives FIFREEZE into ext4/xfs inside the guest
+   → Forces journal commit + dirty-page writeback through virtio
+   → Returns once the guest filesystem state is committed
+
+6. guest-fsfreeze-thaw
+   → Releases the freeze. MUST be called in a finally block —
+     libvirt's own fsfreeze-timeout is the last-resort safety net
 ```
 
-The node agent already manages VMs via libvirt/QEMU and has access to QMP sockets. The lazysync daemon runs as a background service on the node agent, cycling through running VMs on a configurable interval.
+The node agent already manages VMs via libvirt/QEMU and has access to both sockets (QMP via `virsh qemu-monitor-command`, agent via `virsh qemu-agent-command`). The lazysync daemon runs as a background service on the node agent, cycling through running VMs on a configurable interval. The QMP and guest-agent commands flow through the same `IQmpClient` wrapper.
 
 ### 6.1.3 Manifest Versioning & Consistency
 
@@ -1172,6 +1188,112 @@ Rules:
     confirmedVersion advances to 2
   - Recovery always uses confirmedVersion's manifest
 ```
+
+### 6.1.4 Application-Consistent Snapshots via Guest fsfreeze (Phase G)
+
+#### Why this exists
+
+Lazysync's capture paths read the qcow2 file directly — `qemu-img map` + `qemu-img convert` on the first cycle, `drive-backup` with a dirty bitmap on subsequent cycles. Both reads see whatever has been flushed to the qcow2 by QEMU's block layer at the moment of the call. They do **not** coordinate with the guest's kernel page cache.
+
+This produces *crash-consistent* snapshots: the captured state is what the guest filesystem would look like after a power cut. ext4/xfs journal recovery can repair *filesystem-level* inconsistency from that state (the journal exists for exactly this purpose), but it cannot repair *file-content-level* inconsistency where the file's metadata says one thing and the file's data extents say another.
+
+#### The failure mode (observed 2026-05-31)
+
+A migrated tenant VM (`504e68ab-…`) failed cloud-init's `init-local` on the target with `ValueError: bad marshal data (unknown type code)` while loading `/usr/share/netplan/netplan/__pycache__/libnetplan.cpython-311.pyc`. `guestmount` against the migrated overlay showed:
+
+```
+size:         33338 bytes (canonical for Debian 12 python3-netplan)
+file magic:   a70d 0d0a 0000 0000 b6ab e463 5348 0000  (Python 3.11 valid)
+tail bytes:   0000 0000 0000 ... 0000 0000 0000        (zero-padded, ~32 bytes)
+dpkg status:  netplan.io — install ok installed
+file (1):     "data" (structurally invalid — not "Python 3.11 byte-compiled")
+```
+
+The base-image content-addressing system (PR1+PR2) held its guarantees end-to-end during this test: orchestrator shipped `BaseImageHash=5ed2aa78…`, the target hit cache, verified bytes, and booted byte-identical base. The defect was one layer down — the **overlay itself** was captured in an internally inconsistent state on the source node:
+
+1. On the source (MSI), `apt-get install netplan.io` finished from cloud-init's perspective: dpkg moved the file into place, updated `/var/lib/dpkg/status`, and recorded `installed`.
+2. The guest kernel's page cache held the `.pyc` file's data extents. Linux's default `vm.dirty_writeback_centisecs=500` only **schedules** writeback every 5 s; cold data like a once-written `.pyc` can sit dirty for far longer.
+3. Cloud-init exited (touched `/var/lib/cloud/instance/boot-finished`), the System service in `VmReadinessMonitor` flipped to Ready, and `VmInstance.IsFullyReady` became `true`.
+4. Lazysync's eligibility filter admitted the VM (`Spec.ReplicationFactor > 0 && IsFullyReady`).
+5. `qemu-img map` + `qemu-img convert` read the qcow2. The file's **inode metadata** had been written through to qcow2 (size=33338) but the trailing **data extent** had not yet been flushed by the guest. The host saw size=33338 with zeros at the tail.
+6. Replication faithfully shipped this state. The target reconstructed it byte-identically.
+7. On target boot, cloud-init's `init-local` ran `netplan generate`, which imported `netplan.libnetplan`, which loaded the `.pyc`, which hit the zero region. `marshal.loads` threw `ValueError: bad marshal data`. cloud-init aborted, netplan never rendered, `networkd-wait-online` timed out, the VM ran in isolation.
+
+The IsFullyReady gate is necessary (don't replicate a half-built system) but not sufficient. "cloud-init done" is not the same as "guest page cache flushed."
+
+#### Why crash-consistent isn't enough here
+
+For a sudden power loss inside a running VM, ext4's journal replay handles the recovery: pending metadata is rolled back to its last consistent state and the affected files are either intact (data committed before the metadata) or absent (metadata committed but data hadn't been written — equivalent to the file never existing). Either way the application sees a coherent filesystem.
+
+For a *snapshot* of a running guest taken by the host without guest cooperation, the same crash-consistent state is captured — but **on the source the guest never crashed**, so the source kept running and eventually flushed the data. The snapshot reflects an instant that, on the source, was followed by the missing flush; the target reconstructs the snapshot and then *never gets the flush*. The file ends up in a state that, on the source, was transient and recoverable, but on the target is permanent and broken.
+
+This asymmetry is the entire reason application-consistent backups exist.
+
+#### Solution: guest-fsfreeze bracket
+
+The QEMU Guest Agent exposes `guest-fsfreeze-freeze`, which drives `FIFREEZE` ioctls into every mounted filesystem inside the guest. `FIFREEZE` forces a journal commit, flushes dirty pages through the block layer, and blocks all subsequent writes until `FITHAW` is called. After freeze returns, the qcow2 reflects a state that the guest filesystem itself considers fully committed.
+
+Lazysync wraps the read step — and *only* the read step — in a freeze/thaw bracket:
+
+```
+For each replication-eligible VM:
+  guest-ping           (cheap precheck, ~2s)
+  guest-fsfreeze-freeze  →  N filesystems frozen
+  try:
+    qemu-img map + convert  (first cycle)        // host-side qcow2 read
+    -- OR --
+    drive-backup sync=incremental                 // QMP-side qcow2 read
+  finally:
+    guest-fsfreeze-thaw
+  push captured blocks to blockstore     // network I/O, NO freeze here
+```
+
+The freeze brackets only the read from qcow2. The downstream work — CID computation, block push to the local BlockStore VM, manifest registration with the orchestrator — runs **outside** the freeze window. The guest is paused only as long as it takes to scan / export the changed regions, which is sub-second for incremental cycles and 1–30 s for first-cycle full captures depending on overlay size.
+
+This is the standard application-consistent backup pattern used by VMware (VSS-quiesced snapshots), Hyper-V (VSS via the integration services), Proxmox (`vzdump --mode snapshot --quiesce`), and libvirt's own `virsh domfsfreeze` / `domfsthaw`. We are not inventing anything — we are aligning to the boundary the industry already settled on.
+
+#### Best-effort, graceful degradation
+
+The fix must not weaken the platform's existing guarantees for tenant VMs whose guest agent is missing, broken, or unreachable. Three rules:
+
+1. **If `guest-ping` fails**, skip the freeze attempt entirely and run the capture body as before. Log a warning; replication proceeds crash-consistent (the pre-Phase-G default).
+2. **If `guest-fsfreeze-freeze` throws** (agent installed but freeze itself fails — e.g. fsfreeze unsupported by an unusual guest filesystem), log a warning and run the capture body without freeze. Crash-consistent fallback.
+3. **Thaw runs in a `finally`**, regardless of whether the capture body succeeded, threw, or was cancelled. `CancellationToken.None` is passed to thaw so a cancelled operation still thaws. If thaw itself fails after a successful freeze, that's logged but not rethrown — the only correctness-critical invariant is "freeze must be followed by thaw," and libvirt's own `domfsfreeze` timeout (a built-in safety net in QEMU 4.2+) auto-thaws the guest if the host fails to within a bounded interval.
+
+A bug in the freeze/thaw bracketing must never leave a guest frozen indefinitely. Three independent layers prevent that: the `finally`, the unconditional thaw token, and libvirt's timeout-driven auto-thaw.
+
+#### What this fix doesn't claim to do
+
+- **It does not provide transactional consistency for in-guest applications** (databases, message brokers, anything with its own write-ordering invariants). Those need either the application's own backup hooks or QGA's `fsfreeze-hook` scripts (operator-installed inside the guest, fired at freeze time). Out of scope for the platform default.
+- **It does not eliminate the need for `IsFullyReady`.** The readiness gate still serves "don't replicate a VM that's still installing packages." Freeze is a complement, not a replacement.
+- **It does not switch to qcow2 internal snapshots** to shrink the freeze window. That's the next lever if first-cycle freeze durations on large overlays cause customer-visible write stalls; not needed today.
+- **It does not change wire formats or persistent state.** No new fields on the manifest, no new fields on `LazysyncState`, no schema migration. The change is entirely local to the node-agent's capture path.
+
+#### Touchpoints
+
+| File | Change |
+|------|--------|
+| `src/DeCloud.NodeAgent.Core/Interfaces/Qmp/IQmpClient.cs` | Add `FsFreezeAsync`, `FsThawAsync`, `GuestAgentPingAsync`. Update interface summary to acknowledge guest-agent commands alongside QMP. |
+| `src/DeCloud.NodeAgent.Infrastructure/Services/Qmp/QmpClient.cs` | Implement the three new methods. Add a private `SendAgentAsync` helper mirroring `SendAsync` but targeting `virsh qemu-agent-command` with a tunable per-call timeout (2 s for ping, 30 s for freeze/thaw). |
+| `src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs` | Add private `RunUnderGuestFreezeAsync(vmId, captureBody, ct)` helper enforcing the ping → freeze → body → finally-thaw sequence with all fallback rules. Wrap `ExportOverlayAsync` (first cycle) and `DriveBackupIncrementalAsync` (incremental) calls in it. |
+
+No orchestrator changes. No wire-protocol changes. No data-store changes.
+
+#### Verification
+
+A diagnostic-positive test reruns the live migration that exposed the bug:
+
+1. Deploy a fresh tenant VM with default cloud-init (includes `qemu-guest-agent`).
+2. Wait for `IsFullyReady`. Wait for first lazysync cycle (logs should show `froze N filesystem(s)` then `thawed N filesystem(s)` at DEBUG).
+3. Shut the source node down to trigger migration.
+4. After migration, `guestmount` the target's overlay and inspect `/usr/share/netplan/netplan/__pycache__/libnetplan.cpython-311.pyc`. Expected: `file` reports "Python 3.11 byte-compiled", no zero-tail, structurally valid.
+5. Cloud-init `init-local` should complete without `ValueError`, netplan should render, network should come up, the VM should reach Ready on the target.
+
+A regression test confirms the graceful-degradation path:
+
+6. Deploy a tenant VM whose cloud-init explicitly removes `qemu-guest-agent`.
+7. Verify lazysync still produces blocks (logs show `guest agent unresponsive — capturing crash-consistent`).
+8. Manifest reaches Protected. VM is replicable. No regression on agentless workloads.
 
 ### 6.2 Migration on Node Failure
 
@@ -2309,6 +2431,82 @@ for confirmed manifests).
 - **`src/Orchestrator/Background/BackgroundServices.cs`** — `MigrationPreflightAsync` helper and
   Step 2.5 call site in `MigrateVmAsync` (F-D).
 
+### Phase G: Overlay Snapshot Consistency — 🟡 Pending
+
+**Goal:** Upgrade lazysync capture from crash-consistent to application-consistent by bracketing
+the qcow2 read step in a `guest-fsfreeze-freeze` / `guest-fsfreeze-thaw` pair. Eliminates the
+torn-write failure mode exposed by live-migration testing on 2026-05-31 (full diagnostic in §6.1.4).
+
+**Why this is its own phase, not a D-fix:** Phase D was declared complete after end-to-end migration
+was confirmed for the *base-image + overlay reconstruction* path. The 2026-05-31 test re-validated
+that path after PR1+PR2 shipped content-addressed base images. PR1+PR2 held; the new failure mode
+sits at a different boundary (overlay capture consistency) and warrants explicit scoping rather
+than being folded into the older phase's history. Future readers should be able to trace exactly
+which boundary failed and which boundary fixed it.
+
+**Foundation:** Wire-compatible with all prior phases. No orchestrator changes, no wire format
+changes, no data-store changes. Pure node-agent local concern.
+
+66. **`IQmpClient` extension** — add `Task<int> FsFreezeAsync(vmId, ct)`,
+    `Task<int> FsThawAsync(vmId, ct)`, `Task<bool> GuestAgentPingAsync(vmId, ct)` to the interface.
+    Update the interface summary to acknowledge that the wrapper now handles both
+    `virsh qemu-monitor-command` (QMP) and `virsh qemu-agent-command` (guest agent). File:
+    `src/DeCloud.NodeAgent.Core/Interfaces/Qmp/IQmpClient.cs`.
+
+67. **`QmpClient` implementation** — implement the three new methods. Add a private
+    `SendAgentAsync(vmId, execute, arguments, timeout, ct)` helper mirroring the existing
+    `SendAsync` but targeting `qemu-agent-command` and accepting a per-call timeout (2 s for ping,
+    30 s for freeze/thaw — matching libvirt's `virsh domfsfreeze` default). Same JSON escaping,
+    same error surface. File: `src/DeCloud.NodeAgent.Infrastructure/Services/Qmp/QmpClient.cs`.
+
+68. **`LazysyncDaemon.RunUnderGuestFreezeAsync` helper** — private method taking
+    `(string vmId, Func<Task> captureBody, CancellationToken ct)`. Implements the full
+    sequence: `GuestAgentPingAsync` precheck → `FsFreezeAsync` (catches and logs failures,
+    proceeds without freeze) → invoke `captureBody` → `finally`: `FsThawAsync` with
+    `CancellationToken.None` so cancellation still thaws. Thaw failures logged as ERROR but not
+    rethrown — libvirt's own `fsfreeze-timeout` is the last-resort safety net. File:
+    `src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs`.
+
+69. **Wrap first-cycle capture** — in `SyncVmAsync`'s `!state.BitmapCreated` branch, replace the
+    direct call to `ExportOverlayAsync(diskPath, tmpPath, ct)` with
+    `RunUnderGuestFreezeAsync(vm.VmId, () => ExportOverlayAsync(diskPath, tmpPath, ct), ct)`.
+    The freeze brackets only the host-side `qemu-img convert` read, not the chunk scan,
+    CID computation, or block push that follow. Same file as item 68.
+
+70. **Wrap incremental capture** — in the `else` branch (BitmapCreated == true), replace the direct
+    call to `DriveBackupIncrementalAsync(...)` with
+    `RunUnderGuestFreezeAsync(vm.VmId, () => _qmpClient.DriveBackupIncrementalAsync(vm.VmId, driveNode, BitmapName, tmpPath, ct), ct)`.
+    Freezing before `drive-backup` ensures any just-committed application data lands in this cycle's
+    bitmap export instead of waiting for the next cycle to catch up. Same file as item 68.
+
+71. **Verification: positive path** — re-run the 2026-05-31 migration test. Deploy a fresh tenant
+    VM with default cloud-init on the offline-prone source node, wait for `IsFullyReady`, wait for
+    the first lazysync cycle (logs must show `froze N filesystem(s)` then `thawed N filesystem(s)`).
+    Force migration. On the target, `guestmount` the overlay and inspect
+    `libnetplan.cpython-311.pyc`: must report "Python 3.11 byte-compiled" via `file`, no zero-tail,
+    structurally valid. cloud-init `init-local` on the target must complete without `ValueError`.
+
+72. **Verification: graceful degradation** — deploy a tenant VM whose cloud-init removes
+    `qemu-guest-agent`. Lazysync must still produce blocks (logs show
+    `guest agent unresponsive — capturing crash-consistent`), manifest reaches Protected, VM
+    remains replicable. No regression on agentless workloads.
+
+73. **Verification: thaw safety** — induce a freeze failure mid-cycle (kill the in-guest agent
+    between `FsFreezeAsync` and the body, or force `FsThawAsync` to throw). Confirm: (a) the body
+    exception (if any) propagates, (b) thaw is still attempted, (c) on thaw failure the ERROR is
+    logged but does not propagate, (d) libvirt's `fsfreeze-timeout` auto-thaws the guest within
+    its bounded window. Guest must remain writable after the dust settles.
+
+#### Phase G file inventory
+
+- **`src/DeCloud.NodeAgent.Core/Interfaces/Qmp/IQmpClient.cs`** — interface additions (item 66).
+- **`src/DeCloud.NodeAgent.Infrastructure/Services/Qmp/QmpClient.cs`** — implementation + `SendAgentAsync`
+  helper (item 67).
+- **`src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs`** —
+  `RunUnderGuestFreezeAsync` helper, wrapping of both capture paths (items 68–70).
+
+No orchestrator-side files. No `Shared` contract changes. No data-store schema changes.
+
 ---
 
 ## 9. How This Connects to Future Features
@@ -2478,6 +2676,20 @@ DHT load on host nodes drops ~12× at steady state. `MaybeTriggerReannounceAsync
 
 This trades a few hundred milliseconds of pre-flight latency for failed-fast migration safety. Aborting on the orchestrator side is far cheaper than committing to a partial reconstruction on the target.
 
+### Decision 18: Application-consistent capture via guest fsfreeze (Phase G)
+**Why:** Lazysync's pre-Phase-G capture reads the qcow2 without coordinating with the guest kernel, producing crash-consistent snapshots. ext4's journal recovery handles crash-consistent state when the guest itself crashes — but a snapshot taken of a running guest, replicated to a target, and booted there is *not* a crash recovery: it's a perfect reconstruction of a transient mid-flush state that on the source would have been followed by a flush, and on the target never is. The 2026-05-31 migration test exposed this concretely (zero-tail `.pyc`, see §6.1.4).
+
+The fix aligns to the boundary the virtualization industry settled on decades ago: bracket the capture in `guest-fsfreeze-freeze` / `guest-fsfreeze-thaw`. The freeze forces a journal commit and dirty-page writeback inside the guest before the host reads the qcow2, so what the host sees is what the guest filesystem itself considers committed.
+
+The decision is not whether to do this — it's the only correct fix for the failure mode — but how to scope it:
+
+- **Best-effort, not strict.** A missing or broken guest agent must not block replication. Pre-Phase-G behaviour (crash-consistent) is the documented fallback. The platform's existing tolerance for diverse tenant images is preserved.
+- **Freeze brackets the read, nothing else.** Block push, CID computation, and manifest registration run outside the freeze window. Guest write-pause is minimized to the duration of the qcow2 export itself.
+- **Thaw must be unconditional.** `finally`-block thaw + `CancellationToken.None` on the thaw call + libvirt's built-in `fsfreeze-timeout` form three independent safety layers. No code path in Phase G can leave a guest frozen.
+- **No qcow2 internal snapshots, yet.** Internal snapshots would reduce the freeze window to sub-second but add lifecycle state to manage. Reasonable next lever if first-cycle freeze durations on multi-GB overlays become customer-visible; not needed for the platform default.
+
+The change is entirely local to the node agent. No orchestrator changes, no wire format changes, no schema migrations. That matters: it means Phase G can ship independently and revert independently if it misbehaves.
+
 ---
 
 ## 11. Risk Assessment
@@ -2494,6 +2706,8 @@ This trades a few hundred milliseconds of pre-flight latency for failed-fast mig
 | Reconciliation delays | Low | Medium | Multiple reconciliation triggers (startup, heartbeat, reconnection); InvalidVmIds in heartbeat response for proactive notification |
 | Stale ConfirmedChunkMap at migration (6h sentinel window) | Low | Medium | Phase F migration pre-flight: 50-CID DHT walk against target before authority transfer; defers migration cycle if <90% of sampled CIDs have providers. Closes the gap created by the slower sentinel cadence |
 | Catastrophic mesh failure (all replicas of a CID gone simultaneously) | Very Low | High | Orchestrator sentinel audit (6h cadence) detects `ConfirmedCids.Count == 0` drain, triggers `TriggerReseedAsync` — irreducible escape hatch |
+| Torn writes in captured overlay (file metadata committed, data extents not) | Medium (pre-G) → Low (post-G) | High | Phase G application-consistent capture via `guest-fsfreeze-freeze`/`thaw` brackets the qcow2 read so the guest filesystem flushes journal + dirty pages first. Best-effort: if the guest agent is unreachable, falls back to crash-consistent (pre-Phase-G behaviour) with a warning rather than blocking replication. See §6.1.4 |
+| Guest left frozen by Phase G capture path | Very Low | High | Three independent safety layers: `finally`-block thaw, `CancellationToken.None` on thaw call so cancellation still thaws, libvirt's `fsfreeze-timeout` (auto-thaw if host fails to thaw within a bounded interval). No code path can leave a guest frozen indefinitely |
 
 ---
 

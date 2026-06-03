@@ -76,14 +76,11 @@
 	<!-- ============================================== -->
 	<!-- TARGET: Install Frontend Dependencies          -->
 	<!-- ============================================== -->
-	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' == 'true'"
-	        Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.js;@(FrontendSource)"
-	        Outputs="$(FrontendDir)/dist/index.html">
+	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' == 'true'" Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.js;@(FrontendSource)" Outputs="$(FrontendDir)/dist/index.html">
 		<Message Importance="high" Text="Building frontend..." />
 		<Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
 		<Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
-		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')"
-			   Text="❌ Frontend build failed: dist/index.html not found." />
+		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')" Text="❌ Frontend build failed: dist/index.html not found." />
 		<Message Importance="high" Text="✓ Frontend built successfully: wwwroot/dist/" />
 	</Target>
 
@@ -112,6 +109,7 @@
 	  <ProjectReference Include="..\..\..\Decloud.Shared\DeCloud.Shared.csproj" />
 	</ItemGroup>
 	<ItemGroup>
+	  <Folder Include="Dtos\" />
 	  <Folder Include="Services\TemplateConstants\" />
 	  <Folder Include="Services\Tenant\" />
 	</ItemGroup>

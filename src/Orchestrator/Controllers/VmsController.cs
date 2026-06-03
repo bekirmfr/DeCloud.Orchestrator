@@ -7,6 +7,7 @@ using Orchestrator.Interfaces.VmScheduling;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Orchestrator.Controllers;
@@ -21,6 +22,7 @@ public class VmsController : ControllerBase
     private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly IVmSchedulingService _schedulingService;
     private readonly DataStore _dataStore;
+    private readonly HttpClient _httpClient;
     private readonly ILogger<VmsController> _logger;
 
     public VmsController(
@@ -29,6 +31,7 @@ public class VmsController : ControllerBase
         IConstraintEvaluator constraintEvaluator,
         IVmSchedulingService schedulingService,
         DataStore dataStore,
+        HttpClient httpClient,
         ILogger<VmsController> logger)
     {
         _vmService = vmService;
@@ -36,6 +39,7 @@ public class VmsController : ControllerBase
         _constraintEvaluator = constraintEvaluator;
         _schedulingService = schedulingService;
         _dataStore = dataStore;
+        _httpClient = httpClient;
         _logger = logger;
     }
 
@@ -448,6 +452,164 @@ public class VmsController : ControllerBase
             vm.AccessInfo?.VncHost,
             vm.AccessInfo?.VncPort ?? 5900
         )));
+    }
+
+    /// <summary>
+    /// Get a diagnostic log stream for a VM (host-side console capture by default).
+    ///
+    /// Proxies to the node agent's <c>GET /api/vms/{vmId}/logs</c> after a
+    /// JWT + ownership check. The default <c>Console</c> source returns the
+    /// tail of the host-side <c>console.log</c> captured by libvirt's
+    /// <c>&lt;log file='...'/&gt;</c> directive — works even when the qemu
+    /// guest-agent never started (cloud-init parse error, apt failure,
+    /// network never up, kernel panic). Other sources (cloud-init logs,
+    /// journal) are accepted by the wire contract but the node currently
+    /// returns <c>Unavailable</c> for them — they land in follow-up commits.
+    ///
+    /// Works for VMs in any state with a node assignment, including
+    /// <c>Error</c> (the case that motivated the feature). For VMs without a
+    /// node yet (<c>Pending</c>, <c>Scheduling</c>), returns 400. For
+    /// <c>Deleted</c> VMs the on-disk log is gone — the node returns 404
+    /// which surfaces here as <c>LOG_UNAVAILABLE</c>.
+    /// </summary>
+    [HttpGet("{vmId}/logs")]
+    public async Task<ActionResult<ApiResponse<DiagnosticsResult>>> GetLogs(
+        string vmId,
+        [FromQuery] DiagnosticSource source = DiagnosticSource.Console,
+        [FromQuery] int maxBytes = 0,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var vm = await _dataStore.GetVmAsync(vmId);
+
+        if (vm == null)
+        {
+            return NotFound(ApiResponse<DiagnosticsResult>.Fail(
+                "NOT_FOUND", "VM not found"));
+        }
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        {
+            return Forbid();
+        }
+
+        if (string.IsNullOrEmpty(vm.NodeId))
+        {
+            return BadRequest(ApiResponse<DiagnosticsResult>.Fail(
+                "NO_NODE",
+                "VM is not assigned to a node yet — logs become available " +
+                "once scheduling completes"));
+        }
+
+        var node = await _dataStore.GetNodeAsync(vm.NodeId);
+        if (node == null)
+        {
+            return NotFound(ApiResponse<DiagnosticsResult>.Fail(
+                "NODE_NOT_FOUND",
+                "The node hosting this VM is no longer registered"));
+        }
+
+        var baseUrl = GetNodeAgentUrl(node);
+        if (baseUrl == null)
+        {
+            return StatusCode(503, ApiResponse<DiagnosticsResult>.Fail(
+                "NODE_UNREACHABLE",
+                "The node hosting this VM has no reachable address"));
+        }
+
+        var url = $"{baseUrl}/api/vms/{vmId}/logs?source={source}&maxBytes={maxBytes}";
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+
+            var response = await _httpClient.GetAsync(url, cts.Token);
+            var body = await response.Content.ReadAsStringAsync(cts.Token);
+
+            // The node returns DiagnosticsResult JSON whether the log is
+            // available or not: 200 when content is present, 404 when the
+            // source is unavailable. Either way we parse the structured
+            // result and re-wrap in ApiResponse so the dashboard sees the
+            // same envelope it sees on every other VM endpoint.
+            DiagnosticsResult? result;
+            try
+            {
+                result = JsonSerializer.Deserialize<DiagnosticsResult>(
+                    body, DeCloud.Shared.Json.JsonOptions.Wire);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex,
+                    "Node {NodeId} returned malformed diagnostics response " +
+                    "for VM {VmId}: {Body}",
+                    node.Id, vmId, body);
+                return StatusCode(502, ApiResponse<DiagnosticsResult>.Fail(
+                    "NODE_BAD_RESPONSE",
+                    "Node returned a malformed diagnostics response"));
+            }
+
+            if (result is null)
+            {
+                return StatusCode(502, ApiResponse<DiagnosticsResult>.Fail(
+                    "NODE_BAD_RESPONSE",
+                    "Node returned an empty diagnostics response"));
+            }
+
+            if (!result.Available)
+            {
+                return NotFound(ApiResponse<DiagnosticsResult>.Fail(
+                    "LOG_UNAVAILABLE",
+                    result.Message ?? "Log not available"));
+            }
+
+            return Ok(ApiResponse<DiagnosticsResult>.Ok(result));
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Node {NodeId} timed out fetching logs for VM {VmId}",
+                node.Id, vmId);
+            return StatusCode(504, ApiResponse<DiagnosticsResult>.Fail(
+                "NODE_TIMEOUT",
+                "Node did not respond within 10 seconds"));
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex,
+                "Network error fetching logs from node {NodeId} for VM {VmId}",
+                node.Id, vmId);
+            return StatusCode(503, ApiResponse<DiagnosticsResult>.Fail(
+                "NODE_UNREACHABLE",
+                $"Could not reach node: {ex.Message}"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Unexpected error fetching logs from node {NodeId} for VM {VmId}",
+                node.Id, vmId);
+            return StatusCode(500, ApiResponse<DiagnosticsResult>.Fail(
+                "PROXY_ERROR",
+                "Unexpected error retrieving logs"));
+        }
+    }
+
+    /// <summary>
+    /// Returns the node agent HTTP base URL for a node, handling CGNAT.
+    /// Mirrors <c>LazysyncManager.GetNodeAgentUrl</c>. When this helper
+    /// appears in a fourth place across the orchestrator, it should be
+    /// extracted to a shared utility — premature extraction now would
+    /// widen the PR for no compounding benefit.
+    /// </summary>
+    private static string? GetNodeAgentUrl(Node node)
+    {
+        if (string.IsNullOrEmpty(node.PublicIp)) return null;
+        var port = node.AgentPort > 0 ? node.AgentPort : 5100;
+
+        if (node.CgnatInfo != null && !string.IsNullOrEmpty(node.CgnatInfo.TunnelIp))
+            return $"http://{node.CgnatInfo.TunnelIp}:{port}";
+
+        return $"http://{node.PublicIp}:{port}";
     }
 
     /// <summary>
