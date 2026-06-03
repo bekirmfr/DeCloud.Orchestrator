@@ -58,7 +58,8 @@ import {
     downloadSSHConfig,
     openTerminal,
     openFileBrowser,
-    showVmMessages
+    showVmMessages,
+    showVmLogs
 } from './vm-modals.js';
 import {
     openCustomDomainsModal,
@@ -1101,6 +1102,15 @@ function renderVMsTable(vms) {
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                            </button>`
                     }
+                    <button class="btn btn-sm btn-secondary" data-vm-action="logs" title="View boot log">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                    </button>
 
                     <button class="btn btn-sm btn-secondary" data-vm-action="messages" title="View events"
                         style="${messagesCount === 0 ? 'opacity:0.45' : ''}">
@@ -1174,6 +1184,9 @@ function attachVmsTableDelegation(tbody) {
                 break;
             case 'stop':
                 window.stopVM(vmId);
+                break;
+            case 'logs':
+                window.showVmLogs(vmId, vmName);
                 break;
             case 'messages':
                 window.showVmMessages(vmId, vmName);
@@ -2062,6 +2075,7 @@ window.openTerminal = openTerminal;
 window.openFileBrowser = openFileBrowser;
 window.showConnectInfo = showConnectInfo;
 window.showVmMessages = showVmMessages;
+window.showVmLogs = showVmLogs;
 window.showSSHConnectionModal = showSSHConnectionModal;
 window.downloadSSHBundle = downloadSSHBundle;
 window.downloadSSHConfig = downloadSSHConfig;

@@ -861,8 +861,8 @@
                 </div>
 
                 <!-- Template Configuration — rendered dynamically by template-detail.js
-         when the template declares user-supplied variables (Kind=Static,
-         no platform resolver). Hidden when the template has none. -->
+                when the template declares user-supplied variables (Kind=Static,
+                no platform resolver). Hidden when the template has none. -->
                 <div class="form-section" id="deploy-variables-section" style="display:none;">
                     <h3 class="form-section-title">Template Configuration</h3>
                     <p class="form-help" style="margin-bottom:10px;">Customize this template before deploying. Defaults are pre-filled.</p>
@@ -1083,6 +1083,32 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('vm-messages-modal')">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- VM Boot Log Modal -->
+    <div class="modal-overlay" id="vm-logs-modal">
+        <div class="modal" style="max-width: 900px;">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title" id="vm-logs-title">Boot Log</h2>
+                    <p class="modal-subtitle" id="vm-logs-subtitle" style="font-size:12px;color:var(--text-muted);margin-top:2px;"></p>
+                </div>
+                <button class="modal-close" onclick="closeModal('vm-logs-modal')">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="vm-logs-body" style="padding: 0; max-height: 580px; overflow-y: auto; background: var(--bg-primary, #0f0f1a);">
+                <div class="loading-spinner" style="padding:48px;text-align:center;color:var(--text-muted);">Loading log...</div>
+            </div>
+            <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end;">
+                <button class="btn btn-secondary" id="vm-logs-copy" disabled>Copy</button>
+                <button class="btn btn-secondary" id="vm-logs-refresh" disabled>Refresh</button>
+                <button class="btn btn-secondary" onclick="closeModal('vm-logs-modal')">Close</button>
             </div>
         </div>
     </div>

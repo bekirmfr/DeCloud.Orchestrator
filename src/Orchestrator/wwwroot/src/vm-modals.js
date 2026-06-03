@@ -436,6 +436,117 @@ export async function showVmMessages(vmId, vmName) {
     }
 }
 
+// ── VM boot log modal (static modal in index.html) ──────────────────────────
+
+let _vmLogsCleanup = null;
+let _vmLogsCurrentVmId = null;
+let _vmLogsCurrentContent = '';
+
+export async function showVmLogs(vmId, vmName) {
+    const modal = document.getElementById('vm-logs-modal');
+    if (!modal) return;
+
+    document.getElementById('vm-logs-title').textContent = `${vmName} — Boot Log`;
+    _vmLogsCurrentVmId = vmId;
+
+    modal.classList.add('active');
+
+    if (_vmLogsCleanup) _vmLogsCleanup();
+    _vmLogsCleanup = makeModalAccessible(modal, () => {
+        modal.classList.remove('active');
+        _vmLogsCleanup?.();
+        _vmLogsCleanup = null;
+        _vmLogsCurrentVmId = null;
+        _vmLogsCurrentContent = '';
+    });
+
+    // Wire up footer buttons. Use onclick (idempotent reassignment) rather
+    // than addEventListener — the modal is static so the buttons persist
+    // across opens, but we want each open to bind to the *current* VM.
+    document.getElementById('vm-logs-refresh').onclick = () => {
+        if (_vmLogsCurrentVmId) loadVmLogs(_vmLogsCurrentVmId);
+    };
+    document.getElementById('vm-logs-copy').onclick = async () => {
+        if (!_vmLogsCurrentContent) return;
+        try {
+            await navigator.clipboard.writeText(_vmLogsCurrentContent);
+            showToast('Copied to clipboard', 'success');
+        } catch {
+            showToast('Could not copy — please select manually', 'warning');
+        }
+    };
+
+    await loadVmLogs(vmId);
+}
+
+async function loadVmLogs(vmId) {
+    const body = document.getElementById('vm-logs-body');
+    const sub = document.getElementById('vm-logs-subtitle');
+    const refreshBtn = document.getElementById('vm-logs-refresh');
+    const copyBtn = document.getElementById('vm-logs-copy');
+
+    body.innerHTML = '<div class="loading-spinner" style="padding:48px;text-align:center;color:var(--text-muted);">Loading log...</div>';
+    sub.textContent = '';
+    refreshBtn.disabled = true;
+    copyBtn.disabled = true;
+    _vmLogsCurrentContent = '';
+
+    try {
+        const res = await api(`/api/vms/${vmId}/logs?source=Console`);
+        const data = await res.json();
+
+        if (!res.ok || !data?.success) {
+            // Orchestrator returns ApiResponse.Fail(code, message) for every
+            // non-success path (LOG_UNAVAILABLE, NO_NODE, NODE_UNREACHABLE,
+            // NODE_TIMEOUT, NODE_BAD_RESPONSE, PROXY_ERROR). Surface the
+            // message verbatim — it's already shaped for human reading.
+            const errMsg = data?.error?.message
+                ?? data?.message
+                ?? `Request failed (HTTP ${res.status})`;
+            renderEmptyLog(body, errMsg);
+            refreshBtn.disabled = false;
+            return;
+        }
+
+        const result = data.data ?? {};
+        const content = result.content ?? '';
+        const totalBytes = result.totalBytes ?? content.length;
+        const truncated = result.truncated ?? false;
+
+        _vmLogsCurrentContent = content;
+        sub.textContent = formatLogMeta(content.length, totalBytes, truncated);
+
+        body.innerHTML = `<pre style="margin:0;padding:16px;font-family:var(--font-mono);font-size:12px;line-height:1.5;color:var(--text-primary);white-space:pre;overflow-x:auto;">${escapeHtml(content)}</pre>`;
+        // Scroll to bottom — boot logs are most useful at the end (the
+        // failure or the "ready" marker is the last meaningful line).
+        body.scrollTop = body.scrollHeight;
+
+        refreshBtn.disabled = false;
+        copyBtn.disabled = false;
+    } catch (err) {
+        console.error('[VM Logs] Failed to load:', err);
+        renderEmptyLog(body, err.message || 'Network error');
+        refreshBtn.disabled = false;
+    }
+}
+
+function renderEmptyLog(body, message) {
+    body.innerHTML = `
+        <div style="text-align:center;padding:48px 24px;color:var(--text-muted);">
+            <div style="font-size:32px;margin-bottom:12px;">📄</div>
+            <div style="font-size:14px;max-width:480px;margin:0 auto;">${escapeHtml(message)}</div>
+        </div>`;
+}
+
+function formatLogMeta(captured, total, truncated) {
+    const fmt = (b) =>
+        b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB`
+            : b >= 1024 ? `${(b / 1024).toFixed(1)} KB`
+                : `${b} B`;
+    if (truncated) return `Showing last ${fmt(captured)} of ${fmt(total)} (older lines truncated)`;
+    return `${fmt(total)} captured`;
+}
+
 function debugHintHtml() {
     const cmds = ['cat /var/log/cloud-init-output.log', 'cat /var/log/setup.log', 'systemctl status cloud-final.service'];
     return `<details style="margin-top:16px; padding:12px; border:1px solid var(--border-color,#333); border-radius:6px; font-size:12px;">
