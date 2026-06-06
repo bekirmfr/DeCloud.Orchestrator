@@ -2803,6 +2803,8 @@ final_message: |
             () => BuildAiChatbotTemplateAsync(ct), ct);
         await TryUpsertComposeAsync("minecraft-paper",
             () => BuildMinecraftPaperTemplateAsync(ct), ct);
+        await TryUpsertComposeAsync("coolify",
+            () => BuildCoolifyTemplateAsync(ct), ct);
     }
 
     private async Task TryUpsertComposeAsync(
