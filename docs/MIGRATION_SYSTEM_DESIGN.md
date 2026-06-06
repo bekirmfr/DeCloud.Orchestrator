@@ -1,8 +1,7 @@
 # Block Store System VM — Design & Implementation Plan
 
-**Date:** 2026-02-16 (Updated: 2026-05-31)
-**Status:** Phase A–F complete. Mesh-driven self-healing replication active across the blockstore fabric; orchestrator audit demoted to sentinel cadence and migration authority. Items 39–41 (network fencing, assignment version, integration test) optional. **Phase G (overlay snapshot consistency)** scoped after live-migration test exposed crash-consistent torn writes on the migrated overlay — application-consistent capture via guest fsfreeze pending implementation.
-
+**Date:** 2026-02-16 (Updated: 2026-06-05)
+**Status:** Phase A–J complete. Mesh-driven self-healing replication active. Phase J (2026-06-05) supersedes Phase I — replacing `drive-backup` with `blockdev-add` + `blockdev-snapshot` as the snapshot primitive on QEMU 8.2.2/libvirt. Phase I's `drive-backup sync=full` was structurally incapable of producing temporally coherent snapshots on active guests (confirmed via live debugfs/e2fsck diagnostics on msi-1867 — see §6.1.8). Phase J captures a coherent point-in-time snapshot atomically inside a sub-second freeze window; every confirmed manifest version is an application-consistent snapshot with no COW race possible. Planned and unplanned recovery produce identical correctness guarantees, differing only in RPO. The reconstruction path on the target does not depend on the base image being present. Items 39–41 (network fencing, assignment version, integration test) optional. **See §6.1.8 for the Phase J model; §6.1.7 documents the superseded Phase I model; §6.1.6 documents the original overlay-only model for historical context.**
 ## Implementation Status
 
 | Phase | Status | Notes |
@@ -14,8 +13,11 @@
 | D-fixes — Replication reliability | ✅ Production-verified 2026-04-08 | Overlay-only fix, bitswap peer targeting, concurrency cap, port firewall, retry queue |
 | E — Split-Brain Prevention | ✅ Complete | Items 34–38 done. InvalidVmIds push model + TargetNodeId pre-check + owner block cleanup + manifest POST NodeId fence. Items 39–41 optional. |
 | F — Self-Healing Replication | ✅ Complete 2026-05-31 | Phases F-A through F-D. RF on the wire (owner meta), reactive repair via `needs-replica` topic, proactive presence-loss + survey loops, orchestrator audit demoted to 6h sentinel, migration pre-flight DHT walk. Mesh handles eviction, replica-offline, and silent-wipe failures without orchestrator polling. |
-| G — Overlay Snapshot Consistency | 🟡 Pending | Application-consistent capture via `guest-fsfreeze-freeze`/`thaw` around qcow2 reads. Closes a torn-write failure mode exposed by live-migration testing on 2026-05-31 where dpkg-installed `.pyc` files migrated with zero-padded tails. See §6.1.4. |
-**Depends on:** DHT system VMs (production-verified 2026-02-15)
+| G — Overlay Snapshot Consistency | ✅ Complete 2026-06-03 | Application-consistent capture via `guest-fsfreeze-freeze`/`thaw` around qcow2 reads. Closes the torn-write failure mode exposed 2026-05-31 (`.pyc` zero-tail). Validated: msi-a4b5 migration — `libnetplan.cpython-311.pyc` byte-identical source-to-target, cloud-init `init-local` completed cleanly. See §6.1.4. |
+| H — Bounded-Freeze Capture + Reconstruction Hardening | ✅ Complete 2026-06-03 | Three sub-items: (1) Replace `qemu-img convert --force-share` with `drive-backup sync=top` — bounded freeze window, lazysync trails 9–15 s instead of pausing for full convert; (2) Remove `RunFsckOnOverlayAsync` — `fsck.ext4 -fy` on crash-consistent overlays caused inode-corruption-by-resolution; ext4 journal replay at mount time is the correct mechanism; (3) Blockstore pre-flight and owner-indexing hardened — `/blocks/has` endpoint replaces `/owners/{vmId}` ownership-index check, owner indexing added to all four block-arrival paths. See §6.1.5. |
+| I — Full-Disk Snapshot Replication | ⚠️ Superseded by Phase J | `drive-backup sync=full` inside per-cycle guest-fsfreeze. Confirmed structurally incapable of producing temporally coherent snapshots on active guests: COW reads clusters sequentially over tens of seconds unfrozen; coupled ext4 metadata structures captured at different wall-clock moments produce temporal incoherence. Diagnosed live on msi-1867 (2026-06-04): missing journal transactions, corrupt inode bitmaps, unbootable VM. See §6.1.7, §6.1.8. |
+| J — blockdev-snapshot-sync (Correct Coherence Model) | ✅ Complete 2026-06-05 | Replaces `drive-backup` with `blockdev-add` + `blockdev-snapshot`. Atomically redirects guest writes to a new overlay inside a sub-second freeze — original disk is immutable and coherent at the exact freeze moment, no COW race possible. Confirmed working sequence on QEMU 8.2.2/libvirt established via live QMP testing. End-to-end migration verified: clean boot, no EXT4 errors, user data intact, browser terminal functional, stale-copy cleanup correct. Bootcmd D-Bus hang fixed in migration cloud-init. See §6.1.8. |
+**Depends on:** DHT system VMs (production-verified 2026-02-15)**Depends on:** DHT system VMs (production-verified 2026-02-15)
 **Follows patterns from:** Relay VMs, DHT VMs
 
 ---
@@ -1038,9 +1040,9 @@ This is the **primary use case** for the block store — not a future feature.
 
 ### 6.1 Lazysync Model — Continuous Dirty Block Replication
 
-Every user VM has its **overlay disk continuously replicated** via a background lazysync process. There are no "snapshot events." Dirty overlay chunks flow to the block store network as they change, and a single evolving manifest per VM tracks the current overlay state.
+Every user VM has its **disk continuously replicated** via a background lazysync process. There are no "snapshot events." Dirty disk clusters flow to the block store network as they change, and a single evolving manifest per VM tracks the current disk state.
 
-Lazysync replicates **only the overlay** — the qcow2 layer that captures writes on top of the read-only base image. The base image (a standard OS image like `debian-12-generic`) is a well-known artifact the orchestrator can re-fetch from the image registry during migration. The cloud-init ISO is regenerated from the VM's labels. Only the overlay carries unique, irreplaceable state.
+Phase I (2026-06-04) captures **the full merged disk** at each cycle — the qcow2 backing chain is dereferenced inline by QEMU's block layer, producing a self-contained raw image at the QMP snapshot point. Reconstruction on the target needs only the manifest CIDs; no backing-file dependency, no base image download required on the migration path. The cloud-init ISO is still regenerated from the VM's labels. See §6.1.7 for the Phase I model in full and §6.1.6 for the superseded overlay-only model that this section's mechanism description originally targeted.
 
 ```
 Node A runs VM-1 (100 GB virtual disk):
@@ -1294,6 +1296,216 @@ A regression test confirms the graceful-degradation path:
 6. Deploy a tenant VM whose cloud-init explicitly removes `qemu-guest-agent`.
 7. Verify lazysync still produces blocks (logs show `guest agent unresponsive — capturing crash-consistent`).
 8. Manifest reaches Protected. VM is replicable. No regression on agentless workloads.
+
+### 6.1.5 Phase H: Bounded-Freeze Capture and Reconstruction Hardening
+
+Phase H (2026-06-03) closes three gaps identified during extended migration testing after Phase G shipped. See §8 Phase H for the full implementation record. The key outcomes:
+
+**`drive-backup sync=top` replaces `qemu-img convert --force-share`** on the first lazysync cycle. `sync=top` exports only the topmost BDS (the overlay) via QEMU's live block layer. The freeze brackets only the QMP job-queue call — sub-second — not the data export. The guest is unfrozen before data copying begins. Lazysync trails the live disk by 9–15 s (async export duration) rather than pausing it for the full convert. The `qemu-img map` whitelist computation (`GetOverlayChunkOffsetsAsync`) is deleted because `sync=top` handles the overlay-only filter natively.
+
+**`RunFsckOnOverlayAsync` is removed.** `fsck.ext4 -fy` applied crash-recovery heuristics that corrupted crash-consistent overlays: it resolved "duplicate block" conflicts between journal entries and normal inodes by clearing extent mappings, producing inodes with correct size metadata but zeroed data blocks. The kernel's own ext4 journal replay at mount time is the correct mechanism — it replays committed transactions and discards uncommitted ones without touching data blocks. The boot log signature for a correctly handled crash-consistent overlay is `EXT4-fs (vda1): recovery complete` followed by a normal mount, not fsck output.
+
+**Owner indexing is complete across all four block-arrival paths:** gossipsub `new-blocks` receive (existing), `POST /blocks?owner=` (existing), `GET /blocks/{cid}?owner=` (new), and `performCatchupFromPeer` (new). The pre-flight check uses `POST /blocks/has` (raw blockstore presence) instead of `GET /owners/{vmId}` (ownership index) — eliminating false negatives when blocks are present but the ownership index is incomplete.
+
+### 6.1.6 Overlay-Only Replication: Structural Limits for Unplanned Migration
+
+**[SUPERSEDED by Phase I — see §6.1.7]** This section documents the design analysis that motivated Phase I. Retained for historical context and as the evidence basis for "why full-disk snapshot replication exists." The platform no longer uses the overlay-only model described below.
+
+**Context (reached 2026-06-03 after extended testing):**
+
+The system distinguishes two migration scenarios with different guarantees:
+
+#### Planned migration (source online, Phase G+H path)
+
+Guest-fsfreeze + `drive-backup sync=top` produces an **application-consistent** overlay snapshot. The guest filesystem considers all captured state fully committed. Reconstruction on the target produces a disk that is coherent: ext4 journal replay at mount time succeeds, cloud-init runs, network comes up. This is the primary validated path.
+
+#### Unplanned migration (source offline, node died)
+
+When the source node dies abruptly, there is no opportunity to freeze the guest. Migration proceeds from the `ConfirmedChunkMap` at `ConfirmedVersion` — the last snapshot that LazysyncManager confirmed had all CIDs with ≥RF remote providers. This snapshot is:
+
+- **Coherent from the block perspective:** every block is content-addressed and byte-verified. No torn blocks.
+- **Crash-consistent from the filesystem perspective:** reflects a point in time when the source's guest was running. The ext4 journal contains in-flight transactions from that moment.
+- **Potentially not journal-replayable:** the crash-consistent state captured by lazysync is taken at an arbitrary instant during guest operation. Unlike an actual VM crash (where the journal represents the honest last state), a lazysync snapshot may capture filesystem metadata structures (inode bitmaps, block bitmaps, the journal itself) that were partially updated across multiple lazysync cycles. If the inode bitmap was captured in one cycle and the journal entry that atomically updates it was captured in a different cycle, the combination is internally inconsistent in a way that neither journal replay nor fsck can fully repair.
+
+**Observed 2026-06-03:** VM `msi-0d04` migrated successfully (pre-flight passed, reconstruction completed) but booted into emergency mode with `EXT4-fs error: ext4_validate_inode_bitmap — Corrupt inode bitmap, block_group = 0`. The journal aborted, the filesystem remounted read-only, cloud-init failed with `OSError: [Errno 30] Read-only file system`. The VM was alive (qemu-guest-agent started) but not usable.
+
+**Root cause analysis:**
+
+ext4's metadata structures are not semantically independent 1 MiB blocks. The inode bitmap at block_group 0 is updated by every file creation and deletion. Its content at any moment depends on the state of the journal and the inode table — both of which may have been captured at different lazysync versions. Content-addressing guarantees each individual block is byte-perfect, but does not guarantee temporal coherence across blocks that form a logically coupled metadata structure.
+
+This is the fundamental property of the overlay-only replication model: it captures the overlay as a set of content-addressed blocks over time, not as a single coherent point-in-time image of the disk.
+
+**What the platform guarantees for unplanned migration:**
+
+| Property | Status |
+|----------|--------|
+| No data loss for committed application data | ✅ Guaranteed — committed writes are in confirmed blocks |
+| Filesystem metadata coherence | ⚠️ Best-effort — depends on lazysync cycle alignment with guest metadata flushes |
+| Successful boot without manual intervention | ⚠️ Likely for lightly-loaded VMs with infrequent metadata churn; not guaranteed for active VMs |
+| Recovery to last ConfirmedVersion state | ✅ Guaranteed — reconstruction is deterministic |
+
+**Mitigations in place:**
+
+1. **Phase G+H for planned migrations** — eliminates this class of issue entirely when the source is available. The platform should prefer planned migrations (user-initiated, rolling node maintenance) over relying on unplanned recovery.
+
+2. **`systemd-fsck-root.service`** — runs e2fsck at boot for minor journal inconsistencies. Cannot recover corrupt inode bitmaps that fail checksum validation; requires `e2fsck -c -y` (full inode table check) which is not available in the initramfs of the tested Debian 12 image.
+
+3. **ConfirmedVersion window minimization** — the shorter the lazysync interval and the faster `ConfirmedVersion` advances, the smaller the delta between the confirmed snapshot and the live disk state. This reduces the probability of metadata skew but does not eliminate it.
+
+**Architectural consensus:**
+
+Overlay-only replication is the **correct and optimal** model for planned migrations where guest-fsfreeze is available. It is structurally insufficient to guarantee bootable filesystem state for unplanned recovery of filesystems with active metadata churn.
+
+For unplanned recovery to be reliable, one of the following is required:
+- **Full-disk snapshot replication** — captures base image + overlay as a single coherent point-in-time image, at higher storage cost (partially offset by content-addressed base image sharing across VMs on the same image)
+- **In-guest consistency hooks** — periodic `guest-fsfreeze-freeze` → snapshot → `thaw` cycles by the lazysync daemon, so every committed manifest version corresponds to an application-consistent (not merely crash-consistent) overlay
+- **Acceptance of the current behavior** — unplanned recovery produces a best-effort result; the operator or platform may need to run `e2fsck` inside the VM post-boot for heavily-loaded VMs
+
+The current platform default is the third option. The first two are future work items.
+
+**This does not change the primary value proposition.** The majority of real-world migrations are planned (node maintenance, rebalancing, user-initiated). For those, Phase G+H provides full application consistency. Unplanned recovery from a sudden node death is the tail case, and even there the platform delivers the best available state (last ConfirmedVersion) rather than total data loss.
+
+**Update (Phase I, 2026-06-04):** Phase I implements option 1 (full-disk snapshot replication) combined with option 2 (per-cycle in-guest consistency hooks). The "current platform default" referenced above is no longer the third option; it is the combined first-and-second option. Planned and unplanned migration now produce identical correctness guarantees. See §6.1.7.
+
+### 6.1.7 Phase I: Full-Disk Snapshot Replication
+
+**Status:** Implemented 2026-06-04. Superseded by Phase J (§6.1.8) on 2026-06-05. Retained for historical context and as the evidence basis for why `drive-backup` was abandoned.
+
+**Why Phase I was superseded.** `drive-backup sync=full` installs a COW snapshot point at job creation (one QMP round-trip inside the freeze), then reads clusters sequentially over tens of seconds unfrozen. QEMU's COW notifier ensures each cluster is captured at T=0 — but coupled ext4 metadata structures (journal, inode bitmap, inode table) are read at different wall-clock moments, producing temporal incoherence. Changing `sync=full` vs `sync=top` changes which blocks are included but not when they are read. The failure is structural to `drive-backup`. Confirmed via live debugfs/e2fsck diagnostics on msi-1867 (2026-06-04). See §6.1.8 for the root cause analysis and Phase J's resolution.
+
+**Capture primitive.** Lazysync captures the full merged disk via QMP `drive-backup sync=full`, bracketed by a `guest-fsfreeze-freeze` / `thaw` envelope. The freeze brackets only the QMP Start call (one round-trip, sub-second); drive-backup's copy-on-write notifier fixes the snapshot point at job creation, and the copy itself runs unfrozen in the background. First cycle uses `sync=full`; subsequent cycles use `sync=incremental` against a drive-level dirty bitmap that tracks any write the guest issues regardless of which qcow2 layer absorbs it.
+
+**Why Phase I did not close §6.1.6's failure mode.** Phase I claimed temporal coherence because `drive-backup` installs a COW snapshot point at T=0. This claim was wrong. The COW notifier captures each cluster at T=0 on a per-cluster basis, but clusters are read at different wall-clock moments during the unfrozen background copy. ext4 metadata structures (inode bitmap, journal commit block, inode table) read at different moments are temporally incoherent even when each individual cluster is individually correct. Phase J (§6.1.8) is what actually closes the msi-0d04 failure mode — by performing no data movement during the freeze and making disk.qcow2 truly immutable at the snapshot point.
+
+**Reconstruction path.** `ReconstructDiskAsync` in `LibvirtVmManager` produces a self-contained qcow2 with no backing file. The pre-Phase-I `qemu-img rebase` step that attached a backing-file pointer is gone — the captured image already contains every populated cluster the guest could read. Consequences:
+
+- The migration target does **not** need the base image present. If the orchestrator's image registry has rotated the URL since the source's original deploy, the migration still succeeds; the manifest CIDs are the contract.
+- `CreateOverlayDiskAsync` is bypassed on the migration path. Only fresh deploys take the deploy-side branch that downloads and verifies the base image.
+- `VmSpec.BaseImageUrl` and `VmSpec.BaseImageHash` remain populated on the migration payload as **provenance only** (audit record of what the source ran). They are not used to fetch or verify anything on the target.
+- `CommandProcessorService.HandleCreateVmAsync`'s guard `if (string.IsNullOrEmpty(req.BaseImageUrl))` was refined to apply only when `req.ChunkMap` is also empty (fresh deploys). Migration payloads with empty `BaseImageUrl` are now legitimate.
+
+**Field renames in `VmSpec`:** `OverlayChunkMap` → `DiskChunkMap`, `OverlayRootCid` → `DiskRootCid`. The post-rename names self-document that the chunk set reconstructs the full disk, not just an overlay layer.
+
+**Storage cost.** Aggregate network growth is bounded by `K × BaseImage × RF`, where K is the number of distinct base images on the network. Content-addressed dedup means each base image's CIDs appear once regardless of how many VMs share that image. Numerical: at platform scale (N ≥ 1000 VMs, K ≤ 20 distinct base images, RF = 3, average overlay churn O = 500 MB/VM), aggregate storage growth vs the prior overlay-only model is **under 2%**. The per-VM MongoDB manifest document grows ~4× (~120 KB for a small VM, two orders of magnitude under the 16 MB BSON limit).
+
+**Per-cycle freeze impact.** Every lazysync cycle (default 5 min) issues one `guest-fsfreeze-freeze` / `thaw` pair around the QMP Start call. Total freeze duration per cycle is bounded by one QMP round-trip — sub-second on the same host. `RunUnderGuestFreezeAsync`'s existing best-effort fallback (crash-consistent capture when the guest agent is unreachable) is unchanged.
+
+**What is unchanged in Phase I.** The block store mesh, GossipSub fast path, DHT-native scatter replication, Kademlia XOR threshold, Phase E split-brain prevention (TargetNodeId pre-check, manifest NodeId fence, InvalidVmIds push), Phase F self-healing (`needs-replica` topic, presence-loss monitor, replication survey), `LazysyncManager` orchestrator audit (5-min + 6-h sentinel), `ManifestRecord` schema in MongoDB, the 1 MB block size for VM manifests, `ManifestType.VmOverlay` enum value (durable identifier — not renamed), and the entire deploy path (`ImageManager.EnsureImageAvailableAsync` + `CreateOverlayDiskAsync` still authoritative for fresh deploys).
+
+**Implementation references.** See `PHASE_I_FULL_DISK_REPLICATION.md` for the design analysis, `PHASE_I_IMPLEMENTATION_PROPOSAL.md` for the file-by-file change inventory, and the six Phase I commits in the codebase for the actual diffs.
+
+---
+
+### 6.1.8 Phase J: blockdev-snapshot-sync — Correct Coherence Model
+
+**Status:** Implemented 2026-06-05. Supersedes Phase I (§6.1.7).
+
+#### Root cause of Phase I's failure (confirmed on msi-1867, 2026-06-04)
+
+`drive-backup sync=full` installs a COW snapshot point at job creation — one QMP round-trip inside the freeze. The actual copy then runs unfrozen over tens of seconds. During those seconds QEMU's COW notifier ensures each individual cluster is captured at its T=0 state — but clusters are read at different wall-clock moments. Coupled ext4 metadata structures (journal commit block, inode bitmap, inode table) read at different moments produce temporal incoherence.
+
+Confirmed on msi-1867 via `debugfs logdump` and `e2fsck -fn`:
+
+- Journal transactions 9331 and 9332 absent from the captured image — bitmap updates for those inodes were not committed at capture time on all blocks
+- Fast Commit Area contained a garbage value (`0x6a0a946c`)
+- Dozens of directory entries pointing to "deleted/unused" inodes across `/`, `/var/lib`, `/var/cache`, `/etc`
+- `qemu-img check` reported "No errors" — the qcow2 was byte-perfect; corruption was temporal, not structural
+- VM booted to empty console, virsh console unresponsive, SSH refused, EXT4-fs error at initramfs pivot
+
+**Conclusion:** `drive-backup sync=full` has identical coherence properties to `sync=top`. Changing `sync=` changes which blocks are included but not when they are read. Phase I was structurally wrong. No fix exists within the `drive-backup` model.
+
+#### Phase J design
+
+**Correct primitive:** `blockdev-snapshot` (not `blockdev-snapshot-sync` — that command has no working call path on QEMU 8.2.2/libvirt; see QMP testing below). The key insight: `blockdev-snapshot` performs **no data movement** at snapshot time. The original disk.qcow2 becomes immutable at the exact freeze moment. The guest is frozen for one QMP round-trip only; no writes can occur; every byte in the original file is at the same filesystem transaction boundary. The COW race that broke Phase I cannot exist — there is nothing to race against.
+
+**QEMU 8.2.2 / libvirt — confirmed working sequence (established via live QMP testing):**
+
+```
+1. qemu-img create -f qcow2 {newOverlayPath} {virtualSize}
+   — NO -b flag: backing-file in the qcow2 header causes blockdev-add to attempt
+     opening disk.qcow2 as a backing file, which fails because QEMU already holds
+     an exclusive write lock on it.
+
+2. chown libvirt-qemu:libvirt-qemu {newOverlayPath}
+   — QEMU opens the file via blockdev-add; requires libvirt-qemu ownership.
+
+3. blockdev-add: {"driver":"qcow2","node-name":"ls-ov-{vmId[..8]}",
+                   "file":{"driver":"file","filename":"{newOverlayPath}"}}
+   — Registers the overlay as a named block node in QEMU's block graph.
+
+4. blockdev-snapshot: {"node":"libvirt-2-format","overlay":"ls-ov-{vmId[..8]}"}
+   — Inside fsfreeze. Atomically redirects guest writes to the new overlay node.
+     disk.qcow2 (libvirt-2-format) is now immutable.
+
+   [Guest thaws. All writes go to the new overlay. disk.qcow2 untouched.]
+
+5. qemu-img convert --force-share disk.qcow2 → tmpRawPath
+   — Safe: disk.qcow2 has no in-flight writes. Produces flat raw for ScanChunksAsync.
+
+6. ScanChunksAsync(tmpRawPath): skip zero chunks, compute CIDs, diff against state.Chunks
+
+7. PushBlocksAsync: push changed CIDs to local blockstore
+
+8. Update state.Chunks, Version, TotalBytes, LastSyncAt; RegisterManifestAsync
+
+9. DeleteSnapshotNodeAsync teardown:
+   a. block-commit: {"device":"ls-ov-{vmId[..8]}","top-node":"ls-ov-{vmId[..8]}",
+                     "base-node":"libvirt-2-format","job-id":"ls-commit-{vmId[..8]}"}
+      — Merges overlay content into disk.qcow2 (background job).
+   b. Poll query-block-jobs until ready=true (1s interval, 10min timeout)
+   c. job-complete: {"id":"ls-commit-{vmId[..8]}"}
+      — Finalizes commit; disk.qcow2 is the live disk again.
+   d. blockdev-del: {"node-name":"ls-ov-{vmId[..8]}"}
+   e. File.Delete(newOverlayPath)
+
+10. finally: RevokeScratchAppArmorAsync, delete newOverlayPath and tmpRawPath (idempotent)
+```
+
+**QMP argument discovery — what failed and why:**
+
+The QEMU 8.2.2 libvirt-managed `query-block` output has `"device": ""` (always empty for virtio drives). The primary disk is identified by `backing_file_depth >= 1` and `ro=false` — this returns `inserted.node-name = "libvirt-2-format"`. `blockdev-snapshot-sync` was rejected under all argument combinations:
+
+- `"device":"libvirt-2-format"` → `Cannot find device='libvirt-2-format' nor node-name=''` (node-name passed as device value)
+- `"node":"libvirt-2-format"` → `Parameter 'node' is unexpected` (this QEMU version doesn't support the `node` argument variant)
+- `"device":"virtio-disk0"` → `Cannot find device='virtio-disk0' nor node-name=''` (QOM path doesn't work as device name)
+
+`blockdev-add` + `blockdev-snapshot` was confirmed working directly via QMP on the running VM. `blockdev-snapshot` requires `overlay` to reference an already-registered block node — which `blockdev-add` provides. Teardown via `block-commit` + `job-complete` + `blockdev-del` was also confirmed working, with the commit job completing nearly instantly (851968 bytes written in <3s for a freshly created overlay).
+
+**Incremental tracking.** The dirty bitmap mechanism (Phases D+1 through I) is removed entirely. Incremental tracking is already provided by `ScanChunksAsync`'s CID diff against `state.Chunks` — only chunks whose content changed since the last cycle enter `changedChunks`. This was always true; the dirty bitmap was a redundant second mechanism. Every Phase J cycle is identical (no first-cycle vs subsequent-cycle distinction).
+
+**Crash safety.** If the node crashes between `blockdev-add`/`blockdev-snapshot` and `DeleteSnapshotNodeAsync`, `newOverlayPath` survives and disk.qcow2 retains the backing-file relationship in QEMU's block graph. The VM cannot start until resolved. Crash-recovery in `LibvirtVmManager` (detecting orphaned `lazysync-overlay-*.qcow2` files and running `qemu-img commit` at startup) is a follow-on item.
+
+**Migration cloud-init bootcmd fix.** The migration cloud-init `bootcmd` previously contained `systemctl start qemu-guest-agent`. At `bootcmd` time systemd's D-Bus socket is not guaranteed available; `systemctl start` blocks indefinitely waiting for D-Bus, hanging cloud-init before SSH or the guest agent can start. Fix: remove `systemctl start qemu-guest-agent` from `bootcmd`. The `qemu-guest-agent.service` symlink already exists in `multi-user.target.wants` on the disk (placed at original deploy time) — systemd starts it automatically at the correct point in the boot sequence without any `bootcmd` intervention.
+
+#### Verification (msi-7825, 2026-06-05)
+
+- **Disk reconstruction:** ✅ Clean — `ReconstructDiskAsync` fetched 1713 blocks
+- **Kernel boot:** ✅ Full boot, all partitions (vda1/vda14/vda15), EXT4 mounted clean
+- **No EXT4 errors:** ✅ No `ext4_validate_inode_bitmap`, no emergency mode
+- **Journal coherence:** ✅ Phase J closure confirmed — §6.1.6 failure mode does not recur
+- **Networking:** ✅ `192.168.122.217` assigned
+- **cloud-init:** ✅ Completed all stages without hanging — `modules:final` at Up 64s
+- **qemu-guest-agent:** ✅ Connected — `Status: 2` (Ready) in MongoDB
+- **SSH:** ✅ Working, root login successful
+- **Welcome page:** ✅ Shows pre-migration content (user data survived)
+- **Browser terminal + file browser:** ✅ Working
+- **Stale VM cleanup:** ✅ When MSI node came back online, correctly detected VM was stale and removed local copy
+
+#### What does not change
+
+`ScanChunksAsync`, `PushBlocksAsync`, `ComputeCidV1`, `ComputeRootCid`, `FindBlockstoreApiAsync`, `GetDiskVirtualSizeAsync`, `RunUnderGuestFreezeAsync`, `LoadStateAsync`, `SaveStateAsync`, `NotifyBlockstoreManifestAsync` — all unchanged. `ReconstructDiskAsync` (migration reconstruction path) — unchanged; it reconstructs from manifest CIDs, which are now produced by reading a coherent snapshot. The orchestrator, blockstore Go binary, Phase F self-healing, Phase E split-brain prevention, DHT/GossipSub, `ManifestRecord` schema, `ManifestType.VmOverlay` enum, 1 MB block size — zero changes.
+
+#### Files changed
+
+```
+src/DeCloud.NodeAgent.Core/Interfaces/Qmp/IQmpClient.cs
+src/DeCloud.NodeAgent.Infrastructure/Services/Qmp/QmpClient.cs
+src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs
+src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs
+  (remove systemctl start qemu-guest-agent from migration bootcmd)
+```
+
+---
 
 ### 6.2 Migration on Node Failure
 
@@ -2509,6 +2721,138 @@ No orchestrator-side files. No `Shared` contract changes. No data-store schema c
 
 ---
 
+### Phase H: Bounded-Freeze Capture + Reconstruction Hardening — ✅ Complete 2026-06-03
+
+**Goal:** Three concrete fixes identified by extended migration testing after Phase G shipped.
+
+#### H-1: Replace `qemu-img convert --force-share` with `drive-backup sync=top`
+
+**Problem (identified 2026-06-03):** Phase G wrapped the first-cycle capture (`qemu-img convert`) in a guest freeze. On a 500 MB overlay the freeze held for the full duration of the convert — 5–30 seconds depending on I/O. For incremental cycles, `drive-backup sync=incremental` uses QEMU's internal dirty-bitmap machinery and is sub-second; but first-cycle captures wrote the entire overlay, pausing every guest filesystem for the convert duration. A 10 GB active overlay could pause a guest for minutes.
+
+**Fix:** Replace the first-cycle full-overlay `qemu-img convert --force-share` path with `drive-backup sync=top`. `sync=top` instructs QEMU to export only the blocks in the topmost BDS (the overlay), not the full merged disk. This is the overlay's allocated data only — the same blocks lazysync was already targeting — but fetched from QEMU's live block layer rather than via a host-side `qemu-img` invocation.
+
+Consequences:
+- The freeze brackets only the QMP call that starts the `drive-backup` job, not the data export itself. QEMU unfreezes the guest as soon as the backup job is queued (sub-second), then exports asynchronously.
+- `GetOverlayChunkOffsetsAsync` (the `qemu-img map` whitelist computation) is **deleted**. `sync=top` filters to the topmost BDS natively; no external whitelist is needed.
+- The first-cycle freeze duration drops from seconds/minutes to sub-second for all overlay sizes.
+- Lazysync trails the live disk by 9–15 s (the background copy duration) rather than pausing it.
+
+**Validated:** msi-a4b5 test on 2026-06-03 — freeze and thaw completed in the same second, lazysync trail confirmed 9–15 s, `.pyc` files intact end-to-end.
+
+```
+Phase G + H combined first-cycle sequence:
+  guest-ping (2 s timeout)
+  guest-fsfreeze-freeze     → N filesystems frozen
+  QMP: drive-backup sync=top target=tmpPath  → backup job queued
+  guest-fsfreeze-thaw       → guest unfrozen (sub-second total freeze)
+  [background] QEMU copies overlay blocks to tmpPath asynchronously
+  [background] LazysyncDaemon scans tmpPath, computes CIDs, pushes blocks
+```
+
+**Files changed:** `src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs` (replace first-cycle path, delete `GetOverlayChunkOffsetsAsync`).
+
+---
+
+#### H-2: Remove `RunFsckOnOverlayAsync`
+
+**Problem (identified 2026-06-03):** After `ReconstructOverlayAsync` assembled the target overlay from blockstore chunks, the node agent ran `fsck.ext4 -fy` on the overlay via `qemu-nbd`. The intent was to repair crash-consistent filesystem state before boot.
+
+**Root cause of regression:** `fsck.ext4 -fy` applies crash-recovery heuristics — including resolving "duplicate block" conflicts between normal inodes and in-flight journal entries — by clearing one side's extent mapping. For a crash-consistent overlay (which is exactly what lazysync produces), the journal contains the uncommitted side of recent transactions. fsck interpreted these as duplicate blocks and cleared the journal entries' extent mappings, leaving inodes with correct size metadata but zeroed data blocks.
+
+Observed consequence: `welcome.service` and `welcome-server.py` (both 252 bytes / 4424 bytes) read as all-zeros on the migrated target. Nine netplan `.pyc` files were moved to `lost+found`. The fsck exit code was 0 (or 1 = "errors corrected"), masking the corruption.
+
+**Fix:** Delete `RunFsckOnOverlayAsync` and its call site entirely. The correct mechanism for crash-consistent ext4 overlays is the kernel's own journal replay at mount time:
+
+```
+[boot log — correct behavior after H-2]
+EXT4-fs (vda1): recovery complete
+EXT4-fs (vda1): mounted filesystem with ordered data mode
+```
+
+Journal replay does exactly what fsck should not have done: it replays the journal's committed transactions and discards the uncommitted ones. This leaves the filesystem in the last fully-committed state, which is precisely the state lazysync was capturing (files committed by the guest before capture + any open transactions that will be rolled back). No file corruption.
+
+**Design rule:** Never run `fsck` on a crash-consistent image produced by a content-addressed replication system. The kernel's mount-time journal replay is the boundary the system already provides. Align to it.
+
+**Files changed:** `src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs` (delete method and call site).
+
+---
+
+#### H-3: Blockstore Pre-Flight and Owner-Indexing Hardening
+
+**Problem (identified 2026-06-03):** Three related gaps in blockstore block accounting were preventing migrations from proceeding even when all required blocks were physically present on the target node.
+
+**Gap 1 — Pre-flight queries ownership index, not raw presence.**
+
+`TryDirectBlockstorePreflightAsync` called `GET /owners/{vmId}` on the target blockstore. The ownership index is only written when a block arrives via the gossipsub `new-blocks` path (which carries vmId metadata). Blocks that arrive via any other path — presence catchup (`performCatchupFromPeer`), direct GET /blocks/{cid} during reconstruction, cross-VM content dedup — are physically stored and DHT-announced but absent from the ownership index.
+
+Consequence: a target blockstore holding all 329 required CIDs (confirmed by `ConfirmedVersion` advancing, because each CID had srv022010 as a DHT provider) reported only 50/329 = 15% to the pre-flight check (the gossipsub-received subset), triggering DHT-walk fallback → 503 → migration deferred indefinitely.
+
+**Fix:** Add `POST /blocks/has` endpoint to the blockstore. Accepts `{"cids":[...]}`, checks `bstore.Has()` for each CID, returns `{"present":[...]}`. Replace the `/owners/{vmId}` GET in `TryDirectBlockstorePreflightAsync` with a `/blocks/has` POST sending all ChunkMap CIDs. This queries raw physical presence, independent of ownership metadata.
+
+**Gap 2 — Ownership index not written on GET /blocks/{cid} during reconstruction.**
+
+`ReconstructOverlayAsync` calls `GET /blocks/{cid}` for each overlay block. The blockstore's `getBlock` handler fetched and served blocks but never wrote the ownership index. After reconstruction, all 329 blocks were present but the ownership index showed 0 for this VM (or only the gossipsub subset from earlier replication).
+
+**Fix:** Add `?owner={vmId}` parameter support to `GET /blocks/{cid}`. The `getBlock` handler reads the `?owner=` query param and appends the CID to `owners/{vmId}.cids` in a goroutine. `ReconstructOverlayAsync` appends `?owner={spec.Id}` to all block fetch URLs.
+
+**Gap 3 — Ownership index not written on `performCatchupFromPeer`.**
+
+The presence catchup path (`performCatchupFromPeer`) fetches all blocks for a VM from a peer via `session.GetBlocks()` but never wrote the ownership index. These blocks (the bulk of the replication, typically 280+ of 329 for a standard Debian VM) were present, DHT-announced, and counted by LazysyncManager as remote providers — but `/owners/{vmId}` stayed at the gossipsub-received subset (~50 CIDs, consistent across all VMs).
+
+**Fix:** Add owner index writes inside the `GetBlocks` receive loop in `performCatchupFromPeer`. The vmId is already in scope from the outer loop over the peer's owner list.
+
+**Why 50 is consistent across VMs:** The gossipsub `new-blocks` path delivers blocks during the active seeding window (first lazysync cycle, when MSI is announcing freshly-pushed blocks). The catchup path delivers all remaining blocks when srv022010 sees MSI's presence heartbeat and fetches the diff. The gossipsub window closes first (burst settled, debounce fired), so exactly the "first wave" of blocks get owner metadata and the catchup blocks do not. With `performCatchupFromPeer` now writing the ownership index, all four block-arrival paths are covered: gossipsub receive, POST /blocks?owner=, GET /blocks/{cid}?owner=, and presence catchup.
+
+**Files changed:**
+- `system-vms/blockstore/src/main.go` — add `/blocks/has` route + handler; add `?owner=` indexing in `getBlock`; add owner index writes in `performCatchupFromPeer`
+- `src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs` — add `vmId` param to `ReconstructOverlayAsync`; append `?owner=` to block fetch URLs
+- `src/Orchestrator/Background/BackgroundServices.cs` — replace `/owners/{vmId}` GET with `/blocks/has` POST in `TryDirectBlockstorePreflightAsync`
+
+#### Phase H file inventory
+
+- **`src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs`** — H-1: replace first-cycle path with `drive-backup sync=top`, delete `GetOverlayChunkOffsetsAsync` (H-1).
+- **`src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs`** — H-2: delete `RunFsckOnOverlayAsync`; H-3: add `vmId` param to `ReconstructOverlayAsync`, append `?owner=` to block fetch URLs.
+- **`system-vms/blockstore/src/main.go`** — H-3: `/blocks/has` endpoint; `?owner=` in `getBlock`; owner indexing in `performCatchupFromPeer`.
+- **`src/Orchestrator/Background/BackgroundServices.cs`** — H-3: `/blocks/has` in `TryDirectBlockstorePreflightAsync`.
+
+---
+
+### Phase I: Full-Disk Snapshot Replication — ⚠️ Superseded by Phase J (2026-06-05)
+
+Phase I shipped `drive-backup sync=full` inside a per-cycle guest-fsfreeze. It was confirmed structurally incapable of producing temporally coherent snapshots on active guests via live diagnostics on msi-1867 (2026-06-04). See §6.1.7 and §6.1.8 for full analysis.
+
+---
+
+### Phase J: blockdev-snapshot-sync — Correct Coherence Model — ✅ Complete 2026-06-05
+
+**Goal:** Replace `drive-backup` with a snapshot primitive that produces genuine temporal coherence — one where all bytes are captured at the same filesystem transaction boundary, not sequentially over tens of seconds.
+
+**Root cause of Phase I failure (msi-1867, 2026-06-04):** `drive-backup sync=full` installs a COW snapshot point at job creation but reads clusters unfrozen over tens of seconds. QEMU's COW notifier guarantees each cluster is captured at T=0 but clusters are read at different wall-clock moments. Coupled ext4 metadata structures (journal, inode bitmap, inode table) captured at different moments produce temporal incoherence. Debugfs confirmed missing journal transactions 9331/9332; e2fsck found dozens of directory entries pointing to deleted inodes; VM unbootable. `qemu-img check` reported "No errors" — the corruption was temporal, not structural.
+
+**Fix:** `blockdev-add` + `blockdev-snapshot`. The snapshot performs no data movement. At the freeze moment QEMU atomically redirects guest writes to a new overlay; disk.qcow2 is immutable from that point forward. Guest thaws in sub-second; lazysync reads disk.qcow2 at leisure via `--force-share`. Every byte is at the same transaction boundary. The COW race cannot exist because there is nothing to race against.
+
+**QMP sequence confirmed on QEMU 8.2.2 via live testing:**
+- `qemu-img create -f qcow2 {newOverlayPath} {virtualSize}` — no `-b` flag (write-lock conflict)
+- `chown libvirt-qemu:libvirt-qemu {newOverlayPath}`
+- `blockdev-add` — register overlay as named block node
+- `blockdev-snapshot` (inside fsfreeze) — atomic write redirect
+- `qemu-img convert --force-share disk.qcow2 → tmpRawPath` → `ScanChunksAsync`
+- `block-commit` → poll `query-block-jobs` → `job-complete` → `blockdev-del` → delete file
+
+**Additional fix — migration bootcmd D-Bus hang:** `systemctl start qemu-guest-agent` in `bootcmd` blocks indefinitely if D-Bus is not yet available (cloud-init runs before systemd is fully initialized). Removed from migration cloud-init; the `qemu-guest-agent.service` symlink in `multi-user.target.wants` handles startup automatically.
+
+**Dirty bitmap removed:** Incremental tracking was always provided by `ScanChunksAsync`'s CID diff against `state.Chunks`. The dirty bitmap was redundant. `AddDirtyBitmapAsync`, `RemoveDirtyBitmapAsync`, `ClearDirtyBitmapAsync`, `StartDriveBackupIncrementalAsync`, `StartDriveBackupFullAsync`, `WaitForBackupJobAsync` removed from `IQmpClient`/`QmpClient`. `BitmapCreated` field removed from `LazysyncState`. Single linear cycle path replaces two interleaved branches.
+
+**End-to-end verification (msi-7825, 2026-06-05):** Clean boot, no EXT4 errors, no emergency mode, networking up, cloud-init completed, guest agent ready, SSH functional, welcome page shows pre-migration content, browser terminal and file browser working, stale VM cleanup on source node recovery correct.
+
+**Files changed:**
+- `src/DeCloud.NodeAgent.Core/Interfaces/Qmp/IQmpClient.cs` — remove bitmap/drive-backup methods, add `CreateSnapshotAsync` + `DeleteSnapshotNodeAsync`
+- `src/DeCloud.NodeAgent.Infrastructure/Services/Qmp/QmpClient.cs` — implement blockdev-add+blockdev-snapshot, block-commit teardown, `backing_file_depth`-based node discovery, silent pre-del in `CreateSnapshotAsync`
+- `src/DeCloud.NodeAgent.Infrastructure/Services/Resilience/LazysyncDaemon.cs` — single cycle path, `newOverlayPath` + `tmpRawPath`, `BitmapCreated` removed
+- `src/DeCloud.NodeAgent.Infrastructure/Libvirt/LibvirtVmManager.cs` — remove `systemctl start qemu-guest-agent` from migration `bootcmd`
+
+---
+
 ## 9. How This Connects to Future Features
 
 ### Built-In (Phase A-F)
@@ -2676,7 +3020,7 @@ DHT load on host nodes drops ~12× at steady state. `MaybeTriggerReannounceAsync
 
 This trades a few hundred milliseconds of pre-flight latency for failed-fast migration safety. Aborting on the orchestrator side is far cheaper than committing to a partial reconstruction on the target.
 
-### Decision 18: Application-consistent capture via guest fsfreeze (Phase G)
+### Decision 18: Application-consistent capture via guest fsfreeze (Phase G) — ✅ Complete
 **Why:** Lazysync's pre-Phase-G capture reads the qcow2 without coordinating with the guest kernel, producing crash-consistent snapshots. ext4's journal recovery handles crash-consistent state when the guest itself crashes — but a snapshot taken of a running guest, replicated to a target, and booted there is *not* a crash recovery: it's a perfect reconstruction of a transient mid-flush state that on the source would have been followed by a flush, and on the target never is. The 2026-05-31 migration test exposed this concretely (zero-tail `.pyc`, see §6.1.4).
 
 The fix aligns to the boundary the virtualization industry settled on decades ago: bracket the capture in `guest-fsfreeze-freeze` / `guest-fsfreeze-thaw`. The freeze forces a journal commit and dirty-page writeback inside the guest before the host reads the qcow2, so what the host sees is what the guest filesystem itself considers committed.
@@ -2689,6 +3033,46 @@ The decision is not whether to do this — it's the only correct fix for the fai
 - **No qcow2 internal snapshots, yet.** Internal snapshots would reduce the freeze window to sub-second but add lifecycle state to manage. Reasonable next lever if first-cycle freeze durations on multi-GB overlays become customer-visible; not needed for the platform default.
 
 The change is entirely local to the node agent. No orchestrator changes, no wire format changes, no schema migrations. That matters: it means Phase G can ship independently and revert independently if it misbehaves.
+
+**Validation (2026-06-03):** Re-ran the failure scenario (msi-a4b5). Freeze and thaw completed in the same second. Lazysync trailed 9–15 s. `.pyc` intact end-to-end. cloud-init `init-local` completed cleanly on the migrated VM. Phase G confirmed closed.
+
+---
+
+### Decision 19: `drive-backup sync=top` replaces `qemu-img convert --force-share` (Phase H)
+**Why:** Phase G exposed a secondary problem: the freeze window for a first-cycle full-overlay convert (`qemu-img convert`) was proportional to overlay size — seconds to minutes for active VMs. `drive-backup sync=top` uses QEMU's internal block-layer machinery to export overlay blocks asynchronously. The freeze brackets only the QMP job-queue call (sub-second), not the data export. The guest is unfrozen before data copying begins, reducing the write-pause from seconds/minutes to milliseconds regardless of overlay size. The `qemu-img map` whitelist (`GetOverlayChunkOffsetsAsync`) is deleted because `sync=top` handles the overlay-only filter natively — the BDS topology enforces the boundary that the whitelist was approximating externally.
+
+---
+
+### Decision 20: Remove `RunFsckOnOverlayAsync` — use kernel journal replay (Phase H)
+**Why:** After `ReconstructOverlayAsync`, the node agent ran `fsck.ext4 -fy` on the assembled overlay. The intent was to repair crash-consistent state. The actual effect was the opposite: `fsck.ext4 -fy` applies crash-recovery heuristics that resolve "duplicate block" conflicts between journal entries and normal inodes by clearing extent mappings. On crash-consistent overlays produced by lazysync, this corrupted files by zeroing their data blocks while leaving size metadata intact. The kernel's own ext4 journal replay at mount time is the correct mechanism — it replays committed transactions and discards uncommitted ones, producing the last fully-consistent filesystem state without touching data blocks. The design rule: never apply external filesystem repair tools to a crash-consistent image produced by a content-addressed replication system. Align to the boundary the kernel already provides.
+
+---
+
+### Decision 21: Pre-flight raw CID presence (`POST /blocks/has`) over ownership index (Phase H)
+**Why:** `TryDirectBlockstorePreflightAsync` queried `/owners/{vmId}` to check how many of the required CIDs the target blockstore already held. The ownership index is only written by the gossipsub `new-blocks` path — blocks arriving via presence catchup, cross-VM content dedup, or direct GET fetches are present but not indexed. In a two-node cluster with a standard Debian base image, the target held 329 of 329 required CIDs (all DHT-announced, all confirmed as remote providers by LazysyncManager), but the ownership index showed 50 (only the gossipsub-delivered subset). Pre-flight reported 15% and fell through to a DHT walk that returned 503 on all samples, deferring migration indefinitely. The fix — `POST /blocks/has` using `bstore.Has()` directly — queries raw physical presence independent of ownership metadata. This is the authoritative "does this node hold this block" query; the ownership index is a derived secondary index that must not gate migration.
+
+---
+
+### Decision 22: Owner indexing across all four block-arrival paths (Phase H)
+**Why:** The ownership index (`owners/{vmId}.cids`) is the data structure that drives replication surveys, presence-loss repair signals, and was previously used for pre-flight checks. It was only written by one of four paths by which a block can arrive at a blockstore: the gossipsub `new-blocks` receiver path. The other three — `POST /blocks?owner=` (lazysync push), `GET /blocks/{cid}?owner=` (reconstruction), and `performCatchupFromPeer` (presence catchup) — stored and DHT-announced blocks without writing ownership metadata. This produced systematically incomplete ownership indexes: every VM showed ~50 gossipsub-received blocks in the index regardless of how many blocks the node actually held for that VM. Fix: add owner index writes to all four paths. The gossipsub and POST paths already existed; the GET path and catchup path required new writes. With all four paths covered, the ownership index becomes the reliable secondary index it was designed to be — replication surveys and survey-based `needs-replica` signals now accurately reflect what the node holds.
+
+---
+
+### Decision 23: Overlay-only replication structural limits — closed by Phase J (2026-06-05)
+
+**Why this became a decision and then a closed issue:** After extended testing, the following was established: overlay-only replication with Phase G+H guest-fsfreeze produces application-consistent, bootable migrated VMs for planned migrations (source node available). For unplanned migrations (source died abruptly), the ConfirmedChunkMap used for reconstruction represents the last confirmed lazysync snapshot — crash-consistent from the block perspective but potentially containing temporally incoherent ext4 metadata structures across blocks captured at different lazysync cycles.
+
+The content-addressing model guarantees per-block integrity, not cross-block temporal coherence. ext4's inode bitmaps, block bitmaps, and journal entries form a logically coupled structure. If they were captured at different lazysync cycles, the combination can be internally inconsistent in ways journal replay cannot repair — producing corrupt inode bitmaps at boot.
+
+**Decision 23 consensus (2026-06-03):** Accept structural limits for unplanned recovery; defer full-disk snapshot replication due to storage/bandwidth overhead.
+
+**Decision 23 closed (2026-06-05) — Phase J shipped full-disk snapshot replication:**
+
+The `drive-backup` approach (Phases H/I) was confirmed structurally incapable of solving the temporal coherence problem via live diagnostics on msi-1867 (2026-06-04). `drive-backup sync=full` installs a COW snapshot point at job creation but reads clusters sequentially over tens of seconds unfrozen — each cluster is correct at T=0 but coupled ext4 metadata structures read at different wall-clock moments produce temporal incoherence regardless of `sync=full` vs `sync=top`. e2fsck found missing journal transactions 9331/9332 and dozens of directory entries pointing to deleted inodes.
+
+Phase J (`blockdev-add` + `blockdev-snapshot`) solves this by performing no data movement during the freeze. The guest is frozen for one QMP round-trip (sub-second). At that moment QEMU atomically redirects writes to a new overlay; the original disk is immutable and coherent at the exact freeze moment. Every byte is at the same filesystem transaction boundary. The COW race that broke Phase I cannot exist because there is nothing to race against. This was confirmed via end-to-end migration test (msi-7825, 2026-06-05): clean boot, no EXT4 errors, no emergency mode, user data intact, SSH functional, browser terminal functional, welcome page showing pre-migration content.
+
+See §6.1.8 for the full Phase J design and verification record.
 
 ---
 
@@ -2704,10 +3088,13 @@ The change is entirely local to the node agent. No orchestrator changes, no wire
 | Split-brain / zombie VM | Medium | High | NodeId authority enforcement, reconciliation on startup/heartbeat, lazysync fencing, optional network fencing |
 | False positive zombie detection | Low | High | Conservative approach: keep running if orchestrator unreachable; version tracking for edge cases |
 | Reconciliation delays | Low | Medium | Multiple reconciliation triggers (startup, heartbeat, reconnection); InvalidVmIds in heartbeat response for proactive notification |
-| Stale ConfirmedChunkMap at migration (6h sentinel window) | Low | Medium | Phase F migration pre-flight: 50-CID DHT walk against target before authority transfer; defers migration cycle if <90% of sampled CIDs have providers. Closes the gap created by the slower sentinel cadence |
+| Stale ConfirmedChunkMap at migration (6h sentinel window) | Low | Medium | Phase F migration pre-flight: DHT walk + direct blockstore `/blocks/has` check against target before authority transfer (Phase H); defers migration cycle if <90% of sampled CIDs have providers or raw presence is below threshold. Closes the gap created by the slower sentinel cadence |
 | Catastrophic mesh failure (all replicas of a CID gone simultaneously) | Very Low | High | Orchestrator sentinel audit (6h cadence) detects `ConfirmedCids.Count == 0` drain, triggers `TriggerReseedAsync` — irreducible escape hatch |
-| Torn writes in captured overlay (file metadata committed, data extents not) | Medium (pre-G) → Low (post-G) | High | Phase G application-consistent capture via `guest-fsfreeze-freeze`/`thaw` brackets the qcow2 read so the guest filesystem flushes journal + dirty pages first. Best-effort: if the guest agent is unreachable, falls back to crash-consistent (pre-Phase-G behaviour) with a warning rather than blocking replication. See §6.1.4 |
+| Torn writes in captured overlay (file metadata committed, data extents not) | Low (post-G+H) | High | Phase G+H: `drive-backup sync=top` inside a guest-fsfreeze bracket. Freeze sub-second (QMP job-queue call only); guest unfrozen before data export; application-consistent for all planned migrations. Best-effort fallback (crash-consistent, pre-Phase-G behaviour) when guest agent is unreachable. See §6.1.4, §6.1.5 |
 | Guest left frozen by Phase G capture path | Very Low | High | Three independent safety layers: `finally`-block thaw, `CancellationToken.None` on thaw call so cancellation still thaws, libvirt's `fsfreeze-timeout` (auto-thaw if host fails to thaw within a bounded interval). No code path can leave a guest frozen indefinitely |
+| fsck corrupting crash-consistent overlay metadata (pre-H) | Closed | High | Phase H: `RunFsckOnOverlayAsync` removed. `fsck.ext4 -fy` applied crash-recovery heuristics that zeroed data blocks in crash-consistent overlays. Kernel ext4 journal replay at mount time is the correct mechanism — replays committed transactions without touching data blocks. See §6.1.5 H-2 |
+| Pre-flight falsely deferring migration when blocks are present (pre-H) | Closed | Medium | Phase H: `TryDirectBlockstorePreflightAsync` uses `POST /blocks/has` (raw blockstore presence) instead of `GET /owners/{vmId}` (ownership index). Ownership index incomplete for blocks arriving via catchup/dedup paths; raw presence is authoritative. See §6.1.5 H-3 |
+| Unplanned migration producing non-bootable VM due to ext4 metadata temporal incoherence | Closed by Phase J | Phase J (`blockdev-add` + `blockdev-snapshot`) eliminates this by construction. The snapshot is instantaneous — no data movement during the freeze, no COW race. Every byte in the original disk is at the same filesystem transaction boundary. Confirmed via live diagnostics (msi-1867) and end-to-end migration test (msi-7825, 2026-06-05). See §6.1.8. |
 
 ---
 

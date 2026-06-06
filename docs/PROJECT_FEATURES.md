@@ -1,6 +1,6 @@
 # DeCloud Platform Features
 
-**Last Updated:** 2026-05-01
+**Last Updated:** 2026-06-05
 **Purpose:** Technical reference for all implemented and planned platform features.
 
 ---
@@ -972,31 +972,38 @@ Also modified `wg-mesh-enroll.sh` to self-source the env file with `set -a` as b
 
 ### Block Store & Storage Economics
 
-**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D–E (Lazysync + Live Migration) ✅ Complete (2026-04-20)
+**Status:** Phase A–C ✅ Production-verified (2026-03-20) | Phase D–J (Lazysync + Live Migration + Self-Healing + blockdev-snapshot-sync) ✅ Complete (2026-06-05)
 
-#### Phase D–E: Lazysync & Live Migration
+#### Phase D–J: Lazysync, Live Migration, and blockdev-snapshot-sync
 
-**What was built:**
-- `LazysyncDaemon` — background service running on each node; every 5 minutes exports VM overlay disk in 1 MB content-addressed chunks and pushes new/changed blocks to the local BlockStore VM
-- Incremental dirty bitmap (`block-dirty-bitmap-add` via QMP) — after first full export, only clusters written since last cycle are exported via `drive-backup sync=incremental`
-- `RemoveDirtyBitmapAsync` — cleans the overlay-carried bitmap on the receiving node before re-adding, preventing `AddDirtyBitmap failed` fallback to full export every cycle
+**What was built (Phases D–E, 2026-04-20):**
+- `LazysyncDaemon` — background service running on each node; every 5 minutes exports VM disk in 1 MB content-addressed chunks and pushes new/changed blocks to the local BlockStore VM
 - Node-offline detection triggers automatic migration: `MarkNodeVmsAsErrorAsync` classifies VMs as `Migrating` / `Recovering` / `Unrecoverable` / `Lost` based on manifest confirmed state
-- `MigrateVmAsync` in `BackgroundServices.cs` — selects best target node, fetches `MigrationManifest` (confirmed chunk map), sends `ProvisionVm` command with `OverlayChunkMap` to reconstruct the overlay
-- Migration cloud-init on receiving node: `package_update/upgrade: false`, `bootcmd` overwrites MAC-pinned netplan (`/etc/netplan/50-cloud-init.yaml`) before networkd starts — prevents `network-online.target` hanging forever
-- Ingress registered before `WaitForPrivateIpAsync` — domain live immediately after migration boot
-- Post-migration reseed: `ConfirmedVersion` reset to 0, `ReseedVm` command sent, LazysyncDaemon re-pushes all blocks so blockstore network replicates to RF providers on new node
+- `MigrateVmAsync` — selects best target node, fetches `MigrationManifest` (confirmed chunk map), sends `ProvisionVm` command with chunk map to reconstruct the disk
+- Migration cloud-init on receiving node: `package_update/upgrade: false`, `bootcmd` overwrites MAC-pinned netplan before networkd starts
+- Split-brain prevention (Phase E): `InvalidVmIds` push model, `TargetNodeId` pre-check, manifest NodeId fence
 
-**Confirmed end-to-end (2026-04-20):**
-- VM created on MSI (Turkey, CGNAT) → versions 1–9 replicated incrementally to blockstore
-- MSI shutdown → orchestrator classifies VM as `Migrating` → overlay reconstructed on dedixlabvm (US East) from chunk map
-- Post-migration: user files preserved, browser terminal functional, ingress subdomain live, incremental replication resumes
+**Self-healing mesh (Phase F, 2026-05-31):**
+- Reactive `needs-replica` GossipSub topic — GC publishes before every eviction; XOR-close peers absorb
+- Presence-loss monitor — detects replica node offline from heartbeat timeout alone (180s), signals `needs-replica` for cached owner indexes
+- Replication survey — every 5 min, fetches peer owner indexes, re-publishes under-replicated CIDs
+- Orchestrator audit demoted to 6h sentinel — mesh handles routine repair
 
-**Fix (2026-04-24) — GossipSub fetch retry queue (item 31b):**
-Freshly booted blockstores hit the 30s BitswapTimeout on all initial GossipSub-triggered
-fetches because DHT provider records for new blocks propagate ~15s after GossipSub publish,
-creating a race on cold routing tables. Failed CIDs were silently dropped with no recovery
-path. Fix: `retryQueue` + `startRetryLoop` in `main.go` — enqueues failed CIDs, retries
-sequentially every 60s with 60s timeout, max 3 attempts. Requires blockstore VM redeployment.
+**Application-consistent capture (Phases G+H, 2026-06-03):**
+- Phase G: guest-fsfreeze-freeze/thaw brackets the snapshot — forces journal commit, eliminates torn writes
+- Phase H: `drive-backup sync=top` replaces `qemu-img convert` — freeze sub-second, lazysync trails 9–15s; `RunFsckOnOverlayAsync` deleted (fsck corrupted crash-consistent overlays); blockstore pre-flight and owner-indexing hardened
+
+**blockdev-snapshot-sync — correct temporal coherence (Phase J, 2026-06-05):**
+- `drive-backup` confirmed structurally incapable of temporal coherence via live diagnostics (msi-1867): COW reads clusters sequentially over tens of seconds unfrozen; coupled ext4 metadata captured at different wall-clock moments produce incoherence `qemu-img check` cannot detect
+- Phase J primitive: `blockdev-add` + `blockdev-snapshot` — no data movement during freeze; disk.qcow2 is immutable at the exact freeze moment; every byte at the same transaction boundary; COW race impossible
+- Dirty bitmap removed entirely; incremental tracking via `ScanChunksAsync` CID diff (was always the real mechanism)
+- Migration bootcmd fix: `systemctl start qemu-guest-agent` removed — blocked on D-Bus before systemd ready; service symlink in `multi-user.target.wants` handles startup
+- QEMU 8.2.2 working sequence confirmed via live QMP testing: `qemu-img create` (no -b), `chown libvirt-qemu`, `blockdev-add`, `blockdev-snapshot` (inside fsfreeze), `qemu-img convert --force-share` → scan, `block-commit` → poll → `job-complete` → `blockdev-del`
+
+**Confirmed end-to-end (msi-7825, 2026-06-05):**
+- VM created on MSI (Turkey) → versions replicated to blockstore
+- MSI shutdown → orchestrator classifies VM as `Migrating` → disk reconstructed on srv022010 (srv022010) from chunk map (1713 blocks)
+- Post-migration: clean boot, no EXT4 errors, user files preserved, welcome page shows pre-migration content, browser terminal functional, ingress subdomain live, stale VM cleanup on source node recovery correct
 
 #### Overview
 

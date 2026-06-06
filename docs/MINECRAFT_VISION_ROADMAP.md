@@ -1,8 +1,8 @@
 # DeCloud: The Minecraft Vision
 ## Building the World's First Emergent Compute Network
 
-**Version:** 2.0
-**Last Updated:** 2026-03-13
+**Version:** 2.1
+**Last Updated:** 2026-06-05
 **Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY (PyTorch inference + training + LoRA confirmed) — See status markers below
 **Philosophy:** Simple primitives → Complex outcomes → Community ownership
 
@@ -120,9 +120,17 @@ Current: Single-user VMs only
 Needed: Shared VMs, team workspaces, infrastructure sharing
 ```
 
-#### 1.5. **Live VM Migration** ✅ Complete (2026-04-20)
+#### 1.5. **Live VM Migration** ✅ Complete (Phase J, 2026-06-05)
 ```
-Auto-migration when source node goes offline. Overlay reconstructed from blockstore chunk map. User files, ingress, and browser terminal intact post-migration. System VM resilience watchdog remaining before MVP.
+Auto-migration when source node goes offline. Disk reconstructed from blockstore
+chunk map via ReconstructDiskAsync (unchanged). Snapshot primitive: blockdev-add +
+blockdev-snapshot inside a sub-second guest-fsfreeze — original disk immutable at
+the exact freeze moment, no COW race, genuine temporal coherence. User files,
+ingress, and browser terminal intact post-migration. Welcome page shows
+pre-migration content. Stale VM cleanup on source node recovery verified.
+Phase I (drive-backup sync=full, 2026-06-04) was superseded after live diagnostics
+confirmed structural temporal incoherence on active guests (msi-1867).
+System VM resilience watchdog remaining before MVP.
 ```
 
 #### 2. **Visualization** ❌

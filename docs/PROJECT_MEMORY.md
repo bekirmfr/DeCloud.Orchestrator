@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-04-24
-**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress.
+**Last Updated:** 2026-06-05
+**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05).
 
 ---
 
@@ -56,7 +56,7 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | General VMs | User workloads — AI, web apps, databases | ✅ Production |
 | Relay VMs | WireGuard tunnel + NAT for CGNAT nodes | ✅ Production |
 | DHT VMs | libp2p coordination over WireGuard mesh | ✅ Production-verified (2026-02-15) |
-| Block Store VMs | Distributed content-addressed storage (5% duty) | ✅ Phase A–E + item 31b (2026-04-24) |
+| Block Store VMs | Distributed content-addressed storage (5% duty) | ✅ Phases A–J complete (2026-06-05) |
 
 ### Networking
 
@@ -157,6 +157,13 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | ObligationStateController Layer 3 caller-IP binding (review finding 2.1) | ✅ |
 | DeCloud.Builds restructure (src/assets/cloud-init layout per role) | ✅ |
 | Binary release pipeline (GitHub Actions, binaries/v* tags) | ✅ |
+| Lazysync daemon — continuous VM disk replication (Phase D) | ✅ |
+| Live migration on node failure — disk reconstruction from chunk map (Phase D) | ✅ |
+| Split-brain prevention — zombie VM detection and cleanup (Phase E) | ✅ |
+| Self-healing replication mesh — needs-replica, presence-loss, survey (Phase F) | ✅ |
+| Application-consistent capture — guest-fsfreeze envelope (Phase G) | ✅ |
+| Bounded-freeze capture — drive-backup sync=top, fsck removed (Phase H) | ✅ |
+| blockdev-snapshot-sync — correct temporal coherence, Phase J (2026-06-05) | ✅ |
 
 ### What Is Incomplete
 
@@ -169,12 +176,12 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Node rating aggregates | ReviewService backend ready, not wired to UI |
 | Review prompts after VM termination | Frontend only |
 | More seed templates | Have 6, target 10–15 then community growth to 50+ |
-| Block Store Phase D | Lazysync — VM overlay replication |
-| System VM boot time optimizations | Partially resolved — gz+b64 decode (34s) eliminated by artifact cache; apt-get (~190s) remains the dominant cost; snapd masking applied in cloud-init |
+| Crash-recovery for orphaned lazysync overlays | `LibvirtVmManager` startup handler for `lazysync-overlay-*.qcow2` left by Phase J if node crashes between blockdev-add and DeleteSnapshotNodeAsync |
+| Migration CLI | `decloud vm migrate` / `decloud vm drain` — stubs exist, not yet implemented |
+| System VM boot time optimizations | apt-get (~190s) remains dominant cost; snapd masking applied; pre-baked base image would eliminate apt entirely |
 | Collaboration features | Shared VMs, infrastructure templates (Phase 3) |
 | Lightweight node support | Non-KVM nodes — design TBD |
 | Alpine Linux system VMs | 50 MB base image, 40× smaller |
-| Prebuilt binary distribution | ✅ Done — DHT and BlockStore binaries built by CI, published to GitHub Releases in DeCloud.Builds. Attestation agent (decloud-agent) still built from source in NodeAgent repo |
 
 ---
 
@@ -283,6 +290,12 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 | Block Store Phase A–C | 2026-03-20 |
 | GPU proxy (Ollama + PyTorch confirmed) | 2026-03-13 |
 | Windows WSL2 auto-start | 2026-04-05 |
+| Lazysync + live migration (Phase D) | 2026-04-20 |
+| Split-brain prevention (Phase E) | 2026-04-20 |
+| Self-healing replication mesh (Phase F) | 2026-05-31 |
+| Application-consistent capture — guest-fsfreeze (Phase G) | 2026-06-03 |
+| Bounded-freeze capture + reconstruction hardening (Phase H) | 2026-06-03 |
+| blockdev-snapshot-sync — correct temporal coherence (Phase J) | 2026-06-05 |
 
 ---
 
@@ -393,7 +406,9 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 
 - **CPU quota critical** — incorrect calculations caused 18-min boot times (vs. 2-min optimal)
 - **MAC-pinned netplan blocks migration boot** — overlay carries source node MAC in `/etc/netplan/50-cloud-init.yaml`; bootcmd must overwrite it before networkd starts or `network-online.target` hangs forever
-- **Dirty bitmap survives migration** — qcow2 persistent bitmap `lazysync` is carried in the overlay; receiving node must remove-then-add to avoid `AddDirtyBitmap failed` fallback to full export every cycle
+- **systemctl in bootcmd hangs on D-Bus** — `systemctl start qemu-guest-agent` in migration `bootcmd` blocks indefinitely before D-Bus is ready; remove it — the `qemu-guest-agent.service` symlink in `multi-user.target.wants` handles startup automatically
+- **drive-backup temporal incoherence** — `drive-backup sync=full/top` reads clusters unfrozen over tens of seconds; coupled ext4 metadata structures captured at different wall-clock moments produce temporal incoherence that `qemu-img check` cannot detect; use blockdev-snapshot instead
+- **blockdev-snapshot requires no backing-file in overlay header** — `qemu-img create -f qcow2` must NOT use `-b`; QEMU already holds write lock on disk.qcow2 and cannot open it as backing file via blockdev-add
 - **sysbench reliable** — provides consistent CPU performance normalization across hardware
 - **apt-get update dominant** — 190s of 343s cloud-init time is package list fetch; disabling it cuts boot by ~55%
 - **TCP_QUICKACK critical for RPC** — 40ms delayed ACK kills GPU proxy throughput; must re-arm before every `read()`
@@ -403,7 +418,7 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 
 - ❌ Custom VM image uploads — security risk, complex, low ROI
 - ❌ Mandatory staking — contradicts "universal participation" principle
-- ~~❌ Live migration~~ → ✅ Implemented (2026-04-20) — node-offline triggers automatic overlay reconstruction and VM reboot on best available node
+- ~~❌ Live migration~~ → ✅ Implemented (Phase J, 2026-06-05) — node-offline triggers automatic full-disk reconstruction and VM reboot on best available node; blockdev-snapshot-sync guarantees temporal coherence
 - ❌ Team workspaces — niche until user base grows
 - ~~❌ DHT-based discovery~~ → ✅ Implemented (2026-02-15)
 
@@ -422,7 +437,7 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 - **Mobile integration:** Two-tier architecture
   - Mobile tier: WebAssembly tasks, ML inference, distributed storage
   - Server tier: full VM hosting (existing)
-- **Block Store Phase D–E:** Lazysync + Live Migration — ✅ Complete (2026-04-20). Continuous overlay replication, automatic node-offline migration, dirty bitmap incremental sync, overlay reconstruction from chunk map. System VM resilience watchdog remaining.
+- **Block Store Phases D–J:** ✅ Complete (2026-06-05). Continuous full-disk replication via blockdev-snapshot-sync (Phase J), automatic node-offline migration, disk reconstruction from chunk map, self-healing mesh replication, split-brain prevention. Crash-recovery for orphaned overlay files remaining.
 - **Alpine base images:** 50 MB system VMs, 5-second boot, ~6.5-min → ~2-min total deploy time
 - **Smart contract coordination:** Move toward true decentralization
 
