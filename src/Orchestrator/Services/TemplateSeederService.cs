@@ -37,10 +37,13 @@ public class TemplateSeederService
     // Per-template role layer URLs
     private const string AiChatbotRoleUrl =
         $"{CloudInitRawBase}/tenant-vms/ai-chatbot/cloud-init.yaml";
+    private const string MinecraftPaperRoleUrl =
+        $"{CloudInitRawBase}/tenant-vms/minecraft-paper/cloud-init.yaml";
 
     // Per-template revisions — bump when role layer or seeder metadata changes
     // in a way that should redeploy new VMs created from this template.
     private const int AiChatbotTemplateRevision = 1;
+    private const int MinecraftPaperTemplateRevision = 1;
 
     public TemplateSeederService(
         ITemplateService templateService,
@@ -229,6 +232,14 @@ public class TemplateSeederService
                 Description = "Privacy-focused tools, VPNs, secure browsing, and censorship-resistant applications",
                 IconEmoji = "🔒",
                 DisplayOrder = 5
+            },
+            new TemplateCategory
+            {
+                Name = "Gaming",
+                Slug = "gaming",
+                Description = "Game servers and multiplayer worlds",
+                IconEmoji = "🎮",
+                DisplayOrder = 6
             }
         };
     }
@@ -252,8 +263,7 @@ public class TemplateSeederService
             // qemu-guest-agent, sshd drop-in, and chpasswd bootcmd from
             // base-tenant.yaml instead of bypassing them.
             CreateVllmInferenceServerTemplate(),
-            CreatePytorchJupyterTemplate(),
-            CreateMinecraftTemplate()
+            CreatePytorchJupyterTemplate()
         };
     }
 
@@ -2762,448 +2772,6 @@ final_message: |
   Note: torch.compile() is disabled (requires kernel driver, not available in proxy mode).
   Note: CUDA Graphs are disabled (noop stubs — use eager mode).";
 
-    private VmTemplate CreateMinecraftTemplate()
-    {
-        return new VmTemplate
-        {
-            Name = "Minecraft Paper Server",
-            Slug = "minecraft-paper",
-            Version = "1.0.0",
-            Revision = 1,
-            Category = "gaming",
-            Description = "Multiplayer Minecraft Java Edition server running Paper — the fastest, most stable Minecraft server software. Invite friends within minutes.",
-            LongDescription = @"## Features
-- **Paper** — the most widely used high-performance Minecraft server fork, compatible with all Spigot/Bukkit plugins
-- Java 21 runtime with Aikar's tuned JVM flags for low GC pauses
-- Auto-scales JVM heap to 75% of available RAM at startup
-- Graceful shutdown saves the world before stopping
-- RCON enabled for remote server management
-- Systemd service — auto-restarts on crash, survives reboots
- 
-## Getting Started
-1. Wait for setup (~2–3 minutes for Java install + Paper download)
-2. Connect from Minecraft Java Edition → Multiplayer → Add Server
-3. **Server Address:** `${DECLOUD_DOMAIN}:25565`
-4. SSH access: `ssh ubuntu@${DECLOUD_DOMAIN}` (password: `${DECLOUD_PASSWORD}`)
- 
-## Choosing a Version
-The `Minecraft Version` field accepts any version with a PaperMC build, e.g. `1.21.4`, `1.20.6`, `1.19.4`.
-Check available versions at https://papermc.io/downloads/paper.
- 
-## Server Management
-```bash
-# View live server console
-journalctl -u minecraft -f
- 
-# Run a server command (e.g. op a player)
-systemctl stop minecraft      # graceful save + stop
-systemctl start minecraft
- 
-# RCON console (local)
-RCON_PASS=$(cat /opt/minecraft/.rcon-password)
-python3 /opt/minecraft/rcon.py ""$RCON_PASS"" ""op YourUsername""
-```
- 
-## Plugins
-Drop `.jar` files into `/opt/minecraft/plugins/`, then restart:
-```bash
-systemctl restart minecraft
-```
- 
-## Backups
-World data lives at `/opt/minecraft/world/`. To back up:
-```bash
-tar czf ~/world-backup-$(date +%Y%m%d).tar.gz /opt/minecraft/world/
-```",
-
-            AuthorId = "platform",
-            AuthorName = "DeCloud",
-            SourceUrl = "https://papermc.io/",
-            License = "MIT",
-
-            Tags = new List<string> { "minecraft", "gaming", "java", "multiplayer", "paper", "sandbox" },
-
-            // ── Specs ──────────────────────────────────────────────────────────
-            // Vanilla + a few players: 2 vCPU / 4 GB works.
-            // Paper with plugins or 10+ players: 4 vCPU / 8 GB recommended.
-            MinimumSpec = new VmSpec
-            {
-                VirtualCpuCores = 2,
-                MemoryBytes = 4L * 1024 * 1024 * 1024,   // 4 GB
-                DiskBytes = 20L * 1024 * 1024 * 1024,  // 20 GB (world grows over time)
-            },
-            RecommendedSpec = new VmSpec
-            {
-                VirtualCpuCores = 4,
-                MemoryBytes = 8L * 1024 * 1024 * 1024,   // 8 GB
-                DiskBytes = 50L * 1024 * 1024 * 1024,  // 50 GB
-            },
-
-            RequiresGpu = false,
-
-            // ── Ports ──────────────────────────────────────────────────────────
-            ExposedPorts = new List<TemplatePort>
-        {
-            new()
-            {
-                Port        = 25565,
-                Protocol    = "tcp",
-                Description = "Minecraft Java Edition",
-                IsPublic    = true,
-                ReadinessCheck = new ServiceCheck
-                {
-                    // TCP connect succeeds as soon as the server is accepting connections.
-                    // Paper takes ~60–90 s for world generation on first boot; 300 s is
-                    // generous enough to cover any hardware tier.
-                    Strategy       = CheckStrategy.TcpPort,
-                    TimeoutSeconds = 300,
-                }
-            }
-        },
-
-            // No DefaultAccessUrl — Minecraft uses a proprietary protocol, not HTTP.
-            // The long description explains the server address format.
-            DefaultAccessUrl = null,
-
-            UseGeneratedPassword = true,
-
-            EstimatedCostPerHour = 0.08m,  // ~2 vCPU / 4 GB baseline
-            DefaultBandwidthTier = BandwidthTier.Standard, // multiplayer traffic is light per player
-
-            Status = TemplateStatus.Published,
-            Visibility = TemplateVisibility.Public,
-            IsFeatured = true,
-            IsVerified = true,
-            IsCommunity = false,
-            PricingModel = TemplatePricingModel.Free,
-            TemplatePrice = 0,
-            AverageRating = 0,
-            TotalReviews = 0,
-            RatingDistribution = new int[5],
-
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-
-            // ── Variables ──────────────────────────────────────────────────────
-            // Platform statics are resolved automatically by the registered resolver
-            // registry (HOSTNAME, SSH_AUTHORIZED_KEYS_BLOCK, CA_PUBLIC_KEY,
-            // PASSWORD_CONFIG_BLOCK, SSH_PASSWORD_AUTH, ADMIN_PASSWORD).
-            // The five entries below are user-supplied at deploy time.
-            Variables = new List<TemplateVariable>
-        {
-            // ── Platform statics (auto-resolved) ─────────────────────────
-            new() { Name = "HOSTNAME",                   Kind = VariableKind.Static, Required = false, DefaultValue = "" },
-            new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK",  Kind = VariableKind.Static, Required = false, DefaultValue = "" },
-            new() { Name = "CA_PUBLIC_KEY",              Kind = VariableKind.Static, Required = false, DefaultValue = "" },
-            new() { Name = "PASSWORD_CONFIG_BLOCK",      Kind = VariableKind.Static, Required = false, DefaultValue = "" },
-            new() { Name = "SSH_PASSWORD_AUTH",          Kind = VariableKind.Static, Required = false, DefaultValue = "false" },
-            new() { Name = "ADMIN_PASSWORD",             Kind = VariableKind.Static, Required = false, DefaultValue = "" },
- 
-            // ── User-supplied statics (appear in the deploy form) ─────────
-            new()
-            {
-                Name         = "MINECRAFT_VERSION",
-                Kind         = VariableKind.Static,
-                Required     = false,
-                DefaultValue = "1.21.4",
-                Description  = "Minecraft Java Edition version. Must have a PaperMC build. " +
-                               "Check https://papermc.io/downloads/paper for available versions.",
-            },
-            new()
-            {
-                Name         = "SERVER_MOTD",
-                Kind         = VariableKind.Static,
-                Required     = false,
-                DefaultValue = "A DeCloud Minecraft Server",
-                Description  = "Message shown below the server name in the multiplayer list. " +
-                               "Single line. Avoid special shell characters.",
-            },
-            new()
-            {
-                Name         = "MAX_PLAYERS",
-                Kind         = VariableKind.Static,
-                Required     = false,
-                DefaultValue = "20",
-                Description  = "Maximum number of simultaneous players. Increase with RAM: " +
-                               "4 GB → 20 players, 8 GB → 50 players, 16 GB → 100+ players.",
-            },
-            new()
-            {
-                Name         = "DIFFICULTY",
-                Kind         = VariableKind.Static,
-                Required     = false,
-                DefaultValue = "normal",
-                Description  = "Server difficulty: peaceful, easy, normal, or hard.",
-            },
-            new()
-            {
-                Name         = "GAMEMODE",
-                Kind         = VariableKind.Static,
-                Required     = false,
-                DefaultValue = "survival",
-                Description  = "Default gamemode for new players: survival, creative, adventure, or spectator.",
-            },
-        },
-
-            // ── Cloud-init ─────────────────────────────────────────────────────
-            // RULES (enforced by the YAML parser — see PyTorch template warning):
-            //   1. NO heredocs (<<EOF) anywhere in runcmd. They place content at
-            //      column 0 which the cloud-init YAML parser misreads as a new
-            //      top-level document and silently skips the entire runcmd.
-            //   2. All static file content goes in write_files (properly indented).
-            //   3. Dynamic content in runcmd uses printf/python3 -c/sed -i.
-            //
-            // setup.sh (a write_files entry) is a full bash script — it CAN use
-            // heredocs internally because by the time bash runs it the YAML has
-            // already been parsed.
-            CloudInitTemplate = MINECRAFT_CLOUD_INIT,
-        };
-    }
-
-    private const string MINECRAFT_CLOUD_INIT = @"#cloud-config
- 
-# Minecraft Paper Server — DeCloud Template v1.0.0
- 
-hostname: __HOSTNAME__
-fqdn: __HOSTNAME__
- 
-__SSH_AUTHORIZED_KEYS_BLOCK__
-__CA_PUBLIC_KEY__
-__PASSWORD_CONFIG_BLOCK__
- 
-ssh_pwauth: __SSH_PASSWORD_AUTH__
- 
-packages:
-  - openjdk-21-jre-headless
-  - curl
-  - python3
-  - qemu-guest-agent
- 
-package_update: true
-package_upgrade: true
- 
-write_files:
- 
-  # ── server.properties ──────────────────────────────────────────────────
-  # Render-time variables are substituted before deploy.
-  # The RCON password is generated at runtime and patched by setup.sh.
-  - path: /opt/minecraft/server.properties
-    owner: root:root
-    permissions: '0640'
-    content: |
-      #Minecraft server properties
-      online-mode=true
-      server-port=25565
-      query.port=25565
-      enable-query=false
-      motd=__SERVER_MOTD__
-      max-players=__MAX_PLAYERS__
-      difficulty=__DIFFICULTY__
-      gamemode=__GAMEMODE__
-      enable-whitelist=false
-      spawn-protection=16
-      allow-nether=true
-      allow-flight=false
-      pvp=true
-      level-seed=
-      enable-rcon=true
-      rcon.port=25575
-      rcon.password=RCON_PASSWORD_PLACEHOLDER
- 
-  # ── start.sh ───────────────────────────────────────────────────────────
-  # Calculates JVM heap at service start time (75% of installed RAM).
-  # Uses Aikar's flags — the Paper-recommended JVM tuning set.
-  - path: /opt/minecraft/start.sh
-    owner: minecraft:minecraft
-    permissions: '0755'
-    content: |
-      #!/bin/bash
-      TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-      JVM_HEAP_MB=$((TOTAL_MEM_KB / 1024 * 75 / 100))
-      exec java \
-        -Xms512M -Xmx${JVM_HEAP_MB}M \
-        -XX:+UseG1GC \
-        -XX:+ParallelRefProcEnabled \
-        -XX:MaxGCPauseMillis=200 \
-        -XX:+UnlockExperimentalVMOptions \
-        -XX:+DisableExplicitGC \
-        -XX:+AlwaysPreTouch \
-        -XX:G1NewSizePercent=30 \
-        -XX:G1MaxNewSizePercent=40 \
-        -XX:G1HeapRegionSize=8M \
-        -XX:G1ReservePercent=20 \
-        -XX:G1HeapWastePercent=5 \
-        -XX:G1MixedGCCountTarget=4 \
-        -XX:InitiatingHeapOccupancyPercent=15 \
-        -XX:G1MixedGCLiveThresholdPercent=90 \
-        -XX:G1RSetUpdatingPauseTimePercent=5 \
-        -XX:SurvivorRatio=32 \
-        -XX:+PerfDisableSharedMem \
-        -XX:MaxTenuringThreshold=1 \
-        -Dusing.aikars.flags=true \
-        -jar /opt/minecraft/paper.jar --nogui
- 
-  # ── rcon.py ────────────────────────────────────────────────────────────
-  # Minimal RCON client. Used for graceful shutdown and for the server
-  # management examples in the long description.
-  # Usage: python3 /opt/minecraft/rcon.py <password> <command>
-  # Exit 0 = success, exit 1 = connection failed (server not running).
-  - path: /opt/minecraft/rcon.py
-    owner: minecraft:minecraft
-    permissions: '0755'
-    content: |
-      #!/usr/bin/env python3
-      import socket, struct, sys, time
- 
-      HOST, PORT = '127.0.0.1', 25575
- 
-      def packet(req_id, pkt_type, payload):
-          body = payload.encode() + b'\x00\x00'
-          return struct.pack('<iii', len(body) + 8, req_id, pkt_type) + body
- 
-      def recv_packet(s):
-          def read(n):
-              buf = b''
-              while len(buf) < n:
-                  chunk = s.recv(n - len(buf))
-                  if not chunk:
-                      raise ConnectionError('Connection closed')
-                  buf += chunk
-              return buf
-          length = struct.unpack('<i', read(4))[0]
-          data = read(length)
-          req_id, pkt_type = struct.unpack('<ii', data[:8])
-          return req_id, pkt_type, data[8:-2].decode(errors='replace')
- 
-      def main():
-          if len(sys.argv) < 3:
-              print('Usage: rcon.py <password> <command>', file=sys.stderr)
-              sys.exit(2)
-          password, command = sys.argv[1], ' '.join(sys.argv[2:])
-          try:
-              with socket.create_connection((HOST, PORT), timeout=10) as s:
-                  s.sendall(packet(1, 3, password))
-                  req_id, _, _ = recv_packet(s)
-                  if req_id == -1:
-                      print('Authentication failed', file=sys.stderr)
-                      sys.exit(1)
-                  s.sendall(packet(2, 2, command))
-                  _, _, response = recv_packet(s)
-                  if response:
-                      print(response)
-          except Exception as e:
-              print(f'RCON error: {e}', file=sys.stderr)
-              sys.exit(1)
- 
-      if __name__ == '__main__':
-          main()
- 
-  # ── minecraft.service ──────────────────────────────────────────────────
-  # ExecStop sends 'stop' via RCON which triggers Paper's graceful shutdown
-  # (world save, player disconnect, clean exit). TimeoutStopSec gives the
-  # server 60 s to complete the save before systemd sends SIGKILL.
-  - path: /etc/systemd/system/minecraft.service
-    owner: root:root
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Minecraft Paper Server
-      After=network-online.target
-      Wants=network-online.target
- 
-      [Service]
-      Type=simple
-      User=minecraft
-      Group=minecraft
-      WorkingDirectory=/opt/minecraft
-      ExecStart=/opt/minecraft/start.sh
-      ExecStop=python3 /opt/minecraft/rcon.py RCON_PASSWORD_PLACEHOLDER stop
-      Restart=on-failure
-      RestartSec=30
-      TimeoutStopSec=60
-      StandardOutput=journal
-      StandardError=journal
-      SyslogIdentifier=minecraft
- 
-      [Install]
-      WantedBy=multi-user.target
- 
-  # ── setup.sh ───────────────────────────────────────────────────────────
-  # Runs once at first boot via runcmd.
-  # Downloads Paper, generates the RCON password, patches server.properties
-  # and the systemd unit, then starts the service.
-  # This file is in write_files so the bash script content can use heredocs
-  # internally without breaking cloud-init's YAML parser.
-  - path: /opt/minecraft/setup.sh
-    owner: root:root
-    permissions: '0755'
-    content: |
-      #!/bin/bash
-      set -euo pipefail
- 
-      MC_VERSION=""__MINECRAFT_VERSION__""
-      INSTALL_DIR=""/opt/minecraft""
- 
-      log() { echo ""[DeCloud/minecraft] $*""; }
- 
-      # ── Create system user ────────────────────────────────────────────
-      if ! id minecraft &>/dev/null; then
-        useradd --system --shell /usr/sbin/nologin --home-dir ""$INSTALL_DIR"" minecraft
-      fi
-      mkdir -p ""$INSTALL_DIR/plugins""
-      chown -R minecraft:minecraft ""$INSTALL_DIR""
- 
-      # ── Download Paper ────────────────────────────────────────────────
-      log ""Fetching Paper ${MC_VERSION} build info...""
-      BUILD=$(python3 - <<'PYEOF'
-      import urllib.request, json, sys
-      version = '__MINECRAFT_VERSION__'
-      url = f'https://api.papermc.io/v2/projects/paper/versions/{version}/builds/'
-      with urllib.request.urlopen(url, timeout=30) as r:
-          data = json.load(r)
-      stable = [b for b in data['builds'] if b.get('channel') == 'STABLE']
-      builds = stable if stable else data['builds']
-      print(builds[-1]['build'])
-      PYEOF
-      )
- 
-      log ""Downloading Paper ${MC_VERSION} build ${BUILD}...""
-      curl -sf -o ""$INSTALL_DIR/paper.jar"" \
-        ""https://api.papermc.io/v2/projects/paper/versions/${MC_VERSION}/builds/${BUILD}/downloads/paper-${MC_VERSION}-${BUILD}.jar""
-      chown minecraft:minecraft ""$INSTALL_DIR/paper.jar""
- 
-      # ── Accept EULA ───────────────────────────────────────────────────
-      echo 'eula=true' > ""$INSTALL_DIR/eula.txt""
-      chown minecraft:minecraft ""$INSTALL_DIR/eula.txt""
- 
-      # ── Generate RCON password ────────────────────────────────────────
-      RCON_PASS=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
-      echo ""$RCON_PASS"" > ""$INSTALL_DIR/.rcon-password""
-      chmod 600 ""$INSTALL_DIR/.rcon-password""
-      chown minecraft:minecraft ""$INSTALL_DIR/.rcon-password""
- 
-      # ── Patch RCON password into server.properties and service unit ───
-      # The placeholder 'RCON_PASSWORD_PLACEHOLDER' was written by cloud-init
-      # write_files; we replace it here with the actual generated password.
-      sed -i ""s|RCON_PASSWORD_PLACEHOLDER|${RCON_PASS}|g"" \
-        ""$INSTALL_DIR/server.properties"" \
-        /etc/systemd/system/minecraft.service
- 
-      chown minecraft:minecraft ""$INSTALL_DIR/server.properties""
- 
-      # ── Enable and start service ──────────────────────────────────────
-      systemctl daemon-reload
-      systemctl enable minecraft
-      systemctl start minecraft
- 
-      log ""Paper ${MC_VERSION} build ${BUILD} is starting.""
-      log ""Connect: __HOSTNAME__:25565""
-      log ""RCON password saved to $INSTALL_DIR/.rcon-password""
- 
-runcmd:
-  - bash /opt/minecraft/setup.sh
-";
-
     // ════════════════════════════════════════════════════════════════════════
     // Compose-pipeline tenant templates
     // ════════════════════════════════════════════════════════════════════════
@@ -3230,6 +2798,8 @@ runcmd:
         // failure-domain isolation in SeedAsync().
         await TryUpsertComposeAsync("ai-chatbot-ollama",
             () => BuildAiChatbotTemplateAsync(ct), ct);
+        await TryUpsertComposeAsync("minecraft-paper",
+            () => BuildMinecraftPaperTemplateAsync(ct), ct);
     }
 
     private async Task TryUpsertComposeAsync(
@@ -3507,5 +3077,244 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                     "with fallback to {vm.Id}.{ingressService.BaseDomain}. " +
                     "Used in the motd block (final_message body is intentionally " +
                     "absent — see TemplateComposer block-scalar workaround note)." },
+    };
+
+    // ── Minecraft Paper Server ───────────────────────────────────────────
+
+    /// <summary>
+    /// Build the Minecraft Paper Server template by composing
+    /// base-tenant.yaml + tenant-vms/minecraft-paper/cloud-init.yaml. The role
+    /// layer carries only the Paper workload; SSH password auth,
+    /// qemu-guest-agent, sshd_config drop-in, and chpasswd bootcmd are
+    /// provided by base-tenant.yaml.
+    /// </summary>
+    private async Task<VmTemplate> BuildMinecraftPaperTemplateAsync(CancellationToken ct)
+    {
+        var baseLayer = await _httpClient.GetStringAsync(BaseTenantUrl, ct);
+        var roleLayer = await _httpClient.GetStringAsync(MinecraftPaperRoleUrl, ct);
+
+        var composed = TemplateComposer.Compose(
+            baseLayer, roleLayer,
+            baseName: "base-tenant.yaml",
+            roleName: "tenant-vms/minecraft-paper/cloud-init.yaml");
+
+        return new VmTemplate
+        {
+            Slug = "minecraft-paper",
+            Name = "Minecraft Paper Server",
+            // Bumped to 2.0.0 from the legacy 1.0.0 — major version because
+            // the pipeline changed (inline → compose). Behaviour to the user
+            // is the same. The legacy 1.0.0 record's MongoDB _id is preserved
+            // by UpsertComposeTemplateAsync's slug-based upsert.
+            Version = "2.0.0",
+            Revision = MinecraftPaperTemplateRevision,
+            Category = "gaming",
+
+            Description =
+                "Multiplayer Minecraft Java Edition server running Paper — " +
+                "the fastest, most stable Minecraft server software. " +
+                "Invite friends within minutes.",
+
+            LongDescription = @"## Features
+- **Paper** — the most widely used high-performance Minecraft server fork, compatible with all Spigot/Bukkit plugins
+- Java 21 runtime with Aikar's tuned JVM flags for low GC pauses
+- Auto-scales JVM heap to 75% of available RAM at startup
+- Graceful shutdown saves the world before stopping
+- RCON enabled for remote server management
+- Systemd service — auto-restarts on crash, survives reboots
+
+## Getting Started
+1. Wait for setup (~2–3 minutes for Java install + Paper download)
+2. Connect from Minecraft Java Edition → Multiplayer → Add Server
+3. **Server Address:** `${DECLOUD_DOMAIN}:25565`
+4. SSH access: `ssh root@${DECLOUD_DOMAIN}` (password: `${DECLOUD_PASSWORD}`)
+
+## Choosing a Version
+The `Minecraft Version` field accepts any version with a PaperMC build, e.g. `1.21.4`, `1.20.6`, `1.19.4`.
+Check available versions at https://papermc.io/downloads/paper.
+
+## Server Management
+````bash
+# View live server console
+journalctl -u minecraft -f
+
+# Graceful save + stop / start
+systemctl stop minecraft
+systemctl start minecraft
+
+# RCON console (local)
+RCON_PASS=$(cat /opt/minecraft/.rcon-password)
+python3 /opt/minecraft/rcon.py ""$RCON_PASS"" ""op YourUsername""
+````
+
+## Plugins
+Drop `.jar` files into `/opt/minecraft/plugins/`, then restart:
+````bash
+systemctl restart minecraft
+````
+
+## Backups
+World data lives at `/opt/minecraft/world/`. To back up:
+````bash
+tar czf ~/world-backup-$(date +%Y%m%d).tar.gz /opt/minecraft/world/
+```",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://papermc.io/",
+            License = "MIT",
+
+            Tags = new List<string>
+            {
+                "minecraft", "gaming", "java", "multiplayer", "paper", "sandbox"
+            },
+
+            // ── Specs ─────────────────────────────────────────────────────
+            // Vanilla + a few players: 2 vCPU / 4 GB works.
+            // Paper with plugins or 10+ players: 4 vCPU / 8 GB recommended.
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024, //  4 GB
+                DiskBytes = 20L * 1024 * 1024 * 1024, // 20 GB
+            },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024, //  8 GB
+                DiskBytes = 50L * 1024 * 1024 * 1024, // 50 GB
+            },
+
+            RequiresGpu = false,
+
+            // ── Ports ─────────────────────────────────────────────────────
+            ExposedPorts = new List<TemplatePort>
+            {
+                new()
+                {
+                    Port        = 25565,
+                    Protocol    = "tcp",
+                    Description = "Minecraft Java Edition",
+                    IsPublic    = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        // TCP connect succeeds as soon as the server is
+                        // accepting connections. Paper takes ~60-90 s for
+                        // world generation on first boot; 300 s is generous.
+                        Strategy       = CheckStrategy.TcpPort,
+                        TimeoutSeconds = 300,
+                    }
+                }
+            },
+
+            DefaultAccessUrl = null,  // Minecraft is not HTTP
+            UseGeneratedPassword = true,
+
+            EstimatedCostPerHour = 0.08m,
+            DefaultBandwidthTier = BandwidthTier.Standard,
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            // Set IsVerified to false until the compose-pipeline migration is
+            // field-validated (see VALIDATION.md). Flip to true after a
+            // successful end-to-end deploy with a real Minecraft client
+            // connection. Avoids mis-signalling "platform verified" before
+            // the migrated template has had a real test.
+            IsVerified = false,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+
+            CloudInitTemplate = composed,
+            Variables = BuildMinecraftPaperVariables(),
+        };
+    }
+
+    /// <summary>
+    /// Declared Variables for the Minecraft Paper composed template. Every
+    /// <c>__VARNAME__</c> placeholder in the composed cloud-init must appear
+    /// here. Mirrors <see cref="BuildAiChatbotVariables"/> plus the five
+    /// Minecraft-specific user statics (version, MOTD, max players, etc.).
+    /// </summary>
+    private static List<TemplateVariable> BuildMinecraftPaperVariables() => new()
+    {
+        // ── Identity / platform context (resolved by platform-common resolvers) ──
+        new() { Name = "VM_ID",            Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier (UUID). Used in /etc/ssh/auth_principals/root by base-tenant.yaml." },
+        new() { Name = "VM_NAME",          Kind = VariableKind.Static, Required = true,
+                Description = "VM display name." },
+        new() { Name = "HOSTNAME",         Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname for the VM. Referenced in setup.sh log and final_message." },
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "URL the VM uses to reach the orchestrator." },
+
+        // ── SSH / password (platform statics, resolved by registered resolvers) ──
+        new() { Name = "CA_PUBLIC_KEY",              Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK",  Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk listing user SSH public keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK",      Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for chpasswd.users (cloud-init 22.3+ format)." },
+        new() { Name = "ADMIN_PASSWORD",             Kind = VariableKind.Static,
+                DefaultValue = "",
+                Description = "Plaintext root password. Set via UseGeneratedPassword pipeline at deploy time. Used by base-tenant.yaml's chpasswd bootcmd and referenced in final_message." },
+        new() { Name = "SSH_PASSWORD_AUTH",          Kind = VariableKind.Static,
+                DefaultValue = "false",
+                Description = "'true' or 'false' for cloud-init's ssh_pwauth. Derived from ADMIN_PASSWORD presence." },
+
+        // ── User-supplied statics — surface in the deploy form ────────────────
+        new()
+        {
+            Name         = "MINECRAFT_VERSION",
+            Kind         = VariableKind.Static,
+            Required     = false,
+            DefaultValue = "1.21.4",
+            Description  = "Minecraft Java Edition version. Must have a PaperMC build. " +
+                           "Check https://papermc.io/downloads/paper for available versions.",
+        },
+        new()
+        {
+            Name         = "SERVER_MOTD",
+            Kind         = VariableKind.Static,
+            Required     = false,
+            DefaultValue = "A DeCloud Minecraft Server",
+            Description  = "Message shown below the server name in the multiplayer list. " +
+                           "Single line. Avoid special shell characters.",
+        },
+        new()
+        {
+            Name         = "MAX_PLAYERS",
+            Kind         = VariableKind.Static,
+            Required     = false,
+            DefaultValue = "20",
+            Description  = "Maximum number of simultaneous players. Scale with RAM: " +
+                           "4 GB → 20 players, 8 GB → 50 players, 16 GB → 100+ players.",
+        },
+        new()
+        {
+            Name         = "DIFFICULTY",
+            Kind         = VariableKind.Static,
+            Required     = false,
+            DefaultValue = "normal",
+            Description  = "Server difficulty: peaceful, easy, normal, or hard.",
+        },
+        new()
+        {
+            Name         = "GAMEMODE",
+            Kind         = VariableKind.Static,
+            Required     = false,
+            DefaultValue = "survival",
+            Description  = "Default gamemode for new players: survival, creative, adventure, or spectator.",
+        },
     };
 }
