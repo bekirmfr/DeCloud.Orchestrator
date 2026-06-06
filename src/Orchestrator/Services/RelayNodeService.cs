@@ -540,7 +540,14 @@ PersistentKeepalive = 25";
                 tunnel_ip = tunnelIp,
                 allowed_ips = $"{tunnelIp}/32",
                 persistent_keepalive = 25,
-                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})",
+                // peer_type + parent_node_id give the dashboard a uniform grouping
+                // key. CGNAT peer's parent_node_id is itself; system VMs owned by
+                // this CGNAT node carry the same value. Without these fields the
+                // relay-api falls back to "cgnat-node" + null and the dashboard
+                // can't group the node's system VMs underneath it.
+                peer_type = "cgnat-node",
+                parent_node_id = cgnatNode.Id
             };
 
             _logger.LogInformation(
@@ -938,7 +945,13 @@ PersistentKeepalive = 25";
                 tunnel_ip = cgnatNode.CgnatInfo.TunnelIp,  // ✅ CRITICAL: Use EXISTING tunnel IP
                 allowed_ips = $"{cgnatNode.CgnatInfo.TunnelIp}/32",
                 persistent_keepalive = 25,
-                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})"
+                description = $"CGNAT node {cgnatNode.Name} ({cgnatNode.Id})",
+                // peer_type + parent_node_id give the dashboard a uniform grouping
+                // key. Mirrors RegisterCgnatNodeWithRelayAsync above — heartbeats
+                // travelling this self-healing path must carry the same identity
+                // so the relay-api's metadata stays consistent across re-registers.
+                peer_type = "cgnat-node",
+                parent_node_id = cgnatNode.Id
             };
 
             var httpClient2 = _httpClientFactory.CreateClient("RelayApi");
