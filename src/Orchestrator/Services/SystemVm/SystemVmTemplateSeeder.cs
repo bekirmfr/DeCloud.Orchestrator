@@ -434,7 +434,7 @@ public sealed partial class SystemVmTemplateSeeder
         RecommendedSpec = new VmSpec
         {
             VirtualCpuCores = 1,
-            MemoryBytes = 256L * 1024 * 1024,
+            MemoryBytes = 512L * 1024 * 1024,
             DiskBytes = 2L * 1024 * 1024 * 1024,
             QualityTier = QualityTier.Burstable,
             ComputePointCost = 1,
