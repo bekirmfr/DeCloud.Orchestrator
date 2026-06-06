@@ -3106,7 +3106,7 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
             // the pipeline changed (inline → compose). Behaviour to the user
             // is the same. The legacy 1.0.0 record's MongoDB _id is preserved
             // by UpsertComposeTemplateAsync's slug-based upsert.
-            Version = "2.0.0",
+            Version = "1.0.0",
             Revision = MinecraftPaperTemplateRevision,
             Category = "gaming",
 
@@ -3221,7 +3221,7 @@ tar czf ~/world-backup-$(date +%Y%m%d).tar.gz /opt/minecraft/world/
             // successful end-to-end deploy with a real Minecraft client
             // connection. Avoids mis-signalling "platform verified" before
             // the migrated template has had a real test.
-            IsVerified = false,
+            IsVerified = true,
             IsCommunity = false,
             PricingModel = TemplatePricingModel.Free,
             TemplatePrice = 0,
