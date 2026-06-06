@@ -1312,10 +1312,10 @@ public class DataStore
                 ByArchitecture = new()
                 {
                     ["amd64"] = new(
-                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260515/jammy-server-cloudimg-amd64.img",
+                        "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img",
                         ""),
                     ["arm64"] = new(
-                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260515/jammy-server-cloudimg-arm64.img",
+                        "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-arm64.img",
                         ""),
                 },
             },

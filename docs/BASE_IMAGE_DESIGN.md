@@ -181,39 +181,95 @@ var descriptor = _dataStore.Images.TryGetValue(imageId, out var image)
 Returns null on miss; callers fail the schedule with a clear error. No
 fallback to a default image.
 
-### 4.2 URL pinning discipline
+### 4.2 URL choice: align to upstream durability
 
-Every URL in `DataStore.Images` must point at a specific, immutable upstream
-build — never `latest/`, `current/`, or any other moving symlink.
+Every URL in `DataStore.Images` is a *fetch hint*; the SHA256 is the
+identity contract. The URL must point at a path the upstream mirror
+**actually keeps durable**. That is not the same thing as "looks
+versioned."
 
-Examples (current seed):
+**Lesson from 2026-06-06.** Earlier guidance recommended pinning to
+upstream dated builds (`releases/jammy/release-20260515/…`) on the
+theory that "bytes at a dated URL today are the bytes that will be
+there in two years, modulo upstream eventually pruning very old builds
+(years out, not weeks)." That theory was wrong for Ubuntu's
+`cloud-images.ubuntu.com`: the dated `releases/{codename}/release-YYYYMMDD/`
+sibling directories are pruned within **weeks** of the next release.
+A clean General-VM deploy on 2026-06-06 failed with HTTP 404 fetching
+a URL the seed had been pinning for ~22 days. The fix replaced the
+guidance, not just the URL — see PROJECT_MEMORY.md
+"Base-image URL durability (2026-06-06)."
+
+**Decision rule.** Choose the URL pattern the upstream mirror commits
+to keeping. That is mirror-specific:
+
+| Distro / mirror | ✅ durable | ❌ avoid | ❌ avoid |
+|---|---|---|---|
+| Ubuntu (`cloud-images.ubuntu.com`) | `releases/{codename}/release/ubuntu-XX.YY-server-cloudimg-{arch}.img` | `releases/{codename}/release-YYYYMMDD/…` (pruned within weeks) | `{codename}/current/{codename}-server-cloudimg-{arch}.img` (daily builds — different artifact, different cadence) |
+| Debian (`cloud.debian.org`) | `images/cloud/{codename}/latest/debian-XX-generic-{arch}.qcow2` | `images/cloud/{codename}/YYYYMMDD-NNNN/…` (pruned, eventually) | — |
+| Fedora (`download.fedoraproject.org`) | `pub/fedora/linux/releases/{N}/Cloud/{arch}/images/Fedora-Cloud-Base-Generic.{arch}-{N}-{point}.qcow2` (point-versioned in filename) | — | — |
+| Alpine (`dl-cdn.alpinelinux.org`) | `alpine/v{N.M}/releases/cloud/nocloud_alpine-{N.M.P}-{arch}-bios-cloudinit-r{R}.qcow2` (point-versioned in filename) | — | — |
+
+For Ubuntu specifically: the `release/` rolling alias is what
+Canonical guarantees stays addressable; the `release-YYYYMMDD/`
+siblings are point-in-time snapshots that the mirror reaps.
+"Versioned" does not imply "durable" — the boundary is what the
+mirror keeps, not what the URL looks like.
+
+**Why this is safe with content addressing.** Pointing the URL at a
+rolling alias does NOT mean we accept whatever bytes happen to be
+there. The `SHA256` field continues to do the identification:
+
+- **Permissive bootstrap** (seed SHA256 empty): node downloads, hashes,
+  records. Subsequent migrations enforce.
+- **Strict** (seed SHA256 populated): node refuses anything that
+  doesn't hash to the recorded value.
+
+When the upstream alias rotates content (e.g., 22.04.4 → 22.04.5
+point release), strict-mode verification fires a clear mismatch with
+exactly the message we want — `"URL has drifted ... seed needs a
+bump"` — and operators update the seed in a single PR. That is the
+**desired** drift signal. The previous mechanism produced silent 404s
+instead.
+
+**Why versioned filenames are still fine when the upstream provides
+them.** Fedora's filename embeds the point release; Alpine's embeds
+the patch level. The filename itself acts as the immutability marker
+because the upstream keeps the directory durable. This is structurally
+the same pattern as Ubuntu's `release/` alias — the bytes don't
+change without the URL changing — just expressed differently. The
+rule is "align to the upstream's durability mechanism," not "always
+use a rolling alias."
+
+**Examples (current seed after 2026-06-06 update):**
 
 ```
-Ubuntu Noble:   releases/noble/release-20260518/noble-server-cloudimg-amd64.img
-Ubuntu Jammy:   releases/jammy/release-20260515/jammy-server-cloudimg-amd64.img
-Debian 12:      bookworm/20260518-2482/debian-12-generic-amd64-20260518-2482.qcow2
-Fedora 40:      Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2     (versioned in name)
-Alpine 3.19:    nocloud_alpine-3.19.1-x86_64-bios-cloudinit-r0.qcow2 (versioned in name)
+Ubuntu Noble:   releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img
+Ubuntu Jammy:   releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img
+Debian 12:      images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2     [audit pending — currently dated]
+Fedora 40:      Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2                 [audit pending — version EOL]
+Alpine 3.19:    nocloud_alpine-3.19.1-x86_64-bios-cloudinit-r0.qcow2           [audit pending]
 ```
 
-**Why this matters.** The content-addressing guarantee — bytes recorded at
-the orchestrator are reproducibly available at any node, forever — depends
-on URLs being immutable. If a URL points at `latest/` and upstream rotates,
-the recorded hash mismatches the downloaded bytes, and every fresh deploy
-fails until somebody updates the seed. Worse, an existing VM that migrates
-to a node without the bytes cached can't be reproduced — its recorded hash
-is what was at `latest/` when it deployed, but `latest/` no longer serves
-those bytes.
+The "audit pending" entries still use the older dated/point-versioned
+patterns from before the 2026-06-06 fix; switching them to durable
+forms is tracked as a follow-up (see §8).
 
-Versioned URLs sidestep both failures: the bytes at a dated URL today are
-the bytes that will be there in two years, modulo upstream eventually
-pruning very old builds (years out, not weeks).
+**Enforcement.** Code review is the primary check. An automated guard
+is harder than the previous "reject `latest/` and `current/`" idea
+suggested — the right URL shape depends on the mirror. A reasonable
+guard form is: every seed URL must either (a) be the upstream's
+documented durable alias *or* (b) carry a SHA256, so a drift is at
+least caught at download time. The previously-proposed "warn on
+`latest/`" rule has been **removed**; that pattern is now the correct
+form for Ubuntu and Debian, not a smell.
 
-**Enforcement.** Code review is the primary check; the convention is
-documented in the seed file's leading comment. A startup guard in
-`DataStore.SeedDefaultData` (added as a small follow-up) warns when a seed
-URL contains `/latest/` or `/current/`, making the convention executable
-rather than tribal.
+**Long-term direction.** URL durability is currently upstream's
+responsibility, and the platform inherits whatever guarantee they
+make. Mirroring base images into DeCloud-controlled storage (the
+blockstore is the obvious fit — same content-addressed primitive)
+would shift the boundary onto us and fully realise the design
+intent. Tracked as Phase 3 / future work (§6, §8).
 
 ### 4.3 Hash propagates with every CreateVm dispatch
 
@@ -385,9 +441,13 @@ deleted; `CommandProcessorService.ResolveImageUrlAsync` deleted. System
 VM imageIds collapsed (`SystemVmRoleMap.ToBaseImageId` returns `"debian-12"`
 for all three system roles).
 
-URL pinning to dated upstream builds applied to every seed entry. Optional
-startup guard against `/latest/` and `/current/` URLs to be added as a
-small follow-up.
+URL pinning to dated upstream builds applied to every seed entry at PR2
+time. **Subsequently corrected (2026-06-06):** Ubuntu's dated paths were
+pruned within weeks, not years; see §4.2 for the updated rule
+(align to upstream durability, not "always versioned"). The previously-
+proposed startup guard against `/latest/` and `/current/` URLs is
+**not** added — that pattern is now the correct form for Ubuntu and
+Debian. A different guard form is discussed in §4.2.
 
 Rollout: `db.images.drop()` in Mongo, restart orchestrator. Platform-
 curated catalog repopulates with the new schema. No tenant data touched.
@@ -398,8 +458,10 @@ When a target node needs a base image hash it doesn't have and the URL is
 unreachable, fetch the bytes from a peer that does. The blockstore mesh
 already moves content-addressed blobs between nodes; base images would
 ride the same rail (chunked, CIDed, bitswap-distributed). Deferred until
-URL drift becomes a felt operational problem — versioned URLs sidestep
-the common case.
+URL drift becomes a felt operational problem — durable-alias URLs (§4.2)
+keep the common case working; peer fetch is the safety net for when
+upstream finally rotates content and a node without cache needs the old
+bytes.
 
 A simpler intermediate step: extend `ImageManager.PruneUnusedImagesAsync`
 to consult `vm.Spec.BaseImageHash` references before deleting from the
@@ -507,11 +569,27 @@ repopulates with new schema.
   admin endpoint would let operators bump without a restart. Natural
   follow-up; out of scope for the consolidation PR.
 
-- **Startup guard against floating URLs.** A five-line check in
-  `DataStore.SeedDefaultData` that warns (or refuses to start) if any
-  seed URL contains `/latest/` or `/current/`. Makes the URL pinning
-  discipline executable rather than tribal. Recommended as a small
-  follow-up to PR2.
+- **Startup guard against URL drift.** The earlier proposal — refuse to
+  start on `/latest/` or `/current/` URLs — is **withdrawn**. Post
+  2026-06-06, `/release/` (Ubuntu) and `/latest/` (Debian) are the
+  *correct* form for those mirrors; flagging them would block the fix.
+  A more useful guard, deferred until pain materialises: require every
+  seed entry to either carry a non-empty SHA256 *or* point at a
+  documented per-mirror durable path. Implementable as a small lookup
+  table next to `SeedDefaultData`. Low priority; code review covers the
+  common case today.
+
+- **Audit pending for sibling distros.** The 2026-06-06 fix updated
+  Ubuntu URLs. Debian (dated path), Fedora 40 (past EOL), and Alpine
+  3.19 (point-versioned) still use older patterns. Audit and update
+  before the next clean-node deploy. Tracked alongside the
+  Ubuntu-incident memory in PROJECT_MEMORY.md.
+
+- **Mirror to DeCloud-controlled storage.** Long-term, URL durability
+  should be our responsibility, not Canonical's / Debian's / Fedora's.
+  Blockstore is the natural fit — same content-addressed primitive
+  the system already uses for overlay chunks. Tracked as Phase 3
+  evolution (§6).
 
 - **Cache pinning by VM reference.** Today `PruneUnusedImagesAsync`
   deletes cached files by age. Consulting `vm.Spec.BaseImageHash`

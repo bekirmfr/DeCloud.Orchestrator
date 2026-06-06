@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-06-05
-**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05).
+**Last Updated:** 2026-06-06
+**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05). Base-image URL durability fix landed (2026-06-06).
 
 ---
 
@@ -268,6 +268,45 @@ Alpine is immune: `virtio-blk` and `ahci` compiled in by default, and `tiny-clou
 "rm -f /etc/cloud/cloud-init.disabled",
 "mkdir -p /etc/cloud/cloud.cfg.d && echo 'datasource_list: [NoCloud, None]' > /etc/cloud/cloud.cfg.d/99_datasource.cfg",
 ```
+
+### Base-image URL durability (2026-06-06)
+
+VM creation `86350f5b-0a87-4534-80a3-45b36f33d51e` failed with HTTP 404 fetching `https://cloud-images.ubuntu.com/releases/jammy/release-20260515/jammy-server-cloudimg-amd64.img`. The dated directory had been pruned by Ubuntu's mirror ~22 days after publication. The orchestrator's seed had been pinning dated URLs under the (incorrect) belief that this was a stable form of pinning.
+
+**Two compounding defects in the seed:**
+
+1. **Directory not durable.** Ubuntu keeps the rolling alias `releases/{codename}/release/` available; the dated `releases/{codename}/release-YYYYMMDD/` siblings are pruned within weeks of each new point release. The previous BASE_IMAGE_DESIGN.md §4.2 wording said upstream prunes "years out, not weeks" — that was wrong for `cloud-images.ubuntu.com`.
+2. **Filename pattern mismatch.** Even before pruning, the seed URL combined a release-style directory path with a daily-builds-style filename (`jammy-server-cloudimg-amd64.img`). Released-build directories use `ubuntu-22.04-server-cloudimg-amd64.img`. The seed had been structurally broken from day one; new deploys only worked when nodes had the bytes cached from earlier successful downloads.
+
+**Fix applied:**
+
+- `Orchestrator/Persistence/DataStore.cs` Ubuntu URLs switched to the durable release alias with the correct released-build filenames:
+  - `ubuntu-22.04`: `releases/jammy/release/ubuntu-22.04-server-cloudimg-{amd64,arm64}.img`
+  - `ubuntu-24.04`: `releases/noble/release/ubuntu-24.04-server-cloudimg-{amd64,arm64}.img`
+- SHA256 stays empty (permissive bootstrap remains in effect). When upstream rotates the alias content at the next point release, `ImageManager`'s strict-mode verification fires a clear mismatch — the design's intended "URL has drifted" signal, replacing silent 404s.
+- BASE_IMAGE_DESIGN.md §4.2 rewritten. The previous "URL pinning discipline / always use versioned dated builds / avoid latest and current" rule is replaced with "align to the upstream mirror's actual durability boundary, which differs per mirror." The §8 startup-guard recommendation that would have warned on `/latest/` and `/current/` URLs is withdrawn — `/release/` (Ubuntu) and `/latest/` (Debian) are now the correct form.
+- `Orchestrator/Models/Common.cs` `BaseImageDescriptor.Url` docstring updated to remove the contradicted "avoid latest/current" advice.
+
+**Sibling distros to audit before next clean-node deploy:**
+
+- `debian-12`: seed still uses dated path `cloud.debian.org/.../20260518-2482/...`. Debian's retention is more generous than Ubuntu's but not infinite. Switch to `cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-{arch}.qcow2` if/when audit shows the dated path is no longer reachable.
+- `fedora-40`: Fedora 40 is past its ~13-month support window (released April 2024). URL may already be dead. Audit; either upgrade to a supported Fedora release or remove.
+- `alpine-3.19`: point-versioned (`alpine/v3.19/releases/cloud/nocloud_alpine-3.19.1-...`). Alpine's archive policy needs verification; in principle the filename's version makes content immutable, but the directory's retention is a separate question.
+
+**Why the original guidance was wrong (general lesson):**
+
+"Pinning" was conflated with "looking versioned." The actual property that matters is **whether the upstream mirror commits to keeping the URL addressable**. That is mirror-specific:
+
+- Ubuntu: only the rolling `release/` alias is durable; dated siblings are reaped.
+- Debian: `latest/` is durable; dated paths persist longer but eventually rotate.
+- Fedora: point-versioned filenames in release directories are durable as long as the version is supported (~13 months).
+- Alpine: point-versioned filenames in release directories; archive policy per release.
+
+The takeaway: pick the URL pattern the upstream mirror actually maintains. Content immutability is delivered by SHA256, not by URL shape. When the upstream alias rotates, strict-mode SHA256 verification fires loudly — that is the desired signal, not silent 404s.
+
+**Long-term direction:**
+
+The natural boundary for durability is content addressing on DeCloud-controlled storage — mirror base images into the blockstore (same content-addressed primitive the system already uses for overlay chunks and template artifacts). This shifts URL durability from upstream's responsibility onto ours and fully realises the design intent. Tracked as Phase 3 / future work in BASE_IMAGE_DESIGN.md §6.
 
 ---
 
