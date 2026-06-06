@@ -39,11 +39,14 @@ public class TemplateSeederService
         $"{CloudInitRawBase}/tenant-vms/ai-chatbot/cloud-init.yaml";
     private const string MinecraftPaperRoleUrl =
         $"{CloudInitRawBase}/tenant-vms/minecraft-paper/cloud-init.yaml";
+    private const string CoolifyRoleUrl =
+        $"{CloudInitRawBase}/tenant-vms/coolify/cloud-init.yaml";
 
     // Per-template revisions — bump when role layer or seeder metadata changes
     // in a way that should redeploy new VMs created from this template.
     private const int AiChatbotTemplateRevision = 1;
     private const int MinecraftPaperTemplateRevision = 1;
+    private const int CoolifyTemplateRevision = 1;
 
     public TemplateSeederService(
         ITemplateService templateService,
@@ -3317,4 +3320,159 @@ tar czf ~/world-backup-$(date +%Y%m%d).tar.gz /opt/minecraft/world/
             Description  = "Default gamemode for new players: survival, creative, adventure, or spectator.",
         },
     };
+
+    private async Task<VmTemplate> BuildCoolifyTemplateAsync(CancellationToken ct)
+    {
+        var baseLayer = await _httpClient.GetStringAsync(BaseTenantUrl, ct);
+        var roleLayer = await _httpClient.GetStringAsync(CoolifyRoleUrl, ct);
+
+        var composed = TemplateComposer.Compose(
+            baseLayer, roleLayer,
+            baseName: "base-tenant.yaml",
+            roleName: "tenant-vms/coolify/cloud-init.yaml");
+
+        return new VmTemplate
+        {
+            Slug = "coolify",
+            Name = "Coolify (self-hosted PaaS)",
+            Version = "1.0.0",
+            Revision = CoolifyTemplateRevision,
+            Category = "dev-tools",
+
+            Description =
+                "Your own Heroku/Vercel. Deploy apps, databases, and services from " +
+                "Git with automatic HTTPS — a self-hosted PaaS on infrastructure you " +
+                "control. No vendor lock-in, no platform fees, no KYC.",
+
+            LongDescription = @"## Your own deploy platform
+
+Coolify turns this VM into a self-hosted PaaS — a Heroku/Vercel/Railway
+alternative. Connect a Git repo, push, and your app is live with automatic
+HTTPS. One VM, unlimited apps.
+
+## Features
+- **Git-based deploys** — push to deploy; auto-detected build (Nixpacks/Dockerfile)
+- **One-click databases** — PostgreSQL, MySQL, Redis, MongoDB with persistent volumes
+- **Automatic HTTPS** — Let's Encrypt certificates handled for you
+- **280+ one-click services** — Ghost, Plausible, Uptime Kuma, n8n, and more
+- **No platform fees, no lock-in** — you own the server and the data
+
+## Getting Started
+1. Wait for setup (~2-5 minutes — Coolify pulls Docker + its own containers)
+2. Open the dashboard at `https://__DECLOUD_DOMAIN__`
+3. Your admin account was created automatically. Retrieve the login over SSH:
+   `ssh root@__HOSTNAME__` then `cat /opt/decloud/coolify-admin`
+4. In **Settings**, set the Instance Domain to your DeCloud subdomain to enable
+   live deploy-log streaming and to serve your apps with automatic HTTPS
+5. Connect GitHub/GitLab and deploy your first app
+
+## Security
+The dashboard has full control of this VM (it runs Docker and deploys code).
+Your admin account is **pre-created at boot** and the public registration page
+is disabled, so nobody can claim the instance before you. Keep the credential
+from `/opt/decloud/coolify-admin` safe, and change it from Settings after first
+login if you wish.
+
+## Specs
+- Minimum: 2 vCPU / 4 GB RAM — runs Coolify + one or two small apps
+- Recommended: 4 vCPU / 8 GB — comfortable for several apps + databases
+- Builds are CPU-intensive (Nixpacks compiles your source); more cores = faster builds",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://coolify.io/",
+            License = "Apache-2.0",
+
+            Tags = new List<string>
+        {
+            "paas", "deploy", "docker", "heroku", "self-hosted", "devops", "git"
+        },
+
+            // Coolify min is 2 GB; 4 GB is the realistic floor once you host apps.
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 4L * 1024 * 1024 * 1024,   //  4 GB
+                DiskBytes = 40L * 1024 * 1024 * 1024,  // 40 GB
+                ImageId = "ubuntu-24.04",
+            },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,   //  8 GB
+                DiskBytes = 80L * 1024 * 1024 * 1024,  // 80 GB
+                ImageId = "ubuntu-24.04",
+            },
+
+            RequiresGpu = false,
+
+            ExposedPorts = new List<TemplatePort>
+        {
+            new()
+            {
+                Port        = 8000,
+                Protocol    = "http",
+                Description = "Coolify Dashboard",
+                IsPublic    = true,
+                ReadinessCheck = new ServiceCheck
+                {
+                    // Coolify pulls several images + runs DB migrations on
+                    // first boot; allow generous time. "/" 302-redirects to
+                    // the login page once up.
+                    Strategy       = CheckStrategy.HttpGet,
+                    HttpPath       = "/",
+                    TimeoutSeconds = 1200,
+                },
+            },
+        },
+
+            DefaultAccessUrl = "https://__DECLOUD_DOMAIN__",
+            DefaultUsername = "root",      // SSH user; Coolify admin is separate (see cred file)
+            UseGeneratedPassword = true,        // root SSH password (Coolify admin is generated in setup.sh)
+
+            EstimatedCostPerHour = 0.12m,
+            DefaultBandwidthTier = BandwidthTier.Standard,
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            // Field-validate before signalling platform-verified — same discipline
+            // as the Minecraft migration. Flip to true after Gates 0-4 pass.
+            IsVerified = false,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+
+            CloudInitTemplate = composed,
+            Variables = BuildCoolifyVariables(),
+        };
+    }
+
+    private static List<TemplateVariable> BuildCoolifyVariables() => new()
+{
+    new() { Name = "VM_ID",          Kind = VariableKind.Static, Required = true,
+            Description = "VM unique identifier (UUID). Used by base-tenant.yaml." },
+    new() { Name = "VM_NAME",        Kind = VariableKind.Static, Required = true,
+            Description = "VM display name." },
+    new() { Name = "HOSTNAME",       Kind = VariableKind.Static, Required = true,
+            Description = "Linux hostname. Referenced in coolify-setup.sh and final_message." },
+    new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+            Description = "URL the VM uses to reach the orchestrator." },
+    new() { Name = "CA_PUBLIC_KEY",  Kind = VariableKind.Static, Required = true,
+            Description = "SSH certificate authority public key." },
+    new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static, Required = true,
+            Description = "Assigned CentralIngress subdomain. Used in DefaultAccessUrl, " +
+                          "dashboard URL, and final_message." },
+    new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static, DefaultValue = "",
+            Description = "Plaintext root SSH password (generated when UseGeneratedPassword)." },
+    new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static, DefaultValue = "true",
+            Description = "'true'/'false' for cloud-init ssh_pwauth." },
+};
 }
