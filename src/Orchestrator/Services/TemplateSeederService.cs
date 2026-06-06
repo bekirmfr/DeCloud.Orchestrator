@@ -3458,23 +3458,41 @@ login if you wish.
     }
 
     private static List<TemplateVariable> BuildCoolifyVariables() => new()
-{
-    new() { Name = "VM_ID",          Kind = VariableKind.Static, Required = true,
-            Description = "VM unique identifier (UUID). Used by base-tenant.yaml." },
-    new() { Name = "VM_NAME",        Kind = VariableKind.Static, Required = true,
-            Description = "VM display name." },
-    new() { Name = "HOSTNAME",       Kind = VariableKind.Static, Required = true,
-            Description = "Linux hostname. Referenced in coolify-setup.sh and final_message." },
-    new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
-            Description = "URL the VM uses to reach the orchestrator." },
-    new() { Name = "CA_PUBLIC_KEY",  Kind = VariableKind.Static, Required = true,
-            Description = "SSH certificate authority public key." },
-    new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static, Required = true,
-            Description = "Assigned CentralIngress subdomain. Used in DefaultAccessUrl, " +
-                          "dashboard URL, and final_message." },
-    new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static, DefaultValue = "",
-            Description = "Plaintext root SSH password (generated when UseGeneratedPassword)." },
-    new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static, DefaultValue = "true",
-            Description = "'true'/'false' for cloud-init ssh_pwauth." },
-};
+    {
+        // Identity (resolved from ctx.Vm)
+        new() { Name = "VM_ID",          Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier (UUID). Used by base-tenant.yaml." },
+        new() { Name = "VM_NAME",        Kind = VariableKind.Static, Required = true,
+                Description = "VM display name." },
+        new() { Name = "HOSTNAME",       Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname. Referenced in coolify-setup.sh and final_message." },
+
+        // Platform context
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "URL the VM uses to reach the orchestrator." },
+
+        // SSH / password machinery — ALL FOUR required by base-tenant.yaml.
+        // SSH_AUTHORIZED_KEYS_BLOCK and PASSWORD_CONFIG_BLOCK are the resolved
+        // YAML chunks the base layer renders (__SSH_AUTHORIZED_KEYS_BLOCK__ /
+        // __PASSWORD_CONFIG_BLOCK__). Omitting them makes CloudInitValidator throw
+        // "[Undeclared placeholders]" at render time.
+        new() { Name = "CA_PUBLIC_KEY",  Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk listing user SSH public keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for chpasswd.users (cloud-init 22.3+ format)." },
+        new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static, DefaultValue = "",
+                Description = "Plaintext root SSH password. Set via UseGeneratedPassword " +
+                              "pipeline at deploy time. Used by base-tenant.yaml's chpasswd bootcmd." },
+        new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static, DefaultValue = "false",
+                Description = "'true'/'false' for cloud-init ssh_pwauth. Derived from ADMIN_PASSWORD presence." },
+
+        // Role-layer addition — resolved by DeCloudDomainResolver
+        new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static, Required = true,
+                Description = "Assigned CentralIngress subdomain. Used in DefaultAccessUrl, " +
+                              "dashboard URL, and final_message." },
+    };
 }
