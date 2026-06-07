@@ -3412,17 +3412,32 @@ login if you wish.
         {
             new()
             {
-                Port        = 8000,
+                // Coolify is a sub-platform — it ships its own Traefik on :80
+                // and owns the routing for the dashboard, the Reverb WebSocket
+                // server (terminal + deploy logs), and every tenant app the
+                // user deploys. Pointing DeCloud's CentralIngress at :8000
+                // bypasses Traefik and breaks all three. We hand off at the
+                // natural boundary: Caddy terminates TLS, forwards plain HTTP
+                // to :80, and Traefik dispatches by Host header.
+                //
+                // APP_URL is pre-seeded at install (see cloud-init.yaml), so
+                // Traefik's Host rule matches the assigned DeCloud subdomain
+                // from the first request — no manual Settings step required.
+                Port        = 80,
                 Protocol    = "http",
-                Description = "Coolify Dashboard",
+                Description = "Coolify Proxy (Traefik)",
                 IsPublic    = true,
                 ReadinessCheck = new ServiceCheck
                 {
-                    // Coolify pulls several images + runs DB migrations on
-                    // first boot; allow generous time. "/" 302-redirects to
-                    // the login page once up.
-                    Strategy       = CheckStrategy.HttpGet,
-                    HttpPath       = "/",
+                    // Probe Laravel's built-in /up endpoint directly on :8000
+                    // inside the VM via qemu-guest-agent. This bypasses Traefik
+                    // (which only routes configured Host names and would 404
+                    // on localhost) and answers the question we actually care
+                    // about: "is the dashboard process up?". Coolify pulls
+                    // several images + runs DB migrations on first boot, so
+                    // keep the generous timeout.
+                    Strategy       = CheckStrategy.ExecCommand,
+                    ExecCommand    = "curl -sf -o /dev/null http://localhost:8000/up",
                     TimeoutSeconds = 1200,
                 },
             },
