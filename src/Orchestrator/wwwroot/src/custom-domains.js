@@ -25,6 +25,19 @@ const DOMAIN_STATUS_LABELS = {
 };
 
 let _a11yCleanup = null;
+
+// Single document-level delegate — registered once at module load.
+// Handles all custom-domain list actions regardless of re-renders.
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-cd-action]');
+    if (!btn) return;
+    const vmId = btn.dataset.cdVmId;
+    const domainId = btn.dataset.cdDomainId;
+    const domainName = btn.dataset.cdDomainName;
+    if (btn.dataset.cdAction === 'verify') verifyCustomDomain(vmId, domainId);
+    else if (btn.dataset.cdAction === 'remove') removeCustomDomain(vmId, domainId, domainName);
+    else if (btn.dataset.cdAction === 'copy-dns') copyToClipboard(btn.dataset.cdTarget || '');
+});
 let _listClickHandler = null;
 
 export async function openCustomDomainsModal(vmId, vmName) {
@@ -122,14 +135,14 @@ function renderCustomDomainsList(domains, vmId) {
                         <td>
                             <div class="table-actions">
                                 ${canVerify ? `
-                                    <button class="btn btn-sm btn-primary" data-action="verify" title="Verify DNS">
+                                    <button class="btn btn-sm btn-primary" data-cd-action="verify" data-cd-vm-id="${escapeHtml(vmId)}" data-cd-domain-id="${escapeHtml(d.id)}" title="Verify DNS">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                                             <polyline points="22 4 12 14.01 9 11.01"/>
                                         </svg>
                                         Verify
                                     </button>` : ''}
-                                <button class="btn btn-sm btn-danger" data-action="remove" title="Remove">
+                                <button class="btn btn-sm btn-danger" data-cd-action="remove" data-cd-vm-id="${escapeHtml(vmId)}" data-cd-domain-id="${escapeHtml(d.id)}" data-cd-domain-name="${escapeHtml(d.domain)}" title="Remove">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <line x1="18" y1="6" x2="6" y2="18"/>
                                         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -144,7 +157,7 @@ function renderCustomDomainsList(domains, vmId) {
                             <div class="dns-instructions">
                                 <span class="dns-instructions-label">DNS Setup:</span>
                                 <code>CNAME ${escapeHtml(d.domain)} &rarr; ${escapeHtml(d.dnsTarget || '')}</code>
-                                <button class="btn-icon" data-action="copy-dns" data-target="${escapeHtml(d.dnsTarget || '')}" title="Copy DNS target">
+                                <button class="btn-icon" data-cd-action="copy-dns" data-cd-target="${escapeHtml(d.dnsTarget || '')}" title="Copy DNS target">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -161,22 +174,6 @@ function renderCustomDomainsList(domains, vmId) {
 
     container.innerHTML = html;
     container.style.display = 'block';
-
-    if (_listClickHandler) container.removeEventListener('click', _listClickHandler);
-    _listClickHandler = (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        const row = btn.closest('[data-domain-id]');
-        if (btn.dataset.action === 'copy-dns') {
-            copyToClipboard(btn.dataset.target || '');
-            return;
-        }
-        if (!row) return;
-        const domainId = row.dataset.domainId;
-        const domainName = row.dataset.domainName;
-        if (btn.dataset.action === 'verify') verifyCustomDomain(vmId, domainId);
-        else if (btn.dataset.action === 'remove') removeCustomDomain(vmId, domainId, domainName);
-    };
     container.addEventListener('click', _listClickHandler);
 }
 
