@@ -252,6 +252,12 @@ export async function removeCustomDomain(vmId, domainId, domainName) {
     try {
         showToast('Removing domain...', 'info');
         const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}`, { method: 'DELETE' });
+        if (response.status === 401 || response.status === 403) {
+            throw new Error(`Not authorized (${response.status})`);
+        }
+        if (response.status === 404) {
+            throw new Error('Domain not found — it may have already been removed');
+        }
         const result = await response.json();
         if (!result.success) throw new Error(result.error || 'Failed to remove');
 
