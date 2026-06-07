@@ -25,6 +25,7 @@ const DOMAIN_STATUS_LABELS = {
 };
 
 let _a11yCleanup = null;
+let _listClickHandler = null;
 
 export async function openCustomDomainsModal(vmId, vmName) {
     const modal = document.getElementById('custom-domains-modal');
@@ -161,7 +162,8 @@ function renderCustomDomainsList(domains, vmId) {
     container.innerHTML = html;
     container.style.display = 'block';
 
-    container.addEventListener('click', (e) => {
+    if (_listClickHandler) container.removeEventListener('click', _listClickHandler);
+    _listClickHandler = (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         const row = btn.closest('[data-domain-id]');
@@ -174,7 +176,8 @@ function renderCustomDomainsList(domains, vmId) {
         const domainName = row.dataset.domainName;
         if (btn.dataset.action === 'verify') verifyCustomDomain(vmId, domainId);
         else if (btn.dataset.action === 'remove') removeCustomDomain(vmId, domainId, domainName);
-    }, { once: false });
+    };
+    container.addEventListener('click', _listClickHandler);
 }
 
 function renderCustomDomainsAddForm(vmId) {
