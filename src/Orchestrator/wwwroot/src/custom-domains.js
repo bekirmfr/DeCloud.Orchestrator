@@ -135,14 +135,14 @@ function renderCustomDomainsList(domains, vmId) {
                         <td>
                             <div class="table-actions">
                                 ${canVerify ? `
-                                    <button class="btn btn-sm btn-primary" data-cd-action="verify" data-cd-vm-id="${escapeHtml(vmId)}" data-cd-domain-id="${escapeHtml(d.id)}" title="Verify DNS">
+                                    <button class="btn btn-sm btn-primary" onclick="window._cdVerify('${escapeHtml(vmId)}','${escapeHtml(d.id)}')" title="Verify DNS">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                                             <polyline points="22 4 12 14.01 9 11.01"/>
                                         </svg>
                                         Verify
                                     </button>` : ''}
-                                <button class="btn btn-sm btn-danger" data-cd-action="remove" data-cd-vm-id="${escapeHtml(vmId)}" data-cd-domain-id="${escapeHtml(d.id)}" data-cd-domain-name="${escapeHtml(d.domain)}" title="Remove">
+                                <button class="btn btn-sm btn-danger" onclick="window._cdRemove('${escapeHtml(vmId)}','${escapeHtml(d.id)}','${escapeHtml(d.domain)}')" title="Remove">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <line x1="18" y1="6" x2="6" y2="18"/>
                                         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -157,7 +157,7 @@ function renderCustomDomainsList(domains, vmId) {
                             <div class="dns-instructions">
                                 <span class="dns-instructions-label">DNS Setup:</span>
                                 <code>CNAME ${escapeHtml(d.domain)} &rarr; ${escapeHtml(d.dnsTarget || '')}</code>
-                                <button class="btn-icon" data-cd-action="copy-dns" data-cd-target="${escapeHtml(d.dnsTarget || '')}" title="Copy DNS target">
+                                <button class="btn-icon" onclick="window.copyToClipboard && window.copyToClipboard('${escapeHtml(d.dnsTarget || '')}')" title="Copy DNS target">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -174,7 +174,8 @@ function renderCustomDomainsList(domains, vmId) {
 
     container.innerHTML = html;
     container.style.display = 'block';
-    container.addEventListener('click', _listClickHandler);
+    window._cdVerify = verifyCustomDomain;
+    window._cdRemove = removeCustomDomain;
 }
 
 function renderCustomDomainsAddForm(vmId) {
