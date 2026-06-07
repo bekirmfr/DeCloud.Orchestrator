@@ -707,14 +707,17 @@ public interface ICentralCaddyManager
             ["policies"] = policies
         };
 
-        // Add on-demand TLS ask endpoint when custom domains exist
+        // on_demand lives inside automation (not a sibling of it).
+        // Uses tls.permission.http module — "ask" was deprecated in Caddy 2.10.
         if (hasCustomDomains)
         {
-            automation["on_demand_tls"] = new
+            automation["on_demand"] = new Dictionary<string, object>
             {
-                ask = "http://localhost:5050/api/central-ingress/domain-check",
-                interval = "5m",
-                burst = 5
+                ["permission"] = new Dictionary<string, object>
+                {
+                    ["module"] = "http",
+                    ["endpoint"] = "http://localhost:5050/api/central-ingress/domain-check"
+                }
             };
         }
 
