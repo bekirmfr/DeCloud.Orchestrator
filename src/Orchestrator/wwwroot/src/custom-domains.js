@@ -245,8 +245,6 @@ export async function verifyCustomDomain(vmId, domainId) {
 }
 
 export async function removeCustomDomain(vmId, domainId, domainName) {
-    if (!confirm(`Remove custom domain ${domainName}?`)) return;
-
     try {
         showToast('Removing domain...', 'info');
         const response = await api(`/api/central-ingress/vm/${vmId}/domains/${domainId}`, { method: 'DELETE' });
