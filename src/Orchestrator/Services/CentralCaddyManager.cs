@@ -14,21 +14,31 @@ public interface ICentralCaddyManager
 {
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
     Task<bool> InitializeWildcardConfigAsync(CancellationToken ct = default);
+
+    [Obsolete("Use UpsertVmRouteAsync (Step 0 surgical update). Remove in next release.")]
     Task<bool> UpsertRouteAsync(CentralIngressRoute route, CancellationToken ct = default);
+
+    [Obsolete("Use RemoveVmRouteAsync (Step 0 surgical update). Remove in next release.")]
     Task<bool> RemoveRouteAsync(string subdomain, CancellationToken ct = default);
-    Task<bool> ReloadAllRoutesAsync(IEnumerable<CentralIngressRoute> routes, IEnumerable<CustomDomain>? customDomains = null, CancellationToken ct = default);
+
+    Task<bool> ReloadAllRoutesAsync(
+        IEnumerable<CentralIngressRoute> routes,
+        IEnumerable<CustomDomain>? customDomains = null,
+        CancellationToken ct = default);
+
     Task<string?> GetWildcardCertStatusAsync(CancellationToken ct = default);
-    /// <summary>
-    /// Ensure a permanent reverse-proxy route exists for the orchestrator's own domain.
-    /// Called on startup — idempotent, survives reloads because it is re-registered
-    /// every time the orchestrator starts.
-    /// </summary>
-    void EnsureOrchestratorRoute(
-        string domain,
-        string upstream);
+
+    void EnsureOrchestratorRoute(string domain, string upstream);
+
+    // ─── Step 0 surgical operations (INGRESS_DESIGN.md §8.1) ─────────────
+    Task<bool> UpsertVmRouteAsync(CentralIngressRoute route, CancellationToken ct = default);
+    Task<bool> RemoveVmRouteAsync(string vmId, CancellationToken ct = default);
+    Task<bool> UpsertCustomDomainRouteAsync(
+        CustomDomain customDomain, CentralIngressRoute vmRoute, CancellationToken ct = default);
+    Task<bool> RemoveCustomDomainRouteAsync(string customDomainId, CancellationToken ct = default);
 }
 
-    public class CentralCaddyManager : ICentralCaddyManager
+public class CentralCaddyManager : ICentralCaddyManager
 {
     private readonly HttpClient _httpClient;
     private readonly CentralIngressOptions _options;
@@ -193,6 +203,129 @@ public interface ICentralCaddyManager
             _logger.LogError(ex, "Error applying Caddy config");
             return false;
         }
+    }
+
+    // =========================================================================
+    // Surgical route operations (Step 0 — INGRESS_DESIGN.md §8.1)
+    //
+    // Each VM and custom-domain route carries a stable @id (see BuildRouteConfig).
+    // Lifecycle events use these methods instead of full-config rebuilds.
+    //
+    // Order invariant maintained: orchestrator-route at index 0, vm-catchall last,
+    // everything else inserted between (order irrelevant — all specific FQDNs).
+    // =========================================================================
+
+    private const string RoutesBasePath = "/config/apps/http/servers/central_ingress/routes";
+
+    /// <summary>
+    /// Insert or replace a route by @id. Tries PUT first (replace existing);
+    /// on 404 falls back to POST at index 1 (insert new).
+    ///
+    /// Used by AddVmRouteAsync, UpdateVmRouteAsync, AddCustomDomainRouteAsync —
+    /// callers don't need to know whether the route already exists.
+    /// </summary>
+    private async Task<bool> UpsertRouteByIdAsync(
+        string atId, object routeConfig, CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(routeConfig, JsonOptions);
+
+        // PUT /id/{atId} — atomic replace if exists
+        using (var putContent = new StringContent(json, Encoding.UTF8, "application/json"))
+        {
+            var putResp = await _httpClient.PutAsync($"/id/{atId}", putContent, ct);
+            if (putResp.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("✓ Route updated: {AtId}", atId);
+                return true;
+            }
+
+            if (putResp.StatusCode != System.Net.HttpStatusCode.NotFound)
+            {
+                var err = await putResp.Content.ReadAsStringAsync(ct);
+                _logger.LogError("Caddy PUT /id/{AtId} failed: {Status} {Error}",
+                    atId, putResp.StatusCode, err);
+                return false;
+            }
+        }
+
+        // 404 — route does not exist. Insert at index 1 (after orchestrator-route).
+        using (var postContent = new StringContent(json, Encoding.UTF8, "application/json"))
+        {
+            var postResp = await _httpClient.PostAsync($"{RoutesBasePath}/1", postContent, ct);
+            if (postResp.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("✓ Route inserted: {AtId}", atId);
+                return true;
+            }
+
+            var err = await postResp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Caddy POST {Path}/1 (for {AtId}) failed: {Status} {Error}",
+                RoutesBasePath, atId, postResp.StatusCode, err);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Remove a route by @id. 404 is treated as success — the route was already absent.
+    /// </summary>
+    private async Task<bool> RemoveRouteByIdAsync(string atId, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _httpClient.DeleteAsync($"/id/{atId}", ct);
+            if (resp.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("✓ Route removed: {AtId}", atId);
+                return true;
+            }
+
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogDebug("Route {AtId} already absent — no-op", atId);
+                return true;
+            }
+
+            var err = await resp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Caddy DELETE /id/{AtId} failed: {Status} {Error}",
+                atId, resp.StatusCode, err);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing route {AtId}", atId);
+            return false;
+        }
+    }
+
+    // ─── Public surgical API ─────────────────────────────────────────────────
+
+    public Task<bool> UpsertVmRouteAsync(CentralIngressRoute route, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(route.NodePublicIp))
+        {
+            _logger.LogWarning("Skipping route upsert for VM {VmId}: no NodePublicIp", route.VmId);
+            return Task.FromResult(false);
+        }
+
+        var atId = $"vm-{route.VmId}";
+        return UpsertRouteByIdAsync(atId, BuildRouteConfig(route), ct);
+    }
+
+    public Task<bool> RemoveVmRouteAsync(string vmId, CancellationToken ct = default)
+    {
+        return RemoveRouteByIdAsync($"vm-{vmId}", ct);
+    }
+
+    public Task<bool> UpsertCustomDomainRouteAsync(
+        CustomDomain customDomain, CentralIngressRoute vmRoute, CancellationToken ct = default)
+    {
+        var atId = $"cd-{customDomain.Id}";
+        return UpsertRouteByIdAsync(atId, BuildCustomDomainRouteConfig(customDomain, vmRoute), ct);
+    }
+
+    public Task<bool> RemoveCustomDomainRouteAsync(string customDomainId, CancellationToken ct = default)
+    {
+        return RemoveRouteByIdAsync($"cd-{customDomainId}", ct);
     }
 
     /// <summary>
@@ -444,53 +577,54 @@ public interface ICentralCaddyManager
             ? route.Subdomain
             : $"{route.Subdomain}.{_options.BaseDomain}";
 
-        return new
+        return new Dictionary<string, object>
         {
-            match = new[]
+            ["@id"] = $"vm-{route.VmId}",
+            ["match"] = new[]
             {
-                new { host = new[] { subdomain } }
+            new { host = new[] { subdomain } }
+        },
+            ["handle"] = new object[]
+            {
+            new
+            {
+                handler = "rewrite",
+                uri = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{{http.request.uri}}"
             },
-            handle = new object[]
+            new
             {
-                new
+                handler = "reverse_proxy",
+                upstreams = new[]
                 {
-                    handler = "rewrite",
-                    uri = $"/api/vms/{route.VmId}/proxy/http/{route.TargetPort}{{http.request.uri}}"
+                    new { dial = $"{route.NodePublicIp}:5100" }
                 },
-                new
+                headers = new
                 {
-                    handler = "reverse_proxy",
-                    upstreams = new[]
+                    request = new
                     {
-                        new { dial = $"{route.NodePublicIp}:5100" }
-                    },
-                    headers = new
-                    {
-                        request = new
+                        set = new Dictionary<string, string[]>
                         {
-                            set = new Dictionary<string, string[]>
-                            {
-                                ["Host"] = new[] { "{http.request.host}" },
-                                ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
-                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
-                                ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
-                                ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
-                            }
+                            ["Host"] = new[] { "{http.request.host}" },
+                            ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
+                            ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
+                            ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
+                            ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
                         }
-                    },
-                    transport = new
-                    {
-                        protocol = "http",
-                        read_buffer_size = 16384,
-                        versions = new[] { "1.1" },
-                        dial_timeout = "10s",
-                        response_header_timeout = "600s",
-                        read_timeout = "600s"
-                    },
-                    flush_interval = -1  // -1 = stream immediately, no buffering
-                }
+                    }
+                },
+                transport = new
+                {
+                    protocol = "http",
+                    read_buffer_size = 16384,
+                    versions = new[] { "1.1" },
+                    dial_timeout = "10s",
+                    response_header_timeout = "600s",
+                    read_timeout = "600s"
+                },
+                flush_interval = -1
+            }
             },
-            terminal = true
+            ["terminal"] = true
         };
     }
 
@@ -499,53 +633,54 @@ public interface ICentralCaddyManager
     /// </summary>
     private object BuildCustomDomainRouteConfig(CustomDomain customDomain, CentralIngressRoute vmRoute)
     {
-        return new
+        return new Dictionary<string, object>
         {
-            match = new[]
+            ["@id"] = $"cd-{customDomain.Id}",
+            ["match"] = new[]
             {
-                new { host = new[] { customDomain.Domain } }
+            new { host = new[] { customDomain.Domain } }
+        },
+            ["handle"] = new object[]
+            {
+            new
+            {
+                handler = "rewrite",
+                uri = $"/api/vms/{customDomain.VmId}/proxy/http/{customDomain.TargetPort}{{http.request.uri}}"
             },
-            handle = new object[]
+            new
             {
-                new
+                handler = "reverse_proxy",
+                upstreams = new[]
                 {
-                    handler = "rewrite",
-                    uri = $"/api/vms/{customDomain.VmId}/proxy/http/{customDomain.TargetPort}{{http.request.uri}}"
+                    new { dial = $"{vmRoute.NodePublicIp}:5100" }
                 },
-                new
+                headers = new
                 {
-                    handler = "reverse_proxy",
-                    upstreams = new[]
+                    request = new
                     {
-                        new { dial = $"{vmRoute.NodePublicIp}:5100" }
-                    },
-                    headers = new
-                    {
-                        request = new
+                        set = new Dictionary<string, string[]>
                         {
-                            set = new Dictionary<string, string[]>
-                            {
-                                ["Host"] = new[] { "{http.request.host}" },
-                                ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
-                                ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
-                                ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
-                                ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
-                            }
+                            ["Host"] = new[] { "{http.request.host}" },
+                            ["X-Forwarded-For"] = new[] { "{http.request.remote.host}" },
+                            ["X-Forwarded-Proto"] = new[] { "{http.request.scheme}" },
+                            ["X-Forwarded-Host"] = new[] { "{http.request.host}" },
+                            ["X-Real-IP"] = new[] { "{http.request.remote.host}" }
                         }
-                    },
-                    transport = new
-                    {
-                        protocol = "http",
-                        read_buffer_size = 16384,
-                        versions = new[] { "1.1" },
-                        dial_timeout = "10s",
-                        response_header_timeout = "600s",
-                        read_timeout = "600s"
-                    },
-                    flush_interval = -1  // -1 = stream immediately, no buffering
-                }
+                    }
+                },
+                transport = new
+                {
+                    protocol = "http",
+                    read_buffer_size = 16384,
+                    versions = new[] { "1.1" },
+                    dial_timeout = "10s",
+                    response_header_timeout = "600s",
+                    read_timeout = "600s"
+                },
+                flush_interval = -1
+            }
             },
-            terminal = true
+            ["terminal"] = true
         };
     }
 
@@ -554,26 +689,27 @@ public interface ICentralCaddyManager
     /// </summary>
     private object BuildCatchAllRoute()
     {
-        return new
+        return new Dictionary<string, object>
         {
-            match = new[]
+            ["@id"] = "vm-catchall",
+            ["match"] = new[]
             {
-                new { host = new[] { $"*.{_options.BaseDomain}" } }
-            },
-            handle = new[]
+            new { host = new[] { $"*.{_options.BaseDomain}" } }
+        },
+            ["handle"] = new[]
             {
-                new
+            new
+            {
+                handler = "static_response",
+                status_code = 404,
+                headers = new
                 {
-                    handler = "static_response",
-                    status_code = 404,
-                    headers = new
-                    {
-                        content_Type = new[] { "application/json" }
-                    },
-                    body = "{\"error\":\"VM not found\",\"message\":\"This subdomain is not associated with any running VM\",\"hint\":\"The VM may be stopped or the subdomain may be incorrect\"}"
-                }
-            },
-            terminal = true
+                    content_Type = new[] { "application/json" }
+                },
+                body = "{\"error\":\"VM not found\",\"message\":\"This subdomain is not associated with any running VM\",\"hint\":\"The VM may be stopped or the subdomain may be incorrect\"}"
+            }
+        },
+            ["terminal"] = true
         };
     }
 
@@ -586,10 +722,11 @@ public interface ICentralCaddyManager
         if (string.IsNullOrEmpty(_options.OrchestratorDomain))
             return null;
 
-        return new
+        return new Dictionary<string, object>
         {
-            match = new[] { new { host = new[] { _options.OrchestratorDomain } } },
-            handle = new object[]
+            ["@id"] = "orchestrator-route",
+            ["match"] = new[] { new { host = new[] { _options.OrchestratorDomain } } },
+            ["handle"] = new object[]
             {
                 new
                 {
@@ -615,7 +752,7 @@ public interface ICentralCaddyManager
                     }
                 }
             },
-            terminal = true
+            ["terminal"] = true
         };
     }
 

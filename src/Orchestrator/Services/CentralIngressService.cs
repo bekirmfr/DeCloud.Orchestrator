@@ -271,8 +271,8 @@ public class CentralIngressService : ICentralIngressService
         vm.IngressConfig.DefaultSubdomainEnabled = true;
         await _dataStore.SaveVmAsync(vm);
 
-        // Reload Caddy
-        await ReloadAllAsync(ct);
+        // Surgical: upsert just this VM's route (Step 0)
+        await _caddyManager.UpsertVmRouteAsync(route, ct);
 
         return route;
     }
@@ -294,8 +294,8 @@ public class CentralIngressService : ICentralIngressService
                 await _dataStore.SaveVmAsync(vm);
             }
 
-            // Reload Caddy
-            await ReloadAllAsync(ct);
+            // Surgical: remove just this VM's route (Step 0)
+            await _caddyManager.RemoveVmRouteAsync(vmId, ct);
             return true;
         }
 
@@ -320,7 +320,8 @@ public class CentralIngressService : ICentralIngressService
             await _dataStore.SaveVmAsync(vm);
         }
 
-        await ReloadAllAsync(ct);
+        // Surgical: PUT the updated route (Step 0)
+        await _caddyManager.UpsertVmRouteAsync(route, ct);
         return true;
     }
 
@@ -486,17 +487,15 @@ public class CentralIngressService : ICentralIngressService
         // the correct node agent after migration.
         await RegisterVmAsync(vmId, vm.IngressConfig?.DefaultPort, ct);
 
-        // Re-activate paused custom domains for this VM
-        var reactivated = false;
+        // Re-activate paused custom domains for this VM — surgical upsert each (Step 0)
+        _routes.TryGetValue(vmId, out var vmRoute);
         foreach (var cd in _customDomains.Values.Where(d => d.VmId == vmId && d.Status == CustomDomainStatus.Paused))
         {
             cd.Status = CustomDomainStatus.Active;
-            reactivated = true;
-        }
-
-        if (reactivated || _routes.ContainsKey(vmId))
-        {
-            await ReloadAllAsync(ct);
+            if (vmRoute != null)
+            {
+                await _caddyManager.UpsertCustomDomainRouteAsync(cd, vmRoute, ct);
+            }
         }
     }
 
@@ -515,16 +514,17 @@ public class CentralIngressService : ICentralIngressService
             {
                 route.Status = CentralRouteStatus.Paused;
                 route.UpdatedAt = DateTime.UtcNow;
+                // Surgical: remove from Caddy — in-memory _routes keeps the Paused marker
+                await _caddyManager.RemoveVmRouteAsync(vmId, ct);
             }
         }
 
-        // Pause active custom domains for this VM
+        // Pause active custom domains for this VM — surgical remove each from Caddy
         foreach (var cd in _customDomains.Values.Where(d => d.VmId == vmId && d.Status == CustomDomainStatus.Active))
         {
             cd.Status = CustomDomainStatus.Paused;
+            await _caddyManager.RemoveCustomDomainRouteAsync(cd.Id, ct);
         }
-
-        await ReloadAllAsync(ct);
 
         // Persist paused status
         var vm = await _dataStore.GetVmAsync(vmId);
@@ -661,10 +661,10 @@ public class CentralIngressService : ICentralIngressService
 
         _logger.LogInformation("Custom domain removed: {Domain} from VM {VmId}", cd.Domain, vmId);
 
-        // Reload Caddy to remove the route
+        // Surgical: remove just this custom domain's route (Step 0)
         if (cd.Status == CustomDomainStatus.Active)
         {
-            await ReloadAllAsync(ct);
+            await _caddyManager.RemoveCustomDomainRouteAsync(cd.Id, ct);
         }
 
         return true;
@@ -707,8 +707,17 @@ public class CentralIngressService : ICentralIngressService
                 "Custom domain DNS verified: {Domain} resolves to {IPs}",
                 cd.Domain, string.Join(", ", addresses.Select(a => a.ToString())));
 
-            // Reload Caddy to add the route
-            await ReloadAllAsync(ct);
+            // Surgical: add just this custom domain's route (Step 0)
+            if (_routes.TryGetValue(vmId, out var vmRoute))
+            {
+                await _caddyManager.UpsertCustomDomainRouteAsync(cd, vmRoute, ct);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Custom domain {Domain} verified but VM {VmId} has no active route — route will be added when VM starts",
+                    cd.Domain, vmId);
+            }
 
             return cd;
         }

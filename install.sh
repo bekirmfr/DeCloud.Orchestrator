@@ -1098,9 +1098,15 @@ bootstrap_caddy_base_config() {
             "module": "acme",
             "email": "${CADDY_EMAIL}"
           }
-        ]
+        ],
+        "on_demand": true
       }
-    ]
+    ],
+    "on_demand_tls": {
+      "ask": "http://localhost:5050/api/central-ingress/domain-check",
+      "interval": "5m",
+      "burst": 5
+    }
   }
 }
 TLSJSON
