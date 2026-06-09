@@ -240,6 +240,7 @@ public record CustomDomainResponse(
     string Id,
     string Domain,
     int TargetPort,
+    [property: JsonConverter(typeof(JsonStringEnumConverter))]
     CustomDomainStatus Status,
     string? PublicUrl,
     DateTime CreatedAt,

@@ -819,25 +819,29 @@ public class CentralCaddyManager : ICentralCaddyManager
 
         var policies = new List<object> { wildcardPolicy };
 
-        // On-demand TLS policy for custom domains (catch-all, no subjects)
-        // Caddy uses HTTP-01 challenge and calls our ask endpoint to verify the domain
-        if (hasCustomDomains)
+        // On-demand TLS catch-all policy (no subjects) is ALWAYS present, not
+        // gated on existing custom domains. The real gate is the domain-check
+        // permission endpoint below, which 404s for any domain that is not an
+        // Active custom domain — so Caddy will not issue a cert for it. Making
+        // the policy unconditional removes a design seam: the surgical custom-
+        // domain route path (UpsertCustomDomainRouteAsync) adds only the route,
+        // never the TLS policy, so if the policy were gated on hasCustomDomains
+        // a freshly verified domain on an otherwise-clean Caddy would have a
+        // route but no way to obtain a cert (tlsv1 alert internal error).
+        var onDemandPolicy = new Dictionary<string, object>
         {
-            var onDemandPolicy = new Dictionary<string, object>
+            ["issuers"] = new object[]
             {
-                ["issuers"] = new object[]
+                new
                 {
-                    new
-                    {
-                        module = "acme",
-                        ca = acmeCa,
-                        email = _options.AcmeEmail,
-                    }
-                },
-                ["on_demand"] = true
-            };
-            policies.Add(onDemandPolicy);
-        }
+                    module = "acme",
+                    ca = acmeCa,
+                    email = _options.AcmeEmail,
+                }
+            },
+            ["on_demand"] = true
+        };
+        policies.Add(onDemandPolicy);
 
         var automation = new Dictionary<string, object>
         {
@@ -846,17 +850,16 @@ public class CentralCaddyManager : ICentralCaddyManager
 
         // on_demand lives inside automation (not a sibling of it).
         // Uses tls.permission.http module — "ask" was deprecated in Caddy 2.10.
-        if (hasCustomDomains)
+        // The permission endpoint is the gate: it returns 200 only for Active
+        // custom domains, 404 otherwise, so Caddy never issues unwanted certs.
+        automation["on_demand"] = new Dictionary<string, object>
         {
-            automation["on_demand"] = new Dictionary<string, object>
+            ["permission"] = new Dictionary<string, object>
             {
-                ["permission"] = new Dictionary<string, object>
-                {
-                    ["module"] = "http",
-                    ["endpoint"] = "http://localhost:5050/api/central-ingress/domain-check"
-                }
-            };
-        }
+                ["module"] = "http",
+                ["endpoint"] = "http://localhost:5050/api/central-ingress/domain-check"
+            }
+        };
 
         return new { automation };
     }
