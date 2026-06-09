@@ -248,43 +248,96 @@ public class CentralCaddyManager : ICentralCaddyManager
             }
         }
 
-        // 404 — route does not exist. Insert it BEFORE the catch-all using
-        // Caddy's "POST /id/<atId>" semantics (insert-before). This is robust
-        // against the catch-all moving position across reloads — we anchor on
-        // identity, not index. If vm-catchall is itself missing (very early
-        // boot, before the first full reload), fall back to appending to the
-        // routes array.
-        using (var postContent = new StringContent(json, Encoding.UTF8, "application/json"))
+        // 404 — route does not exist. Insert it BEFORE the catch-all.
+        //
+        // Caddy admin API semantics (https://caddyserver.com/docs/api):
+        //   POST /config/[path]   — appends to array (ignores any numeric index)
+        //   PUT  /config/[path]/N — inserts into array at index N (shifts the
+        //                           element at N and everything after it down)
+        //
+        // POST /id/<id> appends — it does NOT insert-before, as the previous
+        // version of this method assumed. The 200 OK we got back masked the
+        // fact that the route was being added at the end (after vm-catchall).
+        //
+        // Correct approach: find the catch-all's current index, then PUT at
+        // that index. We anchor on identity (the @id) and resolve to position
+        // at call time, so the operation is robust against reload reordering.
+        //
+        // Cold-boot fallback: if vm-catchall is not present yet (the very
+        // first surgical insert before any full reload has run), append. The
+        // next full reload re-establishes canonical order.
+
+        var catchallIndex = await FindRouteIndexByIdAsync("vm-catchall", ct);
+
+        if (catchallIndex >= 0)
         {
-            var postResp = await _httpClient.PostAsync("/id/vm-catchall", postContent, ct);
-            if (postResp.IsSuccessStatusCode)
+            using var putBeforeContent = new StringContent(json, Encoding.UTF8, "application/json");
+            var putBeforeResp = await _httpClient.PutAsync(
+                $"{RoutesBasePath}/{catchallIndex}", putBeforeContent, ct);
+            if (putBeforeResp.IsSuccessStatusCode)
             {
-                _logger.LogInformation("✓ Route inserted before vm-catchall: {AtId}", atId);
+                _logger.LogInformation(
+                    "✓ Route inserted at index {Index} (before vm-catchall): {AtId}",
+                    catchallIndex, atId);
                 return true;
             }
 
-            // Catch-all not present yet — append. The next full reload will
-            // re-establish the canonical order [orchestrator, ...specific..., catchall].
-            if (postResp.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                using var appendContent = new StringContent(json, Encoding.UTF8, "application/json");
-                var appendResp = await _httpClient.PostAsync(RoutesBasePath, appendContent, ct);
-                if (appendResp.IsSuccessStatusCode)
-                {
-                    _logger.LogInformation("✓ Route appended (vm-catchall absent): {AtId}", atId);
-                    return true;
-                }
+            var err = await putBeforeResp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Caddy PUT {Path}/{Index} (for {AtId}) failed: {Status} {Error}",
+                RoutesBasePath, catchallIndex, atId, putBeforeResp.StatusCode, err);
+            return false;
+        }
 
-                var appendErr = await appendResp.Content.ReadAsStringAsync(ct);
-                _logger.LogError("Caddy POST {Path} (for {AtId}, append fallback) failed: {Status} {Error}",
-                    RoutesBasePath, atId, appendResp.StatusCode, appendErr);
-                return false;
+        // vm-catchall not present yet — append. Next full reload corrects order.
+        using (var appendContent = new StringContent(json, Encoding.UTF8, "application/json"))
+        {
+            var appendResp = await _httpClient.PostAsync(RoutesBasePath, appendContent, ct);
+            if (appendResp.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("✓ Route appended (vm-catchall absent): {AtId}", atId);
+                return true;
             }
 
-            var err = await postResp.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Caddy POST /id/vm-catchall (for {AtId}) failed: {Status} {Error}",
-                atId, postResp.StatusCode, err);
+            var appendErr = await appendResp.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Caddy POST {Path} (for {AtId}, append fallback) failed: {Status} {Error}",
+                RoutesBasePath, atId, appendResp.StatusCode, appendErr);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Find the array index of a route by its @id. Returns -1 if absent or on error.
+    /// Used by UpsertRouteByIdAsync to anchor insert-before operations on the
+    /// catch-all's identity rather than a hard-coded index that drifts with reloads.
+    /// </summary>
+    private async Task<int> FindRouteIndexByIdAsync(string atId, CancellationToken ct)
+    {
+        try
+        {
+            var resp = await _httpClient.GetAsync(RoutesBasePath, ct);
+            if (!resp.IsSuccessStatusCode) return -1;
+
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            var routes = JsonSerializer.Deserialize<JsonElement>(json);
+            if (routes.ValueKind != JsonValueKind.Array) return -1;
+
+            int i = 0;
+            foreach (var route in routes.EnumerateArray())
+            {
+                if (route.TryGetProperty("@id", out var idProp) &&
+                    idProp.ValueKind == JsonValueKind.String &&
+                    idProp.GetString() == atId)
+                {
+                    return i;
+                }
+                i++;
+            }
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "FindRouteIndexByIdAsync failed for {AtId}", atId);
+            return -1;
         }
     }
 
