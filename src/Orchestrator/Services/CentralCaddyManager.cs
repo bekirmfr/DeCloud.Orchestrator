@@ -248,19 +248,42 @@ public class CentralCaddyManager : ICentralCaddyManager
             }
         }
 
-        // 404 — route does not exist. Insert at index 1 (after orchestrator-route).
+        // 404 — route does not exist. Insert it BEFORE the catch-all using
+        // Caddy's "POST /id/<atId>" semantics (insert-before). This is robust
+        // against the catch-all moving position across reloads — we anchor on
+        // identity, not index. If vm-catchall is itself missing (very early
+        // boot, before the first full reload), fall back to appending to the
+        // routes array.
         using (var postContent = new StringContent(json, Encoding.UTF8, "application/json"))
         {
-            var postResp = await _httpClient.PostAsync($"{RoutesBasePath}/1", postContent, ct);
+            var postResp = await _httpClient.PostAsync("/id/vm-catchall", postContent, ct);
             if (postResp.IsSuccessStatusCode)
             {
-                _logger.LogInformation("✓ Route inserted: {AtId}", atId);
+                _logger.LogInformation("✓ Route inserted before vm-catchall: {AtId}", atId);
                 return true;
             }
 
+            // Catch-all not present yet — append. The next full reload will
+            // re-establish the canonical order [orchestrator, ...specific..., catchall].
+            if (postResp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                using var appendContent = new StringContent(json, Encoding.UTF8, "application/json");
+                var appendResp = await _httpClient.PostAsync(RoutesBasePath, appendContent, ct);
+                if (appendResp.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("✓ Route appended (vm-catchall absent): {AtId}", atId);
+                    return true;
+                }
+
+                var appendErr = await appendResp.Content.ReadAsStringAsync(ct);
+                _logger.LogError("Caddy POST {Path} (for {AtId}, append fallback) failed: {Status} {Error}",
+                    RoutesBasePath, atId, appendResp.StatusCode, appendErr);
+                return false;
+            }
+
             var err = await postResp.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Caddy POST {Path}/1 (for {AtId}) failed: {Status} {Error}",
-                RoutesBasePath, atId, postResp.StatusCode, err);
+            _logger.LogError("Caddy POST /id/vm-catchall (for {AtId}) failed: {Status} {Error}",
+                atId, postResp.StatusCode, err);
             return false;
         }
     }
