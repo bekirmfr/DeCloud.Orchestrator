@@ -273,6 +273,63 @@ public class NodeSelfController : ControllerBase
     }
 
     /// <summary>
+    /// Get the orchestrator's stored allocation for this node.
+    /// Returns the operator-configured percentages and their resolved
+    /// absolute values (TotalResources × AllocationConfig).
+    ///
+    /// This is the read-side companion to POST /api/nodes/{id}/allocate.
+    /// Called by the node agent at startup to re-hydrate
+    /// AllocationResolvedAt and AllocatedResources from the authoritative
+    /// orchestrator-side state, rather than relying on a node-local cache
+    /// file that may have been wiped by 'decloud update', uninstall, or
+    /// backup restore. Aligns allocation state with the same boundary
+    /// already used for /performance and /config: orchestrator response
+    /// is authoritative, local cache is a fallback.
+    /// </summary>
+    [HttpGet("allocation")]
+    [ProducesResponseType(typeof(NodeAllocateResponse), 200)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<NodeAllocateResponse>> GetAllocation(CancellationToken ct)
+    {
+        var nodeId = GetNodeIdFromToken();
+        if (string.IsNullOrEmpty(nodeId))
+            return Unauthorized("Invalid node token");
+
+        var node = await _dataStore.GetNodeAsync(nodeId);
+        if (node == null)
+            return NotFound("Node not registered");
+
+        var config = node.AllocationConfig;
+        var allocated = node.AllocatedResources;
+
+        // Effective percentages: stored config wins; otherwise platform defaults.
+        // Mirrors AllocationConfig.Effective* getters used in NodeService.AllocateNodeAsync.
+        var effCpu = config?.CpuPercent ?? AllocationConfig.DefaultPercent;
+        var effMem = config?.MemoryPercent ?? AllocationConfig.DefaultPercent;
+        var effStor = config?.StoragePercent ?? AllocationConfig.DefaultPercent;
+
+        // Resolved absolute values: only meaningful when the node has been
+        // evaluated (TotalResources populated). Return null otherwise so the
+        // node-side UpdateFromOrchestratorResolutionAsync's "> 0" guards
+        // correctly skip these fields rather than overwriting with zero.
+        return Ok(new NodeAllocateResponse
+        {
+            Success = true,
+            EffectiveCpuPercent = effCpu,
+            EffectiveMemoryPercent = effMem,
+            EffectiveStoragePercent = effStor,
+            GpuCount = config?.GpuCount,
+            EffectiveGpuVramPercent = config?.GpuVramPercent,
+
+            ResolvedComputePoints = allocated.ComputePoints > 0 ? allocated.ComputePoints : null,
+            ResolvedMemoryBytes = allocated.MemoryBytes > 0 ? allocated.MemoryBytes : null,
+            ResolvedStorageBytes = allocated.StorageBytes > 0 ? allocated.StorageBytes : null,
+            ResolvedGpuVramBytes = allocated.GpuVramBytes > 0 ? allocated.GpuVramBytes : null,
+        });
+    }
+
+    /// <summary>
     /// Get node capacity and current allocations
     /// </summary>
     [HttpGet("capacity")]
