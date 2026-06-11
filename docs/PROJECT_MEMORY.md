@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
-**Last Updated:** 2026-06-06
-**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05). Base-image URL durability fix landed (2026-06-06).
+**Last Updated:** 2026-06-11
+**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05). Base-image URL durability fix landed (2026-06-06). CentralIngress redesign documented (2026-06-11) — Step 0 surgical route updates pending application; Steps 1–3 designed but deferred.
 
 ---
 
@@ -182,6 +182,7 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Collaboration features | Shared VMs, infrastructure templates (Phase 3) |
 | Lightweight node support | Non-KVM nodes — design TBD |
 | Alpine Linux system VMs | 50 MB base image, 40× smaller |
+| CentralIngress surgical route updates (Step 0) | Replaces O(n) `POST /load` rebuild with per-route `@id`-based admin API operations; extends single-host ceiling from ~1,000 toward ~5,000 VMs. Internal refactor, no infrastructure change. Spec in `STEP_0_CHANGES.md`. |
 
 ---
 
@@ -307,6 +308,49 @@ The takeaway: pick the URL pattern the upstream mirror actually maintains. Conte
 **Long-term direction:**
 
 The natural boundary for durability is content addressing on DeCloud-controlled storage — mirror base images into the blockstore (same content-addressed primitive the system already uses for overlay chunks and template artifacts). This shifts URL durability from upstream's responsibility onto ours and fully realises the design intent. Tracked as Phase 3 / future work in BASE_IMAGE_DESIGN.md §6.
+
+---
+
+### CentralIngress redesign (designed 2026-06-11, partially scoped for execution)
+
+The current CentralIngress — a single Caddy instance on `srv020184` owning ports 80 and 443, terminating TLS and reverse-proxying plain HTTP to NodeAgent — has two structural problems documented during the design pass:
+
+1. **Scaling ceiling at ~1,000 VMs.** Every VM lifecycle event triggers a full Caddy config rebuild via `POST /load`. At thousands of routes this is multi-megabyte per event, serialized by a `_reloadLock` semaphore. The hot path is O(n) on every VM start/stop.
+
+2. **Tenant workloads cannot own their own TLS.** Because Caddy always terminates on the only public IP, no in-VM proxy (Coolify/Traefik, an app's own nginx, a Kubernetes ingress) can complete ACME challenges or terminate TLS itself. The current Coolify file-provider override is a workaround for one specific PaaS that does not generalize.
+
+Both tensions trace to one root: TLS termination is mandatory and centralized. Resolved by making termination optional and distributable, using SNI (already plaintext on the wire) as the routing primitive. See `INGRESS_DESIGN.md` for the full architecture, trust model, and rejection analysis for alternatives.
+
+**Architecture (recorded for reference):**
+
+- Wildcard `*.vms.stackfi.tech` has one A record per registered public-IP node — DNS membership equals node membership; per-VM DNS writes eliminated entirely.
+- Every public-IP node runs a Routing SystemVM (custom Caddy with the `caddy-l4` module) as a fourth canonical role alongside relay/DHT/blockstore. Same `SystemVmReconciler` pattern, no new deployment machinery.
+- Routing SystemVMs do L4 SNI routing only — no certs, no DNS authority, no platform secrets ever land on community-hosted hosts. Capability bounded by what `caddy-l4` *can* do, not by trust in operators.
+- Platform terminator tier (the orchestrator host initially, scale-out deferred) holds the wildcard cert and terminates managed-mode TLS.
+- Per-VM `IngressMode` toggle (`Managed` default, `Passthrough` opt-in): passthrough VMs receive raw TLS, own their own cert via DNS-01, skip the terminator entirely. Coolify-style redirect loops disappear in passthrough because the VM-side proxy genuinely sees HTTPS.
+- Custom Caddy binary distributed via the existing `binaries/v*` release pipeline — same artifact serves the orchestrator host (Step 1) and Routing SystemVMs (Step 3a), built once with reproducible builds and cosign-signed manifest.
+
+**Migration sequence (`INGRESS_DESIGN.md` §8):**
+
+| Step | Goal | Status |
+|---|---|---|
+| 0 — Surgical route updates | Replace `POST /load` full rebuild with per-route admin API operations; extend single-host ceiling ~5×; internal refactor, no infrastructure change | Pending application — spec in `STEP_0_CHANGES.md` |
+| 1 — Custom Caddy build | `caddy-l4` baked into binary; ship to orchestrator host as drop-in replacement; behavior identical (module loaded, unconfigured) | Designed, deferred — spec in `STEP_1_CHANGES.md` |
+| 2 — Passthrough mode pilot | NodeAgent raw-TCP tunnel + `IngressMode` toggle + L4 listener; pilot with Coolify users | Deferred |
+| 3a–d — Distributed routing | Routing SystemVM as 4th canonical role; wildcard multi-A DNS; per-VM routes pushed to all routing nodes; bandwidth-weighted DNS | Deferred |
+
+**Current stopping point (2026-06-11):** Step 0 is the only step queued. Steps 1–3 are designed and documented but deliberately not in flight. The triggers that would justify pulling them forward are concrete signals from production, not roadmap timing:
+
+- Step 2 becomes urgent if tenant demand for self-managed TLS surfaces (security-conscious enterprises, regulated workloads, anyone running their own ingress controller) — the Coolify override stops being a workaround and becomes a sales liability.
+- Step 3 becomes urgent if single-host VM count climbs past ~3,000 in steady state and CPU/NIC pressure on the orchestrator becomes visible in metrics.
+
+Neither pressure exists today. Step 0 alone addresses the operational pain point with the smallest possible change, takes the single-host ceiling well past current scale, and remains correct even if Steps 1–3 never execute.
+
+**Why the design is recorded even though most steps are deferred:** The architectural reasoning, trust-model analysis, and rejection of alternatives — per-node cert delegation with platform-controlled revocation (rejected because browser OCSP soft-fail makes revocation structurally weak), Caddy-on-every-node terminating locally (rejected because nodes lack public IPs, DNS authority, and ACME challenge capability), L7 front-end load balancer (rejected because it recreates the single point of failure) — are non-obvious and do not survive in the codebase. Future contributors looking at `CentralIngressService` need to find this memory before re-litigating settled questions.
+
+**Operational cost of the deferral:** Minimal. The `caddy-l4` commit pin in `caddy/build.sh` would go stale if Steps 1+ sit unbuilt for months; mitigation is to bump the pin and rebuild quarterly as part of normal `binaries/v*` cadence, keeping Step 1 perpetually one half-day of revalidation away rather than letting it bit-rot.
+
+**Documents:** `INGRESS_DESIGN.md` (architecture, trust model, migration sequence), `STEP_0_CHANGES.md` (concrete patches for Step 0), `STEP_1_CHANGES.md` (concrete patches for Step 1, when triggered).
 
 ---
 
@@ -471,6 +515,7 @@ The natural boundary for durability is content addressing on DeCloud-controlled 
 - System VM boot optimization (fixes identified — apply `package_update: false`, mask snapd/LXD)
 - Template library growth to 10–15 seed templates
 - Frontend reputation polish (trust badges, review prompts, node ratings)
+- CentralIngress Step 0 — surgical route updates, extends single-host ceiling ~5×; spec in `STEP_0_CHANGES.md`
 
 ### Mid-Term (6–12 Months)
 - **Mobile integration:** Two-tier architecture

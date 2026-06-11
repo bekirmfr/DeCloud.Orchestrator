@@ -601,10 +601,18 @@ public class CentralIngressService : ICentralIngressService
             return null;
         }
 
-        // Check global uniqueness
-        if (_customDomains.ContainsKey(domain))
+        // Per-VM uniqueness only — global uniqueness is enforced at Verify time
+        // (the CNAME proof-of-control check is the real gate). Allowing the
+        // same domain to sit in PendingDns across multiple VMs prevents an
+        // attacker from squatting on names they do not control: the squatter
+        // can never Verify (no DNS for that name → no CNAME pointing here →
+        // verification fails), so the legitimate owner is free to add it on
+        // their own VM and verify normally. The first VM to successfully
+        // Verify claims the domain globally (see VerifyCustomDomainDnsAsync).
+        if (vm.IngressConfig?.CustomDomains?.Any(d =>
+                string.Equals(d.Domain, domain, StringComparison.OrdinalIgnoreCase)) == true)
         {
-            _logger.LogWarning("Domain {Domain} already registered", domain);
+            _logger.LogWarning("Domain {Domain} already added to VM {VmId}", domain, vmId);
             return null;
         }
 
@@ -630,12 +638,16 @@ public class CentralIngressService : ICentralIngressService
             CreatedAt = DateTime.UtcNow
         };
 
-        // Persist
+        // Persist. The in-memory _customDomains cache is intentionally NOT
+        // populated here — it backs IsCustomDomainRegistered, which Caddy's
+        // on-demand TLS permission endpoint consults to decide whether to
+        // mint a certificate. Only DNS-verified (Active) domains belong
+        // there; populating it for PendingDns would let an attacker who
+        // registers victim.com on their VM trigger a cert issuance attempt
+        // the moment any browser sends a request with that Host header.
+        // VerifyCustomDomainDnsAsync adds the entry once DNS proves control.
         vm.IngressConfig.CustomDomains.Add(customDomain);
         await _dataStore.SaveVmAsync(vm);
-
-        // Add to cache
-        _customDomains[domain] = customDomain;
 
         _logger.LogInformation("Custom domain added: {Domain} → VM {VmId} (PendingDns)", domain, vmId);
 
@@ -683,29 +695,57 @@ public class CentralIngressService : ICentralIngressService
 
         try
         {
-            var addresses = await Dns.GetHostAddressesAsync(cd.Domain, ct);
+            // Proof-of-control check: the domain's DNS chain must end at the
+            // platform base domain (or, for zone apexes where CNAME is illegal,
+            // at one of the configured platform public IPs). Only the DNS
+            // owner could have set such a record, so a passing check proves
+            // the verifier controls the domain.
+            //
+            // Built-in System.Net.Dns.GetHostAddressesAsync gives us only the
+            // final A/AAAA records — it does not surface CNAME aliases. We
+            // need both: prefer CNAME chain matching, fall back to A-record
+            // intersection with platform IPs.
+            var baseDomain = (_options.BaseDomain ?? "").TrimEnd('.').ToLowerInvariant();
+            var (pointsHere, evidence) = await CheckDnsPointsHereAsync(cd.Domain, baseDomain, ct);
 
-            if (addresses.Length == 0)
+            if (!pointsHere)
             {
-                _logger.LogWarning("DNS lookup returned no addresses for {Domain}", cd.Domain);
+                _logger.LogWarning(
+                    "DNS proof-of-control failed for {Domain}: {Evidence}",
+                    cd.Domain, evidence);
                 cd.Status = CustomDomainStatus.Error;
                 await _dataStore.SaveVmAsync(vm);
-                _customDomains[cd.Domain.ToLowerInvariant()] = cd;
+                // Failure path does NOT touch _customDomains — unverified
+                // domains never enter the on-demand-TLS allowlist.
                 return cd;
             }
 
-            // DNS resolves — activate the domain
-            // (Caddy on-demand TLS will verify the domain further during cert issuance)
+            // Global uniqueness is enforced HERE, at the moment of proof.
+            // Two VMs may hold the same PendingDns domain, but only the first
+            // to verify wins — and because verification requires DNS control,
+            // only the legitimate owner can win the race.
+            if (_customDomains.TryGetValue(cd.Domain.ToLowerInvariant(), out var existing)
+                && existing.VmId != vmId
+                && existing.Status == CustomDomainStatus.Active)
+            {
+                _logger.LogWarning(
+                    "Domain {Domain} already verified on VM {OtherVmId}; cannot claim for VM {VmId}",
+                    cd.Domain, existing.VmId, vmId);
+                cd.Status = CustomDomainStatus.Error;
+                await _dataStore.SaveVmAsync(vm);
+                return cd;
+            }
+
             cd.Status = CustomDomainStatus.Active;
             cd.VerifiedAt = DateTime.UtcNow;
             await _dataStore.SaveVmAsync(vm);
 
-            // Update cache
+            // Promote into the on-demand-TLS allowlist now that proof passed.
             _customDomains[cd.Domain.ToLowerInvariant()] = cd;
 
             _logger.LogInformation(
-                "Custom domain DNS verified: {Domain} resolves to {IPs}",
-                cd.Domain, string.Join(", ", addresses.Select(a => a.ToString())));
+                "Custom domain DNS verified: {Domain} ({Evidence})",
+                cd.Domain, evidence);
 
             // Surgical: add just this custom domain's route (Step 0)
             if (_routes.TryGetValue(vmId, out var vmRoute))
@@ -726,8 +766,79 @@ public class CentralIngressService : ICentralIngressService
             _logger.LogWarning(ex, "DNS verification failed for {Domain}", cd.Domain);
             cd.Status = CustomDomainStatus.Error;
             await _dataStore.SaveVmAsync(vm);
-            _customDomains[cd.Domain.ToLowerInvariant()] = cd;
+            // Failure path does NOT touch _customDomains.
             return cd;
+        }
+    }
+
+    /// <summary>
+    /// DNS proof-of-control check. Returns true iff the domain's resolution
+    /// chain demonstrably points at this platform — either via a CNAME chain
+    /// ending at the configured base domain, or (for zone apexes where CNAME
+    /// is illegal) via an A-record matching one of the configured platform
+    /// public IPs.
+    ///
+    /// <para>
+    /// Built on System.Net.Dns to avoid a new dependency: GetHostEntry on the
+    /// domain returns the resolved A-record set plus, on most resolvers, the
+    /// canonical hostname (which is the last name in the CNAME chain). When
+    /// the resolver does not surface the canonical hostname, we also resolve
+    /// the base domain's A-records and check whether the two A-record sets
+    /// overlap — a positive overlap is a strong signal that the chain ends at
+    /// the platform.
+    /// </para>
+    /// </summary>
+    private async Task<(bool ok, string evidence)> CheckDnsPointsHereAsync(
+        string domain, string baseDomain, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(baseDomain))
+            return (false, "platform base domain not configured");
+
+        IPHostEntry entry;
+        try
+        {
+            entry = await Dns.GetHostEntryAsync(domain, ct);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"DNS lookup failed: {ex.Message}");
+        }
+
+        if (entry.AddressList.Length == 0)
+            return (false, "no A/AAAA records");
+
+        // CNAME-chain evidence: GetHostEntry.HostName is the canonical name
+        // after following CNAMEs. If it ends at the base domain, the chain
+        // demonstrably terminates at the platform.
+        var canonical = (entry.HostName ?? "").TrimEnd('.').ToLowerInvariant();
+        if (canonical == baseDomain ||
+            canonical.EndsWith("." + baseDomain, StringComparison.Ordinal))
+        {
+            return (true, $"CNAME → {canonical}");
+        }
+
+        // Apex fallback: resolve the base domain's own A-records and check
+        // whether the verified domain's A-records intersect. An intersecting
+        // A-record set means the domain ultimately resolves to platform IPs,
+        // which only the DNS owner could arrange.
+        try
+        {
+            var platformEntry = await Dns.GetHostEntryAsync(baseDomain, ct);
+            var domainIps = entry.AddressList.Select(a => a.ToString()).ToHashSet();
+            var platformIps = platformEntry.AddressList.Select(a => a.ToString()).ToHashSet();
+            var overlap = domainIps.Intersect(platformIps).ToList();
+            if (overlap.Count > 0)
+            {
+                return (true, $"A → {string.Join(",", overlap)} (matches {baseDomain})");
+            }
+
+            return (false,
+                $"resolves to {string.Join(",", domainIps)}, expected CNAME → {baseDomain} " +
+                $"or A → one of {string.Join(",", platformIps)}");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"platform base-domain lookup failed: {ex.Message}");
         }
     }
 
