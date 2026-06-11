@@ -3364,9 +3364,39 @@ HTTPS. One VM, unlimited apps.
 2. Open the dashboard at `https://__DECLOUD_DOMAIN__`
 3. Your admin account was created automatically. Retrieve the login over SSH:
    `ssh root@__HOSTNAME__` then `cat /opt/decloud/coolify-admin`
-4. In **Settings**, set the Instance Domain to your DeCloud subdomain to enable
-   live deploy-log streaming and to serve your apps with automatic HTTPS
-5. Connect GitHub/GitLab and deploy your first app
+4. Connect GitHub/GitLab and deploy your first app
+
+## Making your apps reachable (custom domains)
+
+Hostnames are yours to choose; ports are handled automatically. Never type an
+app's internal port anywhere, and ignore the `sslip.io` URLs Coolify
+auto-generates — they are not reachable on DeCloud.
+
+**1. DNS — once per app, at your DNS provider:**
+
+| Record | Name | Target |
+|---|---|---|
+| CNAME | `*.myapp.example.com` | `vms.stackfi.tech` |
+| CNAME | `myapp.example.com` | `vms.stackfi.tech` |
+
+The wildcard covers `api.`, `files.`, and any future service hostname; the
+second record is needed because a DNS wildcard does not cover the bare name.
+
+**2. DeCloud — this VM → Custom Domains:**
+Add each hostname a browser will visit, target port **80**, then Verify.
+Port 80 is Coolify's internal router (Traefik) — it forwards by hostname to
+the right container and port from there.
+
+**3. Coolify — each service's domain, with no port suffix:**
+- Frontend: `https://myapp.example.com`
+- Backend/API: `https://api.myapp.example.com`
+
+**4. Internal services need nothing.** Databases, caches, and server-side
+object storage are reached by other containers via their compose service name
+(e.g. `mysql:3306`) — no domain, no exposure.
+
+HTTPS certificates are issued automatically on the first request to each
+verified hostname.
 
 ## Security
 The dashboard has full control of this VM (it runs Docker and deploys code).
