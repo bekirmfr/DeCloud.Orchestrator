@@ -738,12 +738,30 @@ Bandwidth limits enforced at the hypervisor level via libvirt QoS `<bandwidth>` 
 
 ### GPU Proxy (CUDA Virtualization)
 
-**Status:** ✅ Production-ready (2026-03-13)
+**Status:** ✅ Production-ready (2026-03-13) — **single-tenant-per-GPU only** (SEC-1, 2026-06-11; see Security Model below)
 **Verified workloads:** Ollama/ggml inference (436 tok/s), PyTorch inference, PyTorch training (backward + AdamW), LoRA fine-tuning via PEFT (1,038 tok/s, 1,360 MB VRAM)
+**Known limitations:** 7B+ Ollama models blocked (Bug 23a); Ollama pinned to 0.7.0 (Bug 23); multi-tenant GPU sharing blocked (SEC-1) — see `GPU_PROXY_DEBUGGING_JOURNAL.md`
 
 **The problem:** Nodes without IOMMU (WSL2, consumer PCs, most VPS) cannot do GPU passthrough to VMs. This excludes the majority of GPU-equipped nodes from the network.
 
 **The solution:** A CUDA virtualization layer — shim libraries inside the VM intercept all CUDA calls and forward them via TCP RPC to a daemon on the host that holds the real GPU.
+
+#### Security Model (SEC-1)
+
+**Status:** 🔴 Multi-tenant GPU sharing blocked (2026-06-11) — single-tenant-per-GPU scheduler invariant required until fixed
+
+The daemon serves all VM connections from one process holding the device's **primary CUDA context** (`cuDevicePrimaryCtxRetain` — the correct fix for runtime/driver interop, Session 7). Since the primary context is per-device per-process, every tenant shares one GPU address space. Within a CUDA context there is no isolation: a co-tenant with a valid token can read, corrupt, or free another tenant's VRAM (weights, KV cache, prompts) by naming its device addresses, and can launch kernels whose pointer arguments reference foreign buffers. Tokens authenticate connections — not addresses; quotas limit amounts — not addressable ranges.
+
+**Why validation can't close it:** kernel launch parameters are an opaque byte blob (no signature information), so daemon-side pointer validation is impossible in principle for the launch path. Only context separation closes the hole.
+
+| Layer | Measure |
+|---|---|
+| **Interim (required before any GPU co-tenancy)** | Scheduler invariant: at most one wallet's GPU VMs per physical GPU — one-line orchestrator constraint, zero cost at current scale |
+| **Root fix (planned)** | Fork-per-VM daemon workers → per-process primary contexts → GPU MMU-enforced isolation; also yields fault isolation and a per-launch watchdog (kill worker → clean context release). Cost: ~200–400MB VRAM per context, fed into `GpuVramBytes` scheduling |
+| **Hardening (with worker refactor)** | Zero-on-free (`cudaMemset(0)` on Free/teardown — recycled VRAM is not scrubbed); compute watchdog for non-terminating kernels; TCP transport restricted to WireGuard overlay / vsock only |
+| **Threat-model boundary** | GPU side channels and absent MIG partitioning on consumer cards are not fixable at this layer — confidential workloads use the dedicated-GPU tier |
+
+Full analysis: `GPU_PROXY_DEBUGGING_JOURNAL.md` Session 18 and `GPU_PROXY_ARCHITECTURE_REVIEW.md` §5.
 
 #### Architecture
 

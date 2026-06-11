@@ -2,8 +2,8 @@
 ## Building the World's First Emergent Compute Network
 
 **Version:** 2.1
-**Last Updated:** 2026-06-05
-**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY (PyTorch inference + training + LoRA confirmed) — See status markers below
+**Last Updated:** 2026-06-11
+**Status:** Phase 1 COMPLETE, Phase 2 IN PROGRESS, GPU Proxy PRODUCTION-READY (PyTorch inference + training + LoRA confirmed; multi-tenant GPU sharing gated by SEC-1 — single-tenant-per-GPU invariant) — See status markers below
 **Philosophy:** Simple primitives → Complex outcomes → Community ownership
 
 ---
@@ -791,7 +791,7 @@ These significant features were implemented but were NOT in the original Minecra
 | **ARM Architecture Support** | Production | Raspberry Pi support with dual-arch domain XML |
 | **CLI Tool** | Production | `decloud` v1.3.0 — wallet auth, VM management, diagnostics |
 | **USDC Escrow Contract** | Production | `DeCloudEscrow.sol` on Polygon — deposits, settlement, payouts |
-| **GPU Proxy** | Production | CUDA virtualization over TCP RPC — Ollama 436 tok/s; PyTorch inference + full training + LoRA confirmed (2026-03-13); 1,252 tok/s full fine-tune, 1,038 tok/s LoRA at 1,360MB VRAM |
+| **GPU Proxy** | Production (single-tenant-per-GPU) | CUDA virtualization over TCP RPC — Ollama 436 tok/s; PyTorch inference + full training + LoRA confirmed (2026-03-13); 1,252 tok/s full fine-tune, 1,038 tok/s LoRA at 1,360MB VRAM. Multi-tenant sharing gated by SEC-1 (shared primary context) until fork-per-VM daemon workers ship |
 
 ---
 
@@ -819,6 +819,7 @@ These significant features were implemented but were NOT in the original Minecra
 5. Frontend trust badges ("99.9% uptime", "100+ VMs hosted")
 6. Review prompt modal after VM termination
 7. EU node provider setup for GPU passthrough testing
+8. 🔴 SEC-1 interim mitigation — scheduler invariant: one wallet's GPU VMs per physical GPU (must ship before any GPU co-tenancy)
 
 **This Month:**
 1. ~~Implement full template marketplace~~ ✅ Done
@@ -832,6 +833,7 @@ These significant features were implemented but were NOT in the original Minecra
 2. Complete remaining Priority 2 items (frontend polish, trust score)
 3. Onboard 50+ active node operators
 4. Evaluate Phase 3 (collaboration) based on user demand
+5. SEC-1 root fix — fork-per-VM GPU daemon workers (per-process CUDA contexts, GPU MMU isolation; zero-on-free + launch watchdog included)
 
 **Deferred (awaiting prerequisites):**
 - Staking/slashing: Needs XDE token launch, 50+ nodes, 3+ months reputation data

@@ -506,27 +506,44 @@ public class CentralIngressService : ICentralIngressService
             return;
         }
 
-        _logger.LogDebug("VM {VmId} stopped - updating route status", vmId);
+        // Intent vs state: a route describes the user's intent that a hostname
+        // should reach a VM. Whether the underlying node is online right now
+        // is state. Removing routes from Caddy on every transient stop or
+        // node-offline event conflates the two — and the recovery path is
+        // weak (no automatic re-add when the node returns short of a full
+        // ReloadAllRoutesAsync, which doesn't fire on heartbeat resume).
+        //
+        // Design: keep routes installed in Caddy across transient outages.
+        // Caddy will return a clean 502 from the dead upstream while the
+        // node is gone, which is the truthful state of the world; when the
+        // node returns and lifecycle transitions the VM back to Running,
+        // OnVmStartedAsync's RegisterVmAsync re-derives the upstream from
+        // the current vm.NodeId and updates the route in place. Routes are
+        // only torn down for terminal events: VM deleted (OnVmDeletedAsync)
+        // or the user explicitly disables ingress.
+        //
+        // We still update in-memory status to Paused so the dashboard can
+        // reflect "ingress paused" without lying about the Caddy state.
+
+        _logger.LogDebug("VM {VmId} stopped — keeping Caddy route in place, marking Paused", vmId);
 
         if (_routes.TryGetValue(vmId, out var route))
         {
-            if (_options.AutoRemoveOnStop)
-            {
-                route.Status = CentralRouteStatus.Paused;
-                route.UpdatedAt = DateTime.UtcNow;
-                // Surgical: remove from Caddy — in-memory _routes keeps the Paused marker
-                await _caddyManager.RemoveVmRouteAsync(vmId, ct);
-            }
+            route.Status = CentralRouteStatus.Paused;
+            route.UpdatedAt = DateTime.UtcNow;
         }
 
-        // Pause active custom domains for this VM — surgical remove each from Caddy
+        // Same for custom domains: keep the Caddy route, mark the in-memory
+        // entry Paused. The cert automation policy (on-demand TLS) keeps
+        // working because the entry is still in _customDomains; if the user
+        // explicitly removes the custom domain, RemoveCustomDomainAsync tears
+        // down both the entry and the route.
         foreach (var cd in _customDomains.Values.Where(d => d.VmId == vmId && d.Status == CustomDomainStatus.Active))
         {
             cd.Status = CustomDomainStatus.Paused;
-            await _caddyManager.RemoveCustomDomainRouteAsync(cd.Id, ct);
         }
 
-        // Persist paused status
+        // Persist paused status for the dashboard.
         var vm = await _dataStore.GetVmAsync(vmId);
         if (vm?.IngressConfig?.CustomDomains != null)
         {
