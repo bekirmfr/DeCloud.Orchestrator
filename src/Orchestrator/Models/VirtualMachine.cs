@@ -152,7 +152,13 @@ public class VirtualMachine
     /// True when all services (including System) report Ready.
     /// </summary>
     [BsonIgnore]
-    public bool IsFullyReady => Services.Count > 0 && Services.All(s => s.Status == ServiceStatus.Ready);
+    // Mirror VmInstance.IsFullyReady (node-agent): GuestAgentPing is a transport
+    // diagnostic, not a readiness determinant. Keeps dashboard state consistent
+    // with the node's reconciler view during virtio-channel hiccups.
+    public bool IsFullyReady =>
+        Services.Any(s => s.CheckType != CheckType.GuestAgentPing) &&
+        Services.Where(s => s.CheckType != CheckType.GuestAgentPing)
+                .All(s => s.Status == ServiceStatus.Ready);
 
     // =========================================================================
     // Lazysync & Replication State (updated each lazysync cycle)

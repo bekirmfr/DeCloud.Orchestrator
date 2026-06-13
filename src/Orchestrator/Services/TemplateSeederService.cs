@@ -2938,9 +2938,9 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 4,
-                MemoryBytes = 8L * 1024 * 1024 * 1024,
+                MemoryBytes = 3L * 1024 * 1024 * 1024,
                 DiskBytes = 30L * 1024 * 1024 * 1024,
-                GpuVramBytes = 4L * 1024 * 1024 * 1024,
+                GpuVramBytes = 3L * 1024 * 1024 * 1024,
                 Constraints = new List<Constraint>
                 {
                     new()
