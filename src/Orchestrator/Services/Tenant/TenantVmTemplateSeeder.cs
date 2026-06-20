@@ -3781,6 +3781,7 @@ that a score is legitimate. Submit from your server, not a game client.
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 1,
+                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 1L * 1024 * 1024 * 1024,   //  1 GB
                 DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
                 ImageId = "ubuntu-24.04",
@@ -3788,6 +3789,7 @@ that a score is legitimate. Submit from your server, not a game client.
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
+                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,   //  2 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,  // 20 GB
                 ImageId = "ubuntu-24.04",
