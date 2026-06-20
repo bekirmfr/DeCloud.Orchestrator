@@ -560,7 +560,7 @@ public sealed partial class SystemVmTemplateSeeder
     };
 
     /// <summary>
-    /// Fetch a URL as text, with debug logging. Mirrors GeneralVmTemplateSeeder.FetchAsync.
+    /// Fetch a URL as text, with debug logging. Mirrors TenantVmTemplateSeeder.FetchAsync.
     /// </summary>
     private async Task<string> FetchAsync(string url, CancellationToken ct)
     {
@@ -573,7 +573,7 @@ public sealed partial class SystemVmTemplateSeeder
     /// into a single cloud-init document via TemplateComposer.
     ///
     /// <para>
-    /// This is the system-VM equivalent of GeneralVmTemplateSeeder.BuildGeneralTemplateAsync's
+    /// This is the system-VM equivalent of TenantVmTemplateSeeder.BuildGeneralTemplateAsync's
     /// fetch+compose step. P0.3a–c stripped base content from the role YAMLs on the assumption
     /// composition would happen at seed time; this method is what makes that assumption true.
     /// </para>
