@@ -89,7 +89,7 @@ public sealed partial class TenantVmTemplateSeeder
     private const int AiChatbotTemplateRevision = 1;
     private const int MinecraftPaperTemplateRevision = 1;
     private const int CoolifyTemplateRevision = 1;
-    private const int LeaderboardTemplateRevision = 1;
+    private const int LeaderboardTemplateRevision = 2;
 
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
@@ -3706,37 +3706,55 @@ login if you wish.
             Category = "web-apps",
 
             Description =
-                "Self-hosted, multi-tenant leaderboard backend with a " +
-                "LootLocker-compatible API. Many apps, many boards, top-N / " +
+                "Self-hosted leaderboard backend with a LootLocker-compatible " +
+                "API. Project-wide boards, per-board access keys, top-N / " +
                 "recent / rank-around-me queries.",
 
-            LongDescription = @"## Generic, multi-tenant leaderboard backend
+            LongDescription = @"## Generic leaderboard backend
 
-One VM hosts many apps; each app owns many boards; each board ranks many
-members. The HTTP API mirrors LootLocker's server leaderboard API, so games
-using LootLocker or a portal SDK (Playgama, CrazyGames, Poki) integrate with a
-thin adapter.
+One VM is one project. Boards are project-wide; each board ranks many members.
+The HTTP API mirrors LootLocker's server leaderboard API, so games using
+LootLocker or a portal SDK (Playgama, CrazyGames, Poki) integrate with a thin
+adapter.
+
+## Model
+- **Boards** are created by the operator and shared across the project. The
+  board key is the public read capability.
+- **Apps** are just labels (e.g. a game, a partner) - they hold no secret.
+- **Access keys** are the write credential. Each key is a secret bound to ONE
+  board under ONE app, carrying only the rights you grant. A leaked key can
+  touch one board and do only what you allowed.
 
 ## Roles
 - **Operator** (you): the deploy root password is the admin token
-  (`x-admin-token`) - mint and revoke apps.
-- **App**: an `app_secret` (`x-session-token`) - create boards, submit scores,
-  manage its own boards.
-- **Public**: board key only - read rankings.
+  (`x-admin-token`), or sign in to the browser console at the VM URL. Creates
+  boards and apps, issues and revokes access keys. Board lifecycle is
+  operator-only.
+- **Access key** (`x-session-token`): writes to its one board - `submit`
+  (default) and optionally `member:delete`.
+- **Public**: board key only - read rankings, no auth.
 
 ## Getting Started
 1. Wait ~1-2 minutes for first boot.
-2. Mint an app over SSH or from your server with the admin token (the deploy
-   root password):
+2. Open `https://__DECLOUD_DOMAIN__/` and sign in with the deploy root
+   password, or use the admin token over curl:
    ```bash
+   # create a board
+   curl -s https://__DECLOUD_DOMAIN__/admin/boards \
+     -H ""x-admin-token: <DEPLOY_PASSWORD>"" \
+     -d '{""name"":""Daily"",""direction_method"":""descending""}'
+   # create an app, then issue a key bound to the board
    curl -s https://__DECLOUD_DOMAIN__/admin/apps \
      -H ""x-admin-token: <DEPLOY_PASSWORD>"" -d '{""label"":""my-game""}'
+   curl -s https://__DECLOUD_DOMAIN__/admin/apps/<APP_ID>/keys \
+     -H ""x-admin-token: <DEPLOY_PASSWORD>"" \
+     -d '{""board_key"":""<KEY>"",""scopes"":[""submit""]}'
    ```
-3. Create a board with the returned `app_secret`, then point your game server's
-   score submissions at `/leaderboards/<KEY>/submit`.
+3. Submit scores from your server with the key secret in `x-session-token`.
 
 ## Endpoints
-- `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (app)
+- `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (key: submit)
+- `DELETE /leaderboards/{key}/members/{member_id}`  (key: member:delete)
 - `GET  /leaderboards/{key}/list?count=10&after=<cursor>`  (public)
 - `GET  /leaderboards/{key}/member/{member_id}?around=3`  (public)
 
@@ -3763,7 +3781,6 @@ that a score is legitimate. Submit from your server, not a game client.
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 1,
-                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 1L * 1024 * 1024 * 1024,   //  1 GB
                 DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
                 ImageId = "ubuntu-24.04",
@@ -3771,7 +3788,6 @@ that a score is legitimate. Submit from your server, not a game client.
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
-                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,   //  2 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,  // 20 GB
                 ImageId = "ubuntu-24.04",
