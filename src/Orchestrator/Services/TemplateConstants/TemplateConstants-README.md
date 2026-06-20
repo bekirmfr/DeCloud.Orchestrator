@@ -11,7 +11,7 @@ source files in [DeCloud.Builds](https://github.com/bekirmfr/DeCloud.Builds).
 | File | Source script | Extends |
 |------|--------------|---------|
 | `SystemVmTemplateSeeder.Artifacts.cs` | `system-vms/compute-artifact-constants.sh` | `SystemVmTemplateSeeder` |
-| `GeneralVmTemplateSeeder.Artifacts.cs` | `tenant-vms/compute-artifact-constants.sh` | `GeneralVmTemplateSeeder` |
+| `TenantVmTemplateSeeder.Artifacts.cs` | `tenant-vms/compute-artifact-constants.sh` | `TenantVmTemplateSeeder` |
 
 ## Regeneration workflow
 
@@ -26,7 +26,7 @@ bash compute-artifact-constants.sh
 # Tenant VM assets changed:
 cd DeCloud.Builds/tenant-vms
 bash compute-artifact-constants.sh
-# → auto-copies GeneralVmTemplateSeeder.Artifacts.cs here
+# → auto-copies TenantVmTemplateSeeder.Artifacts.cs here
 ```
 
 Then in the Orchestrator repo:
