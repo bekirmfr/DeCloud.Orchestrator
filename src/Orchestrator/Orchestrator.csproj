@@ -111,7 +111,6 @@
 	<ItemGroup>
 	  <Folder Include="Dtos\" />
 	  <Folder Include="Services\TemplateConstants\" />
-	  <Folder Include="Services\Tenant\" />
 	</ItemGroup>
 
 	<!--

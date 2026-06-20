@@ -148,63 +148,63 @@ public sealed partial class SystemVmTemplateSeeder
             Artifacts = new List<TemplateArtifact>
             {
                 // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
-                Artifact("dht-node", "DHT node binary (libp2p Kademlia)",
+                TemplateArtifact.Artifact("dht-node", "DHT node binary (libp2p Kademlia)",
                     ArtifactType.Binary, arch: "amd64",
                     sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
                     sourceUrl: amd64.Url),
 
-                Artifact("dht-node", "DHT node binary — ARM64",
+                TemplateArtifact.Artifact("dht-node", "DHT node binary — ARM64",
                     ArtifactType.Binary, arch: "arm64",
                     sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
                     sourceUrl: arm64.Url),
 
                 // ── Shared scripts (data: URI inline) ────────────────────────
-                Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
+                TemplateArtifact.Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
                     ArtifactType.Script,
                     sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
 
-                Artifact("wg-config-fetch", "WireGuard config fetch script",
+                TemplateArtifact.Artifact("wg-config-fetch", "WireGuard config fetch script",
                     ArtifactType.Script,
                     sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
 
                 // ── DHT-specific scripts (data: URI inline) ───────────────────
-                Artifact("dht-health-check", "DHT health check script",
+                TemplateArtifact.Artifact("dht-health-check", "DHT health check script",
                     ArtifactType.Script,
                     sha256: DhtHealthCheckSha256, sourceUrl: DhtHealthCheckDataUri),
 
-                Artifact("dht-notify-ready", "DHT ready callback script",
+                TemplateArtifact.Artifact("dht-notify-ready", "DHT ready callback script",
                     ArtifactType.Script,
                     sha256: DhtNotifyReadySha256, sourceUrl: DhtNotifyReadyDataUri),
 
-                Artifact("dht-bootstrap-poll", "DHT bootstrap peer polling script",
+                TemplateArtifact.Artifact("dht-bootstrap-poll", "DHT bootstrap peer polling script",
                     ArtifactType.Script,
                     sha256: DhtBootstrapPollSha256, sourceUrl: DhtBootstrapPollDataUri),
 
                 // ── Dashboard (data: URI inline) ──────────────────────────────
-                Artifact("dht-dashboard", "DHT dashboard server (Python)",
+                TemplateArtifact.Artifact("dht-dashboard", "DHT dashboard server (Python)",
                     ArtifactType.WebAsset,
                     sha256: DhtDashboardPySha256, sourceUrl: DhtDashboardPyDataUri),
 
-                Artifact("dht-dashboard-html", "DHT dashboard HTML",
+                TemplateArtifact.Artifact("dht-dashboard-html", "DHT dashboard HTML",
                     ArtifactType.WebAsset,
                     sha256: DhtDashboardHtmlSha256, sourceUrl: DhtDashboardHtmlDataUri),
 
-                Artifact("dht-dashboard-css", "DHT dashboard CSS",
+                TemplateArtifact.Artifact("dht-dashboard-css", "DHT dashboard CSS",
                     ArtifactType.WebAsset,
                     sha256: DhtDashboardCssSha256, sourceUrl: DhtDashboardCssDataUri),
 
-                Artifact("dht-dashboard-js", "DHT dashboard JS",
+                TemplateArtifact.Artifact("dht-dashboard-js", "DHT dashboard JS",
                     ArtifactType.WebAsset,
                     sha256: DhtDashboardJsSha256, sourceUrl: DhtDashboardJsDataUri),
 
                 // ── Shared watcher artifacts ─────────────────────────────────────
-                Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                TemplateArtifact.Artifact("decloud-env-watcher", "In-VM environment watcher script",
                     ArtifactType.Script,
                     sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
-                Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                TemplateArtifact.Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
                     ArtifactType.Config,
                     sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
-                Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                TemplateArtifact.Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
                     ArtifactType.Config,
                     sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
             },
@@ -254,63 +254,63 @@ public sealed partial class SystemVmTemplateSeeder
             Artifacts = new List<TemplateArtifact>
             {
                 // ── Binary (HTTPS — DeCloud.Builds release) ──────────────────
-                Artifact("blockstore-node", "BlockStore node binary",
+                TemplateArtifact.Artifact("blockstore-node", "BlockStore node binary",
                     ArtifactType.Binary, arch: "amd64",
                     sha256: amd64.Sha256, sizeBytes: amd64.SizeBytes,
                     sourceUrl: amd64.Url),
 
-                Artifact("blockstore-node", "BlockStore node binary — ARM64",
+                TemplateArtifact.Artifact("blockstore-node", "BlockStore node binary — ARM64",
                     ArtifactType.Binary, arch: "arm64",
                     sha256: arm64.Sha256, sizeBytes: arm64.SizeBytes,
                     sourceUrl: arm64.Url),
 
                 // ── Shared scripts (data: URI inline) ────────────────────────
-                Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
+                TemplateArtifact.Artifact("wg-mesh-enroll", "WireGuard mesh enrollment script",
                     ArtifactType.Script,
                     sha256: WgMeshEnrollSha256, sourceUrl: WgMeshEnrollDataUri),
 
-                Artifact("wg-config-fetch", "WireGuard config fetch script",
+                TemplateArtifact.Artifact("wg-config-fetch", "WireGuard config fetch script",
                     ArtifactType.Script,
                     sha256: WgConfigFetchSha256, sourceUrl: WgConfigFetchDataUri),
 
                 // ── BlockStore-specific scripts (data: URI inline) ───────────────────
-                Artifact("blockstore-health-check", "BlockStore health check script",
+                TemplateArtifact.Artifact("blockstore-health-check", "BlockStore health check script",
                     ArtifactType.Script,
                     sha256: BlockstoreHealthCheckSha256, sourceUrl: BlockstoreHealthCheckDataUri),
 
-                Artifact("blockstore-notify-ready", "BlockStore ready callback script",
+                TemplateArtifact.Artifact("blockstore-notify-ready", "BlockStore ready callback script",
                     ArtifactType.Script,
                     sha256: BlockstoreNotifyReadySha256, sourceUrl: BlockstoreNotifyReadyDataUri),
 
-                Artifact("blockstore-bootstrap-poll", "BlockStore bootstrap peer polling script",
+                TemplateArtifact.Artifact("blockstore-bootstrap-poll", "BlockStore bootstrap peer polling script",
                     ArtifactType.Script,
                     sha256: BlockstoreBootstrapPollSha256, sourceUrl: BlockstoreBootstrapPollDataUri),
 
                 // ── Dashboard (data: URI inline) ──────────────────────────────
-                Artifact("blockstore-dashboard", "BlockStore dashboard server (Python)",
+                TemplateArtifact.Artifact("blockstore-dashboard", "BlockStore dashboard server (Python)",
                     ArtifactType.WebAsset,
                     sha256: BlockstoreDashboardPySha256, sourceUrl: BlockstoreDashboardPyDataUri),
 
-                Artifact("blockstore-dashboard-html", "BlockStore dashboard HTML",
+                TemplateArtifact.Artifact("blockstore-dashboard-html", "BlockStore dashboard HTML",
                     ArtifactType.WebAsset,
                     sha256: BlockstoreDashboardHtmlSha256, sourceUrl: BlockstoreDashboardHtmlDataUri),
 
-                Artifact("blockstore-dashboard-css", "BlockStore dashboard CSS",
+                TemplateArtifact.Artifact("blockstore-dashboard-css", "BlockStore dashboard CSS",
                     ArtifactType.WebAsset,
                     sha256: BlockstoreDashboardCssSha256, sourceUrl: BlockstoreDashboardCssDataUri),
 
-                Artifact("blockstore-dashboard-js", "BlockStore dashboard JS",
+                TemplateArtifact.Artifact("blockstore-dashboard-js", "BlockStore dashboard JS",
                     ArtifactType.WebAsset,
                     sha256: BlockstoreDashboardJsSha256, sourceUrl: BlockstoreDashboardJsDataUri),
 
                 // ── Shared watcher artifacts ─────────────────────────────────────
-                Artifact("decloud-env-watcher", "In-VM environment watcher script",
+                TemplateArtifact.Artifact("decloud-env-watcher", "In-VM environment watcher script",
                     ArtifactType.Script,
                     sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
-                Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+                TemplateArtifact.Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
                     ArtifactType.Config,
                     sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
-                Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+                TemplateArtifact.Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
                     ArtifactType.Config,
                     sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
             },
@@ -378,40 +378,40 @@ public sealed partial class SystemVmTemplateSeeder
         Artifacts = new List<TemplateArtifact>
         {
             // Relay has no compiled binary — WireGuard is a kernel module.
-            Artifact("relay-api", "Relay API server (Python)",
+            TemplateArtifact.Artifact("relay-api", "Relay API server (Python)",
                 ArtifactType.Script,
                 sha256: RelayApiPySha256, sourceUrl: RelayApiPyDataUri),
 
-            Artifact("relay-http-proxy", "Relay HTTP proxy (Python)",
+            TemplateArtifact.Artifact("relay-http-proxy", "Relay HTTP proxy (Python)",
                 ArtifactType.Script,
                 sha256: RelayHttpProxyPySha256, sourceUrl: RelayHttpProxyPyDataUri),
 
-            Artifact("notify-nat-ready", "NAT ready callback script",
+            TemplateArtifact.Artifact("notify-nat-ready", "NAT ready callback script",
                 ArtifactType.Script,
                 sha256: RelayNotifyNatReadySha256, sourceUrl: RelayNotifyNatReadyDataUri),
 
-            Artifact("relay-dashboard-html", "Relay dashboard HTML",
+            TemplateArtifact.Artifact("relay-dashboard-html", "Relay dashboard HTML",
                 ArtifactType.WebAsset,
                 sha256: RelayDashboardHtmlSha256, sourceUrl: RelayDashboardHtmlDataUri),
 
-            Artifact("relay-dashboard-css", "Relay dashboard CSS",
+            TemplateArtifact.Artifact("relay-dashboard-css", "Relay dashboard CSS",
                 ArtifactType.WebAsset,
                 sha256: RelayDashboardCssSha256, sourceUrl: RelayDashboardCssDataUri),
 
-            Artifact("relay-dashboard-js", "Relay dashboard JS",
+            TemplateArtifact.Artifact("relay-dashboard-js", "Relay dashboard JS",
             ArtifactType.WebAsset,
             sha256: RelayDashboardJsSha256, sourceUrl: RelayDashboardJsDataUri),
 
             // ── Shared watcher artifacts (P3.1.4) ────────────────────────────────
-            Artifact("decloud-env-watcher", "In-VM environment watcher script",
+            TemplateArtifact.Artifact("decloud-env-watcher", "In-VM environment watcher script",
                 ArtifactType.Script,
                 sha256: DecloudEnvWatcherSha256, sourceUrl: DecloudEnvWatcherDataUri),
 
-            Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
+            TemplateArtifact.Artifact("decloud-env-watcher-service", "Environment watcher systemd service template",
                 ArtifactType.Config,
                 sha256: DecloudEnvWatcherServiceSha256, sourceUrl: DecloudEnvWatcherServiceDataUri),
 
-            Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
+            TemplateArtifact.Artifact("decloud-env-watcher-timer", "Environment watcher systemd timer template",
                 ArtifactType.Config,
                 sha256: DecloudEnvWatcherTimerSha256, sourceUrl: DecloudEnvWatcherTimerDataUri),
         },
@@ -944,49 +944,4 @@ public sealed partial class SystemVmTemplateSeeder
                               "Contains VARNAME=scope lines for each Dynamic variable. " +
                               "Empty comment for relay (no dynamics in Phase 3)." },
     };
-
-    // ── Artifact factory ──────────────────────────────────────────────────
-
-    private static TemplateArtifact Artifact(
-        string name,
-        string description,
-        ArtifactType type,
-        string sha256,
-        string sourceUrl,
-        string? arch = null,
-        long sizeBytes = 0)
-    {
-        // Verify the data: URI SHA256 matches at seed time (cheap — bytes are inline).
-        // This catches constant mismatches caused by editing one but not the other.
-        if (sourceUrl.StartsWith("data:", StringComparison.OrdinalIgnoreCase) &&
-            sha256 != "COMPUTE_FROM_FILE")
-        {
-            var commaIndex = sourceUrl.IndexOf(',');
-            if (commaIndex >= 0)
-            {
-                var bytes = Convert.FromBase64String(sourceUrl[(commaIndex + 1)..].Trim());
-                var actual = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-                if (!string.Equals(actual, sha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(
-                        $"SystemVmTemplateSeeder: inline artifact '{name}' SHA256 mismatch. " +
-                        $"Expected {sha256[..12]}, actual {actual[..12]}. " +
-                        "Run compute-artifact-constants.sh to regenerate constants.");
-
-                sizeBytes = bytes.Length;
-            }
-        }
-
-        return new TemplateArtifact
-        {
-            Name = name,
-            Description = description,
-            Type = type,
-            Architecture = arch,
-            Sha256 = sha256,
-            SizeBytes = sizeBytes,
-            SourceUrl = sourceUrl,
-            RegisteredAt = DateTime.UtcNow,
-            RegisteredBy = "system",
-        };
-    }
 }

@@ -1,5 +1,5 @@
 // ============================================================
-// GeneralVmTemplateSeeder.Artifacts.cs  —  AUTO-GENERATED
+// TenantVmTemplateSeeder.Artifacts.cs  —  AUTO-GENERATED
 //
 // Run:  bash tenant-vms/compute-artifact-constants.sh
 //       (auto-copies to Orchestrator sibling repo)
@@ -7,11 +7,11 @@
 // DO NOT EDIT MANUALLY — regenerate from source files in DeCloud.Builds.
 // ============================================================
 
-// Generated: 2026-06-20T19:17:45Z
+// Generated: 2026-06-20T20:50:34Z
 
 namespace Orchestrator.Services.Tenant;
 
-public sealed partial class GeneralVmTemplateSeeder
+public sealed partial class TenantVmTemplateSeeder
 {
     // ── General ────────────────────────────────────────────────────────────────
     // general/assets/general-api.py  (4424 bytes)
@@ -29,7 +29,7 @@ public sealed partial class GeneralVmTemplateSeeder
 
 
     // ── Summary ─────────────────────────────────────────────────────────────────
-    // Generated: 2026-06-20T19:17:46Z
+    // Generated: 2026-06-20T20:50:35Z
     // Roles discovered:
     //   general/assets/ [prefix='General']: 2 files
     //   leaderboard/assets/ [prefix='Leaderboard']: 1 files

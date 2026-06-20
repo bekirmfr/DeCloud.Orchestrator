@@ -146,8 +146,8 @@ builder.Services.AddHttpClient("github-releases");
 
 // Tenant VM template seeder — composes base-tenant.yaml + tenant-vms/general/
 // cloud-init.yaml from DeCloud.Builds, declares Variables, upserts platform-general.
-builder.Services.AddSingleton<GeneralVmTemplateSeeder>();
-builder.Services.AddHttpClient<GeneralVmTemplateSeeder>()
+builder.Services.AddSingleton<TenantVmTemplateSeeder>();
+builder.Services.AddHttpClient<TenantVmTemplateSeeder>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 // TemplateSeederService also fetches compose-pipeline tenant role layers
