@@ -41,12 +41,15 @@ public class TemplateSeederService
         $"{CloudInitRawBase}/tenant-vms/minecraft-paper/cloud-init.yaml";
     private const string CoolifyRoleUrl =
         $"{CloudInitRawBase}/tenant-vms/coolify/cloud-init.yaml";
+    private const string LeaderboardRoleUrl =
+        $"{CloudInitRawBase}/tenant-vms/leaderboard/cloud-init.yaml";
 
     // Per-template revisions — bump when role layer or seeder metadata changes
     // in a way that should redeploy new VMs created from this template.
     private const int AiChatbotTemplateRevision = 1;
     private const int MinecraftPaperTemplateRevision = 1;
     private const int CoolifyTemplateRevision = 1;
+    private const int LeaderboardTemplateRevision = 1;
 
     public TemplateSeederService(
         ITemplateService templateService,
@@ -485,14 +488,14 @@ final_message: |
 
     private VmTemplate CreateFluxTemplate()
     {
-      return new VmTemplate
-      {
-          Name = "FLUX.1 Image Generation",
-          Slug = "flux-image-generation",
-          Version = "1.1.0",
-          Category = "ai-ml",
-          Description = "FLUX.1-dev (NF4 quantized) via SD WebUI Forge. Best-in-class open-source image generation, unrestricted, on 8GB+ VRAM.",
-          LongDescription = @"## Features
+        return new VmTemplate
+        {
+            Name = "FLUX.1 Image Generation",
+            Slug = "flux-image-generation",
+            Version = "1.1.0",
+            Category = "ai-ml",
+            Description = "FLUX.1-dev (NF4 quantized) via SD WebUI Forge. Best-in-class open-source image generation, unrestricted, on 8GB+ VRAM.",
+            LongDescription = @"## Features
 - FLUX.1-dev — best-in-class open-source image generation model
 - NF4 quantized checkpoint — fits in 8GB VRAM
 - SD WebUI Forge interface (actively maintained)
@@ -512,36 +515,36 @@ final_message: |
 - RAM: 8GB minimum (swapfile created automatically if RAM < 20GB)
 - Storage: 60GB for models and dependencies",
 
-          AuthorId = "platform",
-          AuthorName = "DeCloud",
-          SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://github.com/lllyasviel/stable-diffusion-webui-forge",
 
-          MinimumSpec = new VmSpec
-          {
-              VirtualCpuCores = 8,
-              MemoryBytes = 8L * 1024 * 1024 * 1024,   // 8GB — swapfile compensates for mmap
-              DiskBytes = 60L * 1024 * 1024 * 1024,    // 60GB — FLUX files are big
-              GpuMode = GpuMode.Proxied,
-              GpuModel = "NVIDIA"
-          },
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 8L * 1024 * 1024 * 1024,   // 8GB — swapfile compensates for mmap
+                DiskBytes = 60L * 1024 * 1024 * 1024,    // 60GB — FLUX files are big
+                GpuMode = GpuMode.Proxied,
+                GpuModel = "NVIDIA"
+            },
 
-          RecommendedSpec = new VmSpec
-          {
-              VirtualCpuCores = 8,
-              MemoryBytes = 32L * 1024 * 1024 * 1024,  // 32GB — no swap needed, full speed
-              DiskBytes = 100L * 1024 * 1024 * 1024,
-              GpuMode = GpuMode.Passthrough,
-              GpuModel = "NVIDIA RTX 4070"
-          },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 8,
+                MemoryBytes = 32L * 1024 * 1024 * 1024,  // 32GB — no swap needed, full speed
+                DiskBytes = 100L * 1024 * 1024 * 1024,
+                GpuMode = GpuMode.Passthrough,
+                GpuModel = "NVIDIA RTX 4070"
+            },
 
-          RequiresGpu = true,
-          DefaultGpuMode = GpuMode.Proxied,
-          GpuRequirement = "NVIDIA GPU with 8GB+ VRAM",
-          RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
+            RequiresGpu = true,
+            DefaultGpuMode = GpuMode.Proxied,
+            GpuRequirement = "NVIDIA GPU with 8GB+ VRAM",
+            RequiredCapabilities = new List<string> { "cuda", "nvidia-gpu" },
 
-          Tags = new List<string> { "ai", "flux", "image-generation", "gpu", "unrestricted", "forge" },
+            Tags = new List<string> { "ai", "flux", "image-generation", "gpu", "unrestricted", "forge" },
 
-          CloudInitTemplate = @"#cloud-config
+            CloudInitTemplate = @"#cloud-config
 
 # FLUX.1-dev (NF4) via SD WebUI Forge — DeCloud Template v1.1.0
 
@@ -665,14 +668,14 @@ final_message: |
   FLUX.1-dev is starting up. First boot takes 15-20 minutes (model downloads ~15GB total).
   Access: https://${DECLOUD_DOMAIN}:7860 — user / ${DECLOUD_PASSWORD}",
 
-          DefaultEnvironmentVariables = new Dictionary<string, string>
-          {
-              ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
-              ["DECLOUD_GPU_VMEM_PROXY"] = "1",
-              ["CUDA_MODULE_LOADING"] = "EAGER",
-          },
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                ["CUDA_MODULE_LOADING"] = "EAGER",
+            },
 
-          ExposedPorts = new List<TemplatePort>
+            ExposedPorts = new List<TemplatePort>
           {
               new TemplatePort
               {
@@ -689,24 +692,24 @@ final_message: |
               }
           },
 
-          DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}:7860",
 
-          EstimatedCostPerHour = 0.75m,
+            EstimatedCostPerHour = 0.75m,
 
-          Status = TemplateStatus.Published,
-          Visibility = TemplateVisibility.Public,
-          IsFeatured = true,
-          IsVerified = true,
-          IsCommunity = false,
-          PricingModel = TemplatePricingModel.Free,
-          TemplatePrice = 0,
-          AverageRating = 0,
-          TotalReviews = 0,
-          RatingDistribution = new int[5],
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
 
-          CreatedAt = DateTime.UtcNow,
-          UpdatedAt = DateTime.UtcNow
-      };
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
     }
 
     private VmTemplate CreatePostgreSqlTemplate()
@@ -2411,26 +2414,26 @@ final_message: |
   Test: curl https://${DECLOUD_DOMAIN}/v1/models -H ""Authorization: Bearer ${DECLOUD_PASSWORD}""
   Logs: journalctl -u vllm -f",
 
-          DefaultEnvironmentVariables = new Dictionary<string, string>
-          {
-              ["MODEL_ID"] = "Qwen/Qwen2.5-3B-Instruct",
-              ["MAX_MODEL_LEN"] = "8192",
-              ["GPU_MEMORY_UTILIZATION"] = "0.90",
-              // VMM: vLLM uses cuMemCreate/cuMemMap for KV cache allocation
-              ["DECLOUD_GPU_VMEM_PROXY"] = "1",
-              // Graphs: proxy runs kernels eagerly — CUDA graph capture not supported
-              ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
-              // Required for PyTorch CUDA 12 lazy loading
-              ["CUDA_MODULE_LOADING"] = "EAGER",
-              // Disable torch.compile (requires kernel driver, not available in proxy mode)
-              ["TORCHINDUCTOR_DISABLE"] = "1",
-              // Suppress device-side assertion crashes over proxy
-              ["TORCH_USE_CUDA_DSA"] = "0",
-              // Tune allocator: avoid repeated VMM RPC round-trips
-              ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:False",
-          },
+            DefaultEnvironmentVariables = new Dictionary<string, string>
+            {
+                ["MODEL_ID"] = "Qwen/Qwen2.5-3B-Instruct",
+                ["MAX_MODEL_LEN"] = "8192",
+                ["GPU_MEMORY_UTILIZATION"] = "0.90",
+                // VMM: vLLM uses cuMemCreate/cuMemMap for KV cache allocation
+                ["DECLOUD_GPU_VMEM_PROXY"] = "1",
+                // Graphs: proxy runs kernels eagerly — CUDA graph capture not supported
+                ["DECLOUD_GPU_GRAPH_NOOP"] = "1",
+                // Required for PyTorch CUDA 12 lazy loading
+                ["CUDA_MODULE_LOADING"] = "EAGER",
+                // Disable torch.compile (requires kernel driver, not available in proxy mode)
+                ["TORCHINDUCTOR_DISABLE"] = "1",
+                // Suppress device-side assertion crashes over proxy
+                ["TORCH_USE_CUDA_DSA"] = "0",
+                // Tune allocator: avoid repeated VMM RPC round-trips
+                ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:False",
+            },
 
-          ExposedPorts = new List<TemplatePort>
+            ExposedPorts = new List<TemplatePort>
           {
               new TemplatePort
               {
@@ -2447,29 +2450,29 @@ final_message: |
               }
           },
 
-          DefaultAccessUrl = "https://${DECLOUD_DOMAIN}/v1",
-          UseGeneratedPassword = true,
+            DefaultAccessUrl = "https://${DECLOUD_DOMAIN}/v1",
+            UseGeneratedPassword = true,
 
-          EstimatedCostPerHour = 0.25m,
+            EstimatedCostPerHour = 0.25m,
 
-          DefaultBandwidthTier = BandwidthTier.Basic,
+            DefaultBandwidthTier = BandwidthTier.Basic,
 
-          Status = TemplateStatus.Published,
-          Visibility = TemplateVisibility.Public,
-          IsFeatured = true,
-          IsVerified = true,
-          IsCommunity = false,
-          PricingModel = TemplatePricingModel.Free,
-          TemplatePrice = 0,
-          AverageRating = 0,
-          TotalReviews = 0,
-          RatingDistribution = new int[5],
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            IsVerified = true,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
 
-          CreatedAt = DateTime.UtcNow,
-          UpdatedAt = DateTime.UtcNow
-      };
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
     }
-    
+
     private VmTemplate CreatePytorchJupyterTemplate()
     {
         return new VmTemplate
@@ -2805,6 +2808,8 @@ final_message: |
             () => BuildMinecraftPaperTemplateAsync(ct), ct);
         await TryUpsertComposeAsync("coolify",
             () => BuildCoolifyTemplateAsync(ct), ct);
+        await TryUpsertComposeAsync("leaderboard",
+            () => BuildLeaderboardTemplateAsync(ct), ct);
     }
 
     private async Task TryUpsertComposeAsync(
@@ -3527,4 +3532,191 @@ login if you wish.
                 Description = "Assigned CentralIngress subdomain. Used in DefaultAccessUrl, " +
                               "dashboard URL, and final_message." },
     };
+
+
+    // ── Generic Leaderboard ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Build the Generic Leaderboard template by composing
+    /// base-tenant.yaml + tenant-vms/leaderboard/cloud-init.yaml. The role layer
+    /// carries only the leaderboard workload (a Python stdlib service embedded
+    /// inline in write_files, same delivery as minecraft's setup.sh); SSH
+    /// password auth, qemu-guest-agent, sshd CA, and chpasswd bootcmd come from
+    /// base-tenant.yaml.
+    /// </summary>
+    private async Task<VmTemplate> BuildLeaderboardTemplateAsync(CancellationToken ct)
+    {
+        var baseLayer = await _httpClient.GetStringAsync(BaseTenantUrl, ct);
+        var roleLayer = await _httpClient.GetStringAsync(LeaderboardRoleUrl, ct);
+
+        var composed = TemplateComposer.Compose(
+            baseLayer, roleLayer,
+            baseName: "base-tenant.yaml",
+            roleName: "tenant-vms/leaderboard/cloud-init.yaml");
+
+        return new VmTemplate
+        {
+            Slug = "leaderboard",
+            Name = "Generic Leaderboard",
+            Version = "1.0.0",
+            Revision = LeaderboardTemplateRevision,
+            Category = "web-apps",
+
+            Description =
+                "Self-hosted, multi-tenant leaderboard backend with a " +
+                "LootLocker-compatible API. Many apps, many boards, top-N / " +
+                "recent / rank-around-me queries.",
+
+            LongDescription = @"## Generic, multi-tenant leaderboard backend
+
+One VM hosts many apps; each app owns many boards; each board ranks many
+members. The HTTP API mirrors LootLocker's server leaderboard API, so games
+using LootLocker or a portal SDK (Playgama, CrazyGames, Poki) integrate with a
+thin adapter.
+
+## Roles
+- **Operator** (you): the deploy root password is the admin token
+  (`x-admin-token`) - mint and revoke apps.
+- **App**: an `app_secret` (`x-session-token`) - create boards, submit scores,
+  manage its own boards.
+- **Public**: board key only - read rankings.
+
+## Getting Started
+1. Wait ~1-2 minutes for first boot.
+2. Mint an app over SSH or from your server with the admin token (the deploy
+   root password):
+   ```bash
+   curl -s https://__DECLOUD_DOMAIN__/admin/apps \
+     -H ""x-admin-token: <DEPLOY_PASSWORD>"" -d '{""label"":""my-game""}'
+   ```
+3. Create a board with the returned `app_secret`, then point your game server's
+   score submissions at `/leaderboards/<KEY>/submit`.
+
+## Endpoints
+- `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (app)
+- `GET  /leaderboards/{key}/list?count=10&after=<cursor>`  (public)
+- `GET  /leaderboards/{key}/member/{member_id}?around=3`  (public)
+
+## Trust boundary
+Authenticates the deployer's server, not end users. Verifying a portal player
+token is your backend's job. Guarantees authenticated, persisted, ranked - never
+that a score is legitimate. Submit from your server, not a game client.
+
+## Scoring
+- `direction_method`: `descending` (higher wins) | `ascending` (lower wins)
+- `overwrite_score_on_submit`: `false` keeps each member's best; `true` overwrites",
+
+            AuthorId = "platform",
+            AuthorName = "DeCloud",
+            SourceUrl = "https://docs.lootlocker.com/game-systems/leaderboards/",
+            License = "MIT",
+
+            Tags = new List<string>
+            {
+                "leaderboard", "games", "scores", "ranking", "lootlocker", "api"
+            },
+
+            // Interpreted service, no build — modest floor.
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 1L * 1024 * 1024 * 1024,   //  1 GB
+                DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
+                ImageId = "ubuntu-24.04",
+            },
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 2,
+                MemoryBytes = 2L * 1024 * 1024 * 1024,   //  2 GB
+                DiskBytes = 20L * 1024 * 1024 * 1024,  // 20 GB
+                ImageId = "ubuntu-24.04",
+            },
+
+            RequiresGpu = false,
+
+            ExposedPorts = new List<TemplatePort>
+            {
+                new()
+                {
+                    Port        = 8080,
+                    Protocol    = "http",   // CentralIngress (Caddy + HTTPS); DB port never exposed
+                    Description = "Leaderboard HTTP API",
+                    IsPublic    = true,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy       = CheckStrategy.HttpGet,
+                        HttpPath       = "/health",
+                        TimeoutSeconds = 120,
+                    },
+                }
+            },
+
+            DefaultAccessUrl = "https://__DECLOUD_DOMAIN__/health",
+            DefaultUsername = "root",
+            // The admin token IS the root password (ADMIN_TOKEN=__ADMIN_PASSWORD__),
+            // so a password must always be generated or the service refuses to
+            // start. Same ADMIN_PASSWORD dependency the ai-chatbot template has.
+            UseGeneratedPassword = true,
+
+            EstimatedCostPerHour = 0.02m,
+            DefaultBandwidthTier = BandwidthTier.Standard,
+
+            Status = TemplateStatus.Published,
+            Visibility = TemplateVisibility.Public,
+            IsFeatured = true,
+            // Field-validate before signalling platform-verified (same discipline
+            // as the Minecraft/Coolify migrations). Flip to true after gates pass.
+            IsVerified = false,
+            IsCommunity = false,
+            PricingModel = TemplatePricingModel.Free,
+            TemplatePrice = 0,
+
+            AverageRating = 0,
+            TotalReviews = 0,
+            RatingDistribution = new int[5],
+
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+
+            CloudInitTemplate = composed,
+            Variables = BuildLeaderboardVariables(),
+        };
+    }
+
+    private static List<TemplateVariable> BuildLeaderboardVariables() => new()
+    {
+        // Identity (resolved from ctx.Vm) — used by base-tenant.yaml.
+        new() { Name = "VM_ID",          Kind = VariableKind.Static, Required = true,
+                Description = "VM unique identifier (UUID). Used by base-tenant.yaml." },
+        new() { Name = "VM_NAME",        Kind = VariableKind.Static, Required = true,
+                Description = "VM display name. Used in base-tenant final_message." },
+        new() { Name = "HOSTNAME",       Kind = VariableKind.Static, Required = true,
+                Description = "Linux hostname (currently equals VM_NAME)." },
+
+        // Platform context.
+        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
+                Description = "URL the VM uses to reach the orchestrator." },
+
+        // SSH / password machinery — ALL FOUR required by base-tenant.yaml.
+        // Omitting any makes CloudInitValidator throw "[Undeclared placeholders]".
+        new() { Name = "CA_PUBLIC_KEY",  Kind = VariableKind.Static, Required = true,
+                Description = "SSH certificate authority public key." },
+        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No SSH keys provided",
+                Description = "YAML chunk listing user SSH public keys." },
+        new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
+                DefaultValue = "# No password authentication",
+                Description = "YAML chunk for chpasswd.users (cloud-init 22.3+ format)." },
+        new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static, DefaultValue = "",
+                Description = "Plaintext root password. Set via UseGeneratedPassword " +
+                              "pipeline at deploy time. Also the leaderboard admin token " +
+                              "(ADMIN_TOKEN) and shown in motd." },
+        new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static, DefaultValue = "false",
+                Description = "'true'/'false' for cloud-init ssh_pwauth. Derived from ADMIN_PASSWORD presence." },
+
+        // Role-layer addition — resolved by DeCloudDomainResolver.
+        new() { Name = "DECLOUD_DOMAIN", Kind = VariableKind.Static, Required = true,
+                Description = "Assigned CentralIngress subdomain. Used in DefaultAccessUrl and motd." },
+    };
+
 }
