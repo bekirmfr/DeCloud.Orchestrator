@@ -89,7 +89,7 @@ public sealed partial class TenantVmTemplateSeeder
     private const int AiChatbotTemplateRevision = 1;
     private const int MinecraftPaperTemplateRevision = 1;
     private const int CoolifyTemplateRevision = 1;
-    private const int LeaderboardTemplateRevision = 2;
+    private const int LeaderboardTemplateRevision = 5;
 
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
@@ -3733,6 +3733,9 @@ adapter.
 - **Access key** (`x-session-token`): writes to its one board - `submit`
   (default) and optionally `member:delete`.
 - **Public**: board key only - read rankings, no auth.
+- **Submit policy** (per board): server-only by default; a board can be set
+  `allow_public_submit` so a browser game with no backend posts directly (use a
+  submit-only key - the secret then lives in the client and the board is forgeable).
 
 ## Getting Started
 1. Wait ~1-2 minutes for first boot.
@@ -3753,8 +3756,10 @@ adapter.
 3. Submit scores from your server with the key secret in `x-session-token`.
 
 ## Endpoints
-- `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (key: submit)
+- `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (key: submit; browser-writable only if the board is public-submit)
 - `DELETE /leaderboards/{key}/members/{member_id}`  (key: member:delete)
+- `POST /admin/boards` accepts `allow_public_submit`; `PATCH /admin/boards/{key}` toggles it
+- Operators browse and edit entries in the console; `PUT /admin/boards/{key}/members/{member_id}` `{score, metadata}` sets a score (bypasses keep-best), `DELETE` removes a member
 - `GET  /leaderboards/{key}/list?count=10&after=<cursor>`  (public)
 - `GET  /leaderboards/{key}/member/{member_id}?around=3`  (public)
 
@@ -3765,7 +3770,8 @@ that a score is legitimate. Submit from your server, not a game client.
 
 ## Scoring
 - `direction_method`: `descending` (higher wins) | `ascending` (lower wins)
-- `overwrite_score_on_submit`: `false` keeps each member's best; `true` overwrites",
+- `write_policy`: `keep_best` (default) | `overwrite` (latest) | `first` (lock to
+  the first submission; later submits ignored - good for daily challenges)",
 
             AuthorId = "platform",
             AuthorName = "DeCloud",
@@ -3781,7 +3787,6 @@ that a score is legitimate. Submit from your server, not a game client.
             MinimumSpec = new VmSpec
             {
                 VirtualCpuCores = 1,
-                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 1L * 1024 * 1024 * 1024,   //  1 GB
                 DiskBytes = 10L * 1024 * 1024 * 1024,  // 10 GB
                 ImageId = "ubuntu-24.04",
@@ -3789,7 +3794,6 @@ that a score is legitimate. Submit from your server, not a game client.
             RecommendedSpec = new VmSpec
             {
                 VirtualCpuCores = 2,
-                QualityTier = QualityTier.Burstable,
                 MemoryBytes = 2L * 1024 * 1024 * 1024,   //  2 GB
                 DiskBytes = 20L * 1024 * 1024 * 1024,  // 20 GB
                 ImageId = "ubuntu-24.04",
