@@ -89,7 +89,7 @@ public sealed partial class TenantVmTemplateSeeder
     private const int AiChatbotTemplateRevision = 1;
     private const int MinecraftPaperTemplateRevision = 1;
     private const int CoolifyTemplateRevision = 1;
-    private const int LeaderboardTemplateRevision = 5;
+    private const int LeaderboardTemplateRevision = 6;
 
     // ── Inline artifact constants (data: URIs) ───────────────────────────
     // Supplied by the partial class in Services/TemplateConstants/
@@ -3758,7 +3758,7 @@ adapter.
 ## Endpoints
 - `POST /leaderboards/{key}/submit`  `{member_id, score, metadata}`  (key: submit; browser-writable only if the board is public-submit)
 - `DELETE /leaderboards/{key}/members/{member_id}`  (key: member:delete)
-- `POST /admin/boards` accepts `allow_public_submit`; `PATCH /admin/boards/{key}` toggles it
+- `POST /admin/boards` accepts `write_policy` + `allow_public_submit`; `PATCH /admin/boards/{key}` changes either later (forward-only; existing scores untouched)
 - Operators browse and edit entries in the console; `PUT /admin/boards/{key}/members/{member_id}` `{score, metadata}` sets a score (bypasses keep-best), `DELETE` removes a member
 - `GET  /leaderboards/{key}/list?count=10&after=<cursor>`  (public)
 - `GET  /leaderboards/{key}/member/{member_id}?around=3`  (public)
