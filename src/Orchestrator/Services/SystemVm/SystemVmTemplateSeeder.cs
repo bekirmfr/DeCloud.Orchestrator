@@ -927,6 +927,10 @@ public sealed partial class SystemVmTemplateSeeder
                 DefaultValue = "51821",
                 Description = "Orchestrator WireGuard listen port. Hardcoded 51821 unless " +
                               "overridden in IConfiguration[\"WireGuard:OrchestratorPort\"]." },
+        new() { Name = "RELAY_API_TOKEN", Kind = VariableKind.Static, Required = true,
+                Description = "Per-relay control-plane Bearer token. Enforced by " +
+                              "relay-api.py on all mutating endpoints. Source: " +
+                              "RelayObligationState.AuthToken." },
         new() { Name = "RELAY_SUBNET",    Kind = VariableKind.Static, Required = true,
                 Description = "Relay subnet octet (e.g. '10' for 10.20.10.0/24). " +
                               "Extracted from RelayObligationState.RelaySubnet." },

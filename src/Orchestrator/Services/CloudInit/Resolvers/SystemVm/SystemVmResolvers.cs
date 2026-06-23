@@ -33,6 +33,7 @@ public static class SystemVmResolvers
         services.AddSingleton<IVariableResolver, RelaySubnetResolver>();
         services.AddSingleton<IVariableResolver, RelayRegionResolver>();
         services.AddSingleton<IVariableResolver, RelayCapacityResolver>();
+        services.AddSingleton<IVariableResolver, RelayApiTokenResolver>();
 
         //DHT-related resolvers:
         services.AddSingleton<IVariableResolver, DhtRegionResolver>();

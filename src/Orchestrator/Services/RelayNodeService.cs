@@ -556,6 +556,10 @@ PersistentKeepalive = 25";
 
             var httpClient = _httpClientFactory.CreateClient("RelayApi");
             httpClient.Timeout = TimeSpan.FromSeconds(10);
+            httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+                    relayNode.SystemVmObligations
+                        .FirstOrDefault(o => o.Role == SystemVmRole.Relay)?.AuthToken ?? string.Empty);
             var content = new StringContent(
                 System.Text.Json.JsonSerializer.Serialize(payload),
                 System.Text.Encoding.UTF8,
@@ -671,6 +675,10 @@ PersistentKeepalive = 25";
 
                 var httpClient = _httpClientFactory.CreateClient("RelayApi");
                 httpClient.Timeout = TimeSpan.FromSeconds(3);
+                httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+                        relayNode.SystemVmObligations
+                            .FirstOrDefault(o => o.Role == SystemVmRole.Relay)?.AuthToken ?? string.Empty);
                 var content = new StringContent(
                     System.Text.Json.JsonSerializer.Serialize(payload),
                     System.Text.Encoding.UTF8,
@@ -956,6 +964,10 @@ PersistentKeepalive = 25";
 
             var httpClient2 = _httpClientFactory.CreateClient("RelayApi");
             httpClient2.Timeout = TimeSpan.FromSeconds(10);
+            httpClient2.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",
+                    relayNode.SystemVmObligations
+                        .FirstOrDefault(o => o.Role == SystemVmRole.Relay)?.AuthToken ?? string.Empty);
             var content = new StringContent(
                 System.Text.Json.JsonSerializer.Serialize(payload),
                 System.Text.Encoding.UTF8,

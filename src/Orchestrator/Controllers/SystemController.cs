@@ -163,6 +163,7 @@ public class SystemController : ControllerBase
     /// Get pending command acknowledgments (for monitoring/debugging)
     /// </summary>
     [HttpGet("commands/pending")]
+    [Authorize(Roles = "admin")]
     public ActionResult<ApiResponse<List<PendingCommandDto>>> GetPendingCommands()
     {
         var pending = _dataStore.GetPendingAcks()

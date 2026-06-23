@@ -1,5 +1,8 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
+using Orchestrator.Persistence;
 using Orchestrator.Services;
 
 namespace Orchestrator.Controllers;
@@ -8,18 +11,44 @@ namespace Orchestrator.Controllers;
 /// API endpoints for Smart Port Allocation (direct TCP/UDP access to VMs)
 /// </summary>
 [ApiController]
+[Authorize]
 [Route("api/vms/{vmId}/direct-access")]
 public class VmDirectAccessController : ControllerBase
 {
     private readonly DirectAccessService _directAccessService;
+    private readonly DataStore _dataStore;
     private readonly ILogger<VmDirectAccessController> _logger;
 
     public VmDirectAccessController(
         DirectAccessService directAccessService,
+        DataStore dataStore,
         ILogger<VmDirectAccessController> logger)
     {
         _directAccessService = directAccessService;
+        _dataStore = dataStore;
         _logger = logger;
+    }
+
+    private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+
+    /// <summary>
+    /// Verify the authenticated caller owns the VM (admins bypass).
+    /// Returns null when authorized, otherwise the ActionResult to return.
+    /// </summary>
+    private async Task<ActionResult?> AuthorizeVmAccessAsync(string vmId)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(new { error = "User not authenticated" });
+
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return NotFound(new { error = "VM not found" });
+
+        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+            return Forbid();
+
+        return null;
     }
 
     /// <summary>
@@ -29,6 +58,8 @@ public class VmDirectAccessController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<DirectAccessInfoResponse>> GetDirectAccessInfo(string vmId)
     {
+        if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
+
         var info = await _directAccessService.GetDirectAccessInfoAsync(vmId);
         if (info == null)
         {
@@ -48,6 +79,8 @@ public class VmDirectAccessController : ControllerBase
         string vmId,
         [FromBody] AllocatePortRequest request)
     {
+        if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
+
         _logger.LogInformation(
             "Allocating port {VmPort} ({Protocol}) for VM {VmId}",
             request.VmPort, request.Protocol, vmId);
@@ -74,6 +107,8 @@ public class VmDirectAccessController : ControllerBase
     [HttpDelete("ports/{vmPort}")]
     public async Task<ActionResult> RemovePort(string vmId, int vmPort)
     {
+        if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
+
         _logger.LogInformation("Removing port {VmPort} from VM {VmId}", vmPort, vmId);
 
         var success = await _directAccessService.RemovePortAsync(vmId, vmPort);
@@ -95,6 +130,8 @@ public class VmDirectAccessController : ControllerBase
         string vmId,
         [FromBody] QuickAddServiceRequest request)
     {
+        if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
+
         _logger.LogInformation(
             "Quick-adding service {ServiceName} for VM {VmId}",
             request.ServiceName, vmId);

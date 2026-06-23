@@ -8,6 +8,7 @@ using Orchestrator.Persistence;
 namespace Orchestrator.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class NodesController : ControllerBase
 {

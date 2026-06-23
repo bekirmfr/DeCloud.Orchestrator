@@ -293,9 +293,27 @@ public class UserService : IUserService
     {
         try
         {
-            // 1. Validate timestamp to prevent replay attacks
+            // 1. Validate timestamp to prevent replay attacks.
+            // Freshness MUST be checked against the timestamp embedded in the
+            // SIGNED message, not the standalone request.Timestamp field —
+            // otherwise a captured (message, signature) pair can be replayed
+            // indefinitely by supplying a fresh request.Timestamp each attempt.
+            var tsMatch = System.Text.RegularExpressions.Regex.Match(
+                request.Message, @"Timestamp:\s*(\d+)");
+            if (!tsMatch.Success || !long.TryParse(tsMatch.Groups[1].Value, out var signedTimestamp))
+            {
+                _logger.LogWarning("Signed message missing a parseable Timestamp field");
+                return null;
+            }
+
+            if (signedTimestamp != request.Timestamp)
+            {
+                _logger.LogWarning("request.Timestamp does not match the signed message timestamp");
+                return null;
+            }
+
             var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var timeDiff = Math.Abs(currentTimestamp - request.Timestamp);
+            var timeDiff = Math.Abs(currentTimestamp - signedTimestamp);
 
             if (timeDiff > MaxTimestampAgeSeconds)
             {
