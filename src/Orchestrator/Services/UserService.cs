@@ -1,6 +1,7 @@
 using Microsoft.IdentityModel.Tokens;
 using Nethereum.Signer;
 using Nethereum.Util;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.IdentityModel.Tokens.Jwt;
@@ -9,31 +10,6 @@ using System.Security.Cryptography;
 using System.Text;
 
 namespace Orchestrator.Services;
-
-public interface IUserService
-{
-    Task<User?> GetUserByIdAsync(string userId);
-    Task<User?> GetUserByWalletAsync(string walletAddress);
-    Task<User?> GetUserByApiKeyAsync(string apiKey);
-    Task<User> CreateUserAsync(string walletAddress);
-    Task UpdateUserAsync(User user);
-    Task<bool> DeleteUserAsync(string userId);
-
-    // SSH Key Management
-    Task<SshKey?> AddSshKeyAsync(string userId, AddSshKeyRequest request);
-    Task<bool> RemoveSshKeyAsync(string userId, string keyId);
-    Task<List<SshKey>> GetSshKeysAsync(string userId);
-
-    // API Key Management
-    Task<CreateApiKeyResponse?> CreateApiKeyAsync(string userId, CreateApiKeyRequest request);
-    Task<bool> RevokeApiKeyAsync(string userId, string keyId);
-    Task<List<ApiKey>> GetApiKeysAsync(string userId);
-    Task<User?> ValidateApiKeyAsync(string apiKey);
-
-    // Authentication
-    Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request);
-    Task<AuthResponse?> RefreshTokenAsync(string refreshToken);
-}
 
 public class UserService : IUserService
 {
@@ -447,6 +423,18 @@ public class UserService : IUserService
             _logger.LogError(ex, "Error refreshing token");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Verify that an EIP-191 signature over <paramref name="message"/> recovers to
+    /// <paramref name="walletAddress"/>. Reuses RecoverAddressFromSignature so there
+    /// is a single signature-verification path across the platform.
+    /// </summary>
+    public bool VerifyWalletSignature(string walletAddress, string message, string signature)
+    {
+        var recovered = RecoverAddressFromSignature(message, signature);
+        return !string.IsNullOrEmpty(recovered)
+            && string.Equals(recovered, walletAddress, StringComparison.OrdinalIgnoreCase);
     }
 
     // =====================================================

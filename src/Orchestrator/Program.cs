@@ -98,6 +98,18 @@ builder.Services.AddSingleton<IJwtRevocationService>(sp =>
     var logger = sp.GetRequiredService<ILogger<JwtRevocationService>>();
     return new JwtRevocationService(db, logger);
 });
+
+// Terms of Service — loads the embedded document + computes its hash at startup;
+// records wallet-signed acceptances in "tos_acceptances". Singleton (like
+// JwtRevocationService) and factory-registered so the nullable IMongoDatabase is
+// passed through. Safe to inject into the singleton VmService.
+builder.Services.AddSingleton<ITosService>(sp =>
+{
+    var db = sp.GetService<IMongoDatabase>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var logger = sp.GetRequiredService<ILogger<TosService>>();
+    return new TosService(db, config, logger);
+});
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
 builder.Services.AddSingleton<NodeCapacityCalculator>();

@@ -16,6 +16,15 @@
 		</EmbeddedResource>
 	</ItemGroup>
 
+	<!-- Terms of Service — embedded so its SHA-256 is pinned to the build and
+	     loadable via Assembly.GetManifestResourceStream regardless of run mode. -->
+	<ItemGroup>
+		<None Remove="Compliance\terms-of-service.md" />
+		<EmbeddedResource Include="Compliance\terms-of-service.md">
+			<LogicalName>terms-of-service.md</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
+
 	<!-- ============================================== -->
 	<!-- NuGet Package References -->
 	<!-- ============================================== -->

@@ -1,6 +1,7 @@
 ﻿// src/Orchestrator/Services/Balance/BalanceService.cs
 // Balance calculation implementation - completely stateless
 
+using Orchestrator.Interfaces;
 using Orchestrator.Interfaces.Blockchain;
 using Orchestrator.Models;
 using Orchestrator.Models.Balance;

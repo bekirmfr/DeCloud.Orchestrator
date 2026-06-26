@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
-using Orchestrator.Services;
 
 namespace Orchestrator.Controllers;
 

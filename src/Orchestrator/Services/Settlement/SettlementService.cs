@@ -1,4 +1,4 @@
-﻿using Orchestrator.Interfaces.Blockchain;
+﻿using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;

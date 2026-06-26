@@ -29,6 +29,7 @@ public class VmService : IVmService
     private readonly PricingConfig _pricingConfig;
     private readonly IConfiguration _configuration;
     private readonly ICloudInitRenderer _cloudInitRenderer;
+    private readonly ITosService _tosService;
     private readonly ILogger<VmService> _logger;
     private readonly IServiceProvider _serviceProvider;
 
@@ -45,6 +46,7 @@ public class VmService : IVmService
     IOptions<PricingConfig> pricingConfig,
     IConfiguration configuration,
     ICloudInitRenderer cloudInitRenderer,
+    ITosService tosService,
     ILogger<VmService> logger,
     IServiceProvider serviceProvider)
     {
@@ -60,6 +62,7 @@ public class VmService : IVmService
         _pricingConfig = pricingConfig.Value;
         _configuration = configuration;
         _cloudInitRenderer = cloudInitRenderer;
+        _tosService = tosService;
         _logger = logger;
         _serviceProvider = serviceProvider;
     }
@@ -109,6 +112,17 @@ public class VmService : IVmService
         if (_dataStore.Users.TryGetValue(userId, out var existingUser))
         {
             user = existingUser;
+        }
+
+        // ── Compliance: Terms of Service gate (tenant VMs only) ──────────────────────
+        // System VMs deploy under userId "system" and are exempt. Checked server-side
+        // here — never via the JWT claim — so a freshly required (re-)acceptance takes
+        // effect immediately rather than after the ~60-min access-token lifetime.
+        if (!isSystemVm && !await _tosService.HasAcceptedCurrentAsync(userId))
+        {
+            return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                "You must accept the current Terms of Service before deploying.",
+                "TOS_NOT_ACCEPTED");
         }
 
         // Check quotas

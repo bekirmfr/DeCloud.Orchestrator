@@ -1222,7 +1222,7 @@ VM creation gated until signature confirmed
 
 **Required wallet-auth specific clauses:**
 - **User responsibility** — all content associated with the wallet address is the user's sole responsibility
-- **Escrow forfeiture** — violation may result in forfeiture of escrow balance toward damages, no court order required
+- **Cost recovery (reserved, not yet enforced)** — the platform may introduce escrow-based cost recovery in a future contract version; the current escrow contract has no fund-seizure capability and enforcement is withhold-service-only. Include this clause only if counsel advises (see money-transmission / custody review).
 - **Blockchain transparency** — wallet address and on-chain history shareable with law enforcement upon valid legal process
 - **Prohibited content** — explicit enumeration: CSAM, illegal marketplaces, C2 infrastructure, malware hosting, human trafficking facilitation
 - **Law enforcement cooperation** — platform will cooperate with valid legal process including NCMEC CyberTipline mandates
@@ -1242,27 +1242,29 @@ VM creation gated until signature confirmed
 
 **Status:** 🔲 Planned — Pre-Launch Requirement
 
+**Launch scope:** triage is manual (admin-reviewed). AI triage is deferred — see the note below.
+
 **Public intake endpoint:** `POST /api/abuse` — unauthenticated, anyone can submit.
 
 **Urgency tiers:**
 
 | Category | Priority | SLA | Auto-Action |
 |---|---|---|---|
-| CSAM | P0 — Immediate | 2 hours | Block quarantine, NCMEC flag |
+| CSAM | P0 — Immediate | 2 hours | None — immediate human review |
 | Active malware / C2 | P1 — Critical | 4 hours | None (human decision) |
 | Illegal marketplace | P1 — Critical | 8 hours | None (human decision) |
 | DMCA copyright | P2 — Standard | 48 hours | None (human decision) |
 | ToS violation | P3 — Normal | 72 hours | None (human decision) |
 | Spam / low-quality | P4 — Low | Best effort | None |
 
-**AI triage pipeline** (AI-assisted, always human-decided):
-1. Incoming report → AI classifies category and assigns urgency
-2. For template reports: AI re-analyzes the template specifically through the lens of the reported concern
-3. Multiple reports about the same resource are aggregated and summarized for the reviewer
-4. Human reviewer sees AI assessment, reported resource, and wallet enforcement history
-5. Human makes all enforcement decisions — AI never acts autonomously
+**Triage (manual for launch):**
+1. Incoming report → category and urgency assigned by a deterministic category→priority/SLA map (the same shape an AI would later output).
+2. Report enters a human-reviewed admin queue ordered by urgency.
+3. Multiple reports about the same resource are aggregated and surfaced to the reviewer.
+4. The reviewer sees the reported resource and the wallet's `EnforcementActions` history.
+5. The admin makes all enforcement decisions — actions call the takedown endpoint below. Nothing acts autonomously.
 
-**Prompt injection hardening:** The AI receives untrusted user content. System prompt explicitly treats all report and template content as untrusted input. Output is always structured JSON, never interpreted as instructions.
+**Deferred — AI triage:** AI-assisted classification and template re-analysis are deferred. The seam is preserved: the deterministic map is replaceable by a model call, and the nullable `AiAssessment` field (see Template Review Gate) is where AI output will land. When introduced, the AI must treat all report/template content as untrusted input and emit structured JSON only — never interpreted as instructions.
 
 **Enforcement audit trail:** Every action logged to append-only `EnforcementActions` collection — retained indefinitely, never updated or deleted.
 
@@ -1271,8 +1273,8 @@ VM creation gated until signature confirmed
 | File | Purpose |
 |---|---|
 | `AbuseController.cs` | `POST /api/abuse` public intake |
-| `AiReviewService.cs` | AI triage + template review (shared service, two methods) |
-| `AbuseReport.cs` | MongoDB model with reference ID, category, urgency, triage result |
+| `AbuseTriage` (deterministic) | category→priority/SLA map; manual for launch, AI-replaceable later |
+| `AbuseReport.cs` | MongoDB model with reference ID, category, urgency |
 | `EnforcementAction.cs` | Append-only audit log model |
 
 ---
@@ -1329,12 +1331,15 @@ Community templates always go through this workflow. Publish is not automatic on
 
 **Status:** 🔲 Planned — Pre-Launch Requirement
 
-**Wallet blacklist** — `SuspendedWallets` MongoDB collection, checked at VM scheduling:
+**Enforcement gate — two boundaries, one predicate** (`IsWalletBlockedAsync`), checked server-side at the action chokepoints (`CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync`) — never via the stale JWT claim, with addresses checksum-normalized on write and read:
+
+- `User.Status = Suspended` — internal, platform-originated suspensions (the enum already exists and is enforced at token refresh).
+- `BlockedWallets` collection — proactive / imported blocks (sanctions, law-enforcement, cross-platform intel); provenance-bearing, bulk-importable, source-scoped removal; never creates a `User` row.
 
 ```csharp
-// Added to VmService.CreateVmAsync before node scheduling
-var isSuspended = await _dataStore.IsWalletSuspendedAsync(userId);
-if (isSuspended)
+// Added to VmService.CreateVmAsync before node scheduling.
+// Single predicate over both boundaries; address checksum-normalized.
+if (await _dataStore.IsWalletBlockedAsync(userId))
     throw new UnauthorizedAccessException("Account suspended. Contact support.");
 ```
 
@@ -1356,23 +1361,17 @@ Authorization: Bearer <admin-token>
 
 Orchestrates in sequence: VM termination → template archiving → wallet suspension → audit log entry. Returns a summary of all actions taken.
 
-**Escrow forfeiture** — deliberately separate from takedown (irreversible, requires proportionality judgment):
-
-```
-POST /api/admin/escrow-forfeiture
-{ walletAddress, amount?, reason, enforcementActionId }
-```
-
-Uses the existing `DeCloudEscrow.sol` authorized caller mechanism. The ToS escrow forfeiture clause establishes the legal basis — no court order required.
+**Escrow forfeiture — removed from scope (not deferred).** `DeCloudEscrow.sol` v3 has no function to move user funds (explicit contract comment: *"There is NO admin function to drain user funds"*), and `withdrawBalance()` has no pause/freeze gate, so a user can always exit. Faking usage to seize funds is a defeatable override and an anti-pattern. Enforcement is withhold-service-only: refuse scheduling, terminate VMs, blacklist. Any future cost-recovery capability would require a contract redeployment via the migration path and is a counsel decision (see money-transmission / custody review) — not built here.
 
 **Key files to create:**
 
 | File | Purpose |
 |---|---|
-| `SuspendedWallet.cs` | MongoDB model `{ walletAddress, reason, suspendedAt, suspendedBy, enforcementActionId, isPermanent, expiresAt }` |
+| `BlockedWallets.cs` | MongoDB model `{ walletAddress, source, reason, reference, addedBy, addedAt }`; source ∈ sanctions \| law_enforcement \| cross_platform \| internal; source-scoped removal; never creates a `User` |
+| `User.Status = Suspended` | Existing boundary for internal suspensions — no parallel collection |
 | `EnforcementAction.cs` | Append-only audit log `{ actionId, reportReference, actionType, targetWallet, targetVmId, targetTemplateId, reason, category, actingAdmin, timestamp }` |
-| `AdminComplianceController.cs` | `POST /api/admin/takedown` and `POST /api/admin/escrow-forfeiture` |
-| `WalletBlacklistService.cs` | Suspension check + blacklist management |
+| `AdminComplianceController.cs` | `POST /api/admin/takedown` (no forfeiture endpoint) |
+| `WalletBlockService.cs` | `IsWalletBlockedAsync` gate + `BlockedWallets` management (checksum-normalized) |
 
 ---
 
@@ -1384,7 +1383,7 @@ Uses the existing `DeCloudEscrow.sol` authorized caller mechanism. The ToS escro
 
 **DMCA intake flow:**
 1. Copyright holder submits notice via `POST /api/dmca` or published agent email
-2. AI triage classifies as P2, assigns 48h SLA, returns reference ID to claimant
+2. Triage classifies as P2 (deterministic map; manual for launch), assigns 48h SLA, returns reference ID to claimant
 3. Human reviewer validates notice (required elements: copyrighted work identification, infringing material identification, contact info, good-faith statement, accuracy statement, signature)
 4. If valid: template archived or VM flagged, wallet warned, claimant notified within 48h
 5. Counter-notice process available to affected users — content restored after 10–14 business days if claimant does not file suit
