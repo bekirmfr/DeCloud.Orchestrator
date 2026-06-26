@@ -24,8 +24,8 @@ const SOURCE_OPTIONS = [
 ];
 const SOURCE_NAMES = ['Sanctions', 'LawEnforcement', 'CrossPlatform', 'Internal'];
 const SOURCE_LABELS = ['Sanctions', 'Law Enforcement', 'Cross-Platform', 'Internal'];
-const ACTION_NAMES = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'TerminateVms'];
-const ACTION_LABELS = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'Terminate VMs'];
+const ACTION_NAMES = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'TerminateVms', 'SuspendVm', 'ResumeVm'];
+const ACTION_LABELS = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'Terminate VMs', 'Suspend VM', 'Resume VM'];
 
 const sourceToValue = s => (typeof s === 'number' ? s : Math.max(0, SOURCE_NAMES.indexOf(s)));
 const sourceLabel = s => SOURCE_LABELS[sourceToValue(s)] ?? String(s);
@@ -91,6 +91,18 @@ async function doBulk() {
     try {
         const count = await call('/api/admin/compliance/block/bulk', { wallets, source, reason });
         showToast(`Imported ${count} entr${count === 1 ? 'y' : 'ies'}`, 'success');
+        refreshTables();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function doVmHold(resume) {
+    const vmId = val('ac-vm-id');
+    const reason = val('ac-vm-reason');
+    if (!vmId) return showToast('VM id is required', 'error');
+    if (!resume && !reason) return showToast('Reason is required', 'error');
+    try {
+        const data = await call(`/api/admin/compliance/${resume ? 'resume-vm' : 'suspend-vm'}`, { vmId, reason });
+        showToast(resume ? 'VM hold lifted' : `VM suspended${data?.affectedVms ? ' (stopped)' : ''}`, 'success');
         refreshTables();
     } catch (e) { showToast(e.message, 'error'); }
 }
@@ -204,6 +216,18 @@ function render() {
       </div>
 
       <div class="form-section">
+        <h3 class="form-section-title">Single VM control (by ID)</h3>
+        <div class="form-group"><label class="form-label">VM ID</label>
+          <input id="ac-vm-id" class="form-input" placeholder="vm id"></div>
+        <div class="form-group"><label class="form-label">Reason</label>
+          <input id="ac-vm-reason" class="form-input"></div>
+        <div style="display:flex; gap:8px;">
+          <button id="ac-vm-suspend" class="btn btn-primary">Suspend VM</button>
+          <button id="ac-vm-resume" class="btn btn-secondary">Resume VM</button>
+        </div>
+      </div>
+
+      <div class="form-section">
         <div style="display:flex; gap:8px; align-items:flex-end;">
           <div class="form-group" style="flex:1; margin:0;"><label class="form-label">Filter by wallet</label>
             <input id="ac-filter" class="form-input" placeholder="0x… (blank = all)"></div>
@@ -232,5 +256,7 @@ function render() {
     document.getElementById('ac-block').onclick = () => doBlock(false);
     document.getElementById('ac-unblock').onclick = () => doBlock(true);
     document.getElementById('ac-bulk').onclick = doBulk;
+    document.getElementById('ac-vm-suspend').onclick = () => doVmHold(false);
+    document.getElementById('ac-vm-resume').onclick = () => doVmHold(true);
     document.getElementById('ac-refresh').onclick = refreshTables;
 }

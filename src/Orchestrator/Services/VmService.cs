@@ -620,6 +620,41 @@ public class VmService : IVmService
         return true;
     }
 
+    public async Task<VmHoldResult> SetVmComplianceHoldAsync(string vmId, bool held)
+    {
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return new VmHoldResult(false, "VM_NOT_FOUND", null, false);
+
+        // Never hold platform infrastructure VMs.
+        if (vm.Category == VmCategory.System)
+            return new VmHoldResult(false, "SYSTEM_VM", vm.OwnerId, false);
+
+        var ownerId = vm.OwnerId;
+        var wasActive = vm.Status is not (VmStatus.Stopped or VmStatus.Stopping
+            or VmStatus.Deleted or VmStatus.Deleting);
+
+        vm.ComplianceHold = held;
+        vm.UpdatedAt = DateTime.UtcNow;
+        vm.PushMessage(
+            held ? "Administratively held (compliance)." : "Compliance hold lifted.",
+            VmMessageLevel.Info, "compliance");
+        await _dataStore.SaveVmAsync(vm);
+
+        // Holding a running VM stops it. The hold (persisted above) is on a field the
+        // heartbeat/lifecycle sync never touches, so once stopped the owner still can't
+        // restart it.
+        var stopped = false;
+        if (held && wasActive)
+            stopped = await PerformVmActionAsync(vmId, VmAction.Stop);
+
+        _logger.LogInformation(
+            "Compliance hold {State} for VM {VmId} (stopped={Stopped})",
+            held ? "set" : "lifted", vmId, stopped);
+
+        return new VmHoldResult(true, null, ownerId, stopped);
+    }
+
     public async Task<bool> DeleteVmAsync(string vmId, string? userId = null)
     {
         var vm = await _dataStore.GetVmAsync(vmId);

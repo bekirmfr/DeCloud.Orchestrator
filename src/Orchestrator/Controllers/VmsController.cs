@@ -151,6 +151,14 @@ public class VmsController : ControllerBase
             return Forbid();
         }
 
+        // Compliance hold: an administratively held VM cannot be started or resumed,
+        // even by an admin via this endpoint. Lift it via POST /api/admin/compliance/resume-vm.
+        if (vm.ComplianceHold && request.Action is VmAction.Start or VmAction.Resume)
+        {
+            return BadRequest(ApiResponse<bool>.Fail(
+                "VM_HELD", "This VM is administratively held and cannot be started."));
+        }
+
         // Validate action based on current state
         var validAction = (request.Action, vm.Status) switch
         {
@@ -196,6 +204,15 @@ public class VmsController : ControllerBase
         if (vm.OwnerId != userId && !User.IsInRole("admin"))
         {
             return Forbid();
+        }
+
+        // Compliance hold: a held VM is preserved for investigation and cannot be
+        // deleted — by the owner or an admin via this endpoint. Lift it first via
+        // POST /api/admin/compliance/resume-vm.
+        if (vm.ComplianceHold)
+        {
+            return BadRequest(ApiResponse<bool>.Fail(
+                "VM_HELD", "This VM is administratively held and cannot be deleted."));
         }
 
         var success = await _vmService.DeleteVmAsync(vmId, userId);

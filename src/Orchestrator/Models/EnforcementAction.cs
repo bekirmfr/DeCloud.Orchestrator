@@ -6,7 +6,9 @@ public enum EnforcementActionType
     Unsuspend,
     Block,
     Unblock,
-    TerminateVms
+    TerminateVms,
+    SuspendVm,
+    ResumeVm
 }
 
 /// <summary>

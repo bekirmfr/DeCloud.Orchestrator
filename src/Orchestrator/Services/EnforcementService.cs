@@ -90,6 +90,42 @@ public sealed class EnforcementService : IEnforcementService
         return EnforcementResult.Ok(0);
     }
 
+    public async Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, CancellationToken ct = default)
+    {
+        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, true);
+        if (!hold.Success)
+            return EnforcementResult.Fail(hold.Error ?? "HOLD_FAILED",
+                hold.Error == "SYSTEM_VM" ? "System VMs cannot be suspended." : "VM not found.");
+
+        await _blocklist.RecordActionAsync(new EnforcementAction
+        {
+            WalletAddress = hold.OwnerId ?? "",
+            Type = EnforcementActionType.SuspendVm,
+            Reason = reason,
+            ActorWallet = actor,
+            Metadata = new() { ["vmId"] = vmId, ["vmStopped"] = hold.VmStopped.ToString() }
+        }, ct);
+        return EnforcementResult.Ok(hold.VmStopped ? 1 : 0);
+    }
+
+    public async Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default)
+    {
+        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, false);
+        if (!hold.Success)
+            return EnforcementResult.Fail(hold.Error ?? "HOLD_FAILED",
+                hold.Error == "SYSTEM_VM" ? "System VMs are not subject to holds." : "VM not found.");
+
+        await _blocklist.RecordActionAsync(new EnforcementAction
+        {
+            WalletAddress = hold.OwnerId ?? "",
+            Type = EnforcementActionType.ResumeVm,
+            Reason = reason,
+            ActorWallet = actor,
+            Metadata = new() { ["vmId"] = vmId }
+        }, ct);
+        return EnforcementResult.Ok(0);
+    }
+
     public Task BlockAsync(string walletAddress, BlockSource source, string reason, string? reference, string actor, CancellationToken ct = default)
         => _blocklist.AddBlockAsync(walletAddress, source, reason, reference, actor, ct);
 

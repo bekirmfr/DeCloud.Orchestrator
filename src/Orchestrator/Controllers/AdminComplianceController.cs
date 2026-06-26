@@ -62,6 +62,34 @@ public partial class AdminComplianceController : ControllerBase
             : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
     }
 
+    // ── Single-VM control ────────────────────────────────────────────────────
+
+    [HttpPost("suspend-vm")]
+    public async Task<ActionResult<ApiResponse<EnforcementResult>>> SuspendVm([FromBody] VmComplianceRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.VmId))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("VM_ID_REQUIRED", "A VM id is required."));
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("REASON_REQUIRED", "A reason is required."));
+
+        var result = await _enforcement.SuspendVmAsync(req.VmId, req.Reason, Actor(), ct);
+        return result.Success
+            ? Ok(ApiResponse<EnforcementResult>.Ok(result))
+            : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
+    }
+
+    [HttpPost("resume-vm")]
+    public async Task<ActionResult<ApiResponse<EnforcementResult>>> ResumeVm([FromBody] VmComplianceRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.VmId))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("VM_ID_REQUIRED", "A VM id is required."));
+
+        var result = await _enforcement.ResumeVmAsync(req.VmId, req.Reason ?? "", Actor(), ct);
+        return result.Success
+            ? Ok(ApiResponse<EnforcementResult>.Ok(result))
+            : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
+    }
+
     // ── Denylist (provenance-bearing) ────────────────────────────────────────
 
     [HttpPost("block")]
@@ -112,5 +140,6 @@ public partial class AdminComplianceController : ControllerBase
 }
 
 public record SuspendRequest(string Wallet, string? Reason);
+public record VmComplianceRequest(string VmId, string? Reason);
 public record BlockRequest(string Wallet, BlockSource Source, string Reason, string? Reference);
 public record BulkBlockRequest(List<string> Wallets, BlockSource Source, string Reason);

@@ -47,12 +47,20 @@ public class VirtualMachine
 
     // Specification
     public VmSpec Spec { get; set; } = new();
-    
+
     // State
     public VmStatus Status { get; set; } = VmStatus.Pending;
     public VmPowerState PowerState { get; set; } = VmPowerState.Off;
     public string? StatusMessage { get; set; }
-    
+
+    /// <summary>
+    /// Administrative compliance hold. When true the VM is stopped and CANNOT be
+    /// started or resumed by its owner — only an admin "resume-vm" lifts it.
+    /// Orthogonal to Status/PowerState (which are driven by heartbeats and the
+    /// lifecycle manager), so it survives state syncs. Default false.
+    /// </summary>
+    public bool ComplianceHold { get; set; }
+
     // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }

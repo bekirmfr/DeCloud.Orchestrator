@@ -24,6 +24,12 @@ public interface IEnforcementService
     /// <summary>Lift a suspension (User.Status = Active). Does not auto-restart VMs.</summary>
     Task<EnforcementResult> UnsuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default);
 
+    /// <summary>Suspend a single VM by id: stop it and hold it so the owner cannot restart it.</summary>
+    Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
+
+    /// <summary>Lift a single VM's compliance hold (leaves it stopped; owner may start).</summary>
+    Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
+
     Task BlockAsync(string walletAddress, BlockSource source, string reason, string? reference, string actor, CancellationToken ct = default);
 
     Task<bool> UnblockAsync(string walletAddress, BlockSource source, string reason, string actor, CancellationToken ct = default);
