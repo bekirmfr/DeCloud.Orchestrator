@@ -1167,24 +1167,37 @@ The framework rests on four pillars, all required before public launch:
 
 **Status:** 🔲 Planned — Pre-Launch Requirement (Non-Negotiable)
 
-**Why non-negotiable:** CSAM exposure carries federal criminal liability (18 U.S.C. § 2258A). It is the only compliance failure that cannot be remediated retroactively.
+**Why non-negotiable:** CSAM exposure carries federal criminal liability (18 U.S.C. § 2258A / § 2252A). It is the only compliance failure that cannot be remediated retroactively.
 
-**Implementation:** Hash-based detection at Block Store ingestion using the NCMEC PhotoDNA hash database. No content inspection — only hash comparison against known illegal material. Preserves the censorship-resistance architecture entirely.
+**Why block-level hashing does not work:** The Block Store is content-addressed and stores raw 1 MB disk sectors at arbitrary offsets — filesystem fragments, not whole files. CSAM hash databases (PhotoDNA / NCMEC) operate on whole, decoded image/video files. A file split across non-contiguous blocks never produces a matching hash at the block level. Block-store ingestion hashing is therefore technically infeasible and is NOT the detection surface.
 
-**Detection response:**
-1. Block quarantined immediately (removed from serving, preserved for evidence)
-2. NCMEC CyberTipline report filed within 24 hours (legally required)
-3. Associated wallet blacklisted, all VMs terminated
-4. Incident written to enforcement audit trail
+**Implementation:** Node-level filesystem scanning. The hosting node is the only point in the architecture with plaintext access to whole files, before replication. Detection runs inside the existing lazysync cycle, on the frozen guest-freeze snapshot, at the seam between chunk scan and block push:
+- Short-circuit when the cycle's changed-chunk set is empty (quiet cycles cost nothing).
+- Mount the frozen snapshot read-only via libguestfs/guestmount (`LIBGUESTFS_BACKEND=direct`), reusing the existing `CloudInitCleaner` mount pattern — never a host-kernel nbd mount of an untrusted guest filesystem.
+- Per-file diff over magic-byte-typed image/video files against a persisted `{ path -> size, mtime, hash }` map; read each genuinely-changed whole file.
+- Submit hashes only (never file content) to the Microsoft CSAM Matching API (covers NCMEC + PhotoDNA; no local database to maintain).
 
-**Limitation:** Catches known material only. The Template Review Gate is the complementary control for generation pipelines that could produce new material.
+**Replication ordering:** Scan before replicate. If the per-cycle scan budget is exceeded, defer that cycle's replication to the next round rather than publish unscanned content. Deferral keeps content on the origin node (where the guest already wrote it) and only postpones redundancy. Forward-compatible with future encryption-at-rest, which slots in after the scan clears.
+
+**Detection response (human-in-the-loop — no automated enforcement):**
+1. VM suspended locally and on the orchestrator (`VmStatus.Suspended`); overlay preserved for evidence; deletion blocked.
+2. Admin alerted with match metadata (file hash, path, database source) — P0, 2-hour SLA.
+3. Human review. NCMEC CyberTipline report and wallet blacklisting occur ONLY after human confirmation (report legally required within 24h of confirmation under 18 U.S.C. § 2258A).
+4. If false positive: VM unsuspended, incident logged, no further action.
+5. Every action written to the append-only `EnforcementActions` audit trail.
+
+Automated enforcement on a raw hash match is prohibited — it protects against both false-positive harm and adversarial poisoning of the detector.
+
+**Limitation:** This is an inherently partial control. It catches known material only, on decodable image/video files, and is blind to guest-side full-disk encryption (LUKS/dm-crypt) and LVM. The Template Review Gate (generation pipelines) and Abuse Reporting (reactive) are the complementary controls. It is never presented as a guarantee.
 
 **Key files to create:**
 
 | File | Purpose |
 |---|---|
-| `NcmecHashService.cs` | Hash lookup at Block Store ingestion |
-| `CsamQuarantineService.cs` | Block quarantine and CyberTipline reporting |
+| `ICsamScanner` (node agent) | Scan interface; stub returns `IsClean=true`, wired at the lazysync scan->push seam |
+| Node CSAM scanner | guestmount mount + per-file diff + Microsoft CSAM API hash lookup |
+| `VmStatus.Suspended` transitions | `Running -> Suspended` (Enforcement trigger), admin-only unsuspend, deletion blocked while suspended |
+| `POST /api/admin/csam-report` | Node->orchestrator match report (node-auth); suspend + human-review queue |
 
 ---
 
