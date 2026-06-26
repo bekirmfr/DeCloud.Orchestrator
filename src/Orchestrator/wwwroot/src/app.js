@@ -1541,11 +1541,11 @@ async function createVM() {
 
             await refreshData();
         } else {
-            showToast(data.message || 'Failed to create VM', 'error');
+            showToast(data?.error?.message ?? data?.message ?? `Failed to create VM (HTTP ${response.status})`, 'error');
         }
     } catch (error) {
         console.error('[Create VM] Error:', error);
-        showToast('Failed to create VM', 'error');
+        showToast(error.message || 'Failed to create VM', 'error');
     }
 }
 
@@ -1570,11 +1570,11 @@ async function startVM(vmId) {
         if (data.success) {
             showToast(`VM "${vmId}" started successfully!`, 'success');
         } else {
-            showToast(data.message || 'Failed to start VM', 'error');
+            showToast(data?.error?.message ?? data?.message ?? `Failed to start VM (HTTP ${response.status})`, 'error');
         }
     } catch (error) {
         console.error('[Start VM] Error:', error);
-        showToast('Failed to start VM', 'error');
+        showToast(error.message || 'Failed to start VM', 'error');
     }
 }
 
@@ -1599,11 +1599,11 @@ async function stopVM(vmId) {
         if (data.success) {
             showToast(`VM "${vmId}" stopped successfully!`, 'success');
         } else {
-            showToast(data.message || 'Failed to stop VM', 'error');
+            showToast(data?.error?.message ?? data?.message ?? `Failed to stop VM (HTTP ${response.status})`, 'error');
         }
     } catch (error) {
         console.error('[Stop VM] Error:', error);
-        showToast('Failed to stop VM', 'error');
+        showToast(error.message || 'Failed to stop VM', 'error');
     }
 }
 
