@@ -1,10 +1,19 @@
 import { defineConfig } from 'vite';
-import path from 'path';
-import { resolve } from 'path';
+import path, { resolve } from 'path';
+import { nodePolyfills } from 'vite-plugin-node-polyfills';
 
 export default defineConfig({
     // Base public path
     base: '/',
+
+    // Node polyfills for browser — WalletConnect/AppKit's mobile relay path
+    // references Buffer/process/global, which Vite does not inject by default.
+    plugins: [
+        nodePolyfills({
+            globals: { Buffer: true, global: true, process: true },
+            protocolImports: true
+        })
+    ],
 
     // Build configuration
     build: {

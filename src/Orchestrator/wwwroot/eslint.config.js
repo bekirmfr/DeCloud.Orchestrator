@@ -125,5 +125,23 @@ export default [
             'no-unreachable': 'error',             // Catch unreachable code
             'no-fallthrough': 'warn',              // Catch missing break in switch
         }
+    },
+
+    {
+        // Build/config files run under Node, not the browser. Give them Node
+        // globals so __dirname/process/etc. aren't flagged no-undef. Flat-config
+        // merges these globals with the browser block above for matching files.
+        files: ['*.config.js', 'vite.config.js', 'eslint.config.js'],
+        languageOptions: {
+            sourceType: 'module',
+            globals: {
+                process: 'readonly',
+                __dirname: 'readonly',
+                __filename: 'readonly',
+                module: 'readonly',
+                require: 'readonly',
+                globalThis: 'readonly'
+            }
+        }
     }
 ];
