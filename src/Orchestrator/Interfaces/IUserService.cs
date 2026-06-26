@@ -26,6 +26,12 @@ namespace Orchestrator.Interfaces
         Task<AuthResponse?> AuthenticateWithWalletAsync(WalletAuthRequest request);
         Task<AuthResponse?> RefreshTokenAsync(string refreshToken);
 
+        /// <summary>Return the wallet for a valid refresh token without rotating it (SIWE getSession).</summary>
+        Task<string?> GetSessionWalletAsync(string refreshToken);
+
+        /// <summary>Revoke a refresh token (logout).</summary>
+        Task LogoutAsync(string refreshToken, CancellationToken ct = default);
+
         /// <summary>Verify an EIP-191 wallet signature recovers to walletAddress.</summary>
         bool VerifyWalletSignature(string walletAddress, string message, string signature);
     }

@@ -31,10 +31,14 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B1D8E7F-234
 		src\Orchestrator\wwwroot\src\my-templates.js = src\Orchestrator\wwwroot\src\my-templates.js
 		src\Orchestrator\wwwroot\src\payment.js = src\Orchestrator\wwwroot\src\payment.js
 		src\Orchestrator\wwwroot\src\sign.js = src\Orchestrator\wwwroot\src\sign.js
+		src\Orchestrator\wwwroot\src\siwe-config.js = src\Orchestrator\wwwroot\src\siwe-config.js
 		src\Orchestrator\wwwroot\src\ssh-wallet.js = src\Orchestrator\wwwroot\src\ssh-wallet.js
+		src\Orchestrator\wwwroot\src\status-helpers.js = src\Orchestrator\wwwroot\src\status-helpers.js
 		src\Orchestrator\wwwroot\src\template-detail.js = src\Orchestrator\wwwroot\src\template-detail.js
 		src\Orchestrator\wwwroot\src\tos.js = src\Orchestrator\wwwroot\src\tos.js
+		src\Orchestrator\wwwroot\src\utils.js = src\Orchestrator\wwwroot\src\utils.js
 		src\Orchestrator\wwwroot\src\vm-modals.js = src\Orchestrator\wwwroot\src\vm-modals.js
+		src\Orchestrator\wwwroot\src\wallet-crypto.js = src\Orchestrator\wwwroot\src\wallet-crypto.js
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Scripts", "Scripts", "{A1B2C3D4-3456-4DEF-ABCD-0123456789AB}"

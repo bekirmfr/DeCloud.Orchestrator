@@ -5,6 +5,7 @@ import { createAppKit } from '@reown/appkit';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { mainnet, polygon, polygonAmoy, arbitrum } from '@reown/appkit/networks';
 import { BrowserProvider } from 'ethers';
+import { createDecloudSiweConfig } from './siwe-config.js';
 
 import {
     getSSHCertificate,
@@ -170,6 +171,16 @@ let ethersSigner = null;
 let connectedAddress = null;
 let appKitModal = null;
 
+// Shared in-flight refresh promise (single-flight) + access-token exp decoder.
+let refreshInFlight = null;
+function decodeJwtExpMs(token) {
+    try {
+        const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const payload = JSON.parse(atob(b64));
+        return payload?.exp ? payload.exp * 1000 : 0;
+    } catch { return 0; }
+}
+
 // Handles from constraint-builder.js module — one per mounted instance.
 // _cbCreateHandle: create-VM modal
 // _cbUpdateHandle: update-constraints modal (Error-state VM)
@@ -224,12 +235,38 @@ async function initializeAppKit() {
         console.log('[AppKit] Initializing...');
         updateLoadingProgress(50);
 
+        // SIWE One-Click Auth, wired to the /api/auth endpoints.
+        const siweConfig = createDecloudSiweConfig({
+            orchestratorUrl: CONFIG.orchestratorUrl,
+            getChainId: () => {
+                try { return Number(appKitModal?.getChainId?.()) || 137; } catch { return 137; }
+            },
+            onAuthenticated: (accessToken, user) => {
+                authToken = accessToken;
+                currentUser = user;
+                localStorage.setItem('authToken', accessToken);
+                CONFIG.wallet = user?.walletAddress || connectedAddress;
+                if (CONFIG.wallet) localStorage.setItem('wallet', CONFIG.wallet);
+                try { setAuthToken(accessToken); } catch { /* access-token mirror is best-effort */ }
+                if (appKitModal) appKitModal.close();
+                showDashboard();
+                setupTokenRefresh();
+                refreshData();
+                if (ethersSigner) {
+                    initializePayment(ethersSigner, accessToken)
+                        .catch(e => console.warn('[Payment] init failed:', e?.message));
+                }
+            },
+            onSignOut: () => { clearSession(); showLogin(); }
+        });
+
         // Create AppKit instance with unified configuration
         appKitModal = createAppKit({
             adapters: [new EthersAdapter()],
             networks: [polygonAmoy, polygon, mainnet, arbitrum],
             projectId: WALLETCONNECT_PROJECT_ID,
             metadata: CONFIG.metadata,
+            siweConfig,
             features: {
                 analytics: true,
                 email: false,
@@ -293,8 +330,8 @@ function setupAppKitListeners() {
 
                     console.log('[AppKit] Provider and signer ready');
 
-                    // Proceed with authentication
-                    await proceedWithAuthentication(account.address, 'appkit');
+                    // Authentication is driven by AppKit's SIWE flow
+                    // (verifyMessage -> onAuthenticated). Do NOT trigger it here.
                 } catch (error) {
                     console.error('[AppKit] Provider error:', error);
                     handleConnectionError(error);
@@ -354,181 +391,6 @@ async function connectWallet() {
 }
 
 // ============================================
-// AUTHENTICATION FLOW
-// ============================================
-
-async function proceedWithAuthentication(walletAddress, connectionType) {
-    const btn = document.getElementById('connect-wallet-btn');
-
-    try {
-        showLoginStatus('info', 'Requesting signature...');
-        btn.innerHTML = '<div class="spinner"></div> Sign Message...';
-
-        const authResult = await authenticateWithWallet(walletAddress);
-
-        if (authResult.success) {
-            showLoginStatus('success', 'Authentication successful!');
-            localStorage.setItem('connectionType', connectionType);
-            localStorage.setItem('wallet', walletAddress);
-            CONFIG.wallet = walletAddress;
-
-            // Initialize payment module
-            try {
-                setAuthToken(authToken);
-                await initializePayment(ethersSigner, authToken);
-                console.log('[Payment] Module initialized');
-            } catch (paymentError) {
-                console.warn('[Payment] Init failed (non-fatal):', paymentError.message);
-                // Non-fatal - dashboard works without payment
-            }
-
-            // Compliance: require acceptance of the current Terms of Service before
-            // entering the app. Blocking — the user accepts (signs) or is disconnected.
-            try {
-                const accepted = await ensureTosAccepted({ api, getSigner: () => ethersSigner });
-                if (!accepted) {
-                    showLoginStatus('info', 'You must accept the Terms of Service to continue.');
-                    await disconnect();
-                    return;
-                }
-            } catch (tosError) {
-                console.error('[ToS] Gate failed:', tosError);
-                showLoginStatus('error', 'Could not verify Terms of Service. Please try again.');
-                await disconnect();
-                return;
-            }
-
-            setTimeout(() => {
-                // Close the AppKit modal
-                if (appKitModal) {
-                    appKitModal.close();
-                }
-
-                showDashboard();
-                setupTokenRefresh();
-                refreshData();
-            }, 500);
-        } else {
-            throw new Error(authResult.error || 'Authentication failed');
-        }
-    } catch (error) {
-        console.error('[Auth] Error:', error);
-        handleConnectionError(error);
-        resetConnectButton(btn);
-    }
-}
-
-/**
- * Authenticates with the backend using wallet signature
- * SECURITY: Message signing for proof of ownership
- */
-async function authenticateWithWallet(walletAddress) {
-    try {
-        // SECURITY: Validate address format
-        if (!walletAddress || !walletAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-            return { success: false, error: 'Invalid wallet address format' };
-        }
-
-        console.log('[Auth] Requesting authentication message for:', walletAddress);
-
-        // Step 1: Get message to sign from server
-        const messageResponse = await fetch(
-            `${CONFIG.orchestratorUrl}/api/auth/message?walletAddress=${walletAddress}`,
-            {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-
-        if (!messageResponse.ok) {
-            const errorText = await messageResponse.text();
-            console.error('[Auth] Message endpoint error:', messageResponse.status, errorText);
-            return { success: false, error: `Server error: ${messageResponse.status}` };
-        }
-
-        const messageData = await messageResponse.json();
-
-        if (!messageData.success) {
-            return { success: false, error: messageData.message || 'Failed to get authentication message' };
-        }
-
-        const { message, timestamp } = messageData.data;
-
-        // SECURITY: Validate message contains expected components
-        if (!message || !timestamp) {
-            return { success: false, error: 'Invalid authentication message from server' };
-        }
-
-        console.log('[Auth] Requesting signature from wallet...');
-
-        // Step 2: Sign the message with the wallet
-        const signature = await ethersSigner.signMessage(message);
-
-        // SECURITY: Validate signature format
-        if (!signature || !signature.match(/^0x[a-fA-F0-9]{130}$/)) {
-            return { success: false, error: 'Invalid signature format' };
-        }
-
-        console.log('[Auth] Signature received, authenticating with server...');
-
-        // Step 3: Authenticate with the server
-        const authResponse = await fetch(`${CONFIG.orchestratorUrl}/api/auth/wallet`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                walletAddress: walletAddress,
-                signature: signature,
-                message: message,
-                timestamp: timestamp
-            })
-        });
-
-        if (!authResponse.ok) {
-            const errorText = await authResponse.text();
-            console.error('[Auth] Authentication endpoint error:', authResponse.status, errorText);
-            return { success: false, error: `Authentication failed: ${authResponse.status}` };
-        }
-
-        const authData = await authResponse.json();
-
-        if (authData.success && authData.data) {
-            // SECURITY: Store tokens
-            authToken = authData.data.accessToken;
-            refreshToken = authData.data.refreshToken;
-            currentUser = authData.data.user;
-
-            localStorage.setItem('authToken', authToken);
-            localStorage.setItem('refreshToken', refreshToken);
-
-            console.log('[Auth] Authentication successful');
-            return { success: true };
-        } else {
-            return { success: false, error: authData.message || 'Authentication failed' };
-        }
-    } catch (error) {
-        console.error('[Auth] Authentication error:', error);
-
-        // SECURITY: Don't expose internal error details
-        let errorMessage = 'Authentication failed. Please try again.';
-
-        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-            errorMessage = 'Signature request rejected';
-        } else if (error.message?.includes('User rejected')) {
-            errorMessage = 'Signature request rejected';
-        }
-
-        return {
-            success: false,
-            error: errorMessage
-        };
-    }
-}
-
-// ============================================
 // DISCONNECT
 // ============================================
 
@@ -576,7 +438,6 @@ function clearSession() {
 
     // SECURITY: Clear sensitive data
     localStorage.removeItem('authToken');
-    localStorage.removeItem('refreshToken');
     localStorage.removeItem('wallet');
     localStorage.removeItem('connectionType');
 
@@ -601,36 +462,32 @@ function clearSession() {
 
 async function restoreSession() {
     const storedToken = localStorage.getItem('authToken');
-    const storedRefreshToken = localStorage.getItem('refreshToken');
     const storedWallet = localStorage.getItem('wallet');
 
     console.log('[Session] Attempting to restore session...');
 
-    if (storedToken && storedRefreshToken && storedWallet) {
+    // Fast path: a still-valid access token -> no network, no refresh, no race.
+    if (storedToken && storedWallet && decodeJwtExpMs(storedToken) > Date.now() + 30_000) {
         authToken = storedToken;
-        refreshToken = storedRefreshToken;
         CONFIG.wallet = storedWallet;
+        try { setAuthToken(authToken); } catch { /* access-token mirror is best-effort */ }
+        initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
+        setupTokenRefresh();
+        showDashboard();
+        refreshData();
+        return true;
+    }
 
-        try {
-            // Verify token is still valid
-            console.log('[Session] Verifying stored token...');
-            const refreshed = await refreshAuthToken();
-
-            if (refreshed) {
-                console.log('[Session] Token valid, restoring session');
-
-                // Initialize AppKit in background (non-blocking)
-                initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
-
-                // Schedule periodic refresh so long-lived tabs don't fall back to lazy refresh
-                setupTokenRefresh();
-
-                showDashboard();
-                refreshData();
-                return true;
-            }
-        } catch (e) {
-            console.error('[Session] Verification failed:', e);
+    // Expired/absent access token: cookie-based refresh (single-flight).
+    if (storedWallet) {
+        const refreshed = await refreshAuthToken();
+        if (refreshed) {
+            CONFIG.wallet = storedWallet;
+            initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
+            setupTokenRefresh();
+            showDashboard();
+            refreshData();
+            return true;
         }
     }
 
@@ -696,44 +553,39 @@ function updateLoadingProgress(percent) {
 // TOKEN REFRESH
 // ============================================
 
-async function refreshAuthToken() {
-    if (!refreshToken) {
-        return false;
-    }
+function refreshAuthToken() {
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = (async () => {
+        try {
+            const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
+                method: 'POST',
+                credentials: 'include',            // sends the httpOnly refresh cookie
+                headers: { 'Content-Type': 'application/json' }
+            });
 
-    try {
-        const response = await fetch(`${CONFIG.orchestratorUrl}/api/auth/refresh`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ refreshToken })
-        });
+            if (!response.ok) {
+                console.error('[Auth] Token refresh failed:', response.status);
+                return false;
+            }
 
-        if (!response.ok) {
-            console.error('[Auth] Token refresh failed:', response.status);
+            const data = await response.json();
+            if (data.success && data.data?.accessToken) {
+                authToken = data.data.accessToken;
+                currentUser = data.data.user;
+                localStorage.setItem('authToken', authToken);
+                try { setAuthToken(authToken); } catch { /* access-token mirror is best-effort */ }
+                console.log('[Auth] Token refreshed successfully');
+                return true;
+            }
             return false;
+        } catch (error) {
+            console.error('[Auth] Token refresh error:', error);
+            return false;
+        } finally {
+            refreshInFlight = null;
         }
-
-        const data = await response.json();
-
-        if (data.success && data.data) {
-            authToken = data.data.accessToken;
-            refreshToken = data.data.refreshToken;
-            currentUser = data.data.user;
-
-            localStorage.setItem('authToken', authToken);
-            localStorage.setItem('refreshToken', refreshToken);
-
-            console.log('[Auth] Token refreshed successfully');
-            return true;
-        }
-
-        return false;
-    } catch (error) {
-        console.error('[Auth] Token refresh error:', error);
-        return false;
-    }
+    })();
+    return refreshInFlight;
 }
 
 function setupTokenRefresh() {
@@ -764,6 +616,7 @@ async function api(endpoint, options = {}) {
 
     const response = await fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
         ...options,
+        credentials: 'include',
         headers
     });
 

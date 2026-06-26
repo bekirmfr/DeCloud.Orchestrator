@@ -16,14 +16,11 @@ public class UserService : IUserService
     private readonly DataStore _dataStore;
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _environment;
+    private readonly INonceStore _nonceStore;
+    private readonly IRefreshTokenStore _refreshTokenStore;
     private readonly ILogger<UserService> _logger;
 
-    // Refresh token storage (in production, use Redis or database)
-    private static readonly Dictionary<string, RefreshTokenInfo> _refreshTokens = new();
-    private static readonly object _refreshTokenLock = new();
-
     // Configuration constants
-    private const int MaxTimestampAgeSeconds = 300; // 5 minutes for signature validity
     private const int AccessTokenExpiryMinutes = 60; // 1 hour
     private const int RefreshTokenExpiryDays = 7;
 
@@ -31,11 +28,15 @@ public class UserService : IUserService
         DataStore dataStore,
         IConfiguration configuration,
         IHostEnvironment environment,
+        INonceStore nonceStore,
+        IRefreshTokenStore refreshTokenStore,
         ILogger<UserService> logger)
     {
         _dataStore = dataStore;
         _configuration = configuration;
         _environment = environment;
+        _nonceStore = nonceStore;
+        _refreshTokenStore = refreshTokenStore;
         _logger = logger;
     }
 
@@ -269,107 +270,76 @@ public class UserService : IUserService
     {
         try
         {
-            // 1. Validate timestamp to prevent replay attacks.
-            // Freshness MUST be checked against the timestamp embedded in the
-            // SIGNED message, not the standalone request.Timestamp field —
-            // otherwise a captured (message, signature) pair can be replayed
-            // indefinitely by supplying a fresh request.Timestamp each attempt.
-            var tsMatch = System.Text.RegularExpressions.Regex.Match(
-                request.Message, @"Timestamp:\s*(\d+)");
-            if (!tsMatch.Success || !long.TryParse(tsMatch.Groups[1].Value, out var signedTimestamp))
+            if (string.IsNullOrEmpty(request.Message) || string.IsNullOrEmpty(request.Signature))
             {
-                _logger.LogWarning("Signed message missing a parseable Timestamp field");
+                _logger.LogWarning("Auth request missing message or signature");
                 return null;
             }
 
-            if (signedTimestamp != request.Timestamp)
-            {
-                _logger.LogWarning("request.Timestamp does not match the signed message timestamp");
-                return null;
-            }
+            string walletAddress;
 
-            var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var timeDiff = Math.Abs(currentTimestamp - signedTimestamp);
-
-            if (timeDiff > MaxTimestampAgeSeconds)
-            {
-                _logger.LogWarning("Timestamp too old/future: {Diff}s (max: {Max}s)", timeDiff, MaxTimestampAgeSeconds);
-                return null;
-            }
-
-            // 2. Verify the signature (or bypass in development mode)
-            bool signatureValid = false;
-
+            // Dev-only mock bypass (unchanged, explicit opt-in).
             if (_environment.IsDevelopment() &&
                 IsMockSignature(request.Signature) &&
                 Environment.GetEnvironmentVariable("DECLOUD_ALLOW_MOCK_AUTH") == "true")
             {
-                // Development mode: allow mock signatures for testing
-                // Requires explicit opt-in via DECLOUD_ALLOW_MOCK_AUTH=true
                 _logger.LogWarning("DEV MODE: Accepting mock signature for wallet {Wallet}", request.WalletAddress);
-                signatureValid = true;
+                walletAddress = request.WalletAddress ?? string.Empty;
+                if (string.IsNullOrEmpty(walletAddress)) return null;
             }
             else
             {
-                // Production mode: verify real signature
-                var recoveredAddress = RecoverAddressFromSignature(request.Message, request.Signature);
-
-                if (string.IsNullOrEmpty(recoveredAddress))
+                // 1. Recover the signer from the EIP-4361 message + signature.
+                var recovered = RecoverAddressFromSignature(request.Message, request.Signature);
+                if (string.IsNullOrEmpty(recovered))
                 {
                     _logger.LogWarning("Failed to recover address from signature");
                     return null;
                 }
 
-                // Compare addresses (case-insensitive)
-                var providedAddress = request.WalletAddress.ToLowerInvariant();
-                var recovered = recoveredAddress.ToLowerInvariant();
-
-                if (providedAddress != recovered)
+                // 2. The recovered address must appear in the signed message.
+                if (!request.Message.Contains(recovered, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning("Address mismatch: provided={Provided}, recovered={Recovered}",
-                        providedAddress, recovered);
+                    _logger.LogWarning("Recovered address not present in signed message");
                     return null;
                 }
 
-                // Verify the message contains the correct wallet address
-                if (!request.Message.Contains(request.WalletAddress, StringComparison.OrdinalIgnoreCase))
+                // 3. Consume the single-use nonce. This is the replay defense:
+                //    a captured (message, signature) pair cannot be reused.
+                var nonceMatch = System.Text.RegularExpressions.Regex.Match(
+                    request.Message, @"Nonce:\s*(\S+)");
+                if (!nonceMatch.Success)
                 {
-                    _logger.LogWarning("Message does not contain wallet address");
+                    _logger.LogWarning("Signed message has no Nonce field");
+                    return null;
+                }
+                if (!await _nonceStore.ConsumeAsync(nonceMatch.Groups[1].Value))
+                {
+                    _logger.LogWarning("Nonce missing, expired, or already used (possible replay)");
                     return null;
                 }
 
-                signatureValid = true;
+                walletAddress = recovered;
             }
 
-            if (!signatureValid)
-            {
-                return null;
-            }
-
-            // 3. Get or create user (using wallet address as ID)
-            var user = await GetUserByWalletAsync(request.WalletAddress);
-            if (user == null)
-            {
-                _logger.LogInformation("Creating new user for wallet: {Wallet}", request.WalletAddress);
-                user = await CreateUserAsync(request.WalletAddress);
-            }
-
-            // 4. Update last login
+            // 4. Wallet address is the identity.
+            var user = await GetUserByWalletAsync(walletAddress) ?? await CreateUserAsync(walletAddress);
             user.LastLoginAt = DateTime.UtcNow;
             await UpdateUserAsync(user);
 
-            // 5. Generate tokens
+            // 5. Issue tokens. Refresh token persists in the durable store.
             var accessToken = GenerateJwtToken(user);
-            var refreshToken = GenerateRefreshToken(user.Id);
+            var refreshToken = GenerateRefreshToken();
+            await _refreshTokenStore.StoreAsync(
+                refreshToken, user.Id, DateTime.UtcNow.AddDays(RefreshTokenExpiryDays));
+
             var expiresAt = DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes);
-
-            _logger.LogInformation("Wallet auth successful for: {Wallet}", request.WalletAddress);
-
+            _logger.LogInformation("Wallet auth successful for: {Wallet}", walletAddress);
             return new AuthResponse(accessToken, refreshToken, expiresAt, user);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during wallet authentication for: {Wallet}", request.WalletAddress);
+            _logger.LogError(ex, "Error during wallet authentication");
             return null;
         }
     }
@@ -381,41 +351,29 @@ public class UserService : IUserService
     {
         try
         {
-            RefreshTokenInfo? tokenInfo;
-
-            lock (_refreshTokenLock)
+            // Atomic single-use consume. Concurrent refreshes race here; one wins,
+            // the rest get null — without invalidating a legitimately-rotated token.
+            var userId = await _refreshTokenStore.ConsumeAsync(refreshToken);
+            if (userId == null)
             {
-                if (!_refreshTokens.TryGetValue(refreshToken, out tokenInfo))
-                {
-                    _logger.LogWarning("Refresh token not found");
-                    return null;
-                }
-
-                if (tokenInfo.ExpiresAt < DateTime.UtcNow)
-                {
-                    _refreshTokens.Remove(refreshToken);
-                    _logger.LogWarning("Refresh token expired");
-                    return null;
-                }
-
-                // Remove old token (one-time use)
-                _refreshTokens.Remove(refreshToken);
-            }
-
-            var user = await GetUserByIdAsync(tokenInfo.UserId);
-            if (user == null || user.Status != UserStatus.Active)
-            {
-                _logger.LogWarning("User not found or inactive: {UserId}", tokenInfo.UserId);
+                _logger.LogWarning("Refresh token not found / expired / already used");
                 return null;
             }
 
-            // Generate new tokens
+            var user = await GetUserByIdAsync(userId);
+            if (user == null || user.Status != UserStatus.Active)
+            {
+                _logger.LogWarning("User not found or inactive: {UserId}", userId);
+                return null;
+            }
+
             var newAccessToken = GenerateJwtToken(user);
-            var newRefreshToken = GenerateRefreshToken(user.Id);
+            var newRefreshToken = GenerateRefreshToken();
+            await _refreshTokenStore.StoreAsync(
+                newRefreshToken, user.Id, DateTime.UtcNow.AddDays(RefreshTokenExpiryDays));
+
             var expiresAt = DateTime.UtcNow.AddMinutes(AccessTokenExpiryMinutes);
-
             _logger.LogInformation("Token refreshed for user: {UserId}", user.Id);
-
             return new AuthResponse(newAccessToken, newRefreshToken, expiresAt, user);
         }
         catch (Exception ex)
@@ -424,6 +382,17 @@ public class UserService : IUserService
             return null;
         }
     }
+
+    public async Task<string?> GetSessionWalletAsync(string refreshToken)
+    {
+        var userId = await _refreshTokenStore.PeekAsync(refreshToken);
+        if (userId == null) return null;
+        var user = await GetUserByIdAsync(userId);
+        return user?.WalletAddress;
+    }
+
+    public Task LogoutAsync(string refreshToken, CancellationToken ct = default)
+        => _refreshTokenStore.RevokeAsync(refreshToken, ct);
 
     /// <summary>
     /// Verify that an EIP-191 signature over <paramref name="message"/> recovers to
@@ -520,27 +489,12 @@ public class UserService : IUserService
     /// <summary>
     /// Generate refresh token
     /// </summary>
-    private string GenerateRefreshToken(string userId)
+    private static string GenerateRefreshToken()
     {
         var randomBytes = new byte[32];
         using var rng = RandomNumberGenerator.Create();
         rng.GetBytes(randomBytes);
-
-        var token = Convert.ToBase64String(randomBytes);
-
-        // Store the refresh token so it can be validated later
-        lock (_refreshTokenLock)
-        {
-            _refreshTokens[token] = new RefreshTokenInfo
-            {
-                UserId = userId,
-                Token = token,
-                ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
-                CreatedAt = DateTime.UtcNow
-            };
-        }
-
-        return token;
+        return Convert.ToBase64String(randomBytes);
     }
 
     /// <summary>
@@ -598,16 +552,5 @@ public class UserService : IUserService
         {
             return "invalid";
         }
-    }
-
-    /// <summary>
-    /// Refresh token info for storage
-    /// </summary>
-    internal class RefreshTokenInfo
-    {
-        public string UserId { get; set; } = string.Empty;
-        public string Token { get; set; } = string.Empty;
-        public DateTime ExpiresAt { get; set; }
-        public DateTime CreatedAt { get; set; }
     }
 }
