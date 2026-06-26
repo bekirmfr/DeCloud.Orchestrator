@@ -150,6 +150,14 @@
                     </svg>
                     Settings
                 </a>
+
+                <div class="nav-label" id="admin-nav-label" style="margin-top: 24px; display:none;">Admin</div>
+                <a class="nav-item" id="admin-compliance-nav" data-page="admin-compliance" onclick="showPage('admin-compliance')" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    </svg>
+                    Compliance
+                </a>
             </nav>
 
             <div class="sidebar-footer">
@@ -188,6 +196,17 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Admin Compliance Page (admin-only; revealed by applyAdminVisibility) -->
+            <div id="page-admin-compliance" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Compliance</h1>
+                        <p class="page-subtitle">Wallet enforcement — withhold-of-service only. Funds are never affected.</p>
+                    </div>
+                </header>
+                <div id="admin-compliance-content"></div>
+            </div>
+
             <!-- Dashboard Page -->
             <div id="page-dashboard" class="page active">
                 <header class="page-header">

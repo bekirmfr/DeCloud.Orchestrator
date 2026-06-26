@@ -67,6 +67,7 @@ import {
     closeCustomDomainsModal
 } from './custom-domains.js';
 import { ensureTosAccepted } from './tos.js';
+import { initAdminCompliance } from './admin-compliance.js';
 
 // ============================================
 // CONFIGURATION
@@ -706,7 +707,29 @@ function showDashboard() {
         if (disconnectBtn) disconnectBtn.style.display = 'block';
         if (settingsWallet) settingsWallet.value = CONFIG.wallet;
     }
+    applyAdminVisibility();
     loadUserBalance();
+}
+
+// Reveal admin-only UI when the access token carries the Admin role. Visibility
+// only — every admin endpoint is enforced server-side with [Authorize(Roles="Admin")].
+function tokenHasAdminRole(token) {
+    if (!token) return false;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const claim = payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role']
+            ?? payload.role ?? payload.roles;
+        if (!claim) return false;
+        return Array.isArray(claim) ? claim.includes('Admin') : claim === 'Admin';
+    } catch { return false; }
+}
+
+function applyAdminVisibility() {
+    const isAdmin = tokenHasAdminRole(authToken);
+    ['admin-nav-label', 'admin-compliance-nav'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isAdmin ? '' : 'none';
+    });
 }
 
 function showLoginStatus(type, message) {
@@ -756,6 +779,8 @@ function showPage(pageName) {
         initMyTemplates();
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
+    } else if (pageName === 'admin-compliance') {
+        initAdminCompliance(api);
     }
 }
 
