@@ -252,6 +252,7 @@ async function initializeAppKit() {
                 showDashboard();
                 setupTokenRefresh();
                 refreshData();
+                gateTosAfterEntry();
                 if (ethersSigner) {
                     initializePayment(ethersSigner, accessToken)
                         .catch(e => console.warn('[Payment] init failed:', e?.message));
@@ -475,6 +476,7 @@ async function restoreSession() {
         setupTokenRefresh();
         showDashboard();
         refreshData();
+        gateTosAfterEntry();
         return true;
     }
 
@@ -487,12 +489,48 @@ async function restoreSession() {
             setupTokenRefresh();
             showDashboard();
             refreshData();
+            gateTosAfterEntry();
             return true;
         }
     }
 
     console.log('[Session] No valid session found');
     return false;
+}
+
+// ============================================
+// TERMS OF SERVICE GATE
+// ============================================
+
+// Run the ToS acceptance gate after the user enters the app. Fire-and-forget: the
+// dashboard is already rendered; if acceptance is required the gate shows a blocking
+// modal over it, and declining disconnects. The server-side CreateVmAsync gate stays
+// authoritative regardless of this UX check. Common case (already accepted) is a
+// single status request with no signer needed.
+function gateTosAfterEntry() {
+    ensureTosAccepted({ api, getSigner: getReadySigner })
+        .then(accepted => { if (!accepted) disconnect(); })
+        .catch(e => console.error('[ToS] gate failed:', e));
+}
+
+// Return a wallet signer, acquiring it from AppKit if the session was restored
+// (no fresh connect) and the signer is not yet in memory. Returns null if the wallet
+// is not connected — the ToS modal then surfaces a "connect to sign" error, which can
+// only happen when a re-acceptance is required after a restore.
+async function getReadySigner() {
+    if (ethersSigner) return ethersSigner;
+    try {
+        await initializeAppKit();
+        const provider = appKitModal?.getWalletProvider?.();
+        if (provider) {
+            ethersProvider = new BrowserProvider(provider);
+            ethersSigner = await ethersProvider.getSigner();
+            return ethersSigner;
+        }
+    } catch (e) {
+        console.warn('[ToS] signer acquisition failed:', e?.message);
+    }
+    return null;
 }
 
 // ============================================

@@ -23,7 +23,7 @@ const MODAL_ID = 'tos-gate-modal';
  * Blocking: resolves true once accepted (now or already), false if the user
  * declines. Throws if the status/document calls fail (caller decides what to do).
  *
- * @param {{ api: Function, getSigner: Function }} ctx
+ * @param {{ api: Function, getSigner: Function }} ctx  getSigner may be sync or async.
  * @returns {Promise<boolean>}
  */
 export async function ensureTosAccepted({ api, getSigner }) {
@@ -67,7 +67,7 @@ function showTosGate(doc, getSigner, api) {
             const original = acceptBtn.textContent;
             acceptBtn.textContent = 'Sign in wallet…';
             try {
-                const signer = getSigner();
+                const signer = await getSigner();
                 if (!signer) throw new Error('Wallet not connected');
 
                 // EIP-55 checksum address — must match the server's normalized wallet.
