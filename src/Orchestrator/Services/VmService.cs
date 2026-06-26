@@ -30,6 +30,7 @@ public class VmService : IVmService
     private readonly IConfiguration _configuration;
     private readonly ICloudInitRenderer _cloudInitRenderer;
     private readonly ITosService _tosService;
+    private readonly IWalletBlocklistService _blocklistService;
     private readonly ILogger<VmService> _logger;
     private readonly IServiceProvider _serviceProvider;
 
@@ -47,6 +48,7 @@ public class VmService : IVmService
     IConfiguration configuration,
     ICloudInitRenderer cloudInitRenderer,
     ITosService tosService,
+    IWalletBlocklistService blocklistService,
     ILogger<VmService> logger,
     IServiceProvider serviceProvider)
     {
@@ -63,6 +65,7 @@ public class VmService : IVmService
         _configuration = configuration;
         _cloudInitRenderer = cloudInitRenderer;
         _tosService = tosService;
+        _blocklistService = blocklistService;
         _logger = logger;
         _serviceProvider = serviceProvider;
     }
@@ -112,6 +115,17 @@ public class VmService : IVmService
         if (_dataStore.Users.TryGetValue(userId, out var existingUser))
         {
             user = existingUser;
+        }
+
+        // ── Compliance: enforcement gate (tenant VMs only) ───────────────────────────
+        // One predicate over two boundaries: an internal suspension (User.Status) or a
+        // provenance-bearing denylist entry. Checked server-side at action time, never
+        // via a JWT claim, so a block takes effect immediately. Withhold-of-service
+        // only — funds are untouched. The reason is deliberately not surfaced.
+        if (!isSystemVm && await _blocklistService.IsWalletBlockedAsync(userId))
+        {
+            return new CreateVmResponse(string.Empty, VmStatus.Pending,
+                "Your account is not permitted to deploy.", "WALLET_BLOCKED");
         }
 
         // ── Compliance: Terms of Service gate (tenant VMs only) ──────────────────────

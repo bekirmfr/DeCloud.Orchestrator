@@ -118,6 +118,18 @@ builder.Services.AddSingleton<ITosService>(sp =>
     var logger = sp.GetRequiredService<ILogger<TosService>>();
     return new TosService(db, config, logger);
 });
+
+// Enforcement core. The blocklist (gate predicate + denylist/audit storage) is a
+// singleton — injected into the singleton VmService. The enforcement facade (suspend
+// + stop VMs) is scoped and used only by AdminComplianceController.
+builder.Services.AddSingleton<IWalletBlocklistService>(sp =>
+{
+    var db = sp.GetService<IMongoDatabase>();
+    var dataStore = sp.GetRequiredService<DataStore>();
+    var logger = sp.GetRequiredService<ILogger<WalletBlocklistService>>();
+    return new WalletBlocklistService(db, dataStore, logger);
+});
+builder.Services.AddScoped<IEnforcementService, EnforcementService>();
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
 builder.Services.AddSingleton<NodeCapacityCalculator>();

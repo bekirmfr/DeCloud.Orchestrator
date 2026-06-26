@@ -597,16 +597,6 @@ public record VmActionRequest(
     VmAction Action
 );
 
-public enum VmAction
-{
-    Start,
-    Stop,
-    Restart,
-    Pause,
-    Resume,
-    ForceStop
-}
-
 public record VmListResponse(
     List<VmSummaryDto> Vms,
     int TotalCount,
