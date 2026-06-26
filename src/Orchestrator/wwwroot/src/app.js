@@ -65,6 +65,7 @@ import {
     openCustomDomainsModal,
     closeCustomDomainsModal
 } from './custom-domains.js';
+import { ensureTosAccepted } from './tos.js';
 
 // ============================================
 // CONFIGURATION
@@ -379,6 +380,22 @@ async function proceedWithAuthentication(walletAddress, connectionType) {
             } catch (paymentError) {
                 console.warn('[Payment] Init failed (non-fatal):', paymentError.message);
                 // Non-fatal - dashboard works without payment
+            }
+
+            // Compliance: require acceptance of the current Terms of Service before
+            // entering the app. Blocking — the user accepts (signs) or is disconnected.
+            try {
+                const accepted = await ensureTosAccepted({ api, getSigner: () => ethersSigner });
+                if (!accepted) {
+                    showLoginStatus('info', 'You must accept the Terms of Service to continue.');
+                    await disconnect();
+                    return;
+                }
+            } catch (tosError) {
+                console.error('[ToS] Gate failed:', tosError);
+                showLoginStatus('error', 'Could not verify Terms of Service. Please try again.');
+                await disconnect();
+                return;
             }
 
             setTimeout(() => {

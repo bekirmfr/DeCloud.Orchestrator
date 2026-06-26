@@ -33,6 +33,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B1D8E7F-234
 		src\Orchestrator\wwwroot\src\sign.js = src\Orchestrator\wwwroot\src\sign.js
 		src\Orchestrator\wwwroot\src\ssh-wallet.js = src\Orchestrator\wwwroot\src\ssh-wallet.js
 		src\Orchestrator\wwwroot\src\template-detail.js = src\Orchestrator\wwwroot\src\template-detail.js
+		src\Orchestrator\wwwroot\src\tos.js = src\Orchestrator\wwwroot\src\tos.js
 		src\Orchestrator\wwwroot\src\vm-modals.js = src\Orchestrator\wwwroot\src\vm-modals.js
 	EndProjectSection
 EndProject

@@ -482,7 +482,15 @@ public class MarketplaceController : ControllerBase
             // Deploy VM
             var vmResponse = await _vmService.CreateVmAsync(userId, vmRequest, request.NodeId);
 
-            // Track deployment stats (fire and forget)
+            // Surface creation-gate failures (ToS not accepted, quota, etc.) as a
+            // proper 4xx with the specific error code — consistent with VmsController.
+            // Must run before stats tracking so a blocked deploy isn't counted.
+            if (string.IsNullOrEmpty(vmResponse.VmId))
+            {
+                return BadRequest(new { error = vmResponse.Error ?? "CREATE_ERROR", message = vmResponse.Message });
+            }
+
+            // Track deployment stats (fire and forget)s
             _ = Task.Run(async () =>
             {
                 try

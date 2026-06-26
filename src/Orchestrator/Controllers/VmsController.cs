@@ -64,7 +64,10 @@ public class VmsController : ControllerBase
 
             if (string.IsNullOrEmpty(response.VmId))
             {
-                return BadRequest(ApiResponse<CreateVmResponse>.Fail("CREATE_ERROR", response.Message));
+                // Propagate the specific code (e.g. TOS_NOT_ACCEPTED, QUOTA_EXCEEDED)
+                // rather than a generic one, so callers can detect the cause.
+                return BadRequest(ApiResponse<CreateVmResponse>.Fail(
+                    response.Error ?? "CREATE_ERROR", response.Message));
             }
 
             return Ok(ApiResponse<CreateVmResponse>.Ok(response));
