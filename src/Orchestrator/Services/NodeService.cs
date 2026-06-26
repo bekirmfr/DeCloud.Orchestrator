@@ -1261,6 +1261,11 @@ public class NodeService : INodeService
 
         var systemTemplatesPending = await DetectStaleSystemTemplates(node, heartbeat.SystemTemplateVersions);
 
+        var heldVmIds = (await _dataStore.GetVmsByNodeAsync(nodeId))
+            .Where(v => v.ComplianceHold)
+            .Select(v => v.Id)
+            .ToList();
+
         return new NodeHeartbeatResponse(
         true,
         commands.Count > 0 ? commands : null,
@@ -1269,7 +1274,8 @@ public class NodeService : INodeService
         obligationStatesPending.Count > 0 ? obligationStatesPending : null,
         systemTemplatesPending,
         settingsDrift,
-        node.IsSchedulingReady);
+        node.IsSchedulingReady,
+        heldVmIds.Count > 0 ? heldVmIds : null);
     }
 
     /// <summary>
@@ -2222,21 +2228,28 @@ public class NodeService : INodeService
 
                 // ════════════════════════════════════════════════════════════
                 // Compliance hold re-enforcement.
-                // A held VM must not run. If the node reports it Running (node
-                // restart, recovery, or a guest that ignored a stop), re-issue a
-                // force-stop and skip the Running transition so ingress is never
-                // (re-)registered. Guard on Stopping so we don't repeat the command
-                // while one is already in flight.
+                // A held VM must not run. If the node reports it Running, ALWAYS skip
+                // the Running transition (so ingress is never re-registered), and
+                // re-issue a force-stop — unless one is already in flight
+                // (Status==Stopping) or was issued in the last 2 minutes. The dedup
+                // stops a flapping node from producing a burst of ForceStops; after the
+                // window a genuinely dropped stop is retried.
                 // ════════════════════════════════════════════════════════════
-                if (vm.ComplianceHold
-                    && newStatus == VmStatus.Running
-                    && vm.Status != VmStatus.Stopping)
+                if (vm.ComplianceHold && newStatus == VmStatus.Running)
                 {
-                    _logger.LogWarning(
-                        "Compliance-held VM {VmId} reported Running — re-issuing force-stop", vmId);
-                    var vmServiceForHold =
-                        _serviceProvider.GetRequiredService<Orchestrator.Interfaces.IVmService>();
-                    await vmServiceForHold.PerformVmActionAsync(vmId, VmAction.ForceStop);
+                    var stopInFlight = vm.Status == VmStatus.Stopping
+                        || (vm.ActiveCommandType == NodeCommandType.StopVm
+                            && vm.ActiveCommandIssuedAt is { } stopIssuedAt
+                            && (DateTime.UtcNow - stopIssuedAt) < TimeSpan.FromMinutes(2));
+
+                    if (!stopInFlight)
+                    {
+                        _logger.LogWarning(
+                            "Compliance-held VM {VmId} reported Running — re-issuing force-stop", vmId);
+                        var vmServiceForHold =
+                            _serviceProvider.GetRequiredService<Orchestrator.Interfaces.IVmService>();
+                        await vmServiceForHold.PerformVmActionAsync(vmId, VmAction.ForceStop);
+                    }
                     continue;
                 }
 
