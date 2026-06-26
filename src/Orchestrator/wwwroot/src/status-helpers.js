@@ -5,16 +5,19 @@
 
 import { escapeHtml } from './utils.js';
 
+// Must match DeCloud.Shared.Enums.VmStatus exactly (12 values):
+// 0 Pending, 1 Scheduling, 2 Provisioning, 3 Running, 4 Paused, 5 Suspended,
+// 6 Stopping, 7 Stopped, 8 Deleting, 9 Deleted, 10 Migrating, 11 Error.
 const VM_STATUS_CLASS = {
-    0: 'pending', 1: 'scheduling', 2: 'provisioning',
-    3: 'running', 4: 'stopping', 5: 'stopped',
-    6: 'deleting', 7: 'migrating', 8: 'error', 9: 'deleted'
+    0: 'pending', 1: 'scheduling', 2: 'provisioning', 3: 'running',
+    4: 'paused', 5: 'suspended', 6: 'stopping', 7: 'stopped',
+    8: 'deleting', 9: 'deleted', 10: 'migrating', 11: 'error'
 };
 
 const VM_STATUS_TEXT = {
-    0: 'Pending', 1: 'Scheduling', 2: 'Provisioning',
-    3: 'Running', 4: 'Stopping', 5: 'Stopped',
-    6: 'Deleting', 7: 'Migrating', 8: 'Error', 9: 'Deleted'
+    0: 'Pending', 1: 'Scheduling', 2: 'Provisioning', 3: 'Running',
+    4: 'Paused', 5: 'Suspended', 6: 'Stopping', 7: 'Stopped',
+    8: 'Deleting', 9: 'Deleted', 10: 'Migrating', 11: 'Error'
 };
 
 export function getStatusClass(status) {

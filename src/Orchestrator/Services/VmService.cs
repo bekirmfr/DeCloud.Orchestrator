@@ -544,7 +544,8 @@ public class VmService : IVmService
                 CreatedAt: v.CreatedAt,
                 UpdatedAt: v.UpdatedAt,
                 TemplateId: v.TemplateId,
-                Services: v.Services
+                Services: v.Services,
+                ComplianceHold: v.ComplianceHold
             );
         });
 

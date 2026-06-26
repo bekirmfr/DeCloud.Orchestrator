@@ -626,7 +626,8 @@ public record VmSummaryDto(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     string? TemplateId = null,
-    List<VmServiceModel>? Services = null
+    List<VmServiceModel>? Services = null,
+    bool ComplianceHold = false
 );
 
 public record VmDetailResponse(

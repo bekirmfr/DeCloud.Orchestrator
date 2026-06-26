@@ -730,6 +730,12 @@ function applyAdminVisibility() {
         const el = document.getElementById(id);
         if (el) el.style.display = isAdmin ? '' : 'none';
     });
+    // Stale-active-page guard: after admin logout → tenant login (no reload), the
+    // admin page div can still be .active. Send a non-admin back to the dashboard.
+    if (!isAdmin) {
+        const adminPage = document.getElementById('page-admin-compliance');
+        if (adminPage?.classList.contains('active')) showPage('dashboard');
+    }
 }
 
 function showLoginStatus(type, message) {
@@ -780,6 +786,7 @@ function showPage(pageName) {
     } else if (pageName === 'ssh-keys') {
         loadSSHKeys();
     } else if (pageName === 'admin-compliance') {
+        if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
         initAdminCompliance(api);
     }
 }
@@ -969,8 +976,8 @@ function renderVMsTable(vms) {
             <td>${diskGb} GB</td>
             <td>
                 <div class="vm-status-cell">
-                    <span class="status-badge status-${escapeHtml(getStatusClass(vm.status))}">
-                        ${escapeHtml(getStatusText(vm.status))}
+                    <span class="status-badge status-${vm.complianceHold ? 'suspended' : escapeHtml(getStatusClass(vm.status))}">
+                        ${vm.complianceHold ? 'Suspended' : escapeHtml(getStatusText(vm.status))}
                     </span>
                     ${renderServiceBadge(vm.services, vm.status)}
                 </div>
@@ -1159,8 +1166,8 @@ function renderDashboardVMs(vms) {
                         <div class="vm-status ${vm.status}"></div>
                         ${escapeHtml(vm.name)}
                     </div>
-                    <span class="status-badge status-${getStatusClass(vm.status)}">
-                        ${getStatusText(vm.status)}
+                    <span class="status-badge status-${vm.complianceHold ? 'suspended' : getStatusClass(vm.status)}">
+                        ${vm.complianceHold ? 'Suspended' : getStatusText(vm.status)}
                     </span>
                 </div>
                 <div class="vm-card-specs">
