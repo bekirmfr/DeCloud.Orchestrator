@@ -2220,6 +2220,26 @@ public class NodeService : INodeService
                 var newStatus = ParseVmStatus(reported.State);
                 var newPowerState = ParsePowerState(reported.State);
 
+                // ════════════════════════════════════════════════════════════
+                // Compliance hold re-enforcement.
+                // A held VM must not run. If the node reports it Running (node
+                // restart, recovery, or a guest that ignored a stop), re-issue a
+                // force-stop and skip the Running transition so ingress is never
+                // (re-)registered. Guard on Stopping so we don't repeat the command
+                // while one is already in flight.
+                // ════════════════════════════════════════════════════════════
+                if (vm.ComplianceHold
+                    && newStatus == VmStatus.Running
+                    && vm.Status != VmStatus.Stopping)
+                {
+                    _logger.LogWarning(
+                        "Compliance-held VM {VmId} reported Running — re-issuing force-stop", vmId);
+                    var vmServiceForHold =
+                        _serviceProvider.GetRequiredService<Orchestrator.Interfaces.IVmService>();
+                    await vmServiceForHold.PerformVmActionAsync(vmId, VmAction.ForceStop);
+                    continue;
+                }
+
                 // ====================================================================
                 // CRITICAL: Don't overwrite transitional statuses from heartbeat
                 // ====================================================================

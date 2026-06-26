@@ -586,7 +586,14 @@ public class VmService : IVmService
         var command = new NodeCommand(
             Guid.NewGuid().ToString(),
             commandType.Value,
-            JsonSerializer.Serialize(new { VmId = vmId, Action = action.ToString() })
+            JsonSerializer.Serialize(new
+            {
+                VmId = vmId,
+                Action = action.ToString(),
+                // Propagate force so the node powers off immediately (virsh destroy)
+                // for ForceStop, rather than a graceful shutdown the guest can ignore.
+                Force = action == VmAction.ForceStop
+            })
         );
 
         _dataStore.RegisterCommand(
@@ -641,12 +648,14 @@ public class VmService : IVmService
             VmMessageLevel.Info, "compliance");
         await _dataStore.SaveVmAsync(vm);
 
-        // Holding a running VM stops it. The hold (persisted above) is on a field the
-        // heartbeat/lifecycle sync never touches, so once stopped the owner still can't
-        // restart it.
+        // Holding a running VM stops it. Force-stop (immediate power-off) so a guest
+        // cannot ignore a graceful ACPI shutdown. The hold (persisted above) is on a
+        // field the heartbeat/lifecycle sync never touches, so once stopped the owner
+        // still can't restart it — and heartbeat re-enforcement re-stops it if it ever
+        // comes back up.
         var stopped = false;
         if (held && wasActive)
-            stopped = await PerformVmActionAsync(vmId, VmAction.Stop);
+            stopped = await PerformVmActionAsync(vmId, VmAction.ForceStop);
 
         _logger.LogInformation(
             "Compliance hold {State} for VM {VmId} (stopped={Stopped})",
