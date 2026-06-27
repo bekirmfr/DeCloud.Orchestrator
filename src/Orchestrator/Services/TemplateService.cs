@@ -1,5 +1,6 @@
 using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
+using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
 using System.Text.RegularExpressions;
@@ -14,6 +15,7 @@ public class TemplateService : ITemplateService
 {
     private readonly DataStore _dataStore;
     private readonly ICentralIngressService _ingressService;
+    private readonly IWalletBlocklistService _blocklist;
     private readonly ILogger<TemplateService> _logger;
 
     // Cloud-init variable pattern: ${VARIABLE_NAME}
@@ -28,10 +30,12 @@ public class TemplateService : ITemplateService
     public TemplateService(
         DataStore dataStore,
         ICentralIngressService ingressService,
+        IWalletBlocklistService blocklist,
         ILogger<TemplateService> logger)
     {
         _dataStore = dataStore;
         _ingressService = ingressService;
+        _blocklist = blocklist;
         _logger = logger;
     }
 
@@ -309,6 +313,14 @@ public class TemplateService : ITemplateService
 
         if (template.AuthorId != requesterId)
             throw new UnauthorizedAccessException("Only the template author can publish this template");
+
+        // ── Compliance: enforcement gate ─────────────────────────────────────────
+        // A suspended or denylisted author cannot publish. Templates are the highest-
+        // leverage amplification surface (one public template deploys many times), so
+        // the same predicate that guards VM creation guards publication. Checked at
+        // action time, server-side; the reason is deliberately not surfaced.
+        if (await _blocklist.IsWalletBlockedAsync(template.AuthorId))
+            throw new UnauthorizedAccessException("This account is not permitted to publish templates.");
 
         if (template.Status == TemplateStatus.Published)
             throw new InvalidOperationException("Template is already published");

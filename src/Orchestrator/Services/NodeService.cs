@@ -250,6 +250,23 @@ public class NodeService : INodeService
         ValidateSignatureTimestamp(request.Message);
 
         // =====================================================
+        // STEP 1.7: Enforcement Gate (compliance)
+        // =====================================================
+        // The wallet is now proven authentic. Refuse registration if it is suspended
+        // or on the denylist — a blocked operator must not be able to bring up a
+        // provider node. Same predicate as the VM-create and template-publish gates;
+        // server-side at action time. Withhold-of-service only — funds are untouched.
+        var blocklist = _serviceProvider.GetRequiredService<IWalletBlocklistService>();
+        if (await blocklist.IsWalletBlockedAsync(request.WalletAddress, ct))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: wallet {Wallet} is blocked",
+                request.WalletAddress);
+            throw new UnauthorizedAccessException(
+                "This wallet is not permitted to register a node.");
+        }
+
+        // =====================================================
         // STEP 2: Compute Deterministic Node ID
         // =====================================================
         var nodeId = NodeIdGenerator.GenerateNodeId(request.MachineId, request.WalletAddress);
