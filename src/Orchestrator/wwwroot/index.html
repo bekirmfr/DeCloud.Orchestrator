@@ -158,6 +158,13 @@
                     </svg>
                     Compliance
                 </a>
+                <a class="nav-item" id="admin-templates-nav" data-page="admin-templates" onclick="showPage('admin-templates')" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                        <path d="M9 11l3 3L22 4" />
+                    </svg>
+                    Template Review
+                </a>
             </nav>
 
             <div class="sidebar-footer">
@@ -205,6 +212,17 @@
                     </div>
                 </header>
                 <div id="admin-compliance-content"></div>
+            </div>
+
+            <!-- Admin Template Review Page (admin-only; revealed by applyAdminVisibility) -->
+            <div id="page-admin-templates" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Template Review</h1>
+                        <p class="page-subtitle">Community templates awaiting approval before they can be deployed.</p>
+                    </div>
+                </header>
+                <div id="admin-templates-content"></div>
             </div>
 
             <!-- Dashboard Page -->
