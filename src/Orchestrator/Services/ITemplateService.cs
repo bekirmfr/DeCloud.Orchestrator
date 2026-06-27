@@ -34,6 +34,9 @@ public interface ITemplateService
     Task<bool> DeleteTemplateAsync(string templateId, string requesterId);
     Task<VmTemplate> PublishTemplateAsync(string templateId, string requesterId);
 
+    /// <summary>Author: withdraw a PendingReview submission → Draft so it can be edited again.</summary>
+    Task<VmTemplate> CancelReviewAsync(string templateId, string requesterId);
+
     /// <summary>Admin: approve a PendingReview community template → Published.</summary>
     Task<VmTemplate> ApproveTemplateAsync(string templateId, string reviewerId);
 

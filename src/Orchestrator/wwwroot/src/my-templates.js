@@ -29,8 +29,26 @@ const PRICING_TO_INT = { 'Free': 0, 'PerDeploy': 1 };
 const PRICING_TO_STR = { 0: 'Free', 1: 'PerDeploy', 'Free': 'Free', 'PerDeploy': 'PerDeploy' };
 
 const STATUS_TO_STR = {
-    0: 'Draft', 1: 'Published', 2: 'Archived',
-    'Draft': 'Draft', 'Published': 'Published', 'Archived': 'Archived'
+    0: 'Draft', 1: 'Published', 2: 'Archived', 3: 'PendingReview', 4: 'Rejected',
+    'Draft': 'Draft', 'Published': 'Published', 'Archived': 'Archived',
+    'PendingReview': 'PendingReview', 'Rejected': 'Rejected'
+};
+
+// Per-status badge class + label. Inline colours are supplied for the two review
+// states so they read correctly even before any status-pending/status-rejected CSS
+// exists (amber = waiting, red = rejected), using CSS vars with literal fallbacks.
+const STATUS_BADGE = {
+    'Draft': { cls: 'status-draft', label: 'Draft' },
+    'Published': { cls: 'status-published', label: 'Published' },
+    'Archived': { cls: 'status-archived', label: 'Archived' },
+    'PendingReview': {
+        cls: 'status-pending', label: 'Pending Review',
+        style: 'background:var(--warning-dim,rgba(245,158,11,0.15)); color:var(--warning,#f59e0b);'
+    },
+    'Rejected': {
+        cls: 'status-rejected', label: 'Rejected',
+        style: 'background:var(--danger-dim,rgba(239,68,68,0.15)); color:var(--danger,#ef4444);'
+    }
 };
 
 const QUALITY_TIER_TO_INT = { 'Guaranteed': 0, 'Standard': 1, 'Balanced': 2, 'Burstable': 3 };
@@ -142,9 +160,10 @@ function renderMyTemplates() {
 
 function createMyTemplateCard(template) {
     const status = STATUS_TO_STR[template.status] ?? 'Draft';
-    const statusClass = status === 'Published' ? 'status-published' :
-                       status === 'Draft' ? 'status-draft' : 'status-archived';
-    const statusLabel = status;
+    const badge = STATUS_BADGE[status] ?? STATUS_BADGE['Draft'];
+    const statusClass = badge.cls;
+    const statusLabel = badge.label;
+    const statusStyle = badge.style || '';
 
     const visibility = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
     const visibilityIcon = visibility === 'Private' ? '🔒' : '🌐';
@@ -160,12 +179,15 @@ function createMyTemplateCard(template) {
     return `
         <div class="my-template-card">
             <div class="my-template-header">
-                <span class="template-status-badge ${statusClass}">${statusLabel}</span>
+                <span class="template-status-badge ${statusClass}" style="${statusStyle}">${statusLabel}</span>
                 <span class="template-visibility-badge">${visibilityIcon} ${visibility}</span>
             </div>
             <div class="my-template-body">
                 <h3 class="my-template-name">${escapeHtml(template.name)}</h3>
                 <p class="my-template-desc">${escapeHtml(template.description)}</p>
+                ${status === 'Rejected' && template.rejectionReason
+                    ? `<p class="my-template-reject-reason" style="color:var(--danger,#ef4444); font-size:12px; margin-top:4px;">Rejected: ${escapeHtml(template.rejectionReason)}</p>`
+                    : ''}
                 <div class="my-template-meta">
                     <span>${priceText}</span>
                     <span>${stars} (${reviewCount})</span>
@@ -173,20 +195,29 @@ function createMyTemplateCard(template) {
                 </div>
             </div>
             <div class="my-template-actions">
-                ${status === 'Draft' ? `
-                    <button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${template.id}')">
-                        Publish
-                    </button>
-                ` : ''}
-                <button class="btn btn-sm btn-secondary" onclick="window.myTemplates.editTemplate('${template.id}')">
-                    Edit
-                </button>
-                <button class="btn btn-sm btn-danger" onclick="window.myTemplates.deleteTemplate('${template.id}')">
-                    Delete
-                </button>
+                ${renderCardActions(status, template.id)}
             </div>
         </div>
     `;
+}
+
+// Per-status action buttons. A PendingReview template is locked — the only action is
+// to withdraw the submission (returns it to Draft). Rejected can be edited and
+// resubmitted. Draft can be published. Published/Archived: edit + delete.
+function renderCardActions(status, id) {
+    const edit = `<button class="btn btn-sm btn-secondary" onclick="window.myTemplates.editTemplate('${id}')">Edit</button>`;
+    const del = `<button class="btn btn-sm btn-danger" onclick="window.myTemplates.deleteTemplate('${id}')">Delete</button>`;
+
+    if (status === 'PendingReview') {
+        return `<button class="btn btn-sm btn-secondary" onclick="window.myTemplates.cancelReview('${id}')">Cancel submission</button>`;
+    }
+    if (status === 'Rejected') {
+        return `${edit}<button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${id}')">Resubmit</button>${del}`;
+    }
+    if (status === 'Draft') {
+        return `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${id}')">Publish</button>${edit}${del}`;
+    }
+    return `${edit}${del}`;
 }
 
 function renderStars(rating) {
@@ -1016,8 +1047,13 @@ export async function submitTemplate() {
         }
 
         if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || 'Failed to save template');
+            const err = await response.json().catch(() => ({}));
+            // Surface the specific field errors, not just the headline. The server
+            // returns { error, errors: [...], warnings: [...] } on a validation failure.
+            const detail = Array.isArray(err.errors) && err.errors.length
+                ? `${err.error || 'Validation failed'}: ${err.errors.join('; ')}`
+                : (err.error || 'Failed to save template');
+            throw new Error(detail);
         }
 
         const result = await response.json().catch(() => null);
@@ -1184,6 +1220,27 @@ export async function deleteTemplate(templateId) {
         }
 
         showToast('success', 'Template deleted');
+        await loadMyTemplates();
+        renderMyTemplates();
+    } catch (error) {
+        showToast('error', error.message);
+    }
+}
+
+export async function cancelReview(templateId) {
+    if (!confirm('Cancel this review submission? The template returns to Draft so you can edit it.')) return;
+
+    try {
+        const response = await api(`/api/marketplace/templates/${templateId}/cancel-review`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to cancel review');
+        }
+
+        showToast('success', 'Review cancelled — template returned to Draft');
         await loadMyTemplates();
         renderMyTemplates();
     } catch (error) {
@@ -1777,6 +1834,7 @@ window.myTemplates = {
     editTemplate,
     publishTemplate,
     deleteTemplate,
+    cancelReview,
     addPort,
     addEnvVar,
     onPricingChange,

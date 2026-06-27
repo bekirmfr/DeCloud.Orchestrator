@@ -343,10 +343,49 @@ public class MarketplaceController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update template: {TemplateId}", templateId);
             return StatusCode(500, new { error = "Failed to update template" });
+        }
+    }
+
+    /// <summary>
+    /// Withdraw a PendingReview submission back to Draft (author only).
+    /// </summary>
+    [HttpPost("templates/{templateId}/cancel-review")]
+    [Authorize]
+    public async Task<ActionResult<VmTemplate>> CancelReview(string templateId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var result = await _templateService.CancelReviewAsync(templateId, userId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Template '{templateId}' not found" });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to cancel review: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to cancel review" });
         }
     }
 

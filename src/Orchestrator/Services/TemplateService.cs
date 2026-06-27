@@ -224,6 +224,12 @@ public class TemplateService : ITemplateService
             var existing = await GetTemplateByIdAsync(template.Id);
             if (existing != null)
             {
+                // A template under review is locked: a non-admin cannot change its content
+                // until they cancel the review (→ Draft). Admins (the reviewer) are exempt.
+                if (!isAdmin && existing.Status == TemplateStatus.PendingReview)
+                    throw new InvalidOperationException(
+                        "Template is under review and cannot be edited. Cancel the review first.");
+
                 // Preserve immutable fields
                 template.AuthorId = existing.AuthorId;
                 template.DeploymentCount = existing.DeploymentCount;
@@ -482,6 +488,29 @@ public class TemplateService : ITemplateService
 
     public async Task<List<VmTemplate>> GetPendingReviewTemplatesAsync()
         => await _dataStore.GetTemplatesByStatusAsync(TemplateStatus.PendingReview);
+
+    public async Task<VmTemplate> CancelReviewAsync(string templateId, string requesterId)
+    {
+        var template = await GetTemplateByIdAsync(templateId)
+            ?? throw new KeyNotFoundException($"Template '{templateId}' not found");
+
+        // Author-only. Withdrawing is the mirror of submitting, so it stays with the owner.
+        if (!string.Equals(template.AuthorId, requesterId, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("Only the author can cancel a review.");
+
+        if (template.Status != TemplateStatus.PendingReview)
+            throw new InvalidOperationException(
+                $"Template is not pending review (status: {template.Status}).");
+
+        template.Status = TemplateStatus.Draft;
+        template.UpdatedAt = DateTime.UtcNow;
+
+        var saved = await _dataStore.SaveTemplateAsync(template);
+        _logger.LogInformation(
+            "Author {Author} cancelled review for template {TemplateId} ({Name})",
+            requesterId, saved.Id, saved.Name);
+        return saved;
+    }
 
     public async Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template)
     {
