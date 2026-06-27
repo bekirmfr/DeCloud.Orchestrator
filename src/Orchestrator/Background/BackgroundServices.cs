@@ -147,6 +147,13 @@ public class VmSchedulerService : BackgroundService
         var candidates = allVms
             .Where(v =>
                 v.Status == VmStatus.Error &&
+                // A compliance-held VM must never be auto-revived on another node.
+                // Migration re-creates AND starts the VM on the target, and the hold is
+                // node-local persisted state that does not travel in CreateVmPayload — so a
+                // migrated held VM would come up running. Held VMs stay out of the pipeline;
+                // their data is already replicated, and normal scheduling re-places them once
+                // an admin lifts the hold.
+                !v.ComplianceHold &&
                 v.Spec.ReplicationFactor > 0 &&
                 !string.IsNullOrEmpty(v.NodeId) &&
                 offlineNodeIds.Contains(v.NodeId) &&
