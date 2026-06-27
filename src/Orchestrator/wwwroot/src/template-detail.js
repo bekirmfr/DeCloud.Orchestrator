@@ -639,6 +639,10 @@ export async function deployFromTemplate() {
                 window.showPage('virtual-machines');
             }, 1000);
         } else {
+            // ToS may be the blocker (admins skip the entry gate; a tenant's acceptance
+            // can lapse on a version bump). Surface the gate via app.js and retry once —
+            // after acceptance the status check returns false, so this can't loop.
+            if (await window.handleDeployTosGate?.()) { return await deployFromTemplate(); }
             throw new Error(data.error || 'Deployment failed');
         }
     } catch (error) {

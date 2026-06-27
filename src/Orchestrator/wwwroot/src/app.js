@@ -510,9 +510,39 @@ async function restoreSession() {
 // authoritative regardless of this UX check. Common case (already accepted) is a
 // single status request with no signer needed.
 function gateTosAfterEntry() {
+    // Admins operate the platform rather than consume it as tenants, so don't force
+    // the ToS modal on a pure admin session. The server-side CreateVmAsync gate still
+    // requires *any* wallet — admin or not — to accept before deploying a tenant VM,
+    // and handleDeployTosGate() surfaces the modal at that point, so an admin who does
+    // deploy still accepts then. Visibility-only exemption; grants no privilege.
+    if (tokenHasAdminRole(authToken)) return;
     ensureTosAccepted({ api, getSigner: getReadySigner })
         .then(accepted => { if (!accepted) disconnect(); })
         .catch(e => console.error('[ToS] gate failed:', e));
+}
+
+// Deploy-time ToS gate, shared by both deploy paths (direct create here and template
+// deploy in template-detail.js, via window.handleDeployTosGate). Because the entry
+// gate is skipped for admins — and because a tenant's acceptance can lapse mid-session
+// when the ToS version bumps — a deploy may be the first point acceptance is needed.
+// CreateVmAsync checks ToS *before* quota/balance, so a deploy that failed while ToS is
+// unaccepted failed *because* of ToS; we confirm that via the status endpoint
+// (shape-agnostic — no dependence on the deploy error body), surface the gate, and
+// report whether the caller should retry. Returns true only when ToS was the blocker
+// and has now been accepted (so the status check below also guards against a retry loop).
+async function handleDeployTosGate() {
+    let needsAcceptance = false;
+    try {
+        const res = await api('/api/tos/status');
+        needsAcceptance = (await res.json())?.data?.accepted === false;
+    } catch { return false; }
+    if (!needsAcceptance) return false;
+    try {
+        return await ensureTosAccepted({ api, getSigner: getReadySigner });
+    } catch (e) {
+        console.error('[ToS] deploy gate failed:', e);
+        return false;
+    }
 }
 
 // Return a wallet signer, acquiring it from AppKit if the session was restored
@@ -1469,6 +1499,10 @@ async function createVM() {
 
             await refreshData();
         } else {
+            // ToS may be the blocker (admins skip the entry gate; a tenant's acceptance
+            // can lapse on a version bump). If so, surface the gate and retry once —
+            // after acceptance the status check returns false, so this can't loop.
+            if (await handleDeployTosGate()) { await createVM(); return; }
             showToast(data?.error?.message ?? data?.message ?? `Failed to create VM (HTTP ${response.status})`, 'error');
         }
     } catch (error) {
@@ -2033,6 +2067,7 @@ window.loadUserBalance = loadUserBalance;
 window.loadNodes = loadNodes;
 window.searchNodes = searchNodes;
 window.clearNodeFilters = clearNodeFilters;
+window.handleDeployTosGate = handleDeployTosGate;
 
 // Custom-domain helpers — implemented in custom-domains.js but referenced
 // from inline VM actions, so we re-expose them here.
