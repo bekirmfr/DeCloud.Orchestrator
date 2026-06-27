@@ -45,7 +45,7 @@ export function sanitizeUrl(url) {
     // Relative URL
     if (/^[/.?#]/.test(trimmed)) return trimmed;
     // eslint-disable-next-line no-control-regex
-    const cleaned = trimmed.replace(/[ -]/g, '');
+    const cleaned = trimmed.replace(/[\u0000-\u0020]/g, '');
     if (/^(https?:|mailto:)/i.test(cleaned)) return cleaned;
     return '#';
 }
