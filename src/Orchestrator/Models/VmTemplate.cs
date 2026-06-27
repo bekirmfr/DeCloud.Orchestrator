@@ -288,6 +288,27 @@ public class VmTemplate
     /// </summary>
     public bool IsCommunity { get; set; }
 
+    /// <summary>
+    /// Admin (wallet) who approved or rejected this template. Null until reviewed.
+    /// </summary>
+    public string? ReviewedBy { get; set; }
+
+    /// <summary>
+    /// When this template was approved or rejected. Null until reviewed.
+    /// </summary>
+    public DateTime? ReviewedAt { get; set; }
+
+    /// <summary>
+    /// Why a community template was rejected. Shown to the author. Null unless Rejected.
+    /// </summary>
+    public string? RejectionReason { get; set; }
+
+    /// <summary>
+    /// Reserved for the deferred AI triage output (Decision 6). Null at launch; the
+    /// manual reviewer's decision is captured in ReviewedBy / ReviewedAt / RejectionReason.
+    /// </summary>
+    public string? AiAssessment { get; set; }
+
 
     // ============================================
     // TIMESTAMPS
@@ -467,7 +488,19 @@ public enum TemplateStatus
     /// <summary>
     /// Template is no longer maintained/available
     /// </summary>
-    Archived
+    Archived,
+
+    /// <summary>
+    /// Community template submitted for admin review — not listed or deployable by
+    /// others until approved. The author may still test-deploy it.
+    /// </summary>
+    PendingReview,
+
+    /// <summary>
+    /// Community template rejected by admin review. Not listed or deployable by others;
+    /// the author can read RejectionReason, edit, and republish (re-entering review).
+    /// </summary>
+    Rejected
 }
 
 /// <summary>

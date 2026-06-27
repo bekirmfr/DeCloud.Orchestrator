@@ -171,11 +171,15 @@ public class TemplateService : ITemplateService
             template.CreatedAt = DateTime.UtcNow;
             template.UpdatedAt = DateTime.UtcNow;
 
-            // Community templates start unverified and unfeatured
+            // Community templates start unverified and unfeatured, and can never be
+            // created directly in Published — the only path to Published is
+            // publish → review → approve.
             if (template.IsCommunity)
             {
                 template.IsVerified = false;
                 template.IsFeatured = false;
+                if (template.Status == TemplateStatus.Published)
+                    template.Status = TemplateStatus.Draft;
             }
 
             // Initialize rating fields
@@ -236,6 +240,15 @@ public class TemplateService : ITemplateService
                     template.IsCommunity = existing.IsCommunity;
                     template.IsVerified = existing.IsVerified;
                     template.IsFeatured = existing.IsFeatured;
+
+                    // Status transitions to Published / PendingReview are owned by the
+                    // review pipeline (publish → review → approve), never by an
+                    // arbitrary update. Clamp any such attempt to the existing status.
+                    if (template.Status is TemplateStatus.Published or TemplateStatus.PendingReview
+                        && template.Status != existing.Status)
+                    {
+                        template.Status = existing.Status;
+                    }
                 }
             }
 
@@ -325,6 +338,9 @@ public class TemplateService : ITemplateService
         if (template.Status == TemplateStatus.Published)
             throw new InvalidOperationException("Template is already published");
 
+        if (template.Status == TemplateStatus.PendingReview)
+            throw new InvalidOperationException("Template is already submitted for review");
+
         // Verify each artifact's SHA256 by fetching the source URL.
         // This is done once at publish time; subsequent downloads by node agents
         // trust the stored hash. Rejects the publish if any artifact's bytes
@@ -343,14 +359,27 @@ public class TemplateService : ITemplateService
         if (template.PricingModel == TemplatePricingModel.PerDeploy && string.IsNullOrEmpty(template.AuthorRevenueWallet))
             throw new ArgumentException("Paid templates require an author revenue wallet address");
 
-        template.Status = TemplateStatus.Published;
+        // Community templates go to admin review, not live. Platform templates
+        // (admin-authored, IsCommunity == false) publish directly. The only path a
+        // community template reaches Published is via admin approval (slice 2).
+        template.Status = template.IsCommunity
+            ? TemplateStatus.PendingReview
+            : TemplateStatus.Published;
         template.UpdatedAt = DateTime.UtcNow;
 
         var published = await _dataStore.SaveTemplateAsync(template);
 
-        _logger.LogInformation("Published template: {TemplateName} ({TemplateId}) by {AuthorId}",
-            published.Name, published.Id, published.AuthorId);
+        if (published.Status == TemplateStatus.PendingReview)
+            _logger.LogInformation(
+                "Template {TemplateName} ({TemplateId}) by {AuthorId} submitted for review",
+                published.Name, published.Id, published.AuthorId);
+        else
+            _logger.LogInformation(
+                "Published template: {TemplateName} ({TemplateId}) by {AuthorId}",
+                published.Name, published.Id, published.AuthorId);
 
+        // Category counts reflect only Published + Public templates, so a PendingReview
+        // template isn't counted — this is a no-op for it, but harmless.
         await UpdateCategoryCountsAsync();
 
         return published;

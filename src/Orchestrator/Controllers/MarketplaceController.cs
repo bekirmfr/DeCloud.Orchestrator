@@ -445,12 +445,14 @@ public class MarketplaceController : ControllerBase
             if (template.Visibility == TemplateVisibility.Private && template.AuthorId != userId)
                 return NotFound(new { error = $"Template '{templateId}' not found" });
 
-            // Draft templates only deployable by author (for testing)
-            if (template.Status == TemplateStatus.Draft && template.AuthorId != userId)
-                return BadRequest(new { error = "Template is not available for deployment" });
-
+            // Archived is closed to everyone.
             if (template.Status == TemplateStatus.Archived)
                 return BadRequest(new { error = "Template has been archived" });
+
+            // Anything below Published (Draft, PendingReview, Rejected) is deployable
+            // only by its author, for testing — never by others until it is approved.
+            if (template.Status != TemplateStatus.Published && template.AuthorId != userId)
+                return BadRequest(new { error = "Template is not available for deployment" });
 
             // Check balance for paid templates
             if (template.PricingModel == TemplatePricingModel.PerDeploy && template.TemplatePrice > 0)
