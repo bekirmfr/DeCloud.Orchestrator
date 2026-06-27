@@ -36,6 +36,15 @@ public interface INodeService
     Task CutoffSuspendedNodeAsync(string nodeId, string reason, CancellationToken ct = default);
 
     /// <summary>
+    /// Immediate-cutoff override for a suspended node: skip the graceful drain wait and
+    /// force every running VM into the offline-DR path now (ephemeral → Lost, unconfirmed
+    /// → Unrecoverable, confirmed → migrating from the DHT replica). The node stays
+    /// Suspended; the scan migrates the recoverable VMs and slice 3 deregisters it once
+    /// they're off. Refuses if the node is not Suspended.
+    /// </summary>
+    Task CutoffSuspendedNodeNowAsync(string nodeId, string reason, CancellationToken ct = default);
+
+    /// <summary>
     /// Set scheduling-ready flag. Lightweight, JWT-authenticated.
     /// </summary>
     Task<NodeLoginResponse> LoginNodeAsync(string nodeId, CancellationToken ct = default);

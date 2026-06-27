@@ -16,6 +16,7 @@ public sealed class EnforcementService : IEnforcementService
     private readonly IWalletBlocklistService _blocklist;
     private readonly IUserService _userService;
     private readonly IVmService _vmService;
+    private readonly INodeService _nodeService;
     private readonly DataStore _dataStore;
     private readonly ILogger<EnforcementService> _logger;
     private readonly AddressUtil _addr = new();
@@ -24,14 +25,62 @@ public sealed class EnforcementService : IEnforcementService
         IWalletBlocklistService blocklist,
         IUserService userService,
         IVmService vmService,
+        INodeService nodeService,
         DataStore dataStore,
         ILogger<EnforcementService> logger)
     {
         _blocklist = blocklist;
         _userService = userService;
         _vmService = vmService;
+        _nodeService = nodeService;
         _dataStore = dataStore;
         _logger = logger;
+    }
+
+    public async Task<EnforcementResult> CutoffOperatorNodesNowAsync(string walletAddress, string reason, string actor, CancellationToken ct = default)
+    {
+        var wallet = _addr.ConvertToChecksumAddress(walletAddress);
+
+        var nodes = await _dataStore.GetAllNodesAsync();
+        var suspended = nodes
+            .Where(n => string.Equals(n.WalletAddress, wallet, StringComparison.OrdinalIgnoreCase)
+                     && n.Status == NodeStatus.Suspended)
+            .ToList();
+
+        if (suspended.Count == 0)
+            return EnforcementResult.Fail("NO_SUSPENDED_NODES",
+                "No suspended nodes for this wallet. Suspend or block the operator first, " +
+                "then escalate to immediate cutoff.");
+
+        var count = 0;
+        foreach (var node in suspended)
+        {
+            try
+            {
+                await _nodeService.CutoffSuspendedNodeNowAsync(node.Id, reason, ct);
+                count++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Immediate cutoff failed for node {NodeId}", node.Id);
+            }
+        }
+
+        await _blocklist.RecordActionAsync(new EnforcementAction
+        {
+            WalletAddress = wallet,
+            Type = EnforcementActionType.TerminateVms,
+            Reason = reason,
+            ActorWallet = actor,
+            Metadata = new()
+            {
+                ["mode"] = "immediate-node-cutoff",
+                ["nodesCutoff"] = count.ToString()
+            }
+        }, ct);
+
+        _logger.LogWarning("Immediate cutoff for {Wallet}: {Count} node(s) severed", wallet, count);
+        return EnforcementResult.Ok(count);
     }
 
     public async Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default)

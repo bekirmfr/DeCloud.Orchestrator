@@ -30,6 +30,14 @@ public interface IEnforcementService
     /// <summary>Lift a single VM's compliance hold (leaves it stopped; owner may start).</summary>
     Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
 
+    /// <summary>
+    /// Immediate-cutoff override: for each of the wallet's already-suspended nodes, collapse
+    /// the graceful drain — kill ephemeral/unconfirmed VMs now and migrate confirmed ones from
+    /// their replica. The nodes are deregistered once drained. The wallet must already be
+    /// suspended/blocked (its nodes Suspended); otherwise this is a no-op failure.
+    /// </summary>
+    Task<EnforcementResult> CutoffOperatorNodesNowAsync(string walletAddress, string reason, string actor, CancellationToken ct = default);
+
     Task BlockAsync(string walletAddress, BlockSource source, string reason, string? reference, string actor, CancellationToken ct = default);
 
     Task<bool> UnblockAsync(string walletAddress, BlockSource source, string reason, string actor, CancellationToken ct = default);

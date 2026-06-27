@@ -531,6 +531,32 @@ public class NodeService : INodeService
             nodeId, leftovers.Count);
     }
 
+    public async Task CutoffSuspendedNodeNowAsync(string nodeId, string reason, CancellationToken ct = default)
+    {
+        var node = await _dataStore.GetNodeAsync(nodeId)
+            ?? throw new KeyNotFoundException($"Node {nodeId} not found");
+
+        // Only valid on a node already under takedown — refuse to sever a healthy node.
+        if (node.Status != NodeStatus.Suspended)
+            throw new InvalidOperationException(
+                $"Node {nodeId} is not suspended (status: {node.Status}); " +
+                "suspend or block the operator before an immediate cutoff.");
+
+        // Collapse the graceful drain: force EVERY running VM into the offline-DR path now.
+        // MarkNodeVmsAsErrorAsync classifies from the manifest — ephemeral → Lost, no
+        // confirmed replica → Unrecoverable (both terminal at t=0, de-ingressed by the
+        // Error transition), confirmed → Migrating/Recovering (re-placed on a clean node
+        // from the DHT replica; the source node is not needed for that). The node stays
+        // Suspended; the scan migrates the recoverable VMs and slice 3 revokes the JWT +
+        // deregisters once they're off — no record is deleted while a VM still points at it.
+        await MarkNodeVmsAsErrorAsync(nodeId);
+
+        _logger.LogWarning(
+            "Node {NodeId} immediate compliance cutoff ({Reason}): all VMs forced into recovery — " +
+            "ephemeral/unconfirmed lost now, confirmed migrating; deregistered once drained",
+            nodeId, reason);
+    }
+
     // ============================================================================
     // Login / Logout (scheduling readiness)
     // ============================================================================

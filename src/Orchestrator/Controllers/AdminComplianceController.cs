@@ -90,6 +90,22 @@ public partial class AdminComplianceController : ControllerBase
             : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
     }
 
+    // ── Operator-node immediate cutoff (override the graceful drain) ──────────
+
+    [HttpPost("cutoff")]
+    public async Task<ActionResult<ApiResponse<EnforcementResult>>> Cutoff([FromBody] SuspendRequest req, CancellationToken ct)
+    {
+        if (!ValidWallet(req.Wallet))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("INVALID_WALLET", "Malformed wallet address."));
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("REASON_REQUIRED", "A reason is required."));
+
+        var result = await _enforcement.CutoffOperatorNodesNowAsync(req.Wallet, req.Reason, Actor(), ct);
+        return result.Success
+            ? Ok(ApiResponse<EnforcementResult>.Ok(result))
+            : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
+    }
+
     // ── Denylist (provenance-bearing) ────────────────────────────────────────
 
     [HttpPost("block")]
