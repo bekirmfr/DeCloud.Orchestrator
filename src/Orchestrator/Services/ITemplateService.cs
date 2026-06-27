@@ -33,8 +33,17 @@ public interface ITemplateService
     Task SaveTemplateDirectAsync(VmTemplate template);
     Task<bool> DeleteTemplateAsync(string templateId, string requesterId);
     Task<VmTemplate> PublishTemplateAsync(string templateId, string requesterId);
-    Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template);
 
+    /// <summary>Admin: approve a PendingReview community template → Published.</summary>
+    Task<VmTemplate> ApproveTemplateAsync(string templateId, string reviewerId);
+
+    /// <summary>Admin: reject a PendingReview community template → Rejected, with a reason.</summary>
+    Task<VmTemplate> RejectTemplateAsync(string templateId, string reviewerId, string reason);
+
+    /// <summary>Admin: list community templates awaiting review (oldest first).</summary>
+    Task<List<VmTemplate>> GetPendingReviewTemplatesAsync();
+
+    Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template);
     // ════════════════════════════════════════════════════════════════════════
     // Deployment Helpers
     // ════════════════════════════════════════════════════════════════════════

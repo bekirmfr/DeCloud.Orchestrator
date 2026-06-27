@@ -1521,7 +1521,7 @@ public class DataStore
     public async Task<VmTemplate?> GetTemplateBySlugAsync(string slug)
     {
         if (!_useMongoDB) return null;
-        
+
         try
         {
             return await TemplatesCollection!
@@ -1532,6 +1532,24 @@ public class DataStore
         {
             _logger.LogError(ex, "Failed to get template by slug: {Slug}", slug);
             return null;
+        }
+    }
+
+    public async Task<List<VmTemplate>> GetTemplatesByStatusAsync(TemplateStatus status)
+    {
+        if (!_useMongoDB) return new List<VmTemplate>();
+
+        try
+        {
+            return await TemplatesCollection!
+                .Find(t => t.Status == status)
+                .SortBy(t => t.CreatedAt)   // oldest first — FIFO review queue
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get templates by status: {Status}", status);
+            return new List<VmTemplate>();
         }
     }
 

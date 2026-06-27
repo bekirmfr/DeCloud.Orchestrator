@@ -1110,6 +1110,97 @@ public class MarketplaceController : ControllerBase
     }
 
     /// <summary>
+    /// List community templates awaiting review, oldest first (admin only).
+    /// </summary>
+    [HttpGet("templates/pending")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<List<VmTemplate>>> GetPendingTemplates()
+    {
+        try
+        {
+            var templates = await _templateService.GetPendingReviewTemplatesAsync();
+            return Ok(templates);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list pending templates");
+            return StatusCode(500, new { error = "Failed to list pending templates" });
+        }
+    }
+
+    /// <summary>
+    /// Approve a community template (PendingReview -> Published, admin only).
+    /// </summary>
+    [HttpPost("templates/{templateId}/approve")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<VmTemplate>> ApproveTemplate(string templateId)
+    {
+        try
+        {
+            var reviewerId = GetUserId();
+            if (reviewerId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var approved = await _templateService.ApproveTemplateAsync(templateId, reviewerId);
+            return Ok(approved);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Template '{templateId}' not found" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to approve template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to approve template" });
+        }
+    }
+
+    /// <summary>
+    /// Reject a community template (PendingReview -> Rejected, admin only). Reason required.
+    /// </summary>
+    [HttpPost("templates/{templateId}/reject")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<VmTemplate>> RejectTemplate(
+        string templateId, [FromBody] RejectTemplateRequest request)
+    {
+        try
+        {
+            var reviewerId = GetUserId();
+            if (reviewerId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            if (string.IsNullOrWhiteSpace(request?.Reason))
+                return BadRequest(new { error = "A rejection reason is required" });
+
+            var rejected = await _templateService.RejectTemplateAsync(templateId, reviewerId, request.Reason);
+            return Ok(rejected);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Template '{templateId}' not found" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to reject template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to reject template" });
+        }
+    }
+
+    public sealed record RejectTemplateRequest(string Reason);
+
+    /// <summary>
     /// Seed initial templates and categories (admin only)
     /// </summary>
     [HttpPost("seed")]

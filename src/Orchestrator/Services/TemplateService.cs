@@ -385,6 +385,59 @@ public class TemplateService : ITemplateService
         return published;
     }
 
+    public async Task<VmTemplate> ApproveTemplateAsync(string templateId, string reviewerId)
+    {
+        var template = await GetTemplateByIdAsync(templateId)
+            ?? throw new KeyNotFoundException($"Template '{templateId}' not found");
+
+        if (template.Status != TemplateStatus.PendingReview)
+            throw new InvalidOperationException(
+                $"Template is not pending review (status: {template.Status}).");
+
+        template.Status = TemplateStatus.Published;
+        template.IsVerified = true;          // marketplace "reviewed" badge
+        template.ReviewedBy = reviewerId;
+        template.ReviewedAt = DateTime.UtcNow;
+        template.RejectionReason = null;
+        template.UpdatedAt = DateTime.UtcNow;
+
+        var saved = await _dataStore.SaveTemplateAsync(template);
+        await UpdateCategoryCountsAsync();
+
+        _logger.LogInformation("Approved template {TemplateId} ({Name}) by {Reviewer}",
+            saved.Id, saved.Name, reviewerId);
+        return saved;
+    }
+
+    public async Task<VmTemplate> RejectTemplateAsync(string templateId, string reviewerId, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("A rejection reason is required.");
+
+        var template = await GetTemplateByIdAsync(templateId)
+            ?? throw new KeyNotFoundException($"Template '{templateId}' not found");
+
+        if (template.Status != TemplateStatus.PendingReview)
+            throw new InvalidOperationException(
+                $"Template is not pending review (status: {template.Status}).");
+
+        template.Status = TemplateStatus.Rejected;
+        template.IsVerified = false;
+        template.ReviewedBy = reviewerId;
+        template.ReviewedAt = DateTime.UtcNow;
+        template.RejectionReason = reason;
+        template.UpdatedAt = DateTime.UtcNow;
+
+        var saved = await _dataStore.SaveTemplateAsync(template);
+
+        _logger.LogInformation("Rejected template {TemplateId} ({Name}) by {Reviewer}: {Reason}",
+            saved.Id, saved.Name, reviewerId, reason);
+        return saved;
+    }
+
+    public async Task<List<VmTemplate>> GetPendingReviewTemplatesAsync()
+        => await _dataStore.GetTemplatesByStatusAsync(TemplateStatus.PendingReview);
+
     public async Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template)
     {
         var errors = new List<string>();
