@@ -139,8 +139,16 @@ public class VmSchedulerService : BackgroundService
         // The correct semantic: migrate Error VMs whose host node is confirmed offline.
         // MigrateVmAsync checks manifest state downstream and marks Unrecoverable if
         // no confirmed replica exists.
-        var offlineNodeIds = (await dataStore.GetAllNodesAsync())
-            .Where(n => n.Status == NodeStatus.Offline)
+        // Nodes whose VMs must be evacuated: offline (disaster recovery) and
+        // compliance-suspended (operator blocked — drain replicated VMs to clean
+        // nodes). The same migration pipeline serves both; only the trigger differs.
+        var allNodesForScan = await dataStore.GetAllNodesAsync();
+        var evacuateNodeIds = allNodesForScan
+            .Where(n => n.Status == NodeStatus.Offline || n.Status == NodeStatus.Suspended)
+            .Select(n => n.Id)
+            .ToHashSet();
+        var suspendedNodeIds = allNodesForScan
+            .Where(n => n.Status == NodeStatus.Suspended)
             .Select(n => n.Id)
             .ToHashSet();
 
@@ -156,7 +164,7 @@ public class VmSchedulerService : BackgroundService
                 !v.ComplianceHold &&
                 v.Spec.ReplicationFactor > 0 &&
                 !string.IsNullOrEmpty(v.NodeId) &&
-                offlineNodeIds.Contains(v.NodeId) &&
+                evacuateNodeIds.Contains(v.NodeId) &&
                 string.IsNullOrEmpty(v.ActiveCommandId) &&
                 // Unrecoverable is a terminal, deliberate classification (no confirmed
                 // replica), written only by ClassifyOfflineVm and MigrateVmAsync — never
@@ -182,6 +190,63 @@ public class VmSchedulerService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Migration failed for VM {VmId}", vm.Id);
+            }
+        }
+
+        // ── Compliance drain ─────────────────────────────────────────────────
+        // Suspended-operator nodes: evacuate their replicated tenant VMs to clean
+        // nodes via the migration pipeline above. These VMs are still Running on the
+        // (online) suspended node; transition them to Error so the next scan migrates
+        // each from its last confirmed replica. Only VMs that already hold a confirmed
+        // replica (Protected/Replicating) are drained — unconfirmed ones are left to
+        // finish seeding on the still-alive source and picked up on a later cycle.
+        // Ephemeral (factor 0) VMs are not drainable: they stay running and resolve to
+        // Lost at hard cutoff (slice 3). Held VMs are already Stopped, so the Running
+        // filter skips them.
+        if (suspendedNodeIds.Count > 0)
+        {
+            var drainCandidates = allVms
+                .Where(v =>
+                    v.Status == VmStatus.Running &&
+                    v.Role == VmRole.General &&
+                    v.Spec.ReplicationFactor > 0 &&
+                    !v.ComplianceHold &&
+                    !string.IsNullOrEmpty(v.NodeId) &&
+                    suspendedNodeIds.Contains(v.NodeId) &&
+                    string.IsNullOrEmpty(v.ActiveCommandId) &&
+                    (v.LazysyncStatus == LazysyncStatus.Protected ||
+                     v.LazysyncStatus == LazysyncStatus.Replicating))
+                .ToList();
+
+            if (drainCandidates.Count > 0)
+            {
+                _logger.LogInformation(
+                    "VmSchedulerService: draining {Count} replicated VM(s) off suspended node(s)",
+                    drainCandidates.Count);
+
+                var drainLifecycle = services.GetRequiredService<IVmLifecycleManager>();
+
+                foreach (var vm in drainCandidates)
+                {
+                    if (ct.IsCancellationRequested) break;
+
+                    try
+                    {
+                        vm.PushMessage(
+                            "Operator suspended — migrating to another node.",
+                            VmMessageLevel.Warning, "compliance");
+
+                        await drainLifecycle.TransitionAsync(
+                            vm.Id,
+                            VmStatus.Error,
+                            TransitionContext.Compliance("operator suspended — draining node"));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "Failed to transition VM {VmId} to Error for compliance drain", vm.Id);
+                    }
+                }
             }
         }
 
