@@ -27,6 +27,15 @@ public interface INodeService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Hard cutoff for a compliance-suspended node once it has been drained:
+    /// terminalize any leftover tenant VMs (ephemeral → Lost, unconfirmed → Unrecoverable),
+    /// then revoke the node's JWT and delete its record. Defers (no-op) if any leftover
+    /// replicated VM still has a confirmed replica per its manifest — that VM is
+    /// recoverable and must drain first.
+    /// </summary>
+    Task CutoffSuspendedNodeAsync(string nodeId, string reason, CancellationToken ct = default);
+
+    /// <summary>
     /// Set scheduling-ready flag. Lightweight, JWT-authenticated.
     /// </summary>
     Task<NodeLoginResponse> LoginNodeAsync(string nodeId, CancellationToken ct = default);

@@ -306,6 +306,50 @@ public class VmSchedulerService : BackgroundService
                 }
             }
         }
+
+        // ── Compliance hard cutoff (operator-node takedown, slice 3) ──────────
+        // A suspended node is cut off once it has nothing left to drain: no
+        // confirmed-replica VM still on it, nothing in the migration pipeline for it,
+        // and no in-flight migration sourced from it. What remains then is ephemeral
+        // (→ Lost) and replicas that never confirmed (→ Unrecoverable) — neither leaves
+        // via migration. CutoffSuspendedNodeAsync re-checks the manifest before the
+        // irreversible deregister, so a stale LazysyncStatus cannot cause premature
+        // cutoff. Unconfirmed replicas do not block cutoff (lost here, as in a crash).
+        if (suspendedNodeIds.Count > 0)
+        {
+            var nodeService = services.GetRequiredService<INodeService>();
+            foreach (var nodeId in suspendedNodeIds)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                var stillDraining = allVms.Any(v =>
+                    v.Role == VmRole.General &&
+                    v.Spec.ReplicationFactor > 0 &&
+                    !v.ComplianceHold &&
+                    v.LazysyncStatus != LazysyncStatus.Unrecoverable &&
+                    (
+                        (v.NodeId == nodeId && v.Status == VmStatus.Running &&
+                            (v.LazysyncStatus == LazysyncStatus.Protected ||
+                             v.LazysyncStatus == LazysyncStatus.Replicating)) ||
+                        (v.NodeId == nodeId && (v.Status == VmStatus.Error ||
+                                                v.Status == VmStatus.Provisioning)) ||
+                        (v.MigrationSourceNodeId == nodeId &&
+                            !string.IsNullOrEmpty(v.ActiveCommandId))
+                    ));
+
+                if (stillDraining) continue;
+
+                try
+                {
+                    await nodeService.CutoffSuspendedNodeAsync(nodeId, "operator blocked", ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Compliance hard cutoff failed for node {NodeId}", nodeId);
+                }
+            }
+        }
     }
 
     private async Task MigrateVmAsync(

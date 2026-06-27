@@ -470,6 +470,67 @@ public class NodeService : INodeService
         };
     }
 
+    public async Task CutoffSuspendedNodeAsync(string nodeId, string reason, CancellationToken ct = default)
+    {
+        var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
+        var leftovers = nodeVms
+            .Where(v => v.Role == VmRole.General &&
+                        v.NodeId == nodeId &&
+                        v.Status is VmStatus.Running or VmStatus.Provisioning)
+            .ToList();
+
+        // Authoritative safety check before the irreversible deregister: the manifest,
+        // not LazysyncStatus (which is prone to billing-race overwrites), is the source
+        // of truth for a confirmed replica. If any leftover replicated VM still has one,
+        // it is recoverable — defer and let the drain finish on the next cycle.
+        foreach (var vm in leftovers.Where(v => v.Spec.ReplicationFactor > 0))
+        {
+            var manifest = await _dataStore.GetManifestAsync(vm.Id);
+            if (manifest != null && manifest.ConfirmedVersion > 0)
+            {
+                _logger.LogInformation(
+                    "Cutoff deferred for node {NodeId}: VM {VmId} still has a confirmed replica " +
+                    "(v{Version}) — draining first",
+                    nodeId, vm.Id, manifest.ConfirmedVersion);
+                return;
+            }
+        }
+
+        // Terminalize the leftovers: ephemeral → Lost, unconfirmed replicated → Unrecoverable.
+        if (leftovers.Count > 0)
+        {
+            var lifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
+            foreach (var vm in leftovers)
+            {
+                var terminal = vm.Spec.ReplicationFactor == 0
+                    ? LazysyncStatus.Lost
+                    : LazysyncStatus.Unrecoverable;
+
+                await lifecycleManager.TransitionAsync(
+                    vm.Id, VmStatus.Error, TransitionContext.Compliance(reason));
+
+                var updated = await _dataStore.GetVmAsync(vm.Id);
+                if (updated == null) continue;
+                updated.LazysyncStatus = terminal;
+                updated.PushMessage(
+                    terminal == LazysyncStatus.Lost
+                        ? "Operator node removed for compliance — ephemeral VM lost (no replica by design)."
+                        : "Operator node removed for compliance before a replica was confirmed — not recoverable.",
+                    terminal == LazysyncStatus.Lost ? VmMessageLevel.Info : VmMessageLevel.Error,
+                    "compliance");
+                await _dataStore.SaveVmAsync(updated);
+            }
+        }
+
+        // Revoke JWT + delete the node record (reuses DeregisterNodeAsync internals).
+        await DeregisterNodeAsync(nodeId, force: true, reason: $"compliance cutoff — {reason}", ct);
+
+        _logger.LogWarning(
+            "Node {NodeId} hard cutoff (compliance): {Count} leftover VM(s) terminalized, " +
+            "JWT revoked, record removed",
+            nodeId, leftovers.Count);
+    }
+
     // ============================================================================
     // Login / Logout (scheduling readiness)
     // ============================================================================
