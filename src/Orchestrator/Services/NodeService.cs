@@ -480,6 +480,25 @@ public class NodeService : INodeService
             ?? throw new KeyNotFoundException($"Node {nodeId} not found");
 
         // -----------------------------------------------------------------
+        // Precondition: enforcement gate (compliance)
+        // A node suspended for violations, or one whose operator wallet is
+        // suspended/denylisted, may not (re-)enter scheduling. Same predicate as the
+        // create/register gates, server-side at action time. Withhold-of-service only.
+        // Thrown as InvalidOperationException so the controller maps it to
+        // LOGIN_REJECTED (400) rather than a 500.
+        // -----------------------------------------------------------------
+        var blocklist = _serviceProvider.GetRequiredService<IWalletBlocklistService>();
+        if (node.Status == NodeStatus.Suspended ||
+            await blocklist.IsWalletBlockedAsync(node.WalletAddress, ct))
+        {
+            _logger.LogWarning(
+                "Node {NodeId} login rejected — operator {Wallet} suspended/blocked",
+                nodeId, node.WalletAddress);
+            throw new InvalidOperationException(
+                "This node's operator account is suspended. Scheduling cannot be enabled.");
+        }
+
+        // -----------------------------------------------------------------
         // Precondition: settings drift check
         // -----------------------------------------------------------------
         if (!string.IsNullOrEmpty(node.RegisteredSettingsHash) &&
