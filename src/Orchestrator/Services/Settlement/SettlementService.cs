@@ -14,17 +14,20 @@ public class SettlementService : ISettlementService
     private readonly ILogger<SettlementService> _logger;
     private readonly DataStore _dataStore;
     private readonly IUserService _userService;
+    private readonly IWalletBlocklistService _blocklist;
     private readonly PaymentConfig _paymentConfig;
 
     public SettlementService(
         ILogger<SettlementService> logger,
         DataStore dataStore,
         IUserService userService,
+        IWalletBlocklistService blocklist,
         PaymentConfig paymentConfig)
     {
         _logger = logger;
         _dataStore = dataStore;
         _userService = userService;
+        _blocklist = blocklist;
         _paymentConfig = paymentConfig;
     }
 
@@ -243,6 +246,18 @@ public class SettlementService : ISettlementService
                 _logger.LogWarning(
                     "Skipping settlement: user {UserId} or node {NodeId} not found",
                     group.UserId, group.NodeId);
+                continue;
+            }
+
+            // Compliance: never settle on-chain to a suspended or denylisted operator.
+            // This is the only path that pays node wallets, so the gate lives here.
+            // Records stay unsettled (not dropped) — reversible: pre-block earnings
+            // settle normally once the wallet is cleared. Withhold-of-service only.
+            if (await _blocklist.IsWalletBlockedAsync(node.WalletAddress))
+            {
+                _logger.LogWarning(
+                    "Withholding settlement for node {NodeId}: operator {Wallet} is blocked",
+                    group.NodeId, node.WalletAddress);
                 continue;
             }
 
