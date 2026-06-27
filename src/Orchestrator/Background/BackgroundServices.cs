@@ -263,6 +263,10 @@ public class VmSchedulerService : BackgroundService
                 v.NonCompliantSince != null &&
                 v.Status == VmStatus.Running &&
                 v.Role == VmRole.General &&
+                // Defense-in-depth: a held VM is force-stopped (so not Running) and must
+                // never be re-created on another node — make the exclusion explicit, to
+                // match the offline-DR and compliance-drain candidate filters.
+                !v.ComplianceHold &&
                 string.IsNullOrEmpty(v.ActiveCommandId))
             .ToList();
 
