@@ -249,6 +249,24 @@ public class TemplateService : ITemplateService
                     {
                         template.Status = existing.Status;
                     }
+
+                    // Editing the deployable payload of a LIVE community template sends it
+                    // back to review: the changed content must be re-vetted before it serves
+                    // again. Runs after the clamp so the new PendingReview isn't reverted.
+                    // Cosmetic edits (name/description/tags/icon/pricing) are excluded, so
+                    // they don't bounce a live template offline; archiving/unpublishing
+                    // (handled above — template.Status no longer Published) is respected.
+                    if (existing.IsCommunity
+                        && existing.Status == TemplateStatus.Published
+                        && template.Status == TemplateStatus.Published
+                        && DeployableSignature(existing) != DeployableSignature(template))
+                    {
+                        template.Status = TemplateStatus.PendingReview;
+                        template.IsVerified = false;
+                        template.ReviewedBy = null;
+                        template.ReviewedAt = null;
+                        template.RejectionReason = null;
+                    }
                 }
             }
 
@@ -267,6 +285,33 @@ public class TemplateService : ITemplateService
             _logger.LogError(ex, "Failed to update template: {TemplateId}", template.Id);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Canonical signature of the fields that determine what a deployment runs and
+    /// exposes — the surface a content review vouches for. Cosmetic fields (name,
+    /// description, tags, icon, pricing) are excluded so editing them does not bounce a
+    /// live template back into review. Artifacts are omitted because UpdateTemplateAsync
+    /// already preserves them (they cannot change on update). Used to detect a
+    /// post-approval payload edit.
+    /// </summary>
+    private static string DeployableSignature(VmTemplate t)
+    {
+        var payload = new
+        {
+            t.CloudInitTemplate,
+            t.ContainerImage,
+            t.ExposedPorts,
+            t.Variables,
+            // Order-stable so a dictionary re-ordering alone isn't seen as a change.
+            Env = t.DefaultEnvironmentVariables == null
+                ? null
+                : t.DefaultEnvironmentVariables
+                    .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => new { kv.Key, kv.Value })
+                    .ToList()
+        };
+        return System.Text.Json.JsonSerializer.Serialize(payload);
     }
 
     public async Task SaveTemplateDirectAsync(VmTemplate template)
