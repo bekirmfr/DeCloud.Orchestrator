@@ -30,6 +30,15 @@ public interface ITemplateService
 
     Task<VmTemplate> CreateTemplateAsync(VmTemplate template);
     Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false);
+
+    /// <summary>
+    /// Restore server-owned fields (author identity, revision link, accrued history,
+    /// artifacts, revision counter) from the stored record onto an incoming edit. The single
+    /// source of truth for fields the edit form never sends; call before validating an update
+    /// so validation sees the stored values, not the PUT body's model defaults.
+    /// </summary>
+    void RestoreServerOwnedFields(VmTemplate incoming, VmTemplate existing);
+
     Task SaveTemplateDirectAsync(VmTemplate template);
     Task<bool> DeleteTemplateAsync(string templateId, string requesterId);
     Task<VmTemplate> PublishTemplateAsync(string templateId, string requesterId);

@@ -212,18 +212,14 @@ public class TemplateService : ITemplateService
     public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false)
     {
         try
-        {// Resolve the existing record up front. The slug-uniqueness rule must know this
-            // is a revision (a revision may share its parent's slug via the ParentTemplateId
-            // carve-out), and the edit form never sends ParentTemplateId or AuthorName — so
-            // restore them before validating. Otherwise validation runs against the PUT
-            // body's defaults (ParentTemplateId = null) and rejects the revision's shared
-            // slug as a duplicate.
+        {
+            // Restore server-owned fields from the stored record before validating, so
+            // validation sees the real values rather than the edit form's omitted defaults
+            // (e.g. a revision's ParentTemplateId for the slug carve-out, AuthorName for the
+            // reserved-name check). RestoreServerOwnedFields is the single source of truth.
             var existing = await GetTemplateByIdAsync(template.Id);
             if (existing != null)
-            {
-                template.ParentTemplateId = existing.ParentTemplateId;
-                template.AuthorName = existing.AuthorName;
-            }
+                RestoreServerOwnedFields(template, existing);
 
             // Validate before updating
             var validation = await ValidateTemplateAsync(template);
@@ -232,7 +228,7 @@ public class TemplateService : ITemplateService
                 throw new ArgumentException($"Template validation failed: {string.Join(", ", validation.Errors)}");
             }
 
-            // Preserve the remaining immutable fields
+            // Enforce review-pipeline transitions (field restore already ran above)
             if (existing != null)
             {
                 // A template under review is locked: a non-admin cannot change its content
@@ -240,22 +236,6 @@ public class TemplateService : ITemplateService
                 if (!isAdmin && existing.Status == TemplateStatus.PendingReview)
                     throw new InvalidOperationException(
                         "Template is under review and cannot be edited. Cancel the review first.");
-
-                // Preserve fields the edit form never sends — otherwise the PUT payload's
-                // model defaults overwrite them. AuthorName would reset to the default
-                // "DeCloud" and then fail the reserved-name check on the next publish;
-                // ParentTemplateId would reset to null, orphaning a revision from its parent
-                // and breaking promote-on-approve.
-                template.AuthorId = existing.AuthorId;
-                template.AuthorName = existing.AuthorName;
-                template.ParentTemplateId = existing.ParentTemplateId;
-                template.DeploymentCount = existing.DeploymentCount;
-                template.LastDeployedAt = existing.LastDeployedAt;
-                template.CreatedAt = existing.CreatedAt;
-                template.AverageRating = existing.AverageRating;
-                template.TotalReviews = existing.TotalReviews;
-                template.RatingDistribution = existing.RatingDistribution;
-                template.Artifacts = existing.Artifacts;
 
                 // Admin can change classification flags; regular users cannot
                 if (!isAdmin)
@@ -300,6 +280,31 @@ public class TemplateService : ITemplateService
             _logger.LogError(ex, "Failed to update template: {TemplateId}", template.Id);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Restore the fields the edit form never sends and a caller must not change: author
+    /// identity, the revision link, accrued history (ratings, deploy counts), the internal
+    /// revision counter, and artifacts (managed through their own endpoints, so an edit
+    /// payload's empty list must not wipe them). Single source of truth for "server-owned on
+    /// update" — call on an incoming edit before validating, so validation sees the stored
+    /// values rather than the PUT body's model defaults. User-editable fields (name,
+    /// description, tags, specs, pricing, visibility, revenue wallet) and review/classification
+    /// transitions are intentionally left untouched.
+    /// </summary>
+    public void RestoreServerOwnedFields(VmTemplate incoming, VmTemplate existing)
+    {
+        incoming.AuthorId = existing.AuthorId;
+        incoming.AuthorName = existing.AuthorName;
+        incoming.ParentTemplateId = existing.ParentTemplateId;
+        incoming.CreatedAt = existing.CreatedAt;
+        incoming.Revision = existing.Revision;
+        incoming.DeploymentCount = existing.DeploymentCount;
+        incoming.LastDeployedAt = existing.LastDeployedAt;
+        incoming.AverageRating = existing.AverageRating;
+        incoming.TotalReviews = existing.TotalReviews;
+        incoming.RatingDistribution = existing.RatingDistribution;
+        incoming.Artifacts = existing.Artifacts;
     }
 
     /// <summary>

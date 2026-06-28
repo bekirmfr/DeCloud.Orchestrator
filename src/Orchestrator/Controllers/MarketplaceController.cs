@@ -324,12 +324,10 @@ public class MarketplaceController : ControllerBase
                 return Forbid();
 
             template.Id = templateId;
-            // The edit form never sends ParentTemplateId or AuthorName, so restore them from
-            // the stored record before validating — otherwise a revision's shared slug is
-            // rejected as a duplicate (the slug carve-out needs ParentTemplateId) and the
-            // reserved-name check would see the model-default AuthorName.
-            template.ParentTemplateId = existing.ParentTemplateId;
-            template.AuthorName = existing.AuthorName;
+            // Restore server-owned fields before validating, so the controller's validation
+            // sees the stored values rather than the edit form's omitted defaults. Single
+            // source of truth, shared with UpdateTemplateAsync.
+            _templateService.RestoreServerOwnedFields(template, existing);
 
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
