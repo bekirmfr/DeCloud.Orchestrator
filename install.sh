@@ -1303,32 +1303,41 @@ build_orchestrator() {
     log_info "Restoring .NET packages..."
     dotnet restore --verbosity minimal > /dev/null 2>&1 || dotnet restore
     
-    log_info "Building .NET project..."
-    dotnet build --configuration Release --no-restore --no-incremental --verbosity minimal > /dev/null 2>&1 || \
-        dotnet build --configuration Release --no-restore --no-incremental
-    
-    # Build frontend
-    if [ -d "wwwroot" ] && [ -f "wwwroot/package.json" ]; then
-        log_info "Building frontend..."
-        cd wwwroot
-        
-        # Create .env if needed
-        if [ ! -f ".env" ] && [ -f ".env.example" ]; then
-            cp .env.example .env
-        fi
-        
-        npm install --silent > /dev/null 2>&1 || npm install
-        npm run build > /dev/null 2>&1 || npm run build
-        
-        log_success "Frontend built"
-        cd ..
+    # Frontend .env must exist BEFORE the build, because the csproj BuildFrontend
+    # target (BeforeTargets=Build) runs `npm run build` during publish. Creating
+    # .env afterward would ship a dist with a missing WalletConnect project ID.
+    if [ -f "wwwroot/.env.example" ] && [ ! -f "wwwroot/.env" ]; then
+        cp wwwroot/.env.example wwwroot/.env
+        log_info "Frontend .env created from .env.example"
+    fi
+
+    # Publish, don't build-in-place. Publish assembles a self-contained runtime
+    # content root (Orchestrator.dll, appsettings, wwwroot/dist) under
+    # $INSTALL_DIR/publish. The csproj already excludes wwwroot/node_modules from
+    # published content, so the runtime content root contains none of the ~8k npm
+    # directories the ASP.NET Core file watcher was recursing into. The service
+    # runs from here — never from the source checkout. The BuildFrontend MSBuild
+    # target runs during publish (with .env now present), producing wwwroot/dist.
+    local publish_dir="$INSTALL_DIR/publish"
+    log_info "Publishing Orchestrator to $publish_dir ..."
+    rm -rf "$publish_dir"   # idempotent: never serve stale files from a prior version
+    dotnet publish --configuration Release --no-restore --output "$publish_dir" \
+        --verbosity minimal > /dev/null 2>&1 || \
+        dotnet publish --configuration Release --no-restore --output "$publish_dir"
+
+    if [ ! -f "$publish_dir/Orchestrator.dll" ]; then
+        log_error "Publish failed — Orchestrator.dll not found in $publish_dir"
+        exit 1
+    fi
+    if [ ! -f "$publish_dir/wwwroot/dist/index.html" ]; then
+        log_warn "Published tree missing wwwroot/dist/index.html — frontend may not have built"
     fi
     
-    log_success "Orchestrator built successfully"
+    log_success "Orchestrator published successfully"
 }
 
 # ============================================================
-# NEW: Environment File Creation (v3.0)
+# Environment File Creation (v3.0)
 # ============================================================
 
 create_env_file() {
@@ -1530,8 +1539,8 @@ $([ "$ENABLE_WIREGUARD" = true ] && echo "Wants=wg-quick@${WIREGUARD_INTERFACE}.
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator
-ExecStart=/usr/bin/dotnet $INSTALL_DIR/DeCloud.Orchestrator/src/Orchestrator/bin/Release/net8.0/Orchestrator.dll
+WorkingDirectory=$INSTALL_DIR/publish
+ExecStart=/usr/bin/dotnet $INSTALL_DIR/publish/Orchestrator.dll
 
 # Environment configuration
 Environment=ASPNETCORE_ENVIRONMENT=Production
