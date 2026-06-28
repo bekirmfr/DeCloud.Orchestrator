@@ -229,11 +229,11 @@ function renderCardActions(template) {
     if (status === 'Draft') {
         return `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${id}')">Publish</button>${edit}${del}`;
     }
-    // A published template is immutable in place — all edits go through New version, which
-    // opens the revision in the edit modal. No direct Edit on a live template.
+    // A published template is immutable in place. Show opens a read-only details modal
+    // that carries the New version action (which forks a revision for review).
     if (status === 'Published' && !isRevision) {
-        const newVersion = `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.reviseTemplate('${id}')">New version</button>`;
-        return `${newVersion}${del}`;
+        const show = `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.showTemplateDetails('${id}')">Show</button>`;
+        return `${show}${del}`;
     }
     return `${edit}${del}`;
 }
@@ -1286,6 +1286,173 @@ export async function reviseTemplate(templateId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TEMPLATE DETAILS (read-only modal)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GPU_MODE_LABELS = ['None', 'Passthrough', 'Proxied'];
+
+function fmtBytesMb(b) { return b ? `${Math.round(b / (1024 * 1024))} MB` : '—'; }
+function fmtBytesGb(b) { return b ? `${Math.round(b / (1024 * 1024 * 1024))} GB` : '—'; }
+function fmtSize(b) {
+    if (!b) return '';
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`;
+    return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+function fmtDate(s) { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString(); }
+
+function tdRow(label, valueHtml) {
+    return `<div style="display:flex; gap:12px; padding:5px 0; border-bottom:1px solid var(--border-color,#222);">
+        <span style="flex:0 0 170px; color:var(--text-muted,#9ca3af); font-size:13px;">${escapeHtml(label)}</span>
+        <span style="flex:1; font-size:13px; word-break:break-word;">${valueHtml}</span>
+    </div>`;
+}
+function tdSection(title, innerHtml) {
+    return `<div class="form-section"><h3 class="form-section-title">${escapeHtml(title)}</h3>${innerHtml}</div>`;
+}
+const tdEmpty = '<div style="color:var(--text-muted,#9ca3af); font-size:13px;">None</div>';
+
+function templateDetailsModalHtml(t) {
+    const status = STATUS_TO_STR[t.status] ?? 'Draft';
+    const visibility = VISIBILITY_TO_STR[t.visibility] ?? 'Public';
+    const pricing = PRICING_TO_STR[t.pricingModel] ?? 'Free';
+    const min = t.minimumSpec || {};
+    const rec = t.recommendedSpec || {};
+    const srcHref = (t.sourceUrl && /^https?:\/\//i.test(t.sourceUrl)) ? escapeHtml(t.sourceUrl) : null;
+
+    const overview = [
+        tdRow('Name', escapeHtml(t.name || '—')),
+        tdRow('Slug', escapeHtml(t.slug || '—')),
+        tdRow('Version', escapeHtml(t.version || '—')),
+        tdRow('Status', escapeHtml(status)),
+        tdRow('Visibility', escapeHtml(visibility)),
+        tdRow('Category', escapeHtml(t.category || '—')),
+        tdRow('Tags', (t.tags || []).map(escapeHtml).join(', ') || '—'),
+        tdRow('License', escapeHtml(t.license || '—')),
+        tdRow('Source URL', srcHref ? `<a href="${srcHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.sourceUrl)}</a>` : escapeHtml(t.sourceUrl || '—')),
+        tdRow('Author', escapeHtml(t.authorName || '—')),
+        tdRow('Revenue wallet', escapeHtml(t.authorRevenueWallet || '—')),
+    ].join('');
+
+    const descr = [
+        tdRow('Short', escapeHtml(t.description || '—')),
+        t.longDescription ? `<div style="margin-top:8px; font-size:13px;">${renderMarkdown(t.longDescription)}</div>` : ''
+    ].join('');
+
+    const config = [
+        tdRow('Container image', escapeHtml(t.containerImage || '—')),
+        tdRow('Requires GPU', t.requiresGpu
+            ? `Yes (${escapeHtml(GPU_MODE_LABELS[t.defaultGpuMode] ?? String(t.defaultGpuMode))}${t.gpuRequirement ? ', ' + escapeHtml(t.gpuRequirement) : ''})`
+            : 'No'),
+        tdRow('Min spec', `${min.virtualCpuCores ?? '—'} vCPU · ${fmtBytesMb(min.memoryBytes)} · ${fmtBytesGb(min.diskBytes)} · ${escapeHtml(QUALITY_TIER_TO_STR[min.qualityTier] ?? '—')}`),
+        tdRow('Recommended spec', `${rec.virtualCpuCores ?? '—'} vCPU · ${fmtBytesMb(rec.memoryBytes)} · ${fmtBytesGb(rec.diskBytes)}`),
+        tdRow('Bandwidth tier', escapeHtml(BANDWIDTH_TIER_TO_STR[t.defaultBandwidthTier] ?? '—')),
+    ].join('');
+
+    const cloudInit = `<pre style="max-height:300px; overflow:auto; background:var(--bg-tertiary,#1a1a1a); padding:10px; border-radius:6px; font-size:12px; white-space:pre-wrap;">${escapeHtml(t.cloudInitTemplate || '—')}</pre>`;
+
+    const vars = (t.variables || []).length
+        ? (t.variables || []).map(v => tdRow(v.name || '(unnamed)',
+            `${(v.kind === 1 || v.kind === 'Dynamic') ? 'Dynamic' : 'Static'}${v.defaultValue ? ' · default = ' + escapeHtml(v.defaultValue) : ''}${v.required ? ' · required' : ''}`)).join('')
+        : tdEmpty;
+
+    const ports = (t.exposedPorts || []).length
+        ? (t.exposedPorts || []).map(p => tdRow(`Port ${escapeHtml(String(p.port))}`,
+            `${escapeHtml(p.protocol || 'http')}${p.description ? ' · ' + escapeHtml(p.description) : ''}${p.isPublic === false ? ' · private' : ' · public'}`)).join('')
+        : tdEmpty;
+
+    const envEntries = Object.entries(t.defaultEnvironmentVariables || {});
+    const env = envEntries.length
+        ? envEntries.map(([k, v]) => tdRow(k, `<span style="font-family:var(--font-mono,monospace);">${escapeHtml(String(v))}</span>`)).join('')
+        : tdEmpty;
+
+    const artifacts = (t.artifacts || []).length
+        ? (t.artifacts || []).map(a => tdRow(a.name || '—',
+            `${escapeHtml(ARTIFACT_TYPE_LABELS[a.type] ?? 'Artifact')}${a.sizeBytes ? ' · ' + fmtSize(a.sizeBytes) : ''}${a.sha256 ? ' · sha256:' + escapeHtml(String(a.sha256).slice(0, 12)) + '…' : ''}`)).join('')
+        : tdEmpty;
+
+    const access = [
+        tdRow('Access URL', escapeHtml(t.defaultAccessUrl || '—')),
+        tdRow('Username', escapeHtml(t.defaultUsername || '—')),
+        tdRow('Generated password', t.useGeneratedPassword ? 'Yes' : 'No'),
+    ].join('');
+
+    const pricingSec = [
+        tdRow('Model', escapeHtml(pricing)),
+        tdRow('Price', pricing === 'PerDeploy' ? `${t.templatePrice || 0} USDC` : 'Free'),
+        tdRow('Est. cost/hr', t.estimatedCostPerHour ? escapeHtml(String(t.estimatedCostPerHour)) : '—'),
+    ].join('');
+
+    const stats = [
+        tdRow('Deployments', String(t.deploymentCount || 0)),
+        tdRow('Rating', `${(t.averageRating || 0).toFixed(1)} (${t.totalReviews || 0} reviews)`),
+        tdRow('Created', fmtDate(t.createdAt)),
+        tdRow('Updated', fmtDate(t.updatedAt)),
+    ].join('');
+
+    const canRevise = status === 'Published' && !t.parentTemplateId;
+
+    return `
+        <div class="modal modal-large">
+            <div class="modal-header">
+                <h2 class="modal-title">${escapeHtml(t.name || 'Template')}</h2>
+                <button class="modal-close" onclick="window.myTemplates.closeTemplateDetails()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
+                ${tdSection('Overview', overview)}
+                ${tdSection('Description', descr)}
+                ${tdSection('Configuration', config)}
+                ${tdSection('Cloud-init', cloudInit)}
+                ${tdSection('Variables', vars)}
+                ${tdSection('Exposed ports', ports)}
+                ${tdSection('Environment variables', env)}
+                ${tdSection('Artifacts', artifacts)}
+                ${tdSection('Access & credentials', access)}
+                ${tdSection('Pricing', pricingSec)}
+                ${tdSection('Stats', stats)}
+            </div>
+            <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end; padding:16px;">
+                ${canRevise ? `<button class="btn btn-primary" onclick="window.myTemplates.reviseFromDetails('${t.id}')">New version</button>` : ''}
+                <button class="btn btn-secondary" onclick="window.myTemplates.closeTemplateDetails()">Close</button>
+            </div>
+        </div>`;
+}
+
+export function showTemplateDetails(templateId) {
+    const t = myTemplates.find(x => x.id === templateId);
+    if (!t) return;
+    let modal = document.getElementById('template-details-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.id = 'template-details-modal';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = templateDetailsModalHtml(t);
+    if (window.openStaticModal) window.openStaticModal(modal); else modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+export function closeTemplateDetails() {
+    const modal = document.getElementById('template-details-modal');
+    if (modal) {
+        if (window.closeStaticModal) window.closeStaticModal(modal); else modal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+// New version from within the details modal: close it first, then fork the revision
+// (reviseTemplate opens the edit modal on the new revision).
+export async function reviseFromDetails(templateId) {
+    closeTemplateDetails();
+    await reviseTemplate(templateId);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ARTIFACT MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1873,6 +2040,9 @@ window.myTemplates = {
     deleteTemplate,
     cancelReview,
     reviseTemplate,
+    showTemplateDetails,
+    closeTemplateDetails,
+    reviseFromDetails,
     addPort,
     addEnvVar,
     onPricingChange,
