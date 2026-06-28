@@ -256,22 +256,18 @@ public class TemplateService : ITemplateService
                         template.Status = existing.Status;
                     }
 
-                    // Editing the deployable payload of a LIVE community template sends it
-                    // back to review: the changed content must be re-vetted before it serves
-                    // again. Runs after the clamp so the new PendingReview isn't reverted.
-                    // Cosmetic edits (name/description/tags/icon/pricing) are excluded, so
-                    // they don't bounce a live template offline; archiving/unpublishing
-                    // (handled above — template.Status no longer Published) is respected.
+                    // A LIVE community template's deployable payload changes only through a
+                    // reviewed revision (POST {id}/revise), so the live version stays in the
+                    // marketplace. Cosmetic edits (name/description/tags/icon/pricing) still
+                    // save in place. Refuse an in-place payload change and point to versioning.
                     if (existing.IsCommunity
                         && existing.Status == TemplateStatus.Published
                         && template.Status == TemplateStatus.Published
                         && DeployableSignature(existing) != DeployableSignature(template))
                     {
-                        template.Status = TemplateStatus.PendingReview;
-                        template.IsVerified = false;
-                        template.ReviewedBy = null;
-                        template.ReviewedAt = null;
-                        template.RejectionReason = null;
+                        throw new InvalidOperationException(
+                            "A published template's deployable content is changed by creating a new version. " +
+                            "Use \"New version\" to start a revision for review.");
                     }
                 }
             }
@@ -351,6 +347,15 @@ public class TemplateService : ITemplateService
 
             if (deleted)
             {
+                // A revision is meaningless without its parent — cascade-delete any open
+                // revision pointing at this template (author-scoped; a revision shares the
+                // parent's author).
+                var revisions = (await GetTemplatesByAuthorAsync(requesterId))
+                    .Where(t => t.ParentTemplateId == templateId)
+                    .ToList();
+                foreach (var rev in revisions)
+                    await _dataStore.DeleteTemplateAsync(rev.Id);
+
                 _logger.LogInformation("Deleted template: {TemplateName} ({TemplateId}) by {AuthorId}",
                     template.Name, templateId, requesterId);
                 await UpdateCategoryCountsAsync();
@@ -436,6 +441,56 @@ public class TemplateService : ITemplateService
         return published;
     }
 
+    public async Task<VmTemplate> ReviseTemplateAsync(string templateId, string requesterId)
+    {
+        var parent = await GetTemplateByIdAsync(templateId)
+            ?? throw new KeyNotFoundException($"Template '{templateId}' not found");
+
+        if (!string.Equals(parent.AuthorId, requesterId, StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("Only the author can revise this template.");
+
+        // Versioning is a community-template concern; platform templates are admin-edited in place.
+        if (!parent.IsCommunity)
+            throw new InvalidOperationException("Only community templates use versioned revisions.");
+
+        if (parent.Status != TemplateStatus.Published)
+            throw new InvalidOperationException(
+                "Only a published template is revised. Edit a draft or rejected template directly.");
+
+        // At most one open revision per parent — idempotent: return the existing one so a
+        // second "New version" reopens it rather than forking the review queue.
+        var mine = await GetTemplatesByAuthorAsync(requesterId);
+        var existing = mine.FirstOrDefault(t => t.ParentTemplateId == parent.Id);
+        if (existing != null) return existing;
+
+        // Deep clone via JSON round-trip so nested lists/specs are copied, not shared.
+        var json = System.Text.Json.JsonSerializer.Serialize(parent);
+        var revision = System.Text.Json.JsonSerializer.Deserialize<VmTemplate>(json)!;
+
+        revision.Id = Guid.NewGuid().ToString();
+        revision.ParentTemplateId = parent.Id;
+        revision.Status = TemplateStatus.Draft;
+        revision.IsVerified = false;
+        revision.IsFeatured = false;
+        revision.ReviewedBy = null;
+        revision.ReviewedAt = null;
+        revision.RejectionReason = null;
+        revision.CreatedAt = DateTime.UtcNow;
+        revision.UpdatedAt = DateTime.UtcNow;
+        // Accrued history belongs to the live parent, not the revision.
+        revision.AverageRating = 0;
+        revision.TotalReviews = 0;
+        revision.RatingDistribution = new int[5];
+        revision.DeploymentCount = 0;
+        revision.LastDeployedAt = null;
+
+        var saved = await _dataStore.SaveTemplateAsync(revision);
+        _logger.LogInformation(
+            "Author {Author} opened revision {RevisionId} of template {ParentId} ({Name})",
+            requesterId, saved.Id, parent.Id, parent.Name);
+        return saved;
+    }
+
     public async Task<VmTemplate> ApproveTemplateAsync(string templateId, string reviewerId)
     {
         var template = await GetTemplateByIdAsync(templateId)
@@ -444,6 +499,52 @@ public class TemplateService : ITemplateService
         if (template.Status != TemplateStatus.PendingReview)
             throw new InvalidOperationException(
                 $"Template is not pending review (status: {template.Status}).");
+
+        // A revision promotes onto its live parent in place instead of self-publishing, so
+        // the parent keeps its id, slug, reviews, and deploy history — and the live version
+        // is never pulled from the marketplace during review.
+        if (template.ParentTemplateId != null)
+        {
+            var parent = await GetTemplateByIdAsync(template.ParentTemplateId);
+            if (parent != null)
+            {
+                var revisionId = template.Id;
+
+                // Carry the parent's identity, accrued history, and admin curation onto the
+                // revision, then save it over the parent document. Copying identity forward
+                // (not payload backward) can't miss an author-edited field. Artifacts ride
+                // with the revision — a new version may legitimately change them.
+                template.Id = parent.Id;
+                template.AuthorId = parent.AuthorId;
+                template.CreatedAt = parent.CreatedAt;
+                template.AverageRating = parent.AverageRating;
+                template.TotalReviews = parent.TotalReviews;
+                template.RatingDistribution = parent.RatingDistribution;
+                template.DeploymentCount = parent.DeploymentCount;
+                template.LastDeployedAt = parent.LastDeployedAt;
+                template.IsFeatured = parent.IsFeatured;
+                template.IsCommunity = parent.IsCommunity;
+                template.ParentTemplateId = null;
+                template.Status = TemplateStatus.Published;
+                template.IsVerified = true;
+                template.ReviewedBy = reviewerId;
+                template.ReviewedAt = DateTime.UtcNow;
+                template.RejectionReason = null;
+                template.UpdatedAt = DateTime.UtcNow;
+
+                var promoted = await _dataStore.SaveTemplateAsync(template);
+                await _dataStore.DeleteTemplateAsync(revisionId);
+                await UpdateCategoryCountsAsync();
+
+                _logger.LogInformation(
+                    "Promoted revision {RevisionId} onto template {TemplateId} ({Name}) by {Reviewer}",
+                    revisionId, promoted.Id, promoted.Name, reviewerId);
+                return promoted;
+            }
+
+            // Parent deleted mid-review → publish the revision standalone.
+            template.ParentTemplateId = null;
+        }
 
         template.Status = TemplateStatus.Published;
         template.IsVerified = true;          // marketplace "reviewed" badge
@@ -544,7 +645,7 @@ public class TemplateService : ITemplateService
         if (!string.IsNullOrWhiteSpace(template.Slug))
         {
             var existing = await _dataStore.GetTemplateBySlugAsync(template.Slug);
-            if (existing != null && existing.Id != template.Id)
+            if (existing != null && existing.Id != template.Id && existing.Id != template.ParentTemplateId)
             {
                 errors.Add($"Slug '{template.Slug}' is already in use");
             }

@@ -164,6 +164,8 @@ function createMyTemplateCard(template) {
     const statusClass = badge.cls;
     const statusLabel = badge.label;
     const statusStyle = badge.style || '';
+    const isRevision = !!template.parentTemplateId;
+    const hasOpenRevision = !isRevision && myTemplates.some(x => x.parentTemplateId === template.id);
 
     const visibility = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
     const visibilityIcon = visibility === 'Private' ? '🔒' : '🌐';
@@ -180,14 +182,21 @@ function createMyTemplateCard(template) {
         <div class="my-template-card">
             <div class="my-template-header">
                 <span class="template-status-badge ${statusClass}" style="${statusStyle}">${statusLabel}</span>
+                ${isRevision ? `<span class="template-status-badge" style="background:var(--accent-dim,rgba(124,58,237,0.15)); color:var(--accent,#7c3aed);">New version</span>` : ''}
                 <span class="template-visibility-badge">${visibilityIcon} ${visibility}</span>
             </div>
             <div class="my-template-body">
                 <h3 class="my-template-name">${escapeHtml(template.name)}</h3>
                 <p class="my-template-desc">${escapeHtml(template.description)}</p>
                 ${status === 'Rejected' && template.rejectionReason
-                    ? `<p class="my-template-reject-reason" style="color:var(--danger,#ef4444); font-size:12px; margin-top:4px;">Rejected: ${escapeHtml(template.rejectionReason)}</p>`
-                    : ''}
+                ? `<p class="my-template-reject-reason" style="color:var(--danger,#ef4444); font-size:12px; margin-top:4px;">Rejected: ${escapeHtml(template.rejectionReason)}</p>`
+                : ''}
+                    ${isRevision
+                ? `<p style="color:var(--text-muted,#6b7280); font-size:12px; margin-top:4px;">Draft revision of your published “${escapeHtml(template.slug)}”. Approval replaces the live version in place.</p>`
+                : ''}
+                    ${hasOpenRevision
+                ? `<p style="color:var(--warning,#f59e0b); font-size:12px; margin-top:4px;">A new version is in progress.</p>`
+                : ''}
                 <div class="my-template-meta">
                     <span>${priceText}</span>
                     <span>${stars} (${reviewCount})</span>
@@ -195,7 +204,7 @@ function createMyTemplateCard(template) {
                 </div>
             </div>
             <div class="my-template-actions">
-                ${renderCardActions(status, template.id)}
+                ${renderCardActions(template)}
             </div>
         </div>
     `;
@@ -204,9 +213,12 @@ function createMyTemplateCard(template) {
 // Per-status action buttons. A PendingReview template is locked — the only action is
 // to withdraw the submission (returns it to Draft). Rejected can be edited and
 // resubmitted. Draft can be published. Published/Archived: edit + delete.
-function renderCardActions(status, id) {
+function renderCardActions(template) {
+    const id = template.id;
+    const status = STATUS_TO_STR[template.status] ?? 'Draft';
+    const isRevision = !!template.parentTemplateId;
     const edit = `<button class="btn btn-sm btn-secondary" onclick="window.myTemplates.editTemplate('${id}')">Edit</button>`;
-    const del = `<button class="btn btn-sm btn-danger" onclick="window.myTemplates.deleteTemplate('${id}')">Delete</button>`;
+    const del = `<button class="btn btn-sm btn-danger" onclick="window.myTemplates.deleteTemplate('${id}')">${isRevision ? 'Discard' : 'Delete'}</button>`;
 
     if (status === 'PendingReview') {
         return `<button class="btn btn-sm btn-secondary" onclick="window.myTemplates.cancelReview('${id}')">Cancel submission</button>`;
@@ -216,6 +228,11 @@ function renderCardActions(status, id) {
     }
     if (status === 'Draft') {
         return `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${id}')">Publish</button>${edit}${del}`;
+    }
+    // Live community template (a parent): cosmetic Edit in place, or start a reviewed new version.
+    if (status === 'Published' && !isRevision) {
+        const newVersion = `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.reviseTemplate('${id}')">New version</button>`;
+        return `${edit}${newVersion}${del}`;
     }
     return `${edit}${del}`;
 }
@@ -1248,6 +1265,25 @@ export async function cancelReview(templateId) {
     }
 }
 
+export async function reviseTemplate(templateId) {
+    try {
+        const response = await api(`/api/marketplace/templates/${templateId}/revise`, {
+            method: 'POST'
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || 'Failed to start a new version');
+        }
+        const revision = await response.json().catch(() => null);
+        await loadMyTemplates();
+        renderMyTemplates();
+        // Open the edit modal on the revision (the new version), not the live template.
+        if (revision && revision.id) editTemplate(revision.id);
+    } catch (error) {
+        showToast('error', error.message);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ARTIFACT MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1835,6 +1871,7 @@ window.myTemplates = {
     publishTemplate,
     deleteTemplate,
     cancelReview,
+    reviseTemplate,
     addPort,
     addEnvVar,
     onPricingChange,

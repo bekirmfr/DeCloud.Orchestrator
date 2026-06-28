@@ -309,6 +309,14 @@ public class VmTemplate
     /// </summary>
     public string? AiAssessment { get; set; }
 
+    /// <summary>
+    /// If set, this template is a draft revision of the Published template with this id.
+    /// It is never listed or deployed under its own slug; on admin approval its payload is
+    /// promoted onto the parent in place and this revision document is deleted. Null for
+    /// originals and standalone templates.
+    /// </summary>
+    public string? ParentTemplateId { get; set; }
+
 
     // ============================================
     // TIMESTAMPS

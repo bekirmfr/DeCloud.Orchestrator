@@ -127,6 +127,7 @@ function card(t) {
       <div class="form-section" data-template-id="${id}">
         <h3 class="form-section-title" style="margin:0;">${escapeHtml(t.name ?? '(unnamed)')}
           <span style="${MUTED}; font-weight:400;">/${escapeHtml(t.slug ?? '')}</span></h3>
+        ${t.parentTemplateId ? `<div style="font-size:0.78rem; color:var(--accent,#7c3aed); margin:2px 0 6px;">Revision of a published template — approving replaces the live version in place.</div>` : ''}
         <div style="${MUTED}; font-size:0.82rem; margin-bottom:8px;">
           by <span style="font-family:monospace;" title="${escapeHtml(t.authorId ?? '')}">${escapeHtml(shortWallet(t.authorId))}</span>
           · ${escapeHtml(t.category ?? 'uncategorized')}

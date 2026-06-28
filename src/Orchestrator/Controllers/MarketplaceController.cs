@@ -390,6 +390,44 @@ public class MarketplaceController : ControllerBase
     }
 
     /// <summary>
+    /// Open a draft revision of a published template (author only). The live version stays
+    /// in the marketplace; the revision goes through review and, on approval, is promoted
+    /// onto the live template in place. Idempotent — returns the existing open revision if
+    /// one is already in progress.
+    /// </summary>
+    [HttpPost("templates/{templateId}/revise")]
+    [Authorize]
+    public async Task<ActionResult<VmTemplate>> ReviseTemplate(string templateId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(new { error = "Authentication required" });
+
+            var revision = await _templateService.ReviseTemplateAsync(templateId, userId);
+            return Ok(revision);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Template '{templateId}' not found" });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to revise template: {TemplateId}", templateId);
+            return StatusCode(500, new { error = "Failed to start a new version" });
+        }
+    }
+
+    /// <summary>
     /// Delete a template (owner only)
     /// </summary>
     [HttpDelete("templates/{templateId}")]
