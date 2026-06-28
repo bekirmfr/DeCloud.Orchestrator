@@ -230,8 +230,14 @@ public class TemplateService : ITemplateService
                     throw new InvalidOperationException(
                         "Template is under review and cannot be edited. Cancel the review first.");
 
-                // Preserve immutable fields
+                // Preserve fields the edit form never sends — otherwise the PUT payload's
+                // model defaults overwrite them. AuthorName would reset to the default
+                // "DeCloud" and then fail the reserved-name check on the next publish;
+                // ParentTemplateId would reset to null, orphaning a revision from its parent
+                // and breaking promote-on-approve.
                 template.AuthorId = existing.AuthorId;
+                template.AuthorName = existing.AuthorName;
+                template.ParentTemplateId = existing.ParentTemplateId;
                 template.DeploymentCount = existing.DeploymentCount;
                 template.LastDeployedAt = existing.LastDeployedAt;
                 template.CreatedAt = existing.CreatedAt;
@@ -479,6 +485,15 @@ public class TemplateService : ITemplateService
         revision.RatingDistribution = new int[5];
         revision.DeploymentCount = 0;
         revision.LastDeployedAt = null;
+
+        // Heal a legacy/reserved author name (e.g. a community template that picked up the
+        // platform default "DeCloud" through an edit made before AuthorName was preserved),
+        // so the new version passes the reserved-name check on publish and the corrected
+        // name is carried onto the parent when the revision is promoted.
+        if (!string.IsNullOrWhiteSpace(revision.AuthorName) && ReservedAuthorNames.Contains(revision.AuthorName))
+            revision.AuthorName = revision.AuthorId.Length > 10
+                ? $"{revision.AuthorId[..6]}...{revision.AuthorId[^4..]}"
+                : revision.AuthorId;
 
         var saved = await _dataStore.SaveTemplateAsync(revision);
         _logger.LogInformation(
