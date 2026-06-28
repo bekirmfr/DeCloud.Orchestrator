@@ -212,7 +212,19 @@ public class TemplateService : ITemplateService
     public async Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false)
     {
         try
-        {
+        {// Resolve the existing record up front. The slug-uniqueness rule must know this
+            // is a revision (a revision may share its parent's slug via the ParentTemplateId
+            // carve-out), and the edit form never sends ParentTemplateId or AuthorName — so
+            // restore them before validating. Otherwise validation runs against the PUT
+            // body's defaults (ParentTemplateId = null) and rejects the revision's shared
+            // slug as a duplicate.
+            var existing = await GetTemplateByIdAsync(template.Id);
+            if (existing != null)
+            {
+                template.ParentTemplateId = existing.ParentTemplateId;
+                template.AuthorName = existing.AuthorName;
+            }
+
             // Validate before updating
             var validation = await ValidateTemplateAsync(template);
             if (!validation.IsValid)
@@ -220,8 +232,7 @@ public class TemplateService : ITemplateService
                 throw new ArgumentException($"Template validation failed: {string.Join(", ", validation.Errors)}");
             }
 
-            // Preserve fields that users cannot change
-            var existing = await GetTemplateByIdAsync(template.Id);
+            // Preserve the remaining immutable fields
             if (existing != null)
             {
                 // A template under review is locked: a non-admin cannot change its content
