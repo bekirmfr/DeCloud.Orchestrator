@@ -626,6 +626,8 @@ public class MarketplaceController : ControllerBase
 
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
+        if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
+            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
 
         TemplateArtifact artifact;
         try
@@ -820,6 +822,8 @@ public class MarketplaceController : ControllerBase
 
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
+        if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
+            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
 
         var removed = template.Artifacts.RemoveAll(a => a.Id == artifactId);
         if (removed == 0) return NotFound();
@@ -854,6 +858,8 @@ public class MarketplaceController : ControllerBase
 
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
+        if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
+            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
 
         var existing = template.Artifacts.FirstOrDefault(a => a.Id == artifactId);
         if (existing is null)

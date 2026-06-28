@@ -229,10 +229,11 @@ function renderCardActions(template) {
     if (status === 'Draft') {
         return `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.publishTemplate('${id}')">Publish</button>${edit}${del}`;
     }
-    // Live community template (a parent): cosmetic Edit in place, or start a reviewed new version.
+    // A published template is immutable in place — all edits go through New version, which
+    // opens the revision in the edit modal. No direct Edit on a live template.
     if (status === 'Published' && !isRevision) {
         const newVersion = `<button class="btn btn-sm btn-primary" onclick="window.myTemplates.reviseTemplate('${id}')">New version</button>`;
-        return `${edit}${newVersion}${del}`;
+        return `${newVersion}${del}`;
     }
     return `${edit}${del}`;
 }

@@ -256,18 +256,14 @@ public class TemplateService : ITemplateService
                         template.Status = existing.Status;
                     }
 
-                    // A LIVE community template's deployable payload changes only through a
-                    // reviewed revision (POST {id}/revise), so the live version stays in the
-                    // marketplace. Cosmetic edits (name/description/tags/icon/pricing) still
-                    // save in place. Refuse an in-place payload change and point to versioning.
-                    if (existing.IsCommunity
-                        && existing.Status == TemplateStatus.Published
-                        && template.Status == TemplateStatus.Published
-                        && DeployableSignature(existing) != DeployableSignature(template))
+                    // A published community template is immutable in place — every change
+                    // (payload, cosmetic, or artifacts) goes through a reviewed revision so
+                    // the live version is never altered without review. The author edits the
+                    // revision (POST {id}/revise), not the live template.
+                    if (existing.IsCommunity && existing.Status == TemplateStatus.Published)
                     {
                         throw new InvalidOperationException(
-                            "A published template's deployable content is changed by creating a new version. " +
-                            "Use \"New version\" to start a revision for review.");
+                            "A published template can't be edited directly. Use \"New version\" to make changes for review.");
                     }
                 }
             }

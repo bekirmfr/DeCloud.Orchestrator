@@ -208,7 +208,15 @@ public class DataStore
             {
             new CreateIndexModel<VmTemplate>(
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Slug),
-                new CreateIndexOptions { Name = "idx_slug", Unique = true }),
+                new CreateIndexOptions<VmTemplate>
+                {
+                    Name = "idx_slug",
+                    Unique = true,
+                    // Slug uniqueness is a property of real listings. A revision
+                    // (ParentTemplateId present) is excluded so it can share its parent's
+                    // slug; uniqueness still holds across every non-revision template.
+                    PartialFilterExpression = Builders<VmTemplate>.Filter.Exists(t => t.ParentTemplateId, false)
+                }),
             new CreateIndexModel<VmTemplate>(
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Category),
                 new CreateIndexOptions { Name = "idx_category" }),
@@ -231,6 +239,24 @@ public class DataStore
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Visibility),
                 new CreateIndexOptions { Name = "idx_visibility" })
             };
+            // Migration: a pre-existing non-partial idx_slug must be dropped so the partial
+            // definition above replaces it (otherwise a revision sharing its parent's slug
+            // hits a duplicate-key error). Idempotent — once partial, this leaves it alone.
+            try
+            {
+                var slugIdx = TemplatesCollection!.Indexes.List().ToList()
+                    .FirstOrDefault(d => d.GetValue("name", "").AsString == "idx_slug");
+                if (slugIdx != null && !slugIdx.Contains("partialFilterExpression"))
+                {
+                    TemplatesCollection!.Indexes.DropOne("idx_slug");
+                    _logger.LogInformation("Migrated idx_slug → partial unique (revisions excluded)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "idx_slug partial-index migration check failed");
+            }
+
             TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Wait();
 
             // Category indexes

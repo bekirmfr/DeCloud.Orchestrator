@@ -313,8 +313,10 @@ public class VmTemplate
     /// If set, this template is a draft revision of the Published template with this id.
     /// It is never listed or deployed under its own slug; on admin approval its payload is
     /// promoted onto the parent in place and this revision document is deleted. Null for
-    /// originals and standalone templates.
+    /// originals and standalone templates. Omitted from the document when null so the
+    /// partial idx_slug ($exists:false) covers originals and excludes revisions.
     /// </summary>
+    [BsonIgnoreIfNull]
     public string? ParentTemplateId { get; set; }
 
 
