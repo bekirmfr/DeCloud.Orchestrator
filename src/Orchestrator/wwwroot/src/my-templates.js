@@ -155,17 +155,32 @@ function renderMyTemplates() {
         return;
     }
 
-    container.innerHTML = myTemplates.map(t => createMyTemplateCard(t)).join('');
+    // A live template and its in-progress revision render as ONE card. Group each revision
+    // (parentTemplateId set) under its parent; a revision whose parent isn't in the list
+    // falls back to its own card so nothing is hidden.
+    const topLevel = myTemplates.filter(t => !t.parentTemplateId);
+    const topIds = new Set(topLevel.map(t => t.id));
+    const revisionByParent = new Map();
+    const orphanRevisions = [];
+    for (const t of myTemplates) {
+        if (!t.parentTemplateId) continue;
+        if (topIds.has(t.parentTemplateId)) revisionByParent.set(t.parentTemplateId, t);
+        else orphanRevisions.push(t);
+    }
+
+    container.innerHTML = [
+        ...topLevel.map(t => createMyTemplateCard(t, revisionByParent.get(t.id) || null)),
+        ...orphanRevisions.map(t => createMyTemplateCard(t, null)),
+    ].join('');
 }
 
-function createMyTemplateCard(template) {
+function createMyTemplateCard(template, revision = null) {
     const status = STATUS_TO_STR[template.status] ?? 'Draft';
     const badge = STATUS_BADGE[status] ?? STATUS_BADGE['Draft'];
     const statusClass = badge.cls;
     const statusLabel = badge.label;
     const statusStyle = badge.style || '';
     const isRevision = !!template.parentTemplateId;
-    const hasOpenRevision = !isRevision && myTemplates.some(x => x.parentTemplateId === template.id);
 
     const visibility = VISIBILITY_TO_STR[template.visibility] ?? 'Public';
     const visibilityIcon = visibility === 'Private' ? '🔒' : '🌐';
@@ -189,22 +204,41 @@ function createMyTemplateCard(template) {
                 <h3 class="my-template-name">${escapeHtml(template.name)}</h3>
                 <p class="my-template-desc">${escapeHtml(template.description)}</p>
                 ${status === 'Rejected' && template.rejectionReason
-                ? `<p class="my-template-reject-reason" style="color:var(--danger,#ef4444); font-size:12px; margin-top:4px;">Rejected: ${escapeHtml(template.rejectionReason)}</p>`
-                : ''}
-                    ${isRevision
-                ? `<p style="color:var(--text-muted,#6b7280); font-size:12px; margin-top:4px;">Draft revision of your published “${escapeHtml(template.slug)}”. Approval replaces the live version in place.</p>`
-                : ''}
-                    ${hasOpenRevision
-                ? `<p style="color:var(--warning,#f59e0b); font-size:12px; margin-top:4px;">A new version is in progress.</p>`
-                : ''}
+            ? `<p class="my-template-reject-reason" style="color:var(--danger,#ef4444); font-size:12px; margin-top:4px;">Rejected: ${escapeHtml(template.rejectionReason)}</p>`
+            : ''}
+                ${isRevision
+            ? `<p style="color:var(--text-muted,#6b7280); font-size:12px; margin-top:4px;">Draft revision of your published “${escapeHtml(template.slug)}”. Approval replaces the live version in place.</p>`
+            : ''}
                 <div class="my-template-meta">
                     <span>${priceText}</span>
                     <span>${stars} (${reviewCount})</span>
                     <span>${template.deploymentCount || 0} deploys</span>
                 </div>
+                ${revision ? renderRevisionSection(revision) : ''}
             </div>
             <div class="my-template-actions">
                 ${renderCardActions(template)}
+            </div>
+        </div>
+    `;
+}
+
+// Embedded "new version in progress" panel shown inside the live template's card when an
+// open revision exists, so the published template and its draft revision share one card.
+// Carries the revision's own status badge and lifecycle actions (Publish / Edit / Discard).
+function renderRevisionSection(revision) {
+    const status = STATUS_TO_STR[revision.status] ?? 'Draft';
+    const badge = STATUS_BADGE[status] ?? STATUS_BADGE['Draft'];
+    return `
+        <div class="my-template-revision" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color,#222);">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--accent,#7c3aed);">New version in progress</span>
+                <span class="template-status-badge ${badge.cls}" style="${badge.style || ''}">${badge.label}</span>
+            </div>
+            <div style="font-weight:600; font-size:14px; margin-bottom:2px;">${escapeHtml(revision.name)}</div>
+            <p style="color:var(--text-muted,#6b7280); font-size:12px; margin:0 0 10px;">Approval replaces the live version in place.</p>
+            <div class="my-template-actions" style="margin-top:0;">
+                ${renderCardActions(revision)}
             </div>
         </div>
     `;
@@ -1390,7 +1424,8 @@ function templateDetailsModalHtml(t) {
         tdRow('Updated', fmtDate(t.updatedAt)),
     ].join('');
 
-    const canRevise = status === 'Published' && !t.parentTemplateId;
+    const hasOpenRevision = myTemplates.some(x => x.parentTemplateId === t.id);
+    const canRevise = status === 'Published' && !t.parentTemplateId && !hasOpenRevision;
 
     return `
         <div class="modal modal-large">
@@ -1416,7 +1451,11 @@ function templateDetailsModalHtml(t) {
                 ${tdSection('Stats', stats)}
             </div>
             <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end; padding:16px;">
-                ${canRevise ? `<button class="btn btn-primary" onclick="window.myTemplates.reviseFromDetails('${t.id}')">New version</button>` : ''}
+               ${canRevise
+                    ? `<button class="btn btn-primary" onclick="window.myTemplates.reviseFromDetails('${t.id}')">New version</button>`
+                    : (status === 'Published' && hasOpenRevision
+                        ? `<span style="color:var(--warning,#f59e0b); font-size:13px; align-self:center; margin-right:auto;">A new version is already in progress.</span>`
+                        : '')}
                 <button class="btn btn-secondary" onclick="window.myTemplates.closeTemplateDetails()">Close</button>
             </div>
         </div>`;
