@@ -3145,7 +3145,12 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                     {
                         Strategy = CheckStrategy.HttpGet,
                         HttpPath = "/health",
-                        TimeoutSeconds = 1200
+                        // ~6-8 GB of resumable downloads; on Basic-tier /
+                        // residential links (~1 MB/s) honest readiness can
+                        // legitimately take >1h. TimedOut self-heals to Ready
+                        // (VmReadinessMonitor RecheckInterval), so this only
+                        // tunes when the warning appears, not correctness.
+                        TimeoutSeconds = 7200
                     }
                 }
             },
