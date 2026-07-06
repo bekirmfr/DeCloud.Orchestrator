@@ -300,8 +300,8 @@ public class VmsController : ControllerBase
     /// resource-capacity filters (FILTER 6/7) do not mask constraint results.
     /// This endpoint answers "how many nodes satisfy my placement requirements"
     /// — not "how many nodes can host my exact VM right now". The quality tier
-    /// is honoured because it affects FILTER 2 (tier eligibility), which is
-    /// relevant to any deployment.
+    /// is honoured via the derived node.tier constraint evaluated in FILTER 10,
+    /// which is relevant to any deployment.
     ///
     /// The constraint builder debounces calls to 500 ms to limit scheduler load.
     /// Note: each call runs the full filter chain across all online nodes —

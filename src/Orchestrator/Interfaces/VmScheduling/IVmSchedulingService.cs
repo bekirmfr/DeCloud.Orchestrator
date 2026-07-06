@@ -6,9 +6,12 @@ namespace Orchestrator.Interfaces.VmScheduling;
 /// <summary>
 /// Scheduling interface for VM node selection and eligibility checking.
 ///
-/// All scheduling constraints (architecture, locality, reputation, GPU,
-/// jurisdiction, country, zone) are expressed via <c>spec.Constraints</c>
-/// and evaluated through FILTER 10 in <c>ApplyHardFiltersAsync</c>.
+/// All scheduling requirements are evaluated through FILTER 10 in
+/// <c>ApplyHardFiltersAsync</c>: tenant-authored constraints from
+/// <c>spec.Constraints</c> (architecture, locality, reputation,
+/// jurisdiction, country, zone, ...) plus constraints derived from
+/// first-class spec fields (<c>QualityTier</c>, <c>GpuMode</c>,
+/// <c>ReplicationFactor</c>) by <c>DerivedConstraints.Derive</c>.
 /// No legacy per-parameter overrides exist — the constraint vocabulary
 /// is the single mechanism.
 /// </summary>
@@ -16,7 +19,9 @@ public interface IVmSchedulingService
 {
     /// <summary>
     /// Select the best eligible node for a VM.
-    /// All scheduling requirements must be in <c>spec.Constraints</c>.
+    /// Tenant-expressible requirements go in <c>spec.Constraints</c>;
+    /// field-carried requirements (tier, GPU mode, replication) are
+    /// derived automatically at evaluation time.
     /// See <c>docs/SCHEDULING.md</c> §2 for entry paths, including the
     /// template marketplace merge policy (Path D).
     /// </summary>

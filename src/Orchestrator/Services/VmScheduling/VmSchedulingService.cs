@@ -266,10 +266,12 @@ public class VmSchedulingService : IVmSchedulingService
     // ============================================================================
 
     /// <summary>
-    /// Apply hard filters - return rejection reason if any filter fails
+    /// Apply hard filters — return rejection reason if any filter fails.
     ///
-    /// SECURITY: Architecture validation prevents incompatible VM deployment
-    /// LOCALITY: Region/zone filtering ensures geographic constraints are met
+    /// Node-situational and capacity checks are hardcoded (FILTERs 1–9);
+    /// every selection predicate — tenant-authored or derived from
+    /// first-class spec fields — is evaluated in FILTER 10 through the
+    /// one IConstraintEvaluator.
     /// </summary>
     private async Task<string?> ApplyHardFiltersAsync(
             Node node,
@@ -373,6 +375,10 @@ public class VmSchedulingService : IVmSchedulingService
             return $"Node has unmet {unmetObligation.Role} obligation " +
                    $"({unmetObligation.Status}) — node infrastructure not ready";
 
+        // FILTER 8.1 (BlockStore for replicated VMs) has been removed. The
+        // requirement is derived from spec.ReplicationFactor
+        // (node.hasActiveBlockStore eq true) and evaluated in FILTER 10.
+
         // =====================================================
         // FILTER 9: KVM Required for User VMs
         //
@@ -386,11 +392,14 @@ public class VmSchedulingService : IVmSchedulingService
                    "QEMU TCG software emulation is not suitable for any VM workload.";
 
         // =====================================================
-        // FILTER 10: Tenant-supplied constraints (Phase B)
+        // FILTER 10: Unified constraint evaluation
         //
-        // Evaluated through the unified IConstraintEvaluator. Each
-        // constraint runs in order; first failure short-circuits with a
-        // structured rejection naming the failing constraint's index.
+        // Derived constraints (from first-class spec fields) and
+        // tenant-authored constraints, all through the one
+        // IConstraintEvaluator. Each runs in order; first failure
+        // short-circuits with a structured rejection — origin-labeled
+        // for derived ("Derived from GpuMode=Proxied: ..."),
+        // index-labeled for authored ("Constraint #i failed: ...").
         //
         // Constraints are validated at VM creation time
         // (VmService.CreateVmAsync), so malformed entries should never

@@ -116,7 +116,7 @@ VmSchedulerService (BackgroundService, polls every ~10 s)
   → detects VM in Error state with offline host and no in-flight command
   → MigrateVmAsync
       → add ephemeral architecture-stickiness constraint to spec copy:
-          { target: node.cpu.architecture, operator: eq, value: sourceNode.Architecture }
+          { target: node.architecture, operator: eq, value: sourceNode.Architecture }
         (NOT persisted on the VM — migration-specific, restored in finally)
       → _schedulingService.SelectBestNodeForVmAsync(specCopy)
           → same filter chain as Path A
@@ -298,13 +298,13 @@ ApplyHardFiltersAsync(node, spec, tierConfig, config, ct)
   ├── FILTER 3: (reserved — historically architecture)
   │     Architecture matching migrated to FILTER 10 as a constraint.
   │     Express via spec.Constraints[i] =
-  │       { target: "node.cpu.architecture", operator: "eq", value: "x86_64" }.
+  │       { target: "node.architecture", operator: "eq", value: "x86_64" }.
   │     Filter number preserved for commit-history continuity.
   │
   ├── FILTER 4: (reserved — historically locality and reputation)
   │     Locality and reputation thresholds migrated to FILTER 10 as
   │     constraints. Express via node.locality.* targets and
-  │     node.reputation.uptimePercent / node.reputation.score.
+  │     node.uptimePercent / node.reputationScore.
   │     Filter number preserved for commit-history continuity.
   │
   ├── FILTER 5: GPU VRAM headroom (capacity)
@@ -450,7 +450,7 @@ neutral, neither rewarded nor penalised before they have a track record.
 
 Single source of truth: `NodeReputation.Compute(node)` in
 `src/Orchestrator/Services/VmScheduling/NodeReputation.cs`. The scoring
-path, the `node.reputation.score` constraint target, and any future caller
+path, the `node.reputationScore` constraint target, and any future caller
 all route through this method.
 
 ### Locality score
@@ -566,21 +566,21 @@ new Constraint { Target = "node.locality.cuntry", Operator = "in", ... }
 | `ConstraintTargets.Node.Locality.Zone` | `node.locality.zone` | `Node.Locality.Zone` | string |
 | `ConstraintTargets.Node.Locality.JurisdictionTags` | `node.locality.jurisdictionTags` | `Node.Locality.JurisdictionTags` | string[] |
 | `ConstraintTargets.Node.Locality.LocationMismatch` | `node.locality.locationMismatch` | `Node.Locality.LocationMismatch` | bool |
-| `ConstraintTargets.Node.Cpu.Cores` | `node.cpu.cores` | `Node.HardwareInventory.Cpu.PhysicalCores` | numeric |
-| `ConstraintTargets.Node.Cpu.Architecture` | `node.cpu.architecture` | `Node.Architecture` | string |
-| `ConstraintTargets.Node.Gpu.Present` | `node.gpu.present` | `Node.HardwareInventory.SupportsGpu` | bool |
-| `ConstraintTargets.Node.Gpu.Model` | `node.gpu.model` | `Node.HardwareInventory.Gpus[0].Model` | string |
-| `ConstraintTargets.Node.Gpu.VramBytes` | `node.gpu.vramBytes` | `Node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes)` | numeric |
+| `ConstraintTargets.Node.Architecture` | `node.architecture` | `Node.Architecture` | string |
+| `ConstraintTargets.Node.KvmAvailable` | `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
+| `ConstraintTargets.Node.GpuModel` | `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` | string |
 | `ConstraintTargets.Node.Gpu.ProxiedAvailable` | `node.gpu.proxiedAvailable` | `SupportsGpu && Gpus.Count > 0 && HasProxiedCapableGpu` | bool |
 | `ConstraintTargets.Node.Gpu.PassthroughAvailable` | `node.gpu.passthroughAvailable` | `SupportsGpu && Gpus.Count > 0 && HasPassthroughCapableGpu` | bool |
-| `ConstraintTargets.Node.Storage.Nvme` | `node.storage.nvme` | `Node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe)` | bool |
-| `ConstraintTargets.Node.Network.HighBandwidth` | `node.network.highBandwidth` | `Node.HardwareInventory.Network.BandwidthBitsPerSecond > 1_000_000_000` | bool |
-| `ConstraintTargets.Node.Network.HasPublicIp` | `node.network.hasPublicIp` | `Node.HardwareInventory.Network.NatType == NatType.None` | bool |
-| `ConstraintTargets.Node.Tier` | `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] |
-| `ConstraintTargets.Node.Performance.BenchmarkScore` | `node.performance.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
-| `ConstraintTargets.Node.Reputation.UptimePercent` | `node.reputation.uptimePercent` | `Node.UptimePercentage` | numeric |
-| `ConstraintTargets.Node.Reputation.Score` | `node.reputation.score` | `NodeReputation.Compute(node)` | numeric |
 | `ConstraintTargets.Node.HasActiveBlockStore` | `node.hasActiveBlockStore` | `Node.BlockStoreInfo?.Status == BlockStoreStatus.Active` | bool |
+| `ConstraintTargets.Node.Hardware.HasGpu` | `node.hardware.hasGpu` | `Node.HardwareInventory.SupportsGpu` | bool |
+| `ConstraintTargets.Node.Hardware.HasNvme` | `node.hardware.hasNvme` | `Node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe)` | bool |
+| `ConstraintTargets.Node.Hardware.HighBandwidth` | `node.hardware.highBandwidth` | `Node.HardwareInventory.Network.BandwidthBitsPerSecond > 1_000_000_000` | bool |
+| `ConstraintTargets.Node.Hardware.CpuCores` | `node.hardware.cpuCores` | `Node.HardwareInventory.Cpu.PhysicalCores` | numeric |
+| `ConstraintTargets.Node.Hardware.GpuVramBytes` | `node.hardware.gpuVramBytes` | `Node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes)` | numeric |
+| `ConstraintTargets.Node.Tier` | `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] |
+| `ConstraintTargets.Node.BenchmarkScore` | `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
+| `ConstraintTargets.Node.UptimePercent` | `node.uptimePercent` | `Node.UptimePercentage` | numeric |
+| `ConstraintTargets.Node.ReputationScore` | `node.reputationScore` | `NodeReputation.Compute(node)` | numeric |
 | `ConstraintTargets.Node.Tags` | `node.tags` | `Node.Tags` | string[] |
 | *(system-generated)* | `node.id` | `Node.Id` | string *(internal)* |
 
@@ -594,27 +594,25 @@ exposed in the constraint builder UI or the preset library. Adding it to the
 builder would require the user to know node IDs at design time, which is not
 possible for stacks that mix deployed and not-yet-deployed blocks.
 
-Use `ConstraintTargets.Node.Reputation.Score` when the composite
-reputation measure matters; use
-`ConstraintTargets.Node.Reputation.UptimePercent` when only uptime
-matters.
+Use `ConstraintTargets.Node.ReputationScore` when the composite
+reputation measure matters; use `ConstraintTargets.Node.UptimePercent`
+when only uptime matters.
 
-Targets are grouped by node subsystem (`cpu`, `gpu`, `storage`,
-`network`, `performance`, `reputation`). `node.tier` and
-`node.hasActiveBlockStore` are deliberately top-level: `node.tier` is
-load-bearing (every VM derives it — see below) and referenced by the
-unified-evaluation design doc under that name; one platform-readiness
-member does not earn a group. Most targets reflect static hardware spec
-or slowly-changing state, but not all: locality changes on
-re-registration, and `node.gpu.proxiedAvailable` is designed to track
-GPU-proxy daemon liveness once the node-side health fix lands. What the
-vocabulary never contains is a live *counter* (free memory, remaining
-VRAM) — see §11.
+`node.tier` is **load-bearing**: every VM derives `node.tier contains
+<spec.QualityTier>` (see "Derived constraints" below) — it replaced the
+former FILTER 2 and is the most-evaluated target in the system. Most
+targets reflect static hardware spec or slowly-changing state, but not
+all: locality changes on re-registration, and `node.gpu.proxiedAvailable`
+is designed to track GPU-proxy daemon liveness once the node-side health
+fix lands. What the vocabulary never contains is a live *counter* (free
+memory, remaining VRAM) — see §11.
 
-`node.kvmAvailable` was **removed** from the vocabulary: KVM is enforced
-unconditionally by FILTER 9 for every user VM, so a constraint on it was
-an inert hedge nothing produced. If FILTER 9's low-tier/non-KVM TO-DO
-ever ships, the target returns deliberately, with real semantics.
+`node.kvmAvailable` is redundant with the unconditional KVM hard filter
+(FILTER 9) — expressing it as a constraint re-asserts a platform
+guarantee. It remains registered but inert; its removal is staged in the
+vocabulary restructure (see `VOCABULARY_RESTRUCTURE.md`), together with
+a subsystem regrouping of the `node.hardware.*` / flat
+performance-and-reputation names.
 
 Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 (2) a `TargetDescriptor` entry in `ConstraintEvaluator.BuildTargetRegistry`,
@@ -639,7 +637,7 @@ Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 | `ConstraintOperators.Lt` | `lt` | Strictly less than | numeric |
 | `ConstraintOperators.StartsWith` | `starts_with` | Target string starts with the configured prefix, case-insensitive. Primary use: hierarchical region codes — `node.locality.region starts_with "na"` matches `na-central`, `na-east`, `na-west`. | string |
 | `ConstraintOperators.EndsWith` | `ends_with` | Target string ends with the configured suffix, case-insensitive. Example: `node.locality.region ends_with "central"` matches `na-central`, `eu-central`, `ap-central`. | string |
-| `ConstraintOperators.Includes` | `includes` | Target string contains the configured substring, case-insensitive. Named `includes` to avoid collision with `contains` (which checks list membership). Example: `node.gpu.model includes "3090"` matches `RTX 3090`, `RTX 3090 Ti`. | string |
+| `ConstraintOperators.Includes` | `includes` | Target string contains the configured substring, case-insensitive. Named `includes` to avoid collision with `contains` (which checks list membership). Example: `node.gpuModel includes "3090"` matches `RTX 3090`, `RTX 3090 Ti`. | string |
 | `ConstraintOperators.AdjacentTo` | `adjacent_to` | Node's region is adjacent to configured region per `region-adjacency.json` | string (region) |
 | `ConstraintOperators.SameContinentAs` | `same_continent_as` | Node's region shares a continent with configured region | string (region) |
 | `ConstraintOperators.HasJurisdictionTag` | `has_jurisdiction_tag` | Node's country carries the configured supranational tag | string (country) |
@@ -662,7 +660,7 @@ offending entry: `"Constraint #2: Unknown target 'node.foobar'"`.
 
 First-class spec fields that carry placement requirements are reduced to
 ephemeral constraints by `DerivedConstraints.Derive(spec)`
-(`src/Orchestrator/Services/VmScheduling/DerivedConstraints.cs`) and fed
+(`src/Orchestrator/Services/VmScheduling/DerivedConstraint.cs`) and fed
 through the same evaluator as authored constraints:
 
 | Spec field condition | Derived constraint | Origin label |
@@ -675,7 +673,7 @@ through the same evaluator as authored constraints:
 Derived constraints are **never persisted** — the spec field stays
 authoritative for execution (billing, CPU quota, GPU assignment,
 lazysync); derivation is only how the evaluator sees the requirement.
-This generalizes the ephemeral `node.cpu.architecture` constraint that
+This generalizes the ephemeral `node.architecture` constraint that
 `MigrateVmAsync` has always used. Rejection and compliance messages name
 the origin field (`Derived from GpuMode=Proxied: ...`) — never an index
 into a constraint list the tenant never wrote.
@@ -783,8 +781,8 @@ Response:
 
 ```json
 {
-  "targets":     ["node.country", "node.cpu.architecture", ...],
-  "targetTypes": { "node.cpu.architecture": "String", "node.reputation.uptimePercent": "Numeric", "node.gpu.present": "Boolean", ... },
+  "targets":     ["node.architecture", "node.country", ...],
+  "targetTypes": { "node.architecture": "String", "node.uptimePercent": "Numeric", "node.hardware.hasGpu": "Boolean", ... },
   "operators":   ["adjacent_to", "contains", ...]
 }
 ```
@@ -899,7 +897,7 @@ reasons among ineligible ones:
   "rejected": 35,
   "rejectionReasons": [
     { "count": 28, "reason": "node.locality.country not in [DE, FR]" },
-    { "count":  7, "reason": "node.storage.nvme = false" }
+    { "count":  7, "reason": "node.hardware.hasNvme = false" }
   ]
 }
 ```
@@ -1073,7 +1071,7 @@ var constraints = new List<Constraint>
     },
     // C2 — operator reliability floor
     new() {
-        Target   = ConstraintTargets.Node.Reputation.UptimePercent,
+        Target   = ConstraintTargets.Node.UptimePercent,
         Operator = ConstraintOperators.Gte,
         Value    = 99.0
     },
@@ -1107,7 +1105,7 @@ in `POST /api/vms` is:
     "constraints": [
       { "target": "node.locality.jurisdictionTags", "operator": "contains",  "value": "EU" },
       { "target": "node.locality.country",          "operator": "not_in",    "value": ["RU", "BY", "CN"] },
-      { "target": "node.reputation.uptimePercent",  "operator": "gte",       "value": 99.0 },
+      { "target": "node.uptimePercent",             "operator": "gte",       "value": 99.0 },
       { "target": "node.locality.locationMismatch", "operator": "eq",        "value": false },
       { "target": "node.locality.region",           "operator": "in",        "value": ["eu-central", "eu-west"] }
     ]
@@ -1131,7 +1129,7 @@ in `POST /api/vms` is:
      `ReplicationFactor` unset derive nothing further.)
    - C0: `jurisdictionTags contains EU` — drops non-EU nodes.
    - C1: `country not_in [RU, BY, CN]` — drops excluded countries.
-   - C2: `reputation.uptimePercent gte 99.0` — drops unreliable operators.
+   - C2: `uptimePercent gte 99.0` — drops unreliable operators.
    - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes.
    - C4: `region in [eu-central, eu-west]` — restricts to preferred regions.
 
@@ -1146,13 +1144,13 @@ constraint using the typed constant:
 
 ```csharp
 new() {
-    Target   = ConstraintTargets.Node.Cpu.Architecture,
+    Target   = ConstraintTargets.Node.Architecture,
     Operator = ConstraintOperators.Eq,
     Value    = "x86_64"
 }
 ```
 
-Wire form: `{ "target": "node.cpu.architecture", "operator": "eq", "value": "x86_64" }`.
+Wire form: `{ "target": "node.architecture", "operator": "eq", "value": "x86_64" }`.
 
 Multi-arch templates do not need this — architecture is resolved
 post-scheduling from the selected node's `HardwareInventory.Cpu.Architecture`,
@@ -1275,7 +1273,7 @@ deploy.
 |---|---|
 | `src/Orchestrator/Services/VmScheduling/VmSchedulingService.cs` | Filter chain, scoring, public scheduling API |
 | `src/Orchestrator/Services/VmScheduling/ConstraintEvaluator.cs` | Constraint evaluation, target and operator registries |
-| `src/Orchestrator/Services/VmScheduling/DerivedConstraints.cs` | Spec-field → derived-constraint reduction (unified evaluation) |
+| `src/Orchestrator/Services/VmScheduling/DerivedConstraint.cs` | Spec-field → derived-constraint reduction (unified evaluation) |
 | `src/Orchestrator/Models/ConstraintVocabulary.cs` | `ConstraintTargets` and `ConstraintOperators` typed constants |
 | `src/Orchestrator/Models/Constraint.cs` | `Constraint` and `ConstraintEvaluation` models |
 | `src/Orchestrator/Services/VmScheduling/NodeReputation.cs` | Reputation formula (single source of truth) |

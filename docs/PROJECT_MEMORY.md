@@ -1,7 +1,7 @@
 # DeCloud Project Memory
 
 **Last Updated:** 2026-07-06
-**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05). Base-image URL durability fix landed (2026-06-06). CentralIngress redesign documented (2026-06-11) — Step 0 surgical route updates pending application; Steps 1–3 designed but deferred. Unified constraint evaluation applied (2026-07-06): FILTER 2/5-capability/8.1 replaced by spec-derived constraints through the one evaluator, in scheduling and compliance; constraint vocabulary regrouped by subsystem. Node-side GPU daemon-liveness fix (incident root cause) still pending — ordered first and alone per design §7.
+**Status:** Phase 1 (Marketplace Foundation) complete — GPU Proxy production-ready — Phase 2 (User Engagement) in progress — Live Migration Phase J complete (blockdev-snapshot-sync, 2026-06-05). Base-image URL durability fix landed (2026-06-06). CentralIngress redesign documented (2026-06-11) — Step 0 surgical route updates pending application; Steps 1–3 designed but deferred. Unified constraint evaluation applied (2026-07-06): FILTER 2/5-capability/8.1 replaced by spec-derived constraints through the one evaluator, in scheduling and compliance. Constraint vocabulary restructure (subsystem regrouping, kvmAvailable removal, preset + persisted-data migration) staged but NOT yet applied — see VOCABULARY_RESTRUCTURE.md. Node-side GPU daemon-liveness fix (incident root cause) still pending — ordered first and alone per design §7.
 
 ---
 
@@ -165,7 +165,6 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Bounded-freeze capture — drive-backup sync=top, fsck removed (Phase H) | ✅ |
 | blockdev-snapshot-sync — correct temporal coherence, Phase J (2026-06-05) | ✅ |
 | Unified constraint evaluation — spec-derived constraints (tier/GPU/replication), one evaluator for scheduling + compliance, tier param removed | ✅ |
-| Constraint vocabulary restructure — subsystem grouping (cpu/gpu/storage/network/performance/reputation), kvmAvailable removed, presets + persisted data migrated | ✅ |
 
 ### What Is Incomplete
 
@@ -381,7 +380,7 @@ Neither pressure exists today. Step 0 alone addresses the operational pain point
 | Application-consistent capture — guest-fsfreeze (Phase G) | 2026-06-03 |
 | Bounded-freeze capture + reconstruction hardening (Phase H) | 2026-06-03 |
 | blockdev-snapshot-sync — correct temporal coherence (Phase J) | 2026-06-05 |
-| Unified constraint evaluation + vocabulary restructure | 2026-07-06 |
+| Unified constraint evaluation (spec-derived constraints, one evaluator) | 2026-07-06 |
 
 ---
 

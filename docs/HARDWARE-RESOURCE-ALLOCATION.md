@@ -648,7 +648,7 @@ Submitted as `gpuMode` and `gpuVramBytes` in `POST /api/vms`.
 | `VmService.cs` | VM scheduling, resource reservation, `CalculateHourlyRate` |
 | `VmLifecycleManager.cs` | Hold release on state transitions |
 | `VmSchedulingService.cs` | Hard filters (FILTER 5 VRAM headroom, FILTER 7 memory, FILTER 10 unified constraints) |
-| `DerivedConstraints.cs` | Spec-field → derived-constraint reduction (tier, GPU mode, replication) |
+| `DerivedConstraint.cs` | Spec-field → derived-constraint reduction (tier, GPU mode, replication) |
 | `NodeCapacityCalculator.cs` | Tier-aware capacity with overcommit ratios |
 | `PricingConfig.cs` | Floor and default rates including `GpuVramPerGbPerHour` |
 | `Node.cs` | `ResourceSnapshot` (orchestrator), `HardwareInventory`, `HeartbeatVmInfo` |

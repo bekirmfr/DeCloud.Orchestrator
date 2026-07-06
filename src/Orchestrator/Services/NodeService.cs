@@ -2773,11 +2773,17 @@ public class NodeService : INodeService
 
     /// <summary>
     /// Walk all running tenant VMs on this node and evaluate each VM's
-    /// placement constraints against the node's new locality. Flag any
-    /// VM whose constraints are no longer satisfied.
+    /// authored constraints (spec.Constraints) AND derived constraints
+    /// (DerivedConstraints.Derive — tier, GPU mode, replication) against
+    /// the node's current state. Flag any VM whose requirements are no
+    /// longer satisfied.
     ///
-    /// Uses the same IConstraintEvaluator as FILTER 10 in the scheduling
-    /// chain — no parallel logic, one evaluator, one answer.
+    /// Uses the same IConstraintEvaluator and the same derivation as
+    /// FILTER 10 in the scheduling chain — no parallel logic, one
+    /// evaluator, one answer, including requirements the tenant never
+    /// authored. Authored constraints are evaluated first so existing
+    /// NonComplianceReason strings stay byte-identical; derived failures
+    /// are labeled by origin field.
     ///
     /// Returns the list of newly flagged VMs (for inclusion in the
     /// registration response so the operator sees them immediately).
