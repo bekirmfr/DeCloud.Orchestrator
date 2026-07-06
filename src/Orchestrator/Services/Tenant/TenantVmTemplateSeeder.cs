@@ -1803,7 +1803,7 @@ This template defaults to **Standard (50 Mbps)** bandwidth tier, more than enoug
                 {
                     new()
                     {
-                        Target   = ConstraintTargets.Node.Hardware.HasPublicIp,
+                        Target   = ConstraintTargets.Node.Network.HasPublicIp,
                         Operator = ConstraintOperators.Eq,
                         Value    = true
                     }
@@ -3093,7 +3093,7 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
                 {
                     new()
                     {
-                        Target   = ConstraintTargets.Node.Hardware.HasGpu,
+                        Target   = ConstraintTargets.Node.Gpu.Present,
                         Operator = ConstraintOperators.Eq,
                         Value    = true
                     }
