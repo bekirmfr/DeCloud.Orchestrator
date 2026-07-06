@@ -401,9 +401,7 @@ public class VmSchedulerService : BackgroundService
         try
         {
             targetNode = await schedulingService.SelectBestNodeForVmAsync(
-                vm.Spec,
-                vm.Spec.QualityTier,
-                ct);
+                vm.Spec, ct);
         }
         catch (Exception ex)
         {

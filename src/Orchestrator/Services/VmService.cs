@@ -844,8 +844,7 @@ public class VmService : IVmService
             {
                 var rejectionReason = await _schedulingService.ValidateNodeForVmAsync(
                     selectedNode,
-                    vm.Spec,
-                    vm.Spec.QualityTier);
+                    vm.Spec);
 
                 if (rejectionReason != null)
                 {
@@ -866,8 +865,7 @@ public class VmService : IVmService
         {
             // Scheduling via constraint engine — all requirements are in spec.Constraints.
             selectedNode = await _schedulingService.SelectBestNodeForVmAsync(
-                vm.Spec,
-                vm.Spec.QualityTier);
+                vm.Spec);
 
             _logger.LogInformation(
                 "Scheduling VM {VmId} via constraint engine (tier: {Tier}, constraints: {Count})",

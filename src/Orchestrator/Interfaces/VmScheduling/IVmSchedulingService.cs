@@ -22,7 +22,6 @@ public interface IVmSchedulingService
     /// </summary>
     Task<Node?> SelectBestNodeForVmAsync(
         VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
         CancellationToken ct = default);
 
     /// <summary>
@@ -30,7 +29,6 @@ public interface IVmSchedulingService
     /// </summary>
     Task<List<Node>> GetAvailableNodesForVmAsync(
         VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
         CancellationToken ct = default);
 
     /// <summary>
@@ -39,7 +37,6 @@ public interface IVmSchedulingService
     /// </summary>
     Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
         CancellationToken ct = default);
 
     /// <summary>
@@ -53,6 +50,5 @@ public interface IVmSchedulingService
     Task<string?> ValidateNodeForVmAsync(
         Node node,
         VmSpec spec,
-        QualityTier tier,
         CancellationToken ct = default);
 }

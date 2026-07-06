@@ -162,6 +162,26 @@ public class ConstraintEvaluator : IConstraintEvaluator
             ConstraintTargets.Node.KvmAvailable, ConstraintValueType.Boolean,
             (n, _) => (object?)n.HardwareInventory.KvmAvailable);
 
+        // ─── GPU scheduling capability ──────────────────────────────────────
+        // Exact conjunction of the former FILTER 5 capability checks — parity
+        // is proven by DerivedConstraintsParityTests against the old bodies.
+        r[ConstraintTargets.Node.Gpu.ProxiedAvailable] = new TargetDescriptor(
+            ConstraintTargets.Node.Gpu.ProxiedAvailable, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.HardwareInventory.SupportsGpu
+                                && n.HardwareInventory.Gpus.Count > 0
+                                && n.HardwareInventory.HasProxiedCapableGpu));
+
+        r[ConstraintTargets.Node.Gpu.PassthroughAvailable] = new TargetDescriptor(
+            ConstraintTargets.Node.Gpu.PassthroughAvailable, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.HardwareInventory.SupportsGpu
+                                && n.HardwareInventory.Gpus.Count > 0
+                                && n.HardwareInventory.HasPassthroughCapableGpu));
+
+        // ─── Platform obligations ───────────────────────────────────────────
+        r[ConstraintTargets.Node.HasActiveBlockStore] = new TargetDescriptor(
+            ConstraintTargets.Node.HasActiveBlockStore, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.BlockStoreInfo?.Status == BlockStoreStatus.Active));
+
         // GpuModel returns the first GPU's model (null if no GPUs).
         // Multi-GPU nodes filter on a single representative model. If a
         // future requirement needs all-GPU matching, add GpuModels

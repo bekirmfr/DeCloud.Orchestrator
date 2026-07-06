@@ -340,7 +340,7 @@ public class VmsController : ControllerBase
         };
 
         var scored = await _schedulingService.GetScoredNodesForVmAsync(
-            previewSpec, tier, ct);
+            previewSpec, ct);
 
         var totalOnline = scored.Count;
         var eligible = scored.Count(sn => sn.RejectionReason is null);

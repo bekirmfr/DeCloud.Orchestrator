@@ -123,6 +123,42 @@ public static class ConstraintTargets
             public const string GpuVramBytes = "node.hardware.gpuVramBytes";
         }
 
+        // ── GPU scheduling capability ─────────────────────────────────────
+        // Live scheduling capability, distinct from Node.Hardware.HasGpu
+        // (static spec). These answer "can a VM with this GpuMode be placed
+        // here right now" — the same question the former FILTER 5 capability
+        // checks answered. Fed by derived constraints (DerivedConstraints.cs)
+        // and available to tenants as authored constraints like any target.
+        public static class Gpu
+        {
+            /// <summary>
+            /// True when the node can host a Proxied-mode (shared, vsock-proxied)
+            /// GPU VM: node reports GPU support, has at least one GPU, and at
+            /// least one GPU is available for proxied sharing.
+            /// Use <c>eq true</c>. Derived automatically when
+            /// <c>VmSpec.GpuMode == Proxied</c>.
+            /// </summary>
+            public const string ProxiedAvailable = "node.gpu.proxiedAvailable";
+
+            /// <summary>
+            /// True when the node can host a Passthrough-mode (dedicated VFIO)
+            /// GPU VM: node reports GPU support, has at least one GPU, and at
+            /// least one GPU is IOMMU/VFIO-capable.
+            /// Use <c>eq true</c>. Derived automatically when
+            /// <c>VmSpec.GpuMode == Passthrough</c>.
+            /// </summary>
+            public const string PassthroughAvailable = "node.gpu.passthroughAvailable";
+        }
+
+        /// <summary>
+        /// True when the node's BlockStore system VM is Active — the
+        /// prerequisite for hosting replicated VMs (the lazysync daemon needs
+        /// somewhere to push dirty overlay blocks).
+        /// Use <c>eq true</c>. Derived automatically when
+        /// <c>VmSpec.ReplicationFactor &gt; 0</c>.
+        /// </summary>
+        public const string HasActiveBlockStore = "node.hasActiveBlockStore";
+
         /// <summary>
         /// CPU architecture string, normalised to "x86_64" or "aarch64".
         /// Use <c>eq</c>. Typically only needed for single-arch templates;

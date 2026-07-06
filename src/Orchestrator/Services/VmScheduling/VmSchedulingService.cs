@@ -46,7 +46,6 @@ public class VmSchedulingService : IVmSchedulingService
     /// </summary>
     public async Task<Node?> SelectBestNodeForVmAsync(
             VmSpec spec,
-            QualityTier tier = QualityTier.Standard,
             CancellationToken ct = default)
     {
         _logger.LogInformation(
@@ -55,10 +54,10 @@ public class VmSchedulingService : IVmSchedulingService
             spec.VirtualCpuCores,
             spec.MemoryBytes / 1024 / 1024,
             spec.DiskBytes / 1024 / 1024 / 1024,
-            tier,
+            spec.QualityTier,
             spec.Constraints?.Count ?? 0);
 
-        var scoredNodes = await GetScoredNodesForVmAsync(spec, tier, ct);
+        var scoredNodes = await GetScoredNodesForVmAsync(spec, ct);
 
         var eligibleNodes = scoredNodes
             .Where(sn => sn.RejectionReason == null)
@@ -68,7 +67,7 @@ public class VmSchedulingService : IVmSchedulingService
         {
             _logger.LogWarning(
                 "No eligible nodes found for VM (tier: {Tier}, constraints: {ConstraintCount})",
-                tier, spec.Constraints?.Count ?? 0);
+                spec.QualityTier, spec.Constraints?.Count ?? 0);
             return null;
         }
 
@@ -84,7 +83,7 @@ public class VmSchedulingService : IVmSchedulingService
             bestNode.Node.Locality.Region,
             bestNode.Node.Locality.Zone,
             bestNode.TotalScore,
-            tier);
+            spec.QualityTier);
 
         return bestNode.Node;
     }
@@ -94,10 +93,9 @@ public class VmSchedulingService : IVmSchedulingService
     /// </summary>
     public async Task<List<Node>> GetAvailableNodesForVmAsync(
             VmSpec spec,
-            QualityTier tier = QualityTier.Standard,
             CancellationToken ct = default)
     {
-        var scoredNodes = await GetScoredNodesForVmAsync(spec, tier, ct);
+        var scoredNodes = await GetScoredNodesForVmAsync(spec, ct);
 
         return scoredNodes
             .Where(sn => sn.RejectionReason == null)
@@ -110,7 +108,6 @@ public class VmSchedulingService : IVmSchedulingService
     /// </summary>
     public async Task<List<ScoredNode>> GetScoredNodesForVmAsync(
         VmSpec spec,
-        QualityTier tier = QualityTier.Standard,
         CancellationToken ct = default)
     {
         var allNodes = await _dataStore.GetAllNodesAsync(NodeStatus.Online);
@@ -121,7 +118,7 @@ public class VmSchedulingService : IVmSchedulingService
 
         foreach (var node in allNodes)
         {
-            var scored = await ScoreNodeForVmAsync(node, spec, tier, ct);
+            var scored = await ScoreNodeForVmAsync(node, spec, ct);
 
             _logger.LogInformation(
                 "Node {NodeId} ({Architecture}, {Region}/{Zone}) - " +
@@ -157,7 +154,6 @@ public class VmSchedulingService : IVmSchedulingService
     private async Task<ScoredNode> ScoreNodeForVmAsync(
             Node node,
             VmSpec spec,
-            QualityTier tier,
             CancellationToken ct = default)
     {
         try
@@ -166,14 +162,14 @@ public class VmSchedulingService : IVmSchedulingService
 
             // Load configuration
             var config = await _configService.GetConfigAsync(ct);
-            var tierConfig = config.Tiers[tier];
+            var tierConfig = config.Tiers[spec.QualityTier];
 
             // =====================================================
             // STEP 1: HARD FILTERS (Must pass or node rejected)
             // =====================================================
 
             var rejectionReason = await ApplyHardFiltersAsync(
-                node, spec, tier, tierConfig, config, ct);
+                node, spec, tierConfig, config, ct);
 
             if (rejectionReason != null)
             {
@@ -187,7 +183,7 @@ public class VmSchedulingService : IVmSchedulingService
             // STEP 2: CALCULATE RESOURCE AVAILABILITY
             // =====================================================
 
-            var availability = await CalculateResourceAvailabilityAsync(node, tier, ct);
+            var availability = await CalculateResourceAvailabilityAsync(node, spec.QualityTier, ct);
             scored.Availability = availability;
 
             // Calculate compute point cost for VM
@@ -255,15 +251,14 @@ public class VmSchedulingService : IVmSchedulingService
     public async Task<string?> ValidateNodeForVmAsync(
             Node node,
             VmSpec spec,
-            QualityTier tier,
             CancellationToken ct = default)
     {
         var config = await _configService.GetConfigAsync(ct);
 
-        if (!config.Tiers.TryGetValue(tier, out var tierConfig))
-            return $"No tier configuration found for tier {tier}";
+        if (!config.Tiers.TryGetValue(spec.QualityTier, out var tierConfig))
+            return $"No tier configuration found for tier {spec.QualityTier}";
 
-        return await ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct);
+        return await ApplyHardFiltersAsync(node, spec, tierConfig, config, ct);
     }
 
     // ============================================================================
@@ -279,7 +274,6 @@ public class VmSchedulingService : IVmSchedulingService
     private async Task<string?> ApplyHardFiltersAsync(
             Node node,
             VmSpec spec,
-            QualityTier tier,
             TierConfiguration tierConfig,
             SchedulingConfig config,
             CancellationToken ct = default)
@@ -301,64 +295,44 @@ public class VmSchedulingService : IVmSchedulingService
         if (!node.IsSchedulingReady)
             return "Node not scheduling-ready (operator logged out)";
 
-        // =====================================================
-        // FILTER 2: Tier Eligibility
-        // =====================================================
-        var evaluation = node.PerformanceEvaluation;
-        if (evaluation == null)
-            return "Node has no performance evaluation";
-
-        if (!evaluation.EligibleTiers.Contains(tier))
-            return $"Node not eligible for tier {tier} " +
-                   $"(eligible: [{string.Join(", ", evaluation.EligibleTiers)}])";
+        // FILTER 2 (tier eligibility) has been removed. The requirement is
+        // derived from spec.QualityTier (node.tier contains <tier>) and
+        // evaluated in FILTER 10. The node.tier extractor returns an empty
+        // list when PerformanceEvaluation is null, so unevaluated nodes are
+        // rejected exactly as the old null-check did.
 
         // FILTER 3 (architecture) and FILTER 4 (locality, reputation) have
         // been fully removed. All such requirements are expressed in
         // spec.Constraints and evaluated in FILTER 10 below.
 
         // =====================================================
-        // FILTER 5: GPU Mode Requirement
+        // FILTER 5: GPU VRAM headroom (capacity)
+        //
+        // Capability (can this node host this GpuMode at all?) is derived
+        // from spec.GpuMode into node.gpu.* constraints and evaluated in
+        // FILTER 10. What remains here is capacity — how much proxied VRAM
+        // is left right now — which belongs with the other live capacity
+        // filters (6/7), not in the constraint vocabulary.
+        // The former duplicate HasPassthroughCapableGpu check (dead code —
+        // identical condition, unreachable message) is gone with the rest.
         // =====================================================
-        if (spec.GpuMode == GpuMode.Passthrough)
+        if (spec.GpuMode == GpuMode.Proxied && spec.GpuVramBytes is > 0)
         {
-            // Passthrough requires IOMMU-enabled node with an available GPU for VFIO
-            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
-                return "VM requires GPU passthrough but node has no GPU";
+            // Use operator ceiling when set; fall back to physical for nodes
+            // evaluated before GpuVramPercent support was deployed.
+            var totalProxiedVram = node.AllocatedResources.GpuVramBytes > 0
+                ? node.AllocatedResources.GpuVramBytes
+                : node.HardwareInventory.Gpus
+                    .Where(g => g.IsAvailableForProxiedSharing)
+                    .Sum(g => g.MemoryBytes);
+            var committedVram = node.UsedResources.GpuVramBytes
+                              + node.ReservedResources.GpuVramBytes;
+            var availableVram = totalProxiedVram - committedVram;
 
-            if (!node.HardwareInventory.HasPassthroughCapableGpu)
-                return "VM requires GPU passthrough but node has no IOMMU-capable GPU";
-
-            if (!node.HardwareInventory.HasPassthroughCapableGpu)
-                return "VM requires GPU passthrough but no GPU is available for VFIO passthrough";
-        }
-        else if (spec.GpuMode == GpuMode.Proxied)
-        {
-            if (!node.HardwareInventory.SupportsGpu || node.HardwareInventory.Gpus.Count == 0)
-                return "VM requires proxied GPU but node has no GPU";
-
-            if (!node.HardwareInventory.HasProxiedCapableGpu)
-                return "VM requires proxied GPU but no GPU is available for proxy sharing on this node";
-
-            // VRAM headroom — only enforced when the VM carries a quota requirement.
-            // Null GpuVramBytes means unlimited; skip the check to avoid spurious rejections.
-            if (spec.GpuVramBytes is > 0)
-            {
-                // Use operator ceiling when set; fall back to physical for nodes
-                // evaluated before GpuVramPercent support was deployed.
-                var totalProxiedVram = node.AllocatedResources.GpuVramBytes > 0
-                    ? node.AllocatedResources.GpuVramBytes
-                    : node.HardwareInventory.Gpus
-                        .Where(g => g.IsAvailableForProxiedSharing)
-                        .Sum(g => g.MemoryBytes);
-                var committedVram = node.UsedResources.GpuVramBytes
-                                  + node.ReservedResources.GpuVramBytes;
-                var availableVram = totalProxiedVram - committedVram;
-
-                if (availableVram < spec.GpuVramBytes.Value)
-                    return $"Insufficient VRAM: " +
-                           $"{availableVram / (1024.0 * 1024 * 1024):F1} GB available, " +
-                           $"{spec.GpuVramBytes.Value / (1024.0 * 1024 * 1024):F1} GB required";
-            }
+            if (availableVram < spec.GpuVramBytes.Value)
+                return $"Insufficient VRAM: " +
+                       $"{availableVram / (1024.0 * 1024 * 1024):F1} GB available, " +
+                       $"{spec.GpuVramBytes.Value / (1024.0 * 1024 * 1024):F1} GB required";
         }
         // GpuMode.None — no GPU filter applied
 
@@ -400,27 +374,6 @@ public class VmSchedulingService : IVmSchedulingService
                    $"({unmetObligation.Status}) — node infrastructure not ready";
 
         // =====================================================
-        // FILTER 8.1: Active Block Store required for replicated VMs
-        //
-        // When replicationFactor > 0, the node must have an Active BlockStore VM.
-        // Without it, the lazysync daemon on this node has nowhere to push dirty
-        // overlay blocks — replication cannot function.
-        //
-        // Ephemeral VMs (replicationFactor == 0) bypass this filter: they
-        // intentionally accept data loss on node failure and can run anywhere.
-        // =====================================================
-        if (spec.ReplicationFactor > 0)
-        {
-            var blockStoreStatus = node.BlockStoreInfo?.Status;
-            if (blockStoreStatus != BlockStoreStatus.Active)
-            {
-                return blockStoreStatus == null
-                    ? "VM requires replication (ReplicationFactor > 0) but node has no Block Store VM"
-                    : $"VM requires replication but node Block Store is {blockStoreStatus} (not Active)";
-            }
-        }
-
-        // =====================================================
         // FILTER 9: KVM Required for User VMs
         //
         // Nodes without KVM run QEMU TCG (software emulation) — 10-50x slower
@@ -447,6 +400,21 @@ public class VmSchedulingService : IVmSchedulingService
         // See docs/SCHEDULING.md §7 for the constraint vocabulary and
         // design rationale.
         // =====================================================
+        // Derived constraints first — preserves the old precedence where the
+        // tier / GPU-capability / BlockStore hard filters ran before tenant
+        // constraints, so multi-failure nodes keep reporting the same class of
+        // reason. Derive() is called here (not hoisted to the callers) so that
+        // EVERY entry into the filter chain — including ValidateNodeForVmAsync
+        // for targeted marketplace deploys — gets derivation by construction.
+        foreach (var derived in DerivedConstraints.Derive(spec))
+        {
+            var result = _constraintEvaluator.Evaluate(derived.Constraint, node);
+            if (!result.Passed)
+            {
+                return $"Derived from {derived.Origin}: {result.RejectionReason}";
+            }
+        }
+
         if (spec.Constraints is { Count: > 0 })
         {
             for (var i = 0; i < spec.Constraints.Count; i++)

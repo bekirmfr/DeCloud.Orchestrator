@@ -2798,23 +2798,43 @@ public class NodeService : INodeService
             if (vm.Status != VmStatus.Running && vm.Status != VmStatus.Provisioning)
                 continue;
 
-            // VMs without constraints made no locality demands — always compliant
-            if (vm.Spec.Constraints is not { Count: > 0 })
-                continue;
+            // Unified evaluation: first-class spec fields (tier, GPU mode,
+            // replication) carry requirements even when the tenant authored no
+            // constraints — the old "no constraints ⇒ always compliant" early
+            // exit is gone. Derive() always returns at least the tier
+            // requirement, so every tenant VM is now evaluated.
+            var derived = DerivedConstraints.Derive(vm.Spec);
+            var authored = vm.Spec.Constraints ?? new List<Constraint>();
 
             // Already flagged — don't overwrite the original timestamp
             if (vm.NonCompliantSince != null)
                 continue;
 
-            // Evaluate each constraint against the node's current (new) locality
+            // Authored first: keeps existing NonComplianceReason strings
+            // byte-identical for every case flagged today. Derived checks are
+            // additive detections, labeled by origin field — never by an index
+            // into a list the tenant never wrote.
             string? failureReason = null;
-            for (var i = 0; i < vm.Spec.Constraints.Count; i++)
+            for (var i = 0; i < authored.Count; i++)
             {
-                var result = _constraintEvaluator.Evaluate(vm.Spec.Constraints[i], node);
+                var result = _constraintEvaluator.Evaluate(authored[i], node);
                 if (!result.Passed)
                 {
                     failureReason = $"Constraint #{i} failed: {result.RejectionReason}";
                     break;
+                }
+            }
+
+            if (failureReason == null)
+            {
+                foreach (var d in derived)
+                {
+                    var result = _constraintEvaluator.Evaluate(d.Constraint, node);
+                    if (!result.Passed)
+                    {
+                        failureReason = $"Derived from {d.Origin}: {result.RejectionReason}";
+                        break;
+                    }
                 }
             }
 
