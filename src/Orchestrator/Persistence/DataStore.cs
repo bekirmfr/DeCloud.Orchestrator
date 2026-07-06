@@ -207,15 +207,18 @@ public class DataStore
             var templateIndexes = new[]
             {
             new CreateIndexModel<VmTemplate>(
-                Builders<VmTemplate>.IndexKeys.Ascending(t => t.Slug),
-                new CreateIndexOptions<VmTemplate>
+                Builders<VmTemplate>.IndexKeys
+                    .Ascending(t => t.Slug)
+                    .Ascending(t => t.ParentTemplateId),
+                new CreateIndexOptions
                 {
                     Name = "idx_slug",
-                    Unique = true,
-                    // Slug uniqueness is a property of real listings. A revision
-                    // (ParentTemplateId present) is excluded so it can share its parent's
-                    // slug; uniqueness still holds across every non-revision template.
-                    PartialFilterExpression = Builders<VmTemplate>.Filter.Exists(t => t.ParentTemplateId, false)
+                    Unique = true
+                    // Slug uniqueness is a property of real listings. Canonical templates
+                    // index as (Slug, null) — unique among themselves. A revision indexes
+                    // as (Slug, ParentTemplateId) so it can share its parent's slug.
+                    // MongoDB partial indexes cannot express { $exists: false }, so the
+                    // discriminator lives in the key instead of a partial filter.
                 }),
             new CreateIndexModel<VmTemplate>(
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Category),
@@ -239,25 +242,35 @@ public class DataStore
                 Builders<VmTemplate>.IndexKeys.Ascending(t => t.Visibility),
                 new CreateIndexOptions { Name = "idx_visibility" })
             };
-            // Migration: a pre-existing non-partial idx_slug must be dropped so the partial
-            // definition above replaces it (otherwise a revision sharing its parent's slug
-            // hits a duplicate-key error). Idempotent — once partial, this leaves it alone.
+            // Migration: a pre-existing single-field idx_slug must be dropped so the
+            // compound (Slug, ParentTemplateId) definition above replaces it (otherwise a
+            // revision sharing its parent's slug hits a duplicate-key error). Keyed on the
+            // index key shape — idempotent: once compound, this leaves it alone. Needed
+            // because TryCreateIndexesAsync compares unique/sparse but not key patterns.
             try
             {
                 var slugIdx = TemplatesCollection!.Indexes.List().ToList()
                     .FirstOrDefault(d => d.GetValue("name", "").AsString == "idx_slug");
-                if (slugIdx != null && !slugIdx.Contains("partialFilterExpression"))
+                if (slugIdx != null && !slugIdx["key"].AsBsonDocument.Contains("ParentTemplateId"))
                 {
                     TemplatesCollection!.Indexes.DropOne("idx_slug");
-                    _logger.LogInformation("Migrated idx_slug → partial unique (revisions excluded)");
+                    _logger.LogInformation("Migrated idx_slug → compound unique (Slug, ParentTemplateId)");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "idx_slug partial-index migration check failed");
+                _logger.LogWarning(ex, "idx_slug compound-index migration check failed");
             }
 
-            TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Wait();
+            // Slug uniqueness is a security invariant (duplicate slugs enable listing
+            // spoofing) — surface failure loudly instead of letting the blanket
+            // "indexes created successfully" line mask it.
+            if (!TryCreateIndexesAsync(TemplatesCollection!, "vmTemplates", templateIndexes).Result)
+            {
+                _logger.LogError(
+                    "SECURITY: vmTemplates indexes failed — unique slug constraint is NOT " +
+                    "enforced at the database level until this is resolved");
+            }
 
             // Category indexes
             var categoryIndexes = new[]
@@ -307,7 +320,7 @@ public class DataStore
 
             TryCreateIndexesAsync(ManifestsCollection!, "blockstoreManifests", blockstoreManifestIndexes).Wait();
 
-            _logger.LogInformation("✓ MongoDB indexes created successfully");
+            _logger.LogInformation("✓ MongoDB index creation pass completed (per-collection failures, if any, are logged above as ERR)");
         }
         catch (Exception ex)
         {
