@@ -3137,6 +3137,24 @@ nginx (:8080) → Open WebUI (:3000) → Ollama (:11434)",
             {
                 new TemplatePort
                 {
+                    Port = 11434,
+                    Protocol = "http",
+                    Description = "Ollama LLM Engine",
+                    // Declared so the platform can see the component doing the
+                    // actual work — a dependency is a Service that isn't public.
+                    // The probe runs in-guest via guest-exec (localhost:11434);
+                    // IsPublic=false means no ingress exposure is added.
+                    IsPublic = false,
+                    ReadinessCheck = new ServiceCheck
+                    {
+                        Strategy = CheckStrategy.HttpGet,
+                        HttpPath = "/api/tags",
+                        // Same slow-link budget as the WebUI check.
+                        TimeoutSeconds = 7200
+                    }
+                },
+                new TemplatePort
+                {
                     Port = 8080,
                     Protocol = "http",
                     Description = "Open WebUI Chat Interface",
