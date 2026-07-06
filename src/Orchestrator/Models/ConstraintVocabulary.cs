@@ -16,6 +16,13 @@
 /// the extractor in <c>ConstraintEvaluator.BuildTargetRegistry</c>, then
 /// document in <c>docs/SCHEDULING.md</c> §7.
 /// </para>
+///
+/// <para>
+/// Targets are predicates over the node's CURRENT state. Most reflect
+/// static hardware spec, but not all: locality changes on re-registration,
+/// and <c>node.gpu.proxiedAvailable</c> is designed to track GPU-proxy
+/// daemon liveness. Do not assume "constraint target" means "immutable".
+/// </para>
 /// </summary>
 public static class ConstraintTargets
 {
@@ -67,148 +74,169 @@ public static class ConstraintTargets
         /// </summary>
         public const string Country = "node.country";
 
-        // ── Hardware capability ───────────────────────────────────────────
+        // ── CPU ───────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Extended hardware capability predicates, evaluated against static
-        /// node attributes (hardware spec, not live utilisation).
-        /// These are the building blocks for the preset library — "GPU required",
-        /// "NVMe storage", "high bandwidth" — each compiles to one of these
-        /// constraints on the wire.
-        /// </summary>
-        public static class Hardware
+        public static class Cpu
         {
-            /// <summary>
-            /// True when the node has at least one GPU.
-            /// Use <c>eq true</c>. For GPU model specificity, use
-            /// <see cref="GpuModel"/> instead.
-            /// </summary>
-            public const string HasGpu = "node.hardware.hasGpu";
-
-            /// <summary>
-            /// True when at least one storage device is of type NVMe.
-            /// Use <c>eq true</c> for latency-sensitive workloads (databases,
-            /// model checkpoints).
-            /// </summary>
-            public const string HasNvme = "node.hardware.hasNvme";
-
-            /// <summary>
-            /// True when the node's declared network bandwidth exceeds 1 Gbps.
-            /// Use <c>eq true</c> for high-throughput workloads.
-            /// </summary>
-            public const string HighBandwidth = "node.hardware.highBandwidth";
-
-            /// <summary>
-            /// True when the node has a direct public IP address (NatType.None —
-            /// no NAT, no CGNAT). Required for workloads that must be reachable
-            /// from the internet without relay tunnelling, e.g. web proxy templates
-            /// where the ingress path depends on direct connectivity.
-            /// Use <c>eq true</c>.
-            /// </summary>
-            public const string HasPublicIp = "node.network.hasPublicIp";
-
             /// <summary>
             /// Physical CPU core count on the host.
             /// Use numeric operators (<c>gte</c>, <c>gt</c>) to require a
             /// minimum host core count. Distinct from vCPU allocation —
             /// this is the physical hardware.
             /// </summary>
-            public const string CpuCores = "node.hardware.cpuCores";
+            public const string Cores = "node.cpu.cores";
 
             /// <summary>
-            /// Total GPU VRAM in bytes, summed across all GPUs on the host.
-            /// Use <c>gte</c> to require a minimum VRAM pool for large model
-            /// inference (e.g., <c>gte 25769803776</c> for ≥24 GB).
+            /// CPU architecture string, normalised to "x86_64" or "aarch64".
+            /// Use <c>eq</c>. Typically only needed for single-arch templates;
+            /// multi-arch templates resolve the correct artifact
+            /// post-scheduling. Also produced at runtime by
+            /// <c>MigrateVmAsync</c> as an ephemeral derived constraint.
             /// </summary>
-            public const string GpuVramBytes = "node.hardware.gpuVramBytes";
+            public const string Architecture = "node.cpu.architecture";
         }
 
-        // ── GPU scheduling capability ─────────────────────────────────────
-        // Live scheduling capability, distinct from Node.Hardware.HasGpu
-        // (static spec). These answer "can a VM with this GpuMode be placed
-        // here right now" — the same question the former FILTER 5 capability
-        // checks answered. Fed by derived constraints (DerivedConstraints.cs)
-        // and available to tenants as authored constraints like any target.
+        // ── GPU ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// All GPU facts in one group: presence and identity (static spec)
+        /// plus scheduling capability per <c>GpuMode</c> (live predicates,
+        /// fed by derived constraints — see <c>DerivedConstraints.cs</c>).
+        /// Deliberately NOT here: VRAM headroom. Remaining headroom is
+        /// capacity, checked by the live capacity filter at placement time
+        /// only — capacity never enters the constraint vocabulary.
+        /// </summary>
         public static class Gpu
         {
             /// <summary>
-            /// True when the node can host a Proxied-mode (shared, vsock-proxied)
-            /// GPU VM: node reports GPU support, has at least one GPU, and at
-            /// least one GPU is available for proxied sharing.
+            /// True when the node has at least one GPU.
+            /// Use <c>eq true</c>. For model specificity use
+            /// <see cref="Model"/>.
+            /// </summary>
+            public const string Present = "node.gpu.present";
+
+            /// <summary>
+            /// Model name of the first GPU (null when no GPU is present).
+            /// Multi-GPU nodes match on a single representative model.
+            /// Use <c>eq</c> or <c>in</c> for GPU-model pinning.
+            /// </summary>
+            public const string Model = "node.gpu.model";
+
+            /// <summary>
+            /// Total GPU VRAM in bytes, summed across all GPUs on the host —
+            /// static physical total, not remaining headroom.
+            /// Use <c>gte</c> to require a minimum VRAM pool
+            /// (e.g. <c>gte 25769803776</c> for ≥24 GB).
+            /// </summary>
+            public const string VramBytes = "node.gpu.vramBytes";
+
+            /// <summary>
+            /// True when the node can host a Proxied-mode (shared,
+            /// vsock-proxied) GPU VM: GPU support reported, at least one
+            /// GPU, and at least one GPU available for proxied sharing.
             /// Use <c>eq true</c>. Derived automatically when
             /// <c>VmSpec.GpuMode == Proxied</c>.
             /// </summary>
             public const string ProxiedAvailable = "node.gpu.proxiedAvailable";
 
             /// <summary>
-            /// True when the node can host a Passthrough-mode (dedicated VFIO)
-            /// GPU VM: node reports GPU support, has at least one GPU, and at
-            /// least one GPU is IOMMU/VFIO-capable.
+            /// True when the node can host a Passthrough-mode (dedicated
+            /// VFIO) GPU VM: GPU support reported, at least one GPU, and at
+            /// least one GPU IOMMU/VFIO-capable.
             /// Use <c>eq true</c>. Derived automatically when
             /// <c>VmSpec.GpuMode == Passthrough</c>.
             /// </summary>
             public const string PassthroughAvailable = "node.gpu.passthroughAvailable";
         }
 
-        /// <summary>
-        /// True when the node's BlockStore system VM is Active — the
-        /// prerequisite for hosting replicated VMs (the lazysync daemon needs
-        /// somewhere to push dirty overlay blocks).
-        /// Use <c>eq true</c>. Derived automatically when
-        /// <c>VmSpec.ReplicationFactor &gt; 0</c>.
-        /// </summary>
-        public const string HasActiveBlockStore = "node.hasActiveBlockStore";
+        // ── Storage ───────────────────────────────────────────────────────
 
-        /// <summary>
-        /// CPU architecture string, normalised to "x86_64" or "aarch64".
-        /// Use <c>eq</c>. Typically only needed for single-arch templates;
-        /// multi-arch templates resolve the correct artifact post-scheduling.
-        /// </summary>
-        public const string Architecture = "node.architecture";
+        public static class Storage
+        {
+            /// <summary>
+            /// True when at least one storage device is of type NVMe.
+            /// Use <c>eq true</c> for latency-sensitive workloads
+            /// (databases, model checkpoints).
+            /// </summary>
+            public const string Nvme = "node.storage.nvme";
+        }
 
-        /// <summary>
-        /// True when the node has KVM virtualisation available.
-        /// Use <c>eq true</c> (though KVM is also a fixed hard filter —
-        /// expressing it as a constraint is redundant but harmless).
-        /// </summary>
-        public const string KvmAvailable = "node.kvmAvailable";
+        // ── Network ───────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Model name of the first GPU (null when no GPU is present).
-        /// Use <c>eq</c> or <c>in</c> for GPU-model pinning.
-        /// </summary>
-        public const string GpuModel = "node.gpuModel";
+        public static class Network
+        {
+            /// <summary>
+            /// True when the node's declared network bandwidth exceeds
+            /// 1 Gbps. Use <c>eq true</c> for high-throughput workloads.
+            /// </summary>
+            public const string HighBandwidth = "node.network.highBandwidth";
+
+            /// <summary>
+            /// True when the node has a direct public IP address
+            /// (NatType.None — no NAT, no CGNAT). Required for workloads
+            /// that must be reachable from the internet without relay
+            /// tunnelling, e.g. web proxy templates where the ingress path
+            /// depends on direct connectivity. Use <c>eq true</c>.
+            /// </summary>
+            public const string HasPublicIp = "node.network.hasPublicIp";
+        }
 
         // ── Performance / reputation ──────────────────────────────────────
 
         /// <summary>
         /// List of quality-tier names the node is eligible for
         /// ("Burstable", "Balanced", "Standard", "Guaranteed").
-        /// Use <c>contains</c> to require a specific tier capability.
+        /// Use <c>contains</c>.
+        ///
+        /// LOAD-BEARING: this is how tier eligibility is enforced. Every VM
+        /// derives <c>node.tier contains &lt;spec.QualityTier&gt;</c>
+        /// (see <c>DerivedConstraints.cs</c>) — the former FILTER 2 was
+        /// deleted in the unified-evaluation refactor and this target is its
+        /// replacement. Deliberately kept top-level and unrenamed: it is the
+        /// most-evaluated name in the system and is referenced by the
+        /// derivation map in the design doc.
         /// </summary>
         public const string Tier = "node.tier";
 
-        /// <summary>
-        /// Raw benchmark score from <c>NodePerformanceEvaluator</c>.
-        /// Use numeric operators (<c>gte</c>, <c>gt</c>, etc.) to
-        /// require minimum compute capability beyond tier eligibility.
-        /// </summary>
-        public const string BenchmarkScore = "node.benchmarkScore";
+        public static class Performance
+        {
+            /// <summary>
+            /// Raw benchmark score from <c>NodePerformanceEvaluator</c>.
+            /// Use numeric operators (<c>gte</c>, <c>gt</c>, etc.) to
+            /// require minimum compute capability beyond tier eligibility.
+            /// </summary>
+            public const string BenchmarkScore = "node.performance.benchmarkScore";
+        }
+
+        public static class Reputation
+        {
+            /// <summary>
+            /// 30-day rolling uptime percentage (0.0–100.0).
+            /// Use numeric operators. Prefer <see cref="Score"/> when the
+            /// full composite measure is relevant.
+            /// </summary>
+            public const string UptimePercent = "node.reputation.uptimePercent";
+
+            /// <summary>
+            /// Composite reputation score (0.0–1.0) computed as
+            /// (uptimePercent × 0.7) + (successRate × 0.3).
+            /// Single source of truth: <c>NodeReputation.Compute</c>.
+            /// Use <c>gte</c> to set a quality floor.
+            /// </summary>
+            public const string Score = "node.reputation.score";
+        }
+
+        // ── Platform readiness ────────────────────────────────────────────
 
         /// <summary>
-        /// 30-day rolling uptime percentage (0.0–100.0).
-        /// Use numeric operators. Prefer <see cref="ReputationScore"/>
-        /// when the full composite measure is relevant.
+        /// True when the node's BlockStore system VM is Active — the
+        /// prerequisite for hosting replicated VMs (the lazysync daemon
+        /// needs somewhere to push dirty overlay blocks).
+        /// Use <c>eq true</c>. Derived automatically when
+        /// <c>VmSpec.ReplicationFactor &gt; 0</c>.
+        /// Top-level by design: one member does not earn a group.
         /// </summary>
-        public const string UptimePercent = "node.uptimePercent";
-
-        /// <summary>
-        /// Composite reputation score (0.0–1.0) computed as
-        /// (uptimePercent × 0.7) + (successRate × 0.3).
-        /// Single source of truth: <c>NodeReputation.Compute</c>.
-        /// Use <c>gte</c> to set a quality floor.
-        /// </summary>
-        public const string ReputationScore = "node.reputationScore";
+        public const string HasActiveBlockStore = "node.hasActiveBlockStore";
 
         // ── Operator metadata ─────────────────────────────────────────────
 

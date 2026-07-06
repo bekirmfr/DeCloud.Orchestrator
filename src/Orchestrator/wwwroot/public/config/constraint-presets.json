@@ -6,7 +6,11 @@
     "icon": "🇪🇺",
     "category": "Jurisdiction",
     "constraints": [
-      { "target": "node.locality.jurisdictionTags", "operator": "contains", "value": "EU" }
+      {
+        "target": "node.locality.jurisdictionTags",
+        "operator": "contains",
+        "value": "EU"
+      }
     ]
   },
   {
@@ -16,7 +20,11 @@
     "icon": "🎮",
     "category": "Hardware",
     "constraints": [
-      { "target": "node.hardware.hasGpu", "operator": "eq", "value": true }
+      {
+        "target": "node.gpu.present",
+        "operator": "eq",
+        "value": true
+      }
     ]
   },
   {
@@ -26,7 +34,11 @@
     "icon": "⚡",
     "category": "Hardware",
     "constraints": [
-      { "target": "node.hardware.hasNvme", "operator": "eq", "value": true }
+      {
+        "target": "node.storage.nvme",
+        "operator": "eq",
+        "value": true
+      }
     ]
   },
   {
@@ -36,7 +48,11 @@
     "icon": "🌐",
     "category": "Hardware",
     "constraints": [
-      { "target": "node.hardware.highBandwidth", "operator": "eq", "value": true }
+      {
+        "target": "node.network.highBandwidth",
+        "operator": "eq",
+        "value": true
+      }
     ]
   },
   {
@@ -47,7 +63,7 @@
     "category": "Reliability",
     "constraints": [
       {
-        "target": "node.uptimePercent",
+        "target": "node.reputation.uptimePercent",
         "operator": "gte",
         "value": 99.0
       }
@@ -61,7 +77,7 @@
     "category": "Reliability",
     "constraints": [
       {
-        "target": "node.reputationScore",
+        "target": "node.reputation.score",
         "operator": "gte",
         "value": 0.90
       }

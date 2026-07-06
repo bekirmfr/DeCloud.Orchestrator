@@ -392,7 +392,7 @@ public class VmSchedulerService : BackgroundService
         vm.Spec.Constraints = (originalConstraints ?? new List<Constraint>())
             .Append(new Constraint
             {
-                Target = ConstraintTargets.Node.Architecture,
+                Target = ConstraintTargets.Node.Cpu.Architecture,
                 Operator = ConstraintOperators.Eq,
                 Value = sourceNode?.Architecture ?? "x86_64"
             })

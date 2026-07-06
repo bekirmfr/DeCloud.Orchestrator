@@ -289,9 +289,9 @@ placing a VM. Resource-related filters:
 
 | Filter | Check |
 |---|---|
-| FILTER 2 | Tier eligibility (benchmark score) |
-| FILTER 5 | GPU mode requirements (see §7) |
+| FILTER 5 | Proxied-GPU VRAM headroom (capacity — see §7.3). GPU *capability* per `GpuMode` is a derived constraint evaluated in FILTER 10 |
 | FILTER 7 | Minimum free memory: `(AllocatedResources.MemoryBytes - UsedResources.MemoryBytes - ReservedResources.MemoryBytes) / MB ≥ MinFreeMemoryMb` |
+| FILTER 10 | Derived constraints from spec fields — tier eligibility (`node.tier contains <QualityTier>`), GPU capability (`node.gpu.proxiedAvailable` / `node.gpu.passthroughAvailable`), BlockStore for replication (`node.hasActiveBlockStore`). See `SCHEDULING.md` §3/§7 |
 
 ### 6.1 Scheduling holds (`ReservedResources`)
 
@@ -330,7 +330,9 @@ Holds are released in two ways:
 ### 7.2 Passthrough mode
 
 **Scheduling (orchestrator):**
-- FILTER 5 checks `HasIommuCapableGpu` and `HasPassthroughCapableGpu`
+- Derived constraint `node.gpu.passthroughAvailable eq true`
+  (`SupportsGpu && Gpus.Count > 0 && HasPassthroughCapableGpu`),
+  evaluated in FILTER 10
 - `VmService` STEP 7 assigns a specific PCI address from inventory
 
 **Agent:**
@@ -366,9 +368,10 @@ Guest VM                          Host
 Transport: virtio-vsock primary (bare metal), TCP fallback (WSL2).
 
 **Scheduling (orchestrator):**
-- FILTER 5 checks `HasProxiedCapableGpu` (any GPU with
-  `IsAvailableForProxiedSharing = true`)
-- VRAM headroom check when `spec.GpuVramBytes > 0`:
+- Derived constraint `node.gpu.proxiedAvailable eq true`
+  (`SupportsGpu && Gpus.Count > 0 && HasProxiedCapableGpu` — any GPU
+  with `IsAvailableForProxiedSharing = true`), evaluated in FILTER 10
+- FILTER 5 VRAM headroom check (capacity) when `spec.GpuVramBytes > 0`:
   ```
   totalProxiedVram = node.AllocatedResources.AllocatedGpuVramBytes
                      (operator ceiling; falls back to physical inventory
@@ -644,7 +647,8 @@ Submitted as `gpuMode` and `gpuVramBytes` in `POST /api/vms`.
 | `NodeMarketplaceService.cs` | Marketplace search, pricing floor enforcement |
 | `VmService.cs` | VM scheduling, resource reservation, `CalculateHourlyRate` |
 | `VmLifecycleManager.cs` | Hold release on state transitions |
-| `VmSchedulingService.cs` | Hard filters (FILTER 5 GPU + VRAM headroom, FILTER 7 memory) |
+| `VmSchedulingService.cs` | Hard filters (FILTER 5 VRAM headroom, FILTER 7 memory, FILTER 10 unified constraints) |
+| `DerivedConstraints.cs` | Spec-field → derived-constraint reduction (tier, GPU mode, replication) |
 | `NodeCapacityCalculator.cs` | Tier-aware capacity with overcommit ratios |
 | `PricingConfig.cs` | Floor and default rates including `GpuVramPerGbPerHour` |
 | `Node.cs` | `ResourceSnapshot` (orchestrator), `HardwareInventory`, `HeartbeatVmInfo` |

@@ -48,13 +48,20 @@ capability, or any other selection predicate — as a flat AND list of
 `{ target, operator, value }` constraints in `spec.Constraints`. No
 method-level override parameters exist on the scheduler interface.
 
-A small set of **platform-imposed filters** apply regardless: node status,
-quality-tier eligibility, GPU capability matching for `spec.GpuMode`, a
-load and free-memory safety floor, system obligations, the BlockStore
-requirement for replicated VMs, and KVM availability. These are detailed
-in §3 and exist for platform safety and capability coherence — tenants
-cannot disable them, and they cannot be expressed as constraints because
-they encode platform invariants, not tenant preferences.
+A small set of **platform-imposed filters** apply regardless: node
+status, scheduling readiness, a load and free-memory safety floor, GPU
+VRAM headroom for proxied GPU VMs, system obligations, and KVM
+availability. These are detailed in §3 — tenants cannot disable them.
+They are node-situational and capacity checks, not selection predicates,
+which is why they stay hardcoded.
+
+Requirements carried by **first-class spec fields** — `QualityTier`,
+`GpuMode`, `ReplicationFactor` — are *derived* into ephemeral constraints
+at evaluation time (`DerivedConstraints.Derive(spec)`) and evaluated in
+FILTER 10 through the same `IConstraintEvaluator` as tenant-authored
+constraints. One evaluator sees every placement requirement; the fields
+stay authoritative for execution (billing, CPU quota, device assignment,
+lazysync). Derived constraints are never persisted. See §7.
 
 Configuration lives in MongoDB (`scheduling_configs` collection,
 versioned with audit history) and is served by `ISchedulingConfigService`
@@ -77,7 +84,8 @@ POST /api/vms  (no targetNodeId)
       STEP 2: name pipeline, quota check, password gen
       STEP 3: persist VM (status: Pending)
       STEP 4: TryScheduleVmAsync
-                → _schedulingService.SelectBestNodeForVmAsync(spec, tier)
+                → _schedulingService.SelectBestNodeForVmAsync(spec)
+                    (tier read from spec.QualityTier — the single source)
                     → GetScoredNodesForVmAsync
                     → for each Online node: ScoreNodeForVmAsync
                         → ApplyHardFiltersAsync   ← single filter chain
@@ -93,7 +101,7 @@ POST /api/vms  (targetNodeId set)
       (same constraint validation and spec steps as Path A)
       STEP 4: TryScheduleVmAsync
                 → dataStore.GetNodeAsync(targetNodeId)
-                → _schedulingService.ValidateNodeForVmAsync(node, spec, tier)
+                → _schedulingService.ValidateNodeForVmAsync(node, spec)
                     → ApplyHardFiltersAsync   ← same filter chain, single node
                     → null = eligible, string = rejection reason
 ```
@@ -108,9 +116,9 @@ VmSchedulerService (BackgroundService, polls every ~10 s)
   → detects VM in Error state with offline host and no in-flight command
   → MigrateVmAsync
       → add ephemeral architecture-stickiness constraint to spec copy:
-          { target: node.architecture, operator: eq, value: sourceNode.Architecture }
+          { target: node.cpu.architecture, operator: eq, value: sourceNode.Architecture }
         (NOT persisted on the VM — migration-specific, restored in finally)
-      → _schedulingService.SelectBestNodeForVmAsync(specCopy, tier)
+      → _schedulingService.SelectBestNodeForVmAsync(specCopy)
           → same filter chain as Path A
 ```
 
@@ -267,33 +275,46 @@ the first failure. The rejection reason is a human-readable string returned
 to the caller (and surfaced in `ScoredNode.RejectionReason`).
 
 ```
-ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
-  │
+ApplyHardFiltersAsync(node, spec, tierConfig, config, ct)
+  │                         (tier read from spec.QualityTier)
   ├── FILTER 1: Node status
   │     node.Status == Online?
   │     Source: node heartbeat
   │
-  ├── FILTER 2: Tier eligibility
-  │     node.PerformanceEvaluation.EligibleTiers contains tier?
-  │     Source: NodePerformanceEvaluator at registration
+  ├── FILTER 1.5: Scheduling readiness
+  │     node.IsSchedulingReady?
+  │     Operator-controlled pause — a logged-out node is online and
+  │     heartbeating but has opted out of new VM placement.
+  │     Source: operator login/logout (see NODE-LIFECYCLE.md)
+  │
+  ├── FILTER 2: (removed — tier eligibility is a derived constraint)
+  │     Every VM derives { target: "node.tier", operator: "contains",
+  │       value: spec.QualityTier } — evaluated in FILTER 10.
+  │     The node.tier extractor returns an empty list when
+  │     PerformanceEvaluation is null, so unevaluated nodes are
+  │     rejected exactly as the old null-check did.
+  │     Filter number preserved for commit-history continuity.
   │
   ├── FILTER 3: (reserved — historically architecture)
   │     Architecture matching migrated to FILTER 10 as a constraint.
   │     Express via spec.Constraints[i] =
-  │       { target: "node.architecture", operator: "eq", value: "x86_64" }.
+  │       { target: "node.cpu.architecture", operator: "eq", value: "x86_64" }.
   │     Filter number preserved for commit-history continuity.
   │
   ├── FILTER 4: (reserved — historically locality and reputation)
   │     Locality and reputation thresholds migrated to FILTER 10 as
   │     constraints. Express via node.locality.* targets and
-  │     node.uptimePercent / node.reputationScore.
+  │     node.reputation.uptimePercent / node.reputation.score.
   │     Filter number preserved for commit-history continuity.
   │
-  ├── FILTER 5: GPU mode
-  │     spec.GpuMode == Passthrough → node has IOMMU-capable GPU for VFIO?
-  │     spec.GpuMode == Proxied     → node has any GPU?
-  │     spec.GpuMode == None        → (no check)
-  │     Source: spec.GpuMode + node.HardwareInventory
+  ├── FILTER 5: GPU VRAM headroom (capacity)
+  │     spec.GpuMode == Proxied && spec.GpuVramBytes > 0 →
+  │       available proxied VRAM (operator ceiling − used − reserved)
+  │       >= spec.GpuVramBytes?
+  │     GPU *capability* (can this node host this GpuMode at all?) is
+  │     a derived constraint — node.gpu.proxiedAvailable /
+  │     node.gpu.passthroughAvailable — evaluated in FILTER 10.
+  │     Source: spec.GpuMode, spec.GpuVramBytes + node-side
   │
   ├── FILTER 6: Load average
   │     node.LatestMetrics?.LoadAverage <= config.Limits.MaxLoadAverage?
@@ -311,34 +332,49 @@ ApplyHardFiltersAsync(node, spec, tier, tierConfig, config, ct)
   │     BlockStore, Ingress) is not fully onboarded.
   │     Source: node-side
   │
-  ├── FILTER 8.1: BlockStore for replication
-  │     spec.ReplicationFactor > 0 → node has an Active BlockStore obligation?
-  │     A VM requesting replication needs a node that participates in the
-  │     block-storage layer.
-  │     Source: spec.ReplicationFactor + node-side
+  ├── FILTER 8.1: (removed — BlockStore requirement is a derived constraint)
+  │     spec.ReplicationFactor > 0 derives { target:
+  │       "node.hasActiveBlockStore", operator: "eq", value: true } —
+  │     evaluated in FILTER 10.
+  │     Filter number preserved for commit-history continuity.
   │
   ├── FILTER 9: KVM available
   │     node.HardwareInventory.KvmAvailable?
   │     Source: node-side
   │
-  └── FILTER 10: Constraints
-        spec.Constraints non-empty?
-        → for each constraint at index i:
-            IConstraintEvaluator.Evaluate(constraint, node)
-            if !passed → "Constraint #i failed: {target} ({actual}) {op} {value}"
-        Source: spec.Constraints (validated at VM creation)
+  └── FILTER 10: Unified constraint evaluation
+        1) Derived constraints — DerivedConstraints.Derive(spec), from
+           first-class spec fields (see §7 "Derived constraints").
+           Evaluated first, preserving the old precedence where the
+           tier / GPU-capability / BlockStore filters ran before
+           tenant constraints. First failure →
+           "Derived from <Field>=<value>: {target} ({actual}) {op} {value}"
+        2) Authored constraints — spec.Constraints (validated at VM
+           creation). First failure →
+           "Constraint #i failed: {target} ({actual}) {op} {value}"
+        One evaluator for every placement requirement.
 ```
 
-The filters fall into two categories:
+The filters fall into three categories:
 
-- **Platform-imposed** (1, 2, 5, 6, 7, 8, 8.1, 9). Tenants cannot disable
-  these. They encode platform safety thresholds, capability matching for
-  spec-declared workload requirements (GPU mode, replication factor), and
-  operational readiness (status, obligations, KVM). The §1 statement
-  "constraints are the sole mechanism for tenant-expressible requirements"
-  is true; platform invariants are not tenant requirements.
+- **Platform-imposed** (1, 1.5, 5, 6, 7, 8, 9). Tenants cannot disable
+  these. They are node-situational safety thresholds (status, readiness,
+  load, memory, obligations, KVM) and live capacity checks (VRAM
+  headroom). Capacity compares the VM's size against the node's
+  remaining headroom right now — it is deliberately never expressed as
+  a constraint (see §11, live counters) and never evaluated in
+  compliance, where the resident VM would count against itself.
 
-- **Tenant-expressible** (10). Every other selection predicate goes here.
+- **Spec-derived** (evaluated in 10). Requirements carried by
+  first-class spec fields, reduced to ephemeral constraints by
+  `DerivedConstraints.Derive(spec)`: `QualityTier` → `node.tier
+  contains <tier>`, `GpuMode` → `node.gpu.proxiedAvailable` /
+  `node.gpu.passthroughAvailable eq true`, `ReplicationFactor > 0` →
+  `node.hasActiveBlockStore eq true`. The field stays authoritative for
+  execution; the derived constraint is how the one evaluator sees the
+  requirement. Never persisted.
+
+- **Tenant-expressible** (10, authored). Every other selection predicate.
   Architecture, locality, jurisdiction, country, reputation, GPU model,
   hardware capabilities, custom tags — all live in `spec.Constraints` and
   are evaluated through the constraint vocabulary registered in
@@ -414,7 +450,7 @@ neutral, neither rewarded nor penalised before they have a track record.
 
 Single source of truth: `NodeReputation.Compute(node)` in
 `src/Orchestrator/Services/VmScheduling/NodeReputation.cs`. The scoring
-path, the `node.reputationScore` constraint target, and any future caller
+path, the `node.reputation.score` constraint target, and any future caller
 all route through this method.
 
 ### Locality score
@@ -476,8 +512,11 @@ omits it.
 
 Constraints are the sole mechanism for expressing tenant-side VM
 node-selection requirements. All entries in `spec.Constraints` are
-evaluated as a flat AND in FILTER 10. Validated at VM creation; malformed
-entries are rejected before any resource is allocated.
+evaluated as a flat AND in FILTER 10 — alongside the constraints
+*derived* from first-class spec fields (see "Derived constraints"
+below), through the same evaluator. Authored constraints are validated
+at VM creation; malformed entries are rejected before any resource is
+allocated.
 
 ### Wire shape
 
@@ -527,18 +566,21 @@ new Constraint { Target = "node.locality.cuntry", Operator = "in", ... }
 | `ConstraintTargets.Node.Locality.Zone` | `node.locality.zone` | `Node.Locality.Zone` | string |
 | `ConstraintTargets.Node.Locality.JurisdictionTags` | `node.locality.jurisdictionTags` | `Node.Locality.JurisdictionTags` | string[] |
 | `ConstraintTargets.Node.Locality.LocationMismatch` | `node.locality.locationMismatch` | `Node.Locality.LocationMismatch` | bool |
-| `ConstraintTargets.Node.Architecture` | `node.architecture` | `Node.Architecture` | string |
-| `ConstraintTargets.Node.KvmAvailable` | `node.kvmAvailable` | `Node.HardwareInventory.KvmAvailable` | bool |
-| `ConstraintTargets.Node.GpuModel` | `node.gpuModel` | `Node.HardwareInventory.Gpus[0].Model` | string |
-| `ConstraintTargets.Node.Hardware.HasGpu` | `node.hardware.hasGpu` | `Node.HardwareInventory.SupportsGpu` | bool |
-| `ConstraintTargets.Node.Hardware.HasNvme` | `node.hardware.hasNvme` | `Node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe)` | bool |
-| `ConstraintTargets.Node.Hardware.HighBandwidth` | `node.hardware.highBandwidth` | `Node.HardwareInventory.Network.BandwidthBitsPerSecond > 1_000_000_000` | bool |
-| `ConstraintTargets.Node.Hardware.CpuCores` | `node.hardware.cpuCores` | `Node.HardwareInventory.Cpu.PhysicalCores` | numeric |
-| `ConstraintTargets.Node.Hardware.GpuVramBytes` | `node.hardware.gpuVramBytes` | `Node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes)` | numeric |
+| `ConstraintTargets.Node.Cpu.Cores` | `node.cpu.cores` | `Node.HardwareInventory.Cpu.PhysicalCores` | numeric |
+| `ConstraintTargets.Node.Cpu.Architecture` | `node.cpu.architecture` | `Node.Architecture` | string |
+| `ConstraintTargets.Node.Gpu.Present` | `node.gpu.present` | `Node.HardwareInventory.SupportsGpu` | bool |
+| `ConstraintTargets.Node.Gpu.Model` | `node.gpu.model` | `Node.HardwareInventory.Gpus[0].Model` | string |
+| `ConstraintTargets.Node.Gpu.VramBytes` | `node.gpu.vramBytes` | `Node.HardwareInventory.Gpus.Sum(g => g.MemoryBytes)` | numeric |
+| `ConstraintTargets.Node.Gpu.ProxiedAvailable` | `node.gpu.proxiedAvailable` | `SupportsGpu && Gpus.Count > 0 && HasProxiedCapableGpu` | bool |
+| `ConstraintTargets.Node.Gpu.PassthroughAvailable` | `node.gpu.passthroughAvailable` | `SupportsGpu && Gpus.Count > 0 && HasPassthroughCapableGpu` | bool |
+| `ConstraintTargets.Node.Storage.Nvme` | `node.storage.nvme` | `Node.HardwareInventory.Storage.Any(s => s.Type == StorageType.NVMe)` | bool |
+| `ConstraintTargets.Node.Network.HighBandwidth` | `node.network.highBandwidth` | `Node.HardwareInventory.Network.BandwidthBitsPerSecond > 1_000_000_000` | bool |
+| `ConstraintTargets.Node.Network.HasPublicIp` | `node.network.hasPublicIp` | `Node.HardwareInventory.Network.NatType == NatType.None` | bool |
 | `ConstraintTargets.Node.Tier` | `node.tier` | `Node.PerformanceEvaluation.EligibleTiers` | string[] |
-| `ConstraintTargets.Node.BenchmarkScore` | `node.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
-| `ConstraintTargets.Node.UptimePercent` | `node.uptimePercent` | `Node.UptimePercentage` | numeric |
-| `ConstraintTargets.Node.ReputationScore` | `node.reputationScore` | `NodeReputation.Compute(node)` | numeric |
+| `ConstraintTargets.Node.Performance.BenchmarkScore` | `node.performance.benchmarkScore` | `Node.PerformanceEvaluation.BenchmarkScore` | numeric |
+| `ConstraintTargets.Node.Reputation.UptimePercent` | `node.reputation.uptimePercent` | `Node.UptimePercentage` | numeric |
+| `ConstraintTargets.Node.Reputation.Score` | `node.reputation.score` | `NodeReputation.Compute(node)` | numeric |
+| `ConstraintTargets.Node.HasActiveBlockStore` | `node.hasActiveBlockStore` | `Node.BlockStoreInfo?.Status == BlockStoreStatus.Active` | bool |
 | `ConstraintTargets.Node.Tags` | `node.tags` | `Node.Tags` | string[] |
 | *(system-generated)* | `node.id` | `Node.Id` | string *(internal)* |
 
@@ -552,14 +594,27 @@ exposed in the constraint builder UI or the preset library. Adding it to the
 builder would require the user to know node IDs at design time, which is not
 possible for stacks that mix deployed and not-yet-deployed blocks.
 
-Use `ConstraintTargets.Node.ReputationScore` when the composite reputation
-measure matters; use `ConstraintTargets.Node.UptimePercent` when only
-uptime matters.
+Use `ConstraintTargets.Node.Reputation.Score` when the composite
+reputation measure matters; use
+`ConstraintTargets.Node.Reputation.UptimePercent` when only uptime
+matters.
 
-The hardware-capability targets (`HasGpu`, `HasNvme`, `HighBandwidth`,
-`CpuCores`, `GpuVramBytes`) cover the common preset library cases in §9.
-They are static node attributes — they do not change between heartbeats,
-so the v1 "static fields only" principle (see §11) holds.
+Targets are grouped by node subsystem (`cpu`, `gpu`, `storage`,
+`network`, `performance`, `reputation`). `node.tier` and
+`node.hasActiveBlockStore` are deliberately top-level: `node.tier` is
+load-bearing (every VM derives it — see below) and referenced by the
+unified-evaluation design doc under that name; one platform-readiness
+member does not earn a group. Most targets reflect static hardware spec
+or slowly-changing state, but not all: locality changes on
+re-registration, and `node.gpu.proxiedAvailable` is designed to track
+GPU-proxy daemon liveness once the node-side health fix lands. What the
+vocabulary never contains is a live *counter* (free memory, remaining
+VRAM) — see §11.
+
+`node.kvmAvailable` was **removed** from the vocabulary: KVM is enforced
+unconditionally by FILTER 9 for every user VM, so a constraint on it was
+an inert hedge nothing produced. If FILTER 9's low-tier/non-KVM TO-DO
+ever ships, the target returns deliberately, with real semantics.
 
 Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 (2) a `TargetDescriptor` entry in `ConstraintEvaluator.BuildTargetRegistry`,
@@ -584,7 +639,7 @@ Adding a new target requires: (1) a constant in `ConstraintVocabulary.cs`,
 | `ConstraintOperators.Lt` | `lt` | Strictly less than | numeric |
 | `ConstraintOperators.StartsWith` | `starts_with` | Target string starts with the configured prefix, case-insensitive. Primary use: hierarchical region codes — `node.locality.region starts_with "na"` matches `na-central`, `na-east`, `na-west`. | string |
 | `ConstraintOperators.EndsWith` | `ends_with` | Target string ends with the configured suffix, case-insensitive. Example: `node.locality.region ends_with "central"` matches `na-central`, `eu-central`, `ap-central`. | string |
-| `ConstraintOperators.Includes` | `includes` | Target string contains the configured substring, case-insensitive. Named `includes` to avoid collision with `contains` (which checks list membership). Example: `node.gpuModel includes "3090"` matches `RTX 3090`, `RTX 3090 Ti`. | string |
+| `ConstraintOperators.Includes` | `includes` | Target string contains the configured substring, case-insensitive. Named `includes` to avoid collision with `contains` (which checks list membership). Example: `node.gpu.model includes "3090"` matches `RTX 3090`, `RTX 3090 Ti`. | string |
 | `ConstraintOperators.AdjacentTo` | `adjacent_to` | Node's region is adjacent to configured region per `region-adjacency.json` | string (region) |
 | `ConstraintOperators.SameContinentAs` | `same_continent_as` | Node's region shares a continent with configured region | string (region) |
 | `ConstraintOperators.HasJurisdictionTag` | `has_jurisdiction_tag` | Node's country carries the configured supranational tag | string (country) |
@@ -603,9 +658,48 @@ before scheduling is attempted. Validation checks:
 Error messages include the constraint index so tenants can locate the
 offending entry: `"Constraint #2: Unknown target 'node.foobar'"`.
 
+### Derived constraints
+
+First-class spec fields that carry placement requirements are reduced to
+ephemeral constraints by `DerivedConstraints.Derive(spec)`
+(`src/Orchestrator/Services/VmScheduling/DerivedConstraints.cs`) and fed
+through the same evaluator as authored constraints:
+
+| Spec field condition | Derived constraint | Origin label |
+|---|---|---|
+| always (every VM has a tier) | `node.tier contains <spec.QualityTier>` | `QualityTier=<t>` |
+| `GpuMode == Proxied` | `node.gpu.proxiedAvailable eq true` | `GpuMode=Proxied` |
+| `GpuMode == Passthrough` | `node.gpu.passthroughAvailable eq true` | `GpuMode=Passthrough` |
+| `ReplicationFactor > 0` | `node.hasActiveBlockStore eq true` | `ReplicationFactor=<n>` |
+
+Derived constraints are **never persisted** — the spec field stays
+authoritative for execution (billing, CPU quota, GPU assignment,
+lazysync); derivation is only how the evaluator sees the requirement.
+This generalizes the ephemeral `node.cpu.architecture` constraint that
+`MigrateVmAsync` has always used. Rejection and compliance messages name
+the origin field (`Derived from GpuMode=Proxied: ...`) — never an index
+into a constraint list the tenant never wrote.
+
+The same `Derive` function runs in compliance
+(`NodeService.FlagNonCompliantVmsAsync`), so scheduling and compliance
+cannot drift — a VM with zero authored constraints is still evaluated
+against its derived requirements. Parity with the deleted hard filters
+(FILTER 2, FILTER 5 capability, FILTER 8.1) is proven by
+`DerivedConstraintsParityTests`, which uses the deleted filter bodies
+verbatim as oracles.
+
 ### FILTER 10 evaluation loop
 
 ```csharp
+// Derived first — preserves the old precedence where the tier /
+// GPU-capability / BlockStore hard filters ran before tenant constraints.
+foreach (var derived in DerivedConstraints.Derive(spec))
+{
+    var result = _constraintEvaluator.Evaluate(derived.Constraint, node);
+    if (!result.Passed)
+        return $"Derived from {derived.Origin}: {result.RejectionReason}";
+}
+
 if (spec.Constraints is { Count: > 0 })
 {
     for (var i = 0; i < spec.Constraints.Count; i++)
@@ -635,7 +729,8 @@ Body: { "constraints": [ ... ] }
 The full constraint list is replaced atomically. The migration scheduler
 picks up the change on its next scan cycle (≤10 s). Validation runs
 before saving; malformed entries are rejected. Passing `null` or an
-empty list removes all constraints (VM will migrate to any eligible node).
+empty list removes all authored constraints (the VM will migrate to any
+node satisfying its derived requirements — tier, GPU mode, replication).
 
 Only allowed in `Error` state. The endpoint requires ownership or `Admin`
 role.
@@ -688,8 +783,8 @@ Response:
 
 ```json
 {
-  "targets":     ["node.architecture", "node.country", ...],
-  "targetTypes": { "node.architecture": "String", "node.uptimePercent": "Numeric", "node.hardware.hasGpu": "Boolean", ... },
+  "targets":     ["node.country", "node.cpu.architecture", ...],
+  "targetTypes": { "node.cpu.architecture": "String", "node.reputation.uptimePercent": "Numeric", "node.gpu.present": "Boolean", ... },
   "operators":   ["adjacent_to", "contains", ...]
 }
 ```
@@ -727,7 +822,7 @@ model. Reference endpoints:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/api/vms/scheduling/preview` | Required | Eligibility preview — accepts `{ constraints, qualityTier? }`, returns count of matching nodes and top rejection reasons (see §9). Uses a minimal VmSpec (1 vCPU / 256 MB / 1 GB, `ComputePointCost=0`) so resource-capacity filters do not mask constraint mismatches. Rejection reasons are normalized by stripping per-node actual values so structurally identical rejections collapse into one count. |
+| `POST` | `/api/vms/scheduling/preview` | Required | Eligibility preview — accepts `{ constraints, qualityTier? }`, returns count of matching nodes and top rejection reasons (see §9). Uses a minimal VmSpec (1 vCPU / 256 MB / 1 GB, `ComputePointCost=0`) so resource-capacity filters do not mask constraint mismatches. The quality tier is honoured via the derived `node.tier` constraint (FILTER 10). Rejection reasons are normalized by stripping per-node actual values so structurally identical rejections collapse into one count. |
 
 ### Preset library
 
@@ -774,8 +869,8 @@ the long tail:
 - **Preset library** — one-click toggles for frequently-needed requirements
   ("EU jurisdiction only", "GPU required", "NVMe storage", "≥99% uptime").
   Each preset compiles to one or more ordinary constraints. The list is
-  curated in `wwwroot/public/config/constraint-presets.json` (9 presets
-  across 4 categories: Jurisdiction, Hardware, Reliability, Architecture),
+  curated in `wwwroot/public/config/constraint-presets.json` (7 presets
+  across 4 categories: Jurisdiction, Hardware, Reliability, Network),
   loaded by the builder at mount time via a plain `fetch`. No auth
   required, no startup validation — if the file is missing the section
   is silently omitted and the builder works normally.
@@ -804,7 +899,7 @@ reasons among ineligible ones:
   "rejected": 35,
   "rejectionReasons": [
     { "count": 28, "reason": "node.locality.country not in [DE, FR]" },
-    { "count":  7, "reason": "node.hardware.hasNvme = false" }
+    { "count":  7, "reason": "node.storage.nvme = false" }
   ]
 }
 ```
@@ -978,7 +1073,7 @@ var constraints = new List<Constraint>
     },
     // C2 — operator reliability floor
     new() {
-        Target   = ConstraintTargets.Node.UptimePercent,
+        Target   = ConstraintTargets.Node.Reputation.UptimePercent,
         Operator = ConstraintOperators.Gte,
         Value    = 99.0
     },
@@ -1012,7 +1107,7 @@ in `POST /api/vms` is:
     "constraints": [
       { "target": "node.locality.jurisdictionTags", "operator": "contains",  "value": "EU" },
       { "target": "node.locality.country",          "operator": "not_in",    "value": ["RU", "BY", "CN"] },
-      { "target": "node.uptimePercent",             "operator": "gte",       "value": 99.0 },
+      { "target": "node.reputation.uptimePercent",  "operator": "gte",       "value": 99.0 },
       { "target": "node.locality.locationMismatch", "operator": "eq",        "value": false },
       { "target": "node.locality.region",           "operator": "in",        "value": ["eu-central", "eu-west"] }
     ]
@@ -1023,18 +1118,20 @@ in `POST /api/vms` is:
 ### What the scheduler does
 
 1. **FILTER 1 (Status):** drops offline nodes.
-2. **FILTER 2 (Tier):** drops nodes not eligible for `Guaranteed`
-   (benchmark < 4 000).
-3. **FILTER 5 (GPU):** `GpuMode` not set → passes all nodes.
+2. **FILTER 1.5 (Readiness):** drops logged-out nodes.
+3. **FILTER 5 (VRAM capacity):** `GpuMode` not set → no check.
 4. **FILTER 6 (Load):** drops nodes above the load ceiling (default 8.0).
 5. **FILTER 7 (Memory):** drops nodes below the free-memory floor (default 512 MB).
 6. **FILTER 8 (Obligations):** drops nodes with any non-Active system obligation.
-7. **FILTER 8.1 (BlockStore):** `ReplicationFactor` not set → passes all nodes.
-8. **FILTER 9 (KVM):** drops non-KVM nodes.
-9. **FILTER 10 (Constraints):**
+7. **FILTER 9 (KVM):** drops non-KVM nodes.
+8. **FILTER 10 (Unified constraints):**
+   - Derived from `QualityTier=Guaranteed`: `node.tier contains
+     Guaranteed` — drops nodes not eligible (benchmark < 4 000) and
+     nodes with no performance evaluation. (`GpuMode` unset and
+     `ReplicationFactor` unset derive nothing further.)
    - C0: `jurisdictionTags contains EU` — drops non-EU nodes.
    - C1: `country not_in [RU, BY, CN]` — drops excluded countries.
-   - C2: `uptimePercent gte 99.0` — drops unreliable operators.
+   - C2: `reputation.uptimePercent gte 99.0` — drops unreliable operators.
    - C3: `locationMismatch eq false` — drops VPN/leased-foreign nodes.
    - C4: `region in [eu-central, eu-west]` — restricts to preferred regions.
 
@@ -1049,13 +1146,13 @@ constraint using the typed constant:
 
 ```csharp
 new() {
-    Target   = ConstraintTargets.Node.Architecture,
+    Target   = ConstraintTargets.Node.Cpu.Architecture,
     Operator = ConstraintOperators.Eq,
     Value    = "x86_64"
 }
 ```
 
-Wire form: `{ "target": "node.architecture", "operator": "eq", "value": "x86_64" }`.
+Wire form: `{ "target": "node.cpu.architecture", "operator": "eq", "value": "x86_64" }`.
 
 Multi-arch templates do not need this — architecture is resolved
 post-scheduling from the selected node's `HardwareInventory.Cpu.Architecture`,
@@ -1159,8 +1256,14 @@ deploy.
   "give me a node with ≥ 16 free CPU cores right now" — such
   constraints would pass validation but might fail at scheduling time
   because the value drifts between validation and evaluation. Resource
-  thresholds are enforced by the platform filters (FILTER 7 for memory
-  and the implicit capacity check) rather than by tenant constraints.
+  thresholds are enforced by the platform filters (FILTER 7 for memory,
+  FILTER 5 for proxied-GPU VRAM headroom, and the implicit capacity
+  check) rather than by tenant constraints. The same principle is why
+  capacity is never a *derived* constraint either — capability
+  ("can this node ever host this GpuMode") derives cleanly; capacity
+  ("is there room right now") stays a placement-time hard filter and is
+  never evaluated in compliance, where the resident VM would count
+  against itself.
 
 ---
 
@@ -1172,6 +1275,7 @@ deploy.
 |---|---|
 | `src/Orchestrator/Services/VmScheduling/VmSchedulingService.cs` | Filter chain, scoring, public scheduling API |
 | `src/Orchestrator/Services/VmScheduling/ConstraintEvaluator.cs` | Constraint evaluation, target and operator registries |
+| `src/Orchestrator/Services/VmScheduling/DerivedConstraints.cs` | Spec-field → derived-constraint reduction (unified evaluation) |
 | `src/Orchestrator/Models/ConstraintVocabulary.cs` | `ConstraintTargets` and `ConstraintOperators` typed constants |
 | `src/Orchestrator/Models/Constraint.cs` | `Constraint` and `ConstraintEvaluation` models |
 | `src/Orchestrator/Services/VmScheduling/NodeReputation.cs` | Reputation formula (single source of truth) |
@@ -1189,7 +1293,7 @@ deploy.
 | `src/Orchestrator/Background/BackgroundServices.cs` | Migration scheduler |
 | `src/Orchestrator/Interfaces/VmScheduling/IVmSchedulingService.cs` | Scheduler contract |
 | `src/Orchestrator/wwwroot/src/constraint-builder.js` | Global constraint builder UI module (ES module, `mount()` API) |
-| `wwwroot/public/config/constraint-presets.json` | Preset library data (9 presets; served as static asset at `/config/constraint-presets.json`) |
+| `wwwroot/public/config/constraint-presets.json` | Preset library data (7 presets; served as static asset at `/config/constraint-presets.json`) |
 
 **Related docs**
 

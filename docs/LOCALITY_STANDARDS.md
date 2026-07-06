@@ -591,24 +591,32 @@ auto-suggests). Manual `default/default` registration is rejected.
 
 ## Scheduling semantics
 
-### Hard filters (`ApplyHardFiltersAsync`)
+### Hard filters — locality is expressed as constraints
 
-Each filter is independent and means exactly what it says:
+Locality requirements are **not** flat `VmSpec` fields. They are
+tenant-authored constraints in `spec.Constraints`, evaluated in
+FILTER 10 of `ApplyHardFiltersAsync` through `IConstraintEvaluator`
+(see `SCHEDULING.md` §3/§7). Each is independent and means exactly
+what it says:
 
-| `VmSpec` field | Filter applied |
+| Requirement | Constraint |
 | --- | --- |
-| `RequiredJurisdictionTag = "EU"` | `node.JurisdictionTags.Contains("EU")` |
-| `RequiredCountry = "DE"` | `node.Country == "DE"` |
-| `ForbiddenCountries = ["RU", "BY"]` | `!ForbiddenCountries.Contains(node.Country)` |
-| `Region = "eu-central"` | `node.Region == "eu-central"` |
-| `Zone = "eu-central-1"` | `node.Zone == "eu-central-1"` |
+| EU jurisdiction | `node.locality.jurisdictionTags contains "EU"` |
+| Specific country | `node.locality.country eq "DE"` |
+| Country exclusion list | `node.locality.country not_in ["RU", "BY"]` |
+| Specific region | `node.locality.region eq "eu-central"` |
+| Specific zone | `node.locality.zone eq "eu-central-1"` |
+| Jurisdictional certainty | `node.locality.locationMismatch eq false` |
 
-A node failing any filter is excluded from scheduling consideration.
+A node failing any constraint is excluded from scheduling
+consideration — a categorical reject, not a score penalty.
 
 ### Soft scoring (`CalculateLocalityScore`)
 
-Used when no hard filters apply or when multiple nodes pass them.
-Weighted into the final scheduling score per `ScoringWeightsConfig.Locality`.
+**Currently neutral (0.5) for all nodes** — soft locality preferences
+are a deferred design concern (see `SCHEDULING.md` §5/§11). Hard
+locality requirements are fully expressible via the constraints above.
+When soft preferences ship, the intended graduated model is:
 
 | Match | Score |
 | --- | --- |
@@ -622,18 +630,15 @@ Weighted into the final scheduling score per `ScoringWeightsConfig.Locality`.
 **Jurisdiction does not enter scoring.** It is a hard filter or it is
 irrelevant — there is no "30% EU-compliant" node.
 
-### Why the change matters
+### Why this model matters
 
-Today's scheduler does an exact case-insensitive region match for
-hard filtering (`"Region mismatch: Node is in 'X', VM requires 'Y'"`)
-and a binary match-or-not for soft scoring (1.0/0.7/0.5/0.0). After
-this standard:
-
-- Hard filters become typed and granular (jurisdiction tag vs country
-  vs region vs zone)
-- Soft scoring uses the adjacency graph for genuinely useful "close
-  but not exact" results (a `eu-central` workload with no `eu-central`
-  capacity gets `eu-west` next, not random)
+Hard filters are typed and granular (jurisdiction tag vs country vs
+region vs zone), all through one constraint vocabulary and one
+evaluator — the same evaluator that checks compliance when a node's
+locality changes at re-registration. Soft scoring, once implemented,
+will use the adjacency graph for genuinely useful "close but not
+exact" results (a `eu-central` workload with no `eu-central` capacity
+gets `eu-west` next, not random).
 
 ---
 

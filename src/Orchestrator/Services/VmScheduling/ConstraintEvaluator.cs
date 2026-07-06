@@ -128,7 +128,7 @@ public class ConstraintEvaluator : IConstraintEvaluator
     {
         var r = new Dictionary<string, TargetDescriptor>(StringComparer.Ordinal);
 
-        // ─── Locality (jurisdiction-aware) ─────────────────────────
+        // ─── Locality (jurisdiction-aware) ──────────────────────────────
         // Node.Country and Node.Locality.Country are aliases.
         r[ConstraintTargets.Node.Country] = new TargetDescriptor(
             ConstraintTargets.Node.Country, ConstraintValueType.String,
@@ -153,18 +153,37 @@ public class ConstraintEvaluator : IConstraintEvaluator
             ConstraintTargets.Node.Locality.LocationMismatch, ConstraintValueType.Boolean,
             (n, _) => (object?)(n.Locality?.LocationMismatch ?? false));
 
-        // ─── Hardware capability ────────────────────────────────────
-        r[ConstraintTargets.Node.Architecture] = new TargetDescriptor(
-            ConstraintTargets.Node.Architecture, ConstraintValueType.String,
+        // ─── CPU ────────────────────────────────────────────────────────
+        r[ConstraintTargets.Node.Cpu.Cores] = new TargetDescriptor(
+            ConstraintTargets.Node.Cpu.Cores, ConstraintValueType.Numeric,
+            (n, _) => (object?)(double)n.HardwareInventory.Cpu.PhysicalCores);
+
+        r[ConstraintTargets.Node.Cpu.Architecture] = new TargetDescriptor(
+            ConstraintTargets.Node.Cpu.Architecture, ConstraintValueType.String,
             (n, _) => n.Architecture);
 
-        r[ConstraintTargets.Node.KvmAvailable] = new TargetDescriptor(
-            ConstraintTargets.Node.KvmAvailable, ConstraintValueType.Boolean,
-            (n, _) => (object?)n.HardwareInventory.KvmAvailable);
+        // ─── GPU ────────────────────────────────────────────────────────
+        // Presence/identity are static spec; proxied/passthrough are
+        // scheduling capability (live once the daemon-health fix lands).
+        // VRAM headroom is deliberately absent — capacity, not vocabulary.
+        r[ConstraintTargets.Node.Gpu.Present] = new TargetDescriptor(
+            ConstraintTargets.Node.Gpu.Present, ConstraintValueType.Boolean,
+            (n, _) => (object?)n.HardwareInventory.SupportsGpu);
 
-        // ─── GPU scheduling capability ──────────────────────────────────────
-        // Exact conjunction of the former FILTER 5 capability checks — parity
-        // is proven by DerivedConstraintsParityTests against the old bodies.
+        // Model returns the first GPU's model (null if no GPUs).
+        // Multi-GPU nodes filter on a single representative model. If a
+        // future requirement needs all-GPU matching, add a plural
+        // StringList target separately.
+        r[ConstraintTargets.Node.Gpu.Model] = new TargetDescriptor(
+            ConstraintTargets.Node.Gpu.Model, ConstraintValueType.String,
+            (n, _) => n.HardwareInventory.Gpus.FirstOrDefault()?.Model);
+
+        r[ConstraintTargets.Node.Gpu.VramBytes] = new TargetDescriptor(
+            ConstraintTargets.Node.Gpu.VramBytes, ConstraintValueType.Numeric,
+            (n, _) => (object?)(double)n.HardwareInventory.Gpus.Sum(g => g.MemoryBytes));
+
+        // Exact conjunction of the former FILTER 5 capability checks —
+        // parity proven by DerivedConstraintsParityTests.
         r[ConstraintTargets.Node.Gpu.ProxiedAvailable] = new TargetDescriptor(
             ConstraintTargets.Node.Gpu.ProxiedAvailable, ConstraintValueType.Boolean,
             (n, _) => (object?)(n.HardwareInventory.SupportsGpu
@@ -177,80 +196,66 @@ public class ConstraintEvaluator : IConstraintEvaluator
                                 && n.HardwareInventory.Gpus.Count > 0
                                 && n.HardwareInventory.HasPassthroughCapableGpu));
 
-        // ─── Platform obligations ───────────────────────────────────────────
-        r[ConstraintTargets.Node.HasActiveBlockStore] = new TargetDescriptor(
-            ConstraintTargets.Node.HasActiveBlockStore, ConstraintValueType.Boolean,
-            (n, _) => (object?)(n.BlockStoreInfo?.Status == BlockStoreStatus.Active));
+        // ─── Storage ────────────────────────────────────────────────────
+        r[ConstraintTargets.Node.Storage.Nvme] = new TargetDescriptor(
+            ConstraintTargets.Node.Storage.Nvme, ConstraintValueType.Boolean,
+            (n, _) => (object?)n.HardwareInventory.Storage
+                .Any(s => s.Type == StorageType.NVMe));
 
-        // GpuModel returns the first GPU's model (null if no GPUs).
-        // Multi-GPU nodes filter on a single representative model. If a
-        // future requirement needs all-GPU matching, add GpuModels
-        // (plural, StringList type) as a separate target.
-        r[ConstraintTargets.Node.GpuModel] = new TargetDescriptor(
-            ConstraintTargets.Node.GpuModel, ConstraintValueType.String,
-            (n, _) => n.HardwareInventory.Gpus.FirstOrDefault()?.Model);
+        // ─── Network ────────────────────────────────────────────────────
+        r[ConstraintTargets.Node.Network.HighBandwidth] = new TargetDescriptor(
+            ConstraintTargets.Node.Network.HighBandwidth, ConstraintValueType.Boolean,
+            (n, _) => (object?)(
+                (n.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000));
 
-        // ─── Performance / reputation ────────────────────────────
-        // Tier returns the list of quality-tier names this node qualifies
-        // for. Use with Contains to require a specific tier capability.
+        // NatType.None = public IP matches private IP = direct internet
+        // connection, no NAT or CGNAT in the path. Any other NatType
+        // (Unknown, FullCone, etc.) means the node is behind NAT and
+        // accessed via relay.
+        r[ConstraintTargets.Node.Network.HasPublicIp] = new TargetDescriptor(
+            ConstraintTargets.Node.Network.HasPublicIp, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.HardwareInventory.Network.NatType == NatType.None));
+
+        // ─── Performance / tier ─────────────────────────────────────────
+        // Tier is LOAD-BEARING: every VM derives node.tier contains <tier>
+        // (DerivedConstraints.cs) — this entry replaced FILTER 2. The
+        // empty-list fallback preserves FILTER 2's null-evaluation
+        // rejection: contains on an empty list fails.
         r[ConstraintTargets.Node.Tier] = new TargetDescriptor(
             ConstraintTargets.Node.Tier, ConstraintValueType.StringList,
             (n, _) => (object?)(n.PerformanceEvaluation?.EligibleTiers
                 .Select(t => t.ToString()).ToList()
                 ?? new List<string>()));
 
-        r[ConstraintTargets.Node.BenchmarkScore] = new TargetDescriptor(
-            ConstraintTargets.Node.BenchmarkScore, ConstraintValueType.Numeric,
+        r[ConstraintTargets.Node.Performance.BenchmarkScore] = new TargetDescriptor(
+            ConstraintTargets.Node.Performance.BenchmarkScore, ConstraintValueType.Numeric,
             (n, _) => (object?)(n.PerformanceEvaluation?.BenchmarkScore));
 
-        r[ConstraintTargets.Node.UptimePercent] = new TargetDescriptor(
-            ConstraintTargets.Node.UptimePercent, ConstraintValueType.Numeric,
+        // ─── Reputation ─────────────────────────────────────────────────
+        r[ConstraintTargets.Node.Reputation.UptimePercent] = new TargetDescriptor(
+            ConstraintTargets.Node.Reputation.UptimePercent, ConstraintValueType.Numeric,
             (n, _) => (object?)n.UptimePercentage);
 
-        // ReputationScore: full composite formula via NodeReputation.Compute.
-        // Use when the weighted uptime+success measure matters; use
-        // UptimePercent when only uptime matters.
-        r[ConstraintTargets.Node.ReputationScore] = new TargetDescriptor(
-            ConstraintTargets.Node.ReputationScore, ConstraintValueType.Numeric,
+        // Score: full composite formula via NodeReputation.Compute. Use when
+        // the weighted uptime+success measure matters; use UptimePercent
+        // when only uptime matters.
+        r[ConstraintTargets.Node.Reputation.Score] = new TargetDescriptor(
+            ConstraintTargets.Node.Reputation.Score, ConstraintValueType.Numeric,
             (n, _) => (object?)NodeReputation.Compute(n));
 
-        // ─── Operator metadata ──────────────────────────────────────────────
+        // ─── Platform readiness ─────────────────────────────────────────
+        r[ConstraintTargets.Node.HasActiveBlockStore] = new TargetDescriptor(
+            ConstraintTargets.Node.HasActiveBlockStore, ConstraintValueType.Boolean,
+            (n, _) => (object?)(n.BlockStoreInfo?.Status == BlockStoreStatus.Active));
+
+        // ─── Operator metadata ──────────────────────────────────────────
         r[ConstraintTargets.Node.Tags] = new TargetDescriptor(
             ConstraintTargets.Node.Tags, ConstraintValueType.StringList,
             (n, _) => (object?)(n.Tags ?? new List<string>()));
 
-        // ─── Hardware capabilities ──────────────────────────────────────────
-        // Static node attributes — reflect hardware spec, not live utilisation.
-        // These power the preset library: "GPU required", "NVMe storage", etc.
-
-        r[ConstraintTargets.Node.Hardware.HasGpu] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.HasGpu, ConstraintValueType.Boolean,
-            (n, _) => (object?)n.HardwareInventory.SupportsGpu);
-
-        r[ConstraintTargets.Node.Hardware.HasNvme] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.HasNvme, ConstraintValueType.Boolean,
-            (n, _) => (object?)n.HardwareInventory.Storage
-                .Any(s => s.Type == StorageType.NVMe));
-
-        r[ConstraintTargets.Node.Hardware.HighBandwidth] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.HighBandwidth, ConstraintValueType.Boolean,
-            (n, _) => (object?)(
-                (n.HardwareInventory.Network.BandwidthBitsPerSecond ?? 0) > 1_000_000_000));
-
-        // NatType.None = public IP matches private IP = direct internet connection,
-        // no NAT or CGNAT in the path. Any other NatType (Unknown, FullCone, etc.)
-        // means the node is behind NAT and accessed via relay.
-        r[ConstraintTargets.Node.Hardware.HasPublicIp] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.HasPublicIp, ConstraintValueType.Boolean,
-            (n, _) => (object?)(n.HardwareInventory.Network.NatType == NatType.None));
-
-        r[ConstraintTargets.Node.Hardware.CpuCores] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.CpuCores, ConstraintValueType.Numeric,
-            (n, _) => (object?)(double)n.HardwareInventory.Cpu.PhysicalCores);
-
-        r[ConstraintTargets.Node.Hardware.GpuVramBytes] = new TargetDescriptor(
-            ConstraintTargets.Node.Hardware.GpuVramBytes, ConstraintValueType.Numeric,
-            (n, _) => (object?)(double)n.HardwareInventory.Gpus.Sum(g => g.MemoryBytes));
+        // node.kvmAvailable REMOVED: it was an unused hedge over the
+        // unconditional KVM hard filter (FILTER 9). Re-add deliberately if
+        // FILTER 9's low-tier/non-KVM TO-DO ever ships.
 
         return r;
     }
