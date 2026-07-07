@@ -69,6 +69,7 @@ import {
 import { ensureTosAccepted } from './tos.js';
 import { initAdminCompliance } from './admin-compliance.js';
 import { initAdminTemplates } from './admin-templates.js';
+import { initAdminAbuse } from './admin-abuse.js';
 
 // ============================================
 // CONFIGURATION
@@ -786,14 +787,14 @@ function tokenHasAdminRole(token) {
 
 function applyAdminVisibility() {
     const isAdmin = tokenHasAdminRole(authToken);
-    ['admin-nav-label', 'admin-compliance-nav', 'admin-templates-nav'].forEach(id => {
+    ['admin-nav-label', 'admin-compliance-nav', 'admin-templates-nav', 'admin-abuse-nav'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = isAdmin ? '' : 'none';
     });
     // Stale-active-page guard: after admin logout → tenant login (no reload), an
     // admin page div can still be .active. Send a non-admin back to the dashboard.
     if (!isAdmin) {
-        const onAdminPage = ['page-admin-compliance', 'page-admin-templates']
+        const onAdminPage = ['page-admin-compliance', 'page-admin-templates', 'page-admin-abuse']
             .some(pid => document.getElementById(pid)?.classList.contains('active'));
         if (onAdminPage) showPage('dashboard');
     }
@@ -852,6 +853,9 @@ function showPage(pageName) {
     } else if (pageName === 'admin-templates') {
         if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
         initAdminTemplates(api);
+    } else if (pageName === 'admin-abuse') {
+        if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
+        initAdminAbuse(api);
     }
 }
 

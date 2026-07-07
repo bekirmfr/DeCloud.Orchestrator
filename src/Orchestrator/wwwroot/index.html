@@ -165,6 +165,13 @@
                     </svg>
                     Template Review
                 </a>
+                <a class="nav-item" id="admin-abuse-nav" data-page="admin-abuse" onclick="showPage('admin-abuse')" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                        <line x1="4" y1="22" x2="4" y2="15" />
+                    </svg>
+                    Abuse Reports
+                </a>
             </nav>
 
             <div class="sidebar-footer">
@@ -223,6 +230,17 @@
                     </div>
                 </header>
                 <div id="admin-templates-content"></div>
+            </div>
+
+            <!-- Admin Abuse Reports Page (admin-only; revealed by applyAdminVisibility) -->
+            <div id="page-admin-abuse" class="page">
+                <header class="page-header">
+                    <div>
+                        <h1 class="page-title">Abuse Reports</h1>
+                        <p class="page-subtitle">Reported content and conduct. Dismiss, warn, or take down — takedown withholds service; funds are never affected.</p>
+                    </div>
+                </header>
+                <div id="admin-abuse-content"></div>
             </div>
 
             <!-- Dashboard Page -->
