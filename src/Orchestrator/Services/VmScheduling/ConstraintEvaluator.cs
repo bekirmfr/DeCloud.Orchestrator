@@ -139,11 +139,11 @@ public class ConstraintEvaluator : IConstraintEvaluator
 
         r[ConstraintTargets.Node.Locality.Region] = new TargetDescriptor(
             ConstraintTargets.Node.Locality.Region, ConstraintValueType.String,
-            (n, _) => n.Locality?.Region ?? n.Locality.Region);
+            (n, _) => n.Locality?.Region ?? n.Locality?.Region);
 
         r[ConstraintTargets.Node.Locality.Zone] = new TargetDescriptor(
             ConstraintTargets.Node.Locality.Zone, ConstraintValueType.String,
-            (n, _) => n.Locality?.Zone ?? n.Locality.Zone);
+            (n, _) => n.Locality?.Zone ?? n.Locality?.Zone);
 
         r[ConstraintTargets.Node.Locality.JurisdictionTags] = new TargetDescriptor(
             ConstraintTargets.Node.Locality.JurisdictionTags, ConstraintValueType.StringList,
