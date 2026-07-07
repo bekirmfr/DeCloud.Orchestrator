@@ -36,6 +36,13 @@ public class ErrorHandlingMiddleware
 
         var (statusCode, errorCode, message) = exception switch
         {
+            // A request rejected as too large or malformed already carries the right status
+            // (413/400). Honor it instead of flattening it to a 500. Messages stay generic so
+            // the exact size cap isn't echoed back.
+            BadHttpRequestException bad
+                => ((HttpStatusCode)bad.StatusCode,
+                    bad.StatusCode == 413 ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST",
+                    bad.StatusCode == 413 ? "Request body too large." : "Malformed request."),
             ArgumentException => (HttpStatusCode.BadRequest, "INVALID_ARGUMENT", exception.Message),
             UnauthorizedAccessException => (HttpStatusCode.Unauthorized, "UNAUTHORIZED", "Access denied"),
             KeyNotFoundException => (HttpStatusCode.NotFound, "NOT_FOUND", "Resource not found"),
