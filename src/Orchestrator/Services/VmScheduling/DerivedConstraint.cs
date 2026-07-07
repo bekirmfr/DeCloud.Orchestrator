@@ -74,7 +74,7 @@ public static class DerivedConstraints
             {
                 Target = ConstraintTargets.Node.Tier,
                 Operator = ConstraintOperators.Contains,
-                Value = spec.QualityTier
+                Value = spec.QualityTier.ToString()
             },
             $"QualityTier={spec.QualityTier}"));
 
