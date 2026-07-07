@@ -44,7 +44,7 @@ public partial class AdminComplianceController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Reason))
             return BadRequest(ApiResponse<EnforcementResult>.Fail("REASON_REQUIRED", "A reason is required."));
 
-        var result = await _enforcement.SuspendAsync(req.Wallet, req.Reason, Actor(), ct);
+        var result = await _enforcement.SuspendAsync(req.Wallet, req.Reason, Actor(), ct: ct);
         return result.Success
             ? Ok(ApiResponse<EnforcementResult>.Ok(result))
             : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
@@ -72,7 +72,7 @@ public partial class AdminComplianceController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Reason))
             return BadRequest(ApiResponse<EnforcementResult>.Fail("REASON_REQUIRED", "A reason is required."));
 
-        var result = await _enforcement.SuspendVmAsync(req.VmId, req.Reason, Actor(), ct);
+        var result = await _enforcement.SuspendVmAsync(req.VmId, req.Reason, Actor(), ct: ct);
         return result.Success
             ? Ok(ApiResponse<EnforcementResult>.Ok(result))
             : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));

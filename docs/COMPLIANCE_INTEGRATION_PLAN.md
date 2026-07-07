@@ -168,6 +168,10 @@ Verified against the repos so future readers don't rediscover it.
 - Deterministic category→priority/SLA map (no AI): CSAM=P0/2h, malware_c2=P1/4h, illegal_marketplace=P1/8h, dmca=P2/48h, tos_violation=P3/72h, spam=P4/best-effort.
 - `GET /api/admin/abuse` ordered by urgency, showing the reported resource and the wallet's `EnforcementActions` history; actions (dismiss / warn / takedown) call Phase 2.
 
+**Intake is intentionally anonymous.** A report triggers nothing on its own — it is inert until an admin reviews and acts, so the verification boundary is admin review, not the reporter's identity. Requiring accounts to report would suppress exactly the reports that matter most (a CSAM reporter is often a victim or witness with no account) while adding no safety the human step doesn't already provide. Endpoint abuse (spam / false reports) is bounded by the rate limit + validation and by priority ordering (a flood of low-priority reports can't bury a P0), with admin dismissal as the backstop.
+
+**A `dmca`-category report here is a complaint, not a valid DMCA notice.** Anonymous intake can't satisfy 17 U.S.C. §512(c)(3) (complainant identity + contact, good-faith-belief statement, statement under penalty of perjury, signature). Until Phase 5, treat `dmca` reports on their illegality / TOS merits — do **not** action one *as a formal DMCA takedown*. The notice-validity fields and counter-notice flow are Phase 5's job.
+
 **Definition of done:**
 - Anyone can submit a report and receives a reference ID + SLA.
 - The admin queue orders by urgency and surfaces prior enforcement history.
@@ -180,6 +184,7 @@ Verified against the repos so future readers don't rediscover it.
 **Depends on:** Phase 1 (repeat-infringer clause), Phase 4 (intake + queue).
 **Build:**
 - DMCA notices route through `POST /api/abuse` with `category=dmca` (or a thin `POST /api/dmca` alias) → P2/48h in the same manual queue.
+- Capture what makes a notice legally valid — the fields the anonymous Phase-4 intake does **not** collect: complainant identity + contact, a good-faith-belief statement, and a statement under penalty of perjury with a signature (§512(c)(3)). A `dmca` report missing these is a complaint, not an actionable notice; this is the layer that turns one into the other.
 - Counter-notice handling: restore after 10–14 business days unless the claimant files suit (process + admin action).
 
 **Definition of done:**

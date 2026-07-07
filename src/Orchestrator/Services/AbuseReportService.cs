@@ -22,7 +22,8 @@ public sealed class AbuseReportService : IAbuseReportService
         _counters = database?.GetCollection<BsonDocument>("abuse_counters");
         _logger = logger;
 
-        // Best-effort index — the admin queue (slice 2) reads open reports, most urgent first.
+        // Best-effort indexes — the admin queue reads open reports most urgent first, and
+        // resolve looks a report up by its reference (also enforce reference uniqueness).
         try
         {
             _reports?.Indexes.CreateOne(new CreateIndexModel<AbuseReport>(
@@ -30,10 +31,13 @@ public sealed class AbuseReportService : IAbuseReportService
                     .Ascending(r => r.Status)
                     .Ascending(r => r.Priority)
                     .Ascending(r => r.CreatedAt)));
+            _reports?.Indexes.CreateOne(new CreateIndexModel<AbuseReport>(
+                Builders<AbuseReport>.IndexKeys.Ascending(r => r.Reference),
+                new CreateIndexOptions { Name = "idx_abuse_reference", Unique = true }));
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not ensure abuse_reports index");
+            _logger.LogWarning(ex, "Could not ensure abuse_reports indexes");
         }
     }
 
@@ -68,6 +72,36 @@ public sealed class AbuseReportService : IAbuseReportService
         _logger.LogInformation("Abuse report {Reference} filed: {Category} ({Priority})",
             report.Reference, category, priority);
         return report;
+    }
+
+    public async Task<List<AbuseReport>> GetOpenQueueAsync(int limit = 200, CancellationToken ct = default)
+    {
+        if (_reports == null) return new();
+        return await _reports
+            .Find(r => r.Status == AbuseReportStatus.Open)
+            .Sort(Builders<AbuseReport>.Sort.Ascending(r => r.Priority).Ascending(r => r.CreatedAt))
+            .Limit(limit)
+            .ToListAsync(ct);
+    }
+
+    public async Task<AbuseReport?> GetByReferenceAsync(string reference, CancellationToken ct = default)
+    {
+        if (_reports == null) return null;
+        return await _reports.Find(r => r.Reference == reference).FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<AbuseReport?> ResolveAsync(string reference, AbuseReportStatus status,
+        string resolvedBy, string note, CancellationToken ct = default)
+    {
+        if (_reports == null) return null;
+        var filter = Builders<AbuseReport>.Filter.Eq(r => r.Reference, reference);
+        var update = Builders<AbuseReport>.Update
+            .Set(r => r.Status, status)
+            .Set(r => r.ResolvedBy, resolvedBy)
+            .Set(r => r.ResolvedAt, DateTime.UtcNow)
+            .Set(r => r.ResolutionNote, note);
+        var opts = new FindOneAndUpdateOptions<AbuseReport> { ReturnDocument = ReturnDocument.After };
+        return await _reports.FindOneAndUpdateAsync(filter, update, opts, ct);
     }
 
     /// <summary>Atomic per-year sequence: one counter doc per year, $inc on each submit.</summary>

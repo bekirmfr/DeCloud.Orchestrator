@@ -17,4 +17,15 @@ public interface IAbuseReportService
     Task<AbuseReport> SubmitAsync(
         AbuseCategory category, string reportedResource, string description,
         string? targetWallet, string? reporterContact, CancellationToken ct = default);
+
+    /// <summary>Open reports, most urgent first (priority ascending, then oldest first).</summary>
+    Task<List<AbuseReport>> GetOpenQueueAsync(int limit = 200, CancellationToken ct = default);
+
+    /// <summary>One report by its reference, or null.</summary>
+    Task<AbuseReport?> GetByReferenceAsync(string reference, CancellationToken ct = default);
+
+    /// <summary>Record an admin resolution (status + who/when/note) on a report. Returns the
+    /// updated report, or null if not found.</summary>
+    Task<AbuseReport?> ResolveAsync(string reference, AbuseReportStatus status,
+        string resolvedBy, string note, CancellationToken ct = default);
 }

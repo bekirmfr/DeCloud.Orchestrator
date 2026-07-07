@@ -83,7 +83,7 @@ public sealed class EnforcementService : IEnforcementService
         return EnforcementResult.Ok(count);
     }
 
-    public async Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default)
+    public async Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, string? reference = null, CancellationToken ct = default)
     {
         var wallet = _addr.ConvertToChecksumAddress(walletAddress);
         var user = await _userService.GetUserByIdAsync(wallet);
@@ -107,6 +107,7 @@ public sealed class EnforcementService : IEnforcementService
             WalletAddress = wallet,
             Type = EnforcementActionType.Suspend,
             Reason = reason,
+            Reference = reference,
             ActorWallet = actor,
             Metadata = new()
             {
@@ -151,7 +152,7 @@ public sealed class EnforcementService : IEnforcementService
         return EnforcementResult.Ok(0);
     }
 
-    public async Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, CancellationToken ct = default)
+    public async Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, string? reference = null, CancellationToken ct = default)
     {
         var hold = await _vmService.SetVmComplianceHoldAsync(vmId, true);
         if (!hold.Success)
@@ -163,6 +164,7 @@ public sealed class EnforcementService : IEnforcementService
             WalletAddress = hold.OwnerId ?? "",
             Type = EnforcementActionType.SuspendVm,
             Reason = reason,
+            Reference = reference,
             ActorWallet = actor,
             Metadata = new() { ["vmId"] = vmId, ["vmStopped"] = hold.VmStopped.ToString() }
         }, ct);

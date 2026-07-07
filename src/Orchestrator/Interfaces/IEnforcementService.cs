@@ -18,14 +18,17 @@ public record EnforcementResult(bool Success, string? Error, string? Message, in
 /// </summary>
 public interface IEnforcementService
 {
-    /// <summary>Suspend a wallet (User.Status = Suspended) and stop its running VMs.</summary>
-    Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default);
+    /// <summary>Suspend a wallet (User.Status = Suspended) and stop its running VMs.
+    /// <paramref name="reference"/> is an optional external reference (e.g. an abuse report
+    /// id) recorded on the enforcement action so the takedown is traceable to its cause.</summary>
+    Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, string? reference = null, CancellationToken ct = default);
 
     /// <summary>Lift a suspension (User.Status = Active). Does not auto-restart VMs.</summary>
     Task<EnforcementResult> UnsuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default);
 
-    /// <summary>Suspend a single VM by id: stop it and hold it so the owner cannot restart it.</summary>
-    Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
+    /// <summary>Suspend a single VM by id: stop it and hold it so the owner cannot restart it.
+    /// <paramref name="reference"/> as in SuspendAsync.</summary>
+    Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, string? reference = null, CancellationToken ct = default);
 
     /// <summary>Lift a single VM's compliance hold (leaves it stopped; owner may start).</summary>
     Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
