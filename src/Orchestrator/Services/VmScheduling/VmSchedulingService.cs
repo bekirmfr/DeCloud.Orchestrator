@@ -297,16 +297,32 @@ public class VmSchedulingService : IVmSchedulingService
         if (!node.IsSchedulingReady)
             return "Node not scheduling-ready (operator logged out)";
 
-        // FILTER 2 (tier eligibility) has been removed. The requirement is
-        // derived from spec.QualityTier (node.tier contains <tier>) and
-        // evaluated in FILTER 10. The node.tier extractor returns an empty
-        // list when PerformanceEvaluation is null, so unevaluated nodes are
-        // rejected exactly as the old null-check did.
+        // =====================================================
+        // FILTER 2: Tier eligibility
+        //
+        // Tier is an execution parameter (it sets CPU quota on the node and
+        // the price the tenant pays), gated here at scheduling time. It is
+        // NOT a tenant-authorable constraint — a tenant cannot ask for a
+        // tier other than the one they are paying for (spec.QualityTier).
+        //
+        // Reads spec.QualityTier directly (single source of truth). The
+        // enum Contains matches the node's downward-closed EligibleTiers:
+        // a node eligible for Standard is also eligible for every cheaper
+        // tier, so contains(requested) means "node can deliver this tier".
+        // A node with no performance evaluation has an empty list and is
+        // rejected — it is not yet ready to host tiered workloads.
+        // =====================================================
+        var evaluation = node.PerformanceEvaluation;
+        if (evaluation == null)
+            return "Node has no performance evaluation";
+
+        if (!evaluation.EligibleTiers.Contains(spec.QualityTier))
+            return $"Node not eligible for tier {spec.QualityTier} " +
+                   $"(eligible: [{string.Join(", ", evaluation.EligibleTiers)}])";
 
         // FILTER 3 (architecture) and FILTER 4 (locality, reputation) have
         // been fully removed. All such requirements are expressed in
         // spec.Constraints and evaluated in FILTER 10 below.
-
         // =====================================================
         // FILTER 5: GPU VRAM headroom (capacity)
         //

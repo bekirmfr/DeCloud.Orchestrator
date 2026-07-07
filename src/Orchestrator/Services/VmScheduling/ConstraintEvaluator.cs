@@ -216,17 +216,12 @@ public class ConstraintEvaluator : IConstraintEvaluator
             ConstraintTargets.Node.Network.HasPublicIp, ConstraintValueType.Boolean,
             (n, _) => (object?)(n.HardwareInventory.Network.NatType == NatType.None));
 
-        // ─── Performance / tier ─────────────────────────────────────────
-        // Tier is LOAD-BEARING: every VM derives node.tier contains <tier>
-        // (DerivedConstraints.cs) — this entry replaced FILTER 2. The
-        // empty-list fallback preserves FILTER 2's null-evaluation
-        // rejection: contains on an empty list fails.
-        r[ConstraintTargets.Node.Tier] = new TargetDescriptor(
-            ConstraintTargets.Node.Tier, ConstraintValueType.StringList,
-            (n, _) => (object?)(n.PerformanceEvaluation?.EligibleTiers
-                .Select(t => t.ToString()).ToList()
-                ?? new List<string>()));
-
+        // ─── Performance / reputation ────────────────────────────
+        // node.tier is intentionally NOT a constraint target. Tier
+        // eligibility is a hard filter (FILTER 2, VmSchedulingService) —
+        // tier is a paid execution parameter, not a tenant-authorable
+        // predicate. Benchmark score IS exposed, for tenants who want a
+        // performance floor beyond tier eligibility.
         r[ConstraintTargets.Node.Performance.BenchmarkScore] = new TargetDescriptor(
             ConstraintTargets.Node.Performance.BenchmarkScore, ConstraintValueType.Numeric,
             (n, _) => (object?)(n.PerformanceEvaluation?.BenchmarkScore));

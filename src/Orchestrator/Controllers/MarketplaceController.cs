@@ -550,6 +550,26 @@ public class MarketplaceController : ControllerBase
                 }
             }
 
+            // Enforce the template's minimum quality tier server-side. The
+            // deploy modal filters the tier dropdown, but that is a UI
+            // convenience — a direct API call must not be able to deploy
+            // below the floor the template author set. Fail closed.
+            if (request.CustomSpec is not null && template.MinimumSpec is not null)
+            {
+                var requestedTier = request.CustomSpec.QualityTier;
+                var floorTier = template.MinimumSpec.QualityTier;
+                if (!QualityTierComparison.MeetsFloor(requestedTier, floorTier))
+                {
+                    return BadRequest(new
+                    {
+                        error = "Requested quality tier is below the template minimum",
+                        requestedTier = requestedTier.ToString(),
+                        minimumTier = floorTier.ToString(),
+                        message = $"This template requires at least the {floorTier} tier."
+                    });
+                }
+            }
+
             // Build VM request from template
             var vmRequest = await _templateService.BuildVmRequestFromTemplateAsync(
                 templateId,

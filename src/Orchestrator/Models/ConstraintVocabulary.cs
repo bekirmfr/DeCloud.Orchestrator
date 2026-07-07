@@ -182,21 +182,12 @@ public static class ConstraintTargets
         }
 
         // ── Performance / reputation ──────────────────────────────────────
-
-        /// <summary>
-        /// List of quality-tier names the node is eligible for
-        /// ("Burstable", "Balanced", "Standard", "Guaranteed").
-        /// Use <c>contains</c>.
-        ///
-        /// LOAD-BEARING: this is how tier eligibility is enforced. Every VM
-        /// derives <c>node.tier contains &lt;spec.QualityTier&gt;</c>
-        /// (see <c>DerivedConstraints.cs</c>) — the former FILTER 2 was
-        /// deleted in the unified-evaluation refactor and this target is its
-        /// replacement. Deliberately kept top-level and unrenamed: it is the
-        /// most-evaluated name in the system and is referenced by the
-        /// derivation map in the design doc.
-        /// </summary>
-        public const string Tier = "node.tier";
+        //
+        // node.tier is intentionally absent. Tier eligibility is enforced as
+        // a hard filter (FILTER 2), not a constraint: tier is a paid
+        // execution parameter set by spec.QualityTier, not something a
+        // tenant expresses as a node-selection predicate. (Retired the same
+        // way as node.kvmAvailable — nothing derives it, nothing authors it.)
 
         public static class Performance
         {

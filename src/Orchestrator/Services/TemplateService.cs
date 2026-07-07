@@ -884,6 +884,27 @@ public class TemplateService : ITemplateService
             }
         }
 
+        // Enforce the template's mandatory (MinimumSpec) constraints server-side.
+        // These are the "locked rows" the deploy UI shows as non-removable, but
+        // the UI is not a security boundary — a custom spec could omit them.
+        // Append any that the request did not already carry (dedup by
+        // target+operator+value) so the template author's requirements always
+        // apply. This is additive: it can only narrow eligibility, never widen.
+        var mandatory = template.MinimumSpec?.Constraints;
+        if (mandatory is { Count: > 0 })
+        {
+            spec.Constraints ??= new List<Constraint>();
+            foreach (var mc in mandatory)
+            {
+                var already = spec.Constraints.Any(c =>
+                    c.Target == mc.Target &&
+                    c.Operator == mc.Operator &&
+                    Equals(c.Value, mc.Value));
+                if (!already)
+                    spec.Constraints.Add(mc);
+            }
+        }
+
         // Merge environment variables (template defaults + user overrides)
         var mergedEnvVars = new Dictionary<string, string>(template.DefaultEnvironmentVariables);
         if (environmentVariables != null)

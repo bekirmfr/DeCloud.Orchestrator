@@ -60,23 +60,21 @@ public static class DerivedConstraints
 {
     /// <summary>
     /// Derive the ephemeral constraints carried by this spec's first-class
-    /// fields. Returns at least one entry (the tier requirement — every VM
-    /// schedules at some tier). Cheap: at most three small allocations.
+    /// fields (GPU capability, BlockStore). May return an empty list — a
+    /// plain VM with no GPU and no replication derives nothing. Tier is a
+    /// hard filter (FILTER 2), not a derived constraint. Cheap: at most two
+    /// small allocations.
     /// </summary>
     public static IReadOnlyList<DerivedConstraint> Derive(VmSpec spec)
     {
-        var derived = new List<DerivedConstraint>(3);
-
-        // ── QualityTier → node.tier (replaces FILTER 2) ──────────────────
-        // Unconditional: FILTER 2 ran for every VM, so this does too.
-        derived.Add(new DerivedConstraint(
-            new Constraint
-            {
-                Target = ConstraintTargets.Node.Tier,
-                Operator = ConstraintOperators.Contains,
-                Value = spec.QualityTier
-            },
-            $"QualityTier={spec.QualityTier}"));
+        // Capacity two — GPU capability and BlockStore. Tier is deliberately
+        // NOT derived: it is enforced as a hard filter (FILTER 2). Unlike
+        // GPU inventory and BlockStore status — which re-registration
+        // rebuilds, so compliance can catch their drift — a node's
+        // PerformanceEvaluation is PRESERVED across re-registration, so a
+        // derived tier constraint could never catch tier drift in
+        // compliance. It would be a check that cannot see its own target.
+        var derived = new List<DerivedConstraint>(2);
 
         // ── GpuMode → node.gpu.* (replaces FILTER 5 capability checks) ───
         switch (spec.GpuMode)
