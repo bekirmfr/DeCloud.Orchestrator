@@ -23,6 +23,7 @@ using Serilog;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
@@ -130,6 +131,16 @@ builder.Services.AddSingleton<IWalletBlocklistService>(sp =>
     return new WalletBlocklistService(db, dataStore, logger);
 });
 builder.Services.AddScoped<IEnforcementService, EnforcementService>();
+
+// Abuse-report intake (Phase 4). Self-contained store (owns "abuse_reports" + the per-year
+// sequence), factory-registered so the nullable IMongoDatabase passes through. Intake only —
+// enforcement stays with IEnforcementService.
+builder.Services.AddSingleton<IAbuseReportService>(sp =>
+{
+    var db = sp.GetService<IMongoDatabase>();
+    var logger = sp.GetRequiredService<ILogger<AbuseReportService>>();
+    return new AbuseReportService(db, logger);
+}); 
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
 builder.Services.AddSingleton<NodeCapacityCalculator>();
@@ -272,6 +283,41 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true; // Accept any casing
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
+
+// Rate limiter for the public, unauthenticated abuse-report intake. Registered globally,
+// but applied ONLY to the [EnableRateLimiting("abuse-intake")] endpoint. Per-IP fixed window.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("abuse-intake", ctx =>
+    {
+        // Real client IP. Trust X-Forwarded-For only when the direct peer is loopback (Caddy
+        // reverse-proxies from the same host) and take the rightmost entry — the one the
+        // nearest trusted proxy appended, which a client cannot forge. Otherwise the direct
+        // connection IP. Keeps the per-IP bucket honest instead of bucketing everyone under
+        // the proxy's address. (Assumes a single same-host Caddy hop; see the doc's note.)
+        var peer = ctx.Connection.RemoteIpAddress;
+        string key;
+        if (peer != null && System.Net.IPAddress.IsLoopback(peer))
+        {
+            var xff = ctx.Request.Headers["X-Forwarded-For"].ToString();
+            var parts = xff.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            key = parts.Length > 0 ? parts[^1] : peer.ToString();
+        }
+        else
+        {
+            key = peer?.ToString() ?? "unknown";
+        }
+
+        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0
+        });
+    });
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -769,6 +815,8 @@ app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseRateLimiter();
 
 // WebSocket terminal/sftp proxy runs AFTER auth so context.User is populated
 // The JWT bearer middleware reads the 'token' query param for these paths (configured in OnMessageReceived)

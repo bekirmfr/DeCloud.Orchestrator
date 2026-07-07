@@ -307,33 +307,6 @@ public class TemplateService : ITemplateService
         incoming.Artifacts = existing.Artifacts;
     }
 
-    /// <summary>
-    /// Canonical signature of the fields that determine what a deployment runs and
-    /// exposes — the surface a content review vouches for. Cosmetic fields (name,
-    /// description, tags, icon, pricing) are excluded so editing them does not bounce a
-    /// live template back into review. Artifacts are omitted because UpdateTemplateAsync
-    /// already preserves them (they cannot change on update). Used to detect a
-    /// post-approval payload edit.
-    /// </summary>
-    private static string DeployableSignature(VmTemplate t)
-    {
-        var payload = new
-        {
-            t.CloudInitTemplate,
-            t.ContainerImage,
-            t.ExposedPorts,
-            t.Variables,
-            // Order-stable so a dictionary re-ordering alone isn't seen as a change.
-            Env = t.DefaultEnvironmentVariables == null
-                ? null
-                : t.DefaultEnvironmentVariables
-                    .OrderBy(kv => kv.Key, StringComparer.Ordinal)
-                    .Select(kv => new { kv.Key, kv.Value })
-                    .ToList()
-        };
-        return System.Text.Json.JsonSerializer.Serialize(payload);
-    }
-
     public async Task SaveTemplateDirectAsync(VmTemplate template)
     {
         template.UpdatedAt = DateTime.UtcNow;
