@@ -645,7 +645,10 @@ function refreshAuthToken() {
 
             if (!response.ok) {
                 console.error('[Auth] Token refresh failed:', response.status);
-                return false;
+                // Only 401/403 is a definitive rejection (the server also clears
+                // the cookie on invalid refresh). 5xx/429 is indeterminate — the
+                // cookie is still valid, so signal "unknown", not "invalid".
+                return response.status === 401 || response.status === 403 ? false : null;
             }
 
             const data = await response.json();
@@ -659,8 +662,11 @@ function refreshAuthToken() {
             }
             return false;
         } catch (error) {
+            // Thrown fetch = transport failure (aborted, offline, DNS). This is
+            // indeterminate, NOT a credential rejection — the httpOnly refresh
+            // cookie is still valid. Signal "unknown" so callers keep the session.
             console.error('[Auth] Token refresh error:', error);
-            return false;
+            return null;
         } finally {
             refreshInFlight = null;
         }
@@ -676,9 +682,16 @@ function setupTokenRefresh() {
     tokenRefreshTimer = setInterval(async () => {
         console.log('[Auth] Auto-refreshing token...');
         const refreshed = await refreshAuthToken();
-        if (!refreshed) {
-            console.error('[Auth] Auto-refresh failed, logging out');
-            disconnect();
+        if (refreshed === false) {
+            // Server definitively rejected the refresh token.
+            console.error('[Auth] Refresh token rejected by server, logging out');
+            clearSession();
+            showLogin();
+        } else if (refreshed === null) {
+            // Transport failure or server error — the httpOnly cookie is still
+            // valid. Keep the session; the next interval (or the api() 401 path)
+            // retries. Do NOT destroy valid credentials on unverifiable evidence.
+            console.warn('[Auth] Token refresh unreachable, will retry');
         }
     }, 50 * 60 * 1000);
 }
@@ -704,16 +717,22 @@ async function api(endpoint, options = {}) {
         console.log('[API] 401 received, attempting token refresh...');
         const refreshed = await refreshAuthToken();
 
-        if (refreshed) {
+        if (refreshed === true) {
             headers['Authorization'] = `Bearer ${authToken}`;
             return fetch(`${CONFIG.orchestratorUrl}${endpoint}`, {
                 ...options,
                 headers
             });
-        } else {
+        }
+        if (refreshed === false) {
+            // Server definitively rejected the refresh token — real logout.
             disconnect();
             throw new Error('Session expired. Please log in again.');
         }
+        // refreshed === null: couldn't reach the refresh endpoint. Don't destroy
+        // a session we can't prove is invalid — fail this one request; a later
+        // call retries once the network recovers.
+        throw new Error('Network error. Please try again.');
     }
 
     return response;
@@ -892,18 +911,31 @@ function updateBalanceDisplay(balance) {
 /**
  * Handle balance card click - opens balance detail modal
  */
-function handleBalanceCardClick() {
+async function handleBalanceCardClick() {
     console.debug('[Payment] Balance card clicked');
-    if (!ethersSigner) {
+    // After a reload the dashboard is interactive before AppKit's background
+    // reconnect completes. getReadySigner() is the existing seam for exactly
+    // this state (same as the ToS gate) — it acquires the signer from AppKit
+    // on demand. Null only if the wallet is genuinely not connected.
+    const signer = await getReadySigner();
+    if (!signer) {
         console.warn('[Payment] Please connect your wallet first.');
         showToast('Please connect your wallet first', 'error');
         return;
     }
 
     if (!isPaymentInitialized()) {
-        console.warn('[Payment] Payment system not available. isPaymentInitialized:', isPaymentInitialized());
-        showToast('Payment system not available', 'error');
-        return;
+        // The signer may have been acquired just now by getReadySigner(),
+        // bypassing the subscribeAccount init. Same rule, same trigger —
+        // signer + token now coexist — applied at the on-demand seam.
+        // Fail closed if init genuinely fails.
+        try {
+            await initializePayment(signer, authToken);
+        } catch (e) {
+            console.warn('[Payment] init failed:', e?.message);
+            showToast('Payment system not available', 'error');
+            return;
+        }
     }
 
     showBalanceModal();
