@@ -333,6 +333,16 @@ function setupAppKitListeners() {
 
                     console.log('[AppKit] Provider and signer ready');
 
+                    // Session-restore path: SIWE getSession restores the session
+                    // WITHOUT firing onAuthenticated, so payment init must happen
+                    // here. On fresh login authToken is still null at this point,
+                    // so onAuthenticated remains the sole initializer for that
+                    // path — no double init. Also covers wallet account switches.
+                    if (authToken && !isPaymentInitialized()) {
+                        initializePayment(ethersSigner, authToken)
+                            .catch(e => console.warn('[Payment] init failed:', e?.message));
+                    }
+
                     // Authentication is driven by AppKit's SIWE flow
                     // (verifyMessage -> onAuthenticated). Do NOT trigger it here.
                 } catch (error) {
