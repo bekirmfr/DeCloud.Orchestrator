@@ -2,7 +2,7 @@
 
 **Status:** Active — build sequencing for the pre-launch compliance framework
 **Created:** 2026-06-26
-**Updated:** 2026-06-28 — Phase 1 (ToS) built. Phase 2 (Enforcement Core) complete: three-chokepoint gate, single-VM compliance hold hardened against every revival path, and the full operator-node takedown chain (scheduling-off → drain → hard cutoff, plus an immediate-cutoff admin override) with payout withheld throughout and held VMs no longer replicating. Phase 3 (Template Review Gate) built, including template versioning: community templates reach `Published` only via admin approval; a published template is immutable in place, and any change goes through a reviewed **draft revision** ("New version") that promotes onto the live version on approval — so the live version is never pulled from the marketplace during review. An admin review UI clears the queue. The first unbuilt pillar is now Phase 4 (Abuse Reporting). See the build log (§7) for detail and the open follow-ups.
+**Updated:** 2026-07-08 — Phase 1 (ToS) built. Phase 2 (Enforcement Core) complete: three-chokepoint gate, single-VM compliance hold hardened against every revival path, and the full operator-node takedown chain (scheduling-off → drain → hard cutoff, plus an immediate-cutoff admin override) with payout withheld throughout and held VMs no longer replicating. Phase 3 (Template Review Gate) built, including template versioning: community templates reach `Published` only via admin approval; a published template is immutable in place, and any change goes through a reviewed **draft revision** ("New version") that promotes onto the live version on approval — so the live version is never pulled from the marketplace during review. An admin review UI clears the queue. Phase 4 (Abuse Reporting) is built: an anonymous public intake (`POST /api/abuse`) files priority-ranked reports into a manual admin queue where dismiss / warn / takedown route through the existing Phase-2 enforcement, each takedown's audit record linked back to its report. Phase 5 (DMCA) is **no new code** — operational/legal (Designated Agent filing + manual notice handling on the Phase 4 queue). The first unbuilt **code** pillar is Phase 6 (CSAM node-level scanning): fully designed (§Phase 6, Decisions 1/9/14/15), gated on external prerequisites (Microsoft CSAM API, NCMEC). See the build log (§7) for detail and the open follow-ups.
 **References:** `COMPLIANCE.md` (authoritative spec), `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
 **Scope:** Turns the four-pillar framework in `COMPLIANCE.md` into a dependency-ordered build plan, grounded in the current code in `DeCloud.Orchestrator`, `DeCloud.NodeAgent`, `DeCloud.Shared`, and the `DeCloudEscrow.sol` contract.
 
@@ -41,8 +41,12 @@ These hold across all phases. They are the result of design discussion, not defa
 8. **Admin role string is `"Admin"`.**
    `AdminUserInitializer` assigns `"Admin"`. `SystemController` has a pre-existing bug using lowercase `"admin"` in `[Authorize(Roles = "admin")]` that silently fails the role check. Do not replicate it; new admin endpoints use `"Admin"`.
 
-9. **CSAM replication ordering = scan-before-replicate; defer on budget overrun.**
-   Scan the frozen snapshot before `PushBlocksAsync`. If the per-cycle scan budget is exceeded, **defer** that cycle's replication to the next round — never publish unscanned content. Deferral keeps content on the origin (where the guest already wrote it) and only postpones redundancy; the sole cost is a temporary durability gap if the origin dies mid-window. This is forward-compatible with future encryption-at-rest, which would slot in *after* the scan clears.
+9. **CSAM replication ordering = scan-before-replicate; gate on the scan *result*, not on "clean".**
+   The scan runs on the frozen snapshot before `PushBlocksAsync`, and replication is gated on its result — the four states (`NotScanned | Clean | Match | Unscannable`) are **not** a clean/not-clean binary:
+   - **Match → block + contain.** Never replicate; suspend + preserve + report (§Phase 6).
+   - **Not finished this cycle (budget overrun) → defer.** Retry next round; don't publish content the scan hasn't cleared *yet*. Deferral keeps content on the origin and only postpones redundancy — the sole cost is a temporary durability gap if the origin dies mid-window.
+   - **Completed non-match → replicate.** `Clean`, `Unscannable`, and type-skipped all proceed to the `RF>0` push. And while no real matcher is wired, the honest `NotScanned` stub-state proceeds too: **replication must never be blocked merely because a matcher isn't in place**, or the stub would halt the whole platform. *Only a positive match blocks.*
+   Forward-compatible with future encryption-at-rest, which slots in *after* the scan clears (Cross-Phase Notes).
 
 10. **Single-VM hold is an orthogonal `VirtualMachine.ComplianceHold` flag, not `VmStatus.Suspended`.**
    Holding one VM (as opposed to suspending a whole wallet) sets a dedicated bool, not the `VmStatus.Suspended` enum value. A status value is overwritten by heartbeat/lifecycle state sync — the node continuously reports a VM's live state, so a status-based hold would be clobbered the moment the VM is observed. An orthogonal flag survives every sync. The node persists the **same** flag in `vms.db` (schema **v9**) and gates its VM manager on it, so the hold holds across node restarts and *before the first heartbeat*. `VmStatus.Suspended` (enum value 5, still transition-less) is left unused for this purpose. **This supersedes Phase 6 step 2's "add `VmStatus.Suspended` transitions"** — Phase 6 reuses `ComplianceHold` instead.
@@ -58,6 +62,10 @@ These hold across all phases. They are the result of design discussion, not defa
 
 14. **A held VM stops replicating immediately; its already-replicated blocks are quarantined, not purged.**
    Lazysync excludes held VMs explicitly (`!ComplianceHold`), so replication halts the moment the node knows of the hold rather than waiting for the force-stop to land — important for a content hold, where continuing would keep *spreading* the offending blocks. But holding does **not** walk back blocks already in the block-store/DHT. Purging them collides with CSAM evidence-preservation (NCMEC/legal hold), so the correct shape is **quarantine** — stop announcing and stop serving to new fetchers, retain under seal for the report — handled in Phase 6, not as a delete.
+   **Grounded status (2026-07-08, block-store binary read — revises the earlier estimate down).** Quarantine is a **preserve-not-purge sibling of the existing, working `vm-deleted` path**, not three new primitives from scratch. What the code shows: `vm-deleted` is a live GossipSub topic carrying an **HMAC-signed, anti-replay** (5-min window) event; every block-store node verifies it and runs `deleteOwnerBlocks` — reads `owners/{vmId}.cids`, skips CIDs shared with another VM (`cidHasOtherOwners`, content-addressed dedup), `DeleteBlock`s the rest. Crucially, **bitswap and GC both operate only on the live blockstore `n.bstore`**: a block *moved out* of `n.bstore` into a sealed store is automatically **not served** (bitswap serves only from `n.bstore`) and **not GC'd** (GC evicts only from `n.bstore`), and dropping it from the ~10-min `reannouncePass` lets its DHT provider record **expire on the ~24h TTL** (libp2p has no active un-provide). So quarantine = **(1)** a `vm-quarantined` message mirroring the signed `vm-deleted` event, and **(2)** a `quarantineOwnerBlocks` that mirrors `deleteOwnerBlocks` but **moves blocks to a sealed store** instead of discarding — serve-deny, GC-exemption, and announce-decay all fall out of that one move + stop-reprovide. **This corrects my earlier "three new primitives, blocked, largest unbuilt piece" framing: it is a well-scoped extension of a proven pattern.** Two genuine design questions remain: the **sealed evidence store** (where/how blocks are held under seal — ties to the Phase 6 sealed-storage prerequisite), and the **shared-block policy** (`cidHasOtherOwners`: a CSAM block deduped with a legitimate VM — rare for high-entropy image content, possible for filesystem-metadata blocks — needs a counsel/design call; the delete path simply skips such blocks). Also now grounded (high confidence): the DHT provider-lookup (503-on-indeterminate) and XOR-proximity layer the audit loop and scatter rely on — see §3.1.
+
+15. **CSAM scan scope is decoupled from replication factor — every tenant VM with a writable overlay is scanned, `RF=0` included.**
+   Hooking the scan at the lazysync `ScanChunks→Push` seam scopes it to `ReplicationFactor > 0`; `RF=0` (ephemeral) VMs are skipped by lazysync entirely (Decision 12 already treats them as non-durable), so they would never be scanned — making a safety property a side effect of a durability opt-in a user can simply decline. Invert it: **scan every tenant VM with a writable overlay; replication — and Decision 9's scan-before-replicate gate — is the `RF>0` tail on the same frozen snapshot.** For `RF>0` the scan shares lazysync's snapshot access and gates the push; for `RF=0` the scan is detection-only (no replication to gate) and needs its own lightweight change-source — the qcow2 overlay's allocated clusters, or a scan-only dirty bitmap (the Phase D+1 bitmap was removed, so today's full-export CID-diff is too costly to run per ephemeral VM; settle this before building). **Out of scope for node-FS scanning:** system VMs (vetted platform code, no tenant data), and **containers** (`DeploymentMode.Container` has no qcow2 overlay — a separate surface, covered only reactively for now).
 
 ---
 
@@ -88,12 +96,80 @@ Verified against the repos so future readers don't rediscover it.
 - `VmStatus.Suspended` exists (enum value 5) **but has no entry in `VmLifecycleManager.ValidTransitions`** — no legal path in/out, and now intentionally left that way: the single-VM hold uses the orthogonal `VirtualMachine.ComplianceHold` flag instead (Decision 10), which is **built** (see §7).
 - `TemplateStatus { Draft, Published, Archived }`; `VmTemplate` has `IsVerified`, `IsCommunity`, `IsFeatured`; `ValidateTemplateAsync` runs as a fast pre-filter inside `PublishTemplateAsync`.
 - Escrow: `DeCloudEscrow.sol` v3, `authorizedCallers`, `batchReportUsage`/`settleCycle`, `withdrawBalance` (no pause gate), no drain function.
-- Lazysync pipeline (`LazysyncDaemon`): guest-freeze snapshot → `qemu-img convert -O raw` → `tmp.raw` → `ScanChunksAsync` (CID diff → `changedChunks`) → `PushBlocksAsync` (**raw bytes, no encryption**) → `DeleteSnapshotNodeAsync`. The dirty bitmap was removed in Phase J; `changedChunks` is the incremental signal.
+- Lazysync pipeline (`LazysyncDaemon`): guest-freeze snapshot → `qemu-img convert -O raw` → `tmp.raw` → `ScanChunksAsync` (CID diff → `changedChunks`) → `PushBlocksAsync` (**raw bytes, no encryption**) → `DeleteSnapshotNodeAsync`. The dirty bitmap was removed in Phase J; `changedChunks` is the incremental signal. **Full fine-grained flow: §3.1.**
 - `CloudInitCleaner` already mounts guest filesystems, preferring `virt-customize` → `guestmount` (`LIBGUESTFS_BACKEND=direct`) → `qemu-nbd` fallback; `libguestfs-tools` is a known dependency; has an NBD concurrency lock.
 
 **Built since this plan was written (2026-06-27 — see §7 for detail):** `TosAcceptance` + `TosService` + `TosController` + VM-create ToS gate (Phase 1); `IWalletBlocklistService.IsWalletBlockedAsync` + `BlockedWallets`/`BlockSource` + `EnforcementActions` audit + `EnforcementService` + `AdminComplianceController` + admin-compliance UI, **with the gate wired at all three chokepoints** — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync` (Phase 2 core, DoD met); the single-VM hold end-to-end — `VirtualMachine.ComplianceHold`, `SetVmComplianceHoldAsync`, `Suspend/ResumeVmAsync`, heartbeat re-enforcement, node-side persisted hold + VM-manager gate + autostart-disable + watchdog skip + migration exclusion + **lazysync exclusion**; the **complete operator-node takedown** — suspend the operator's nodes + login gate, withhold settlement, drain replicated VMs, hard cutoff once drained, and the immediate-cutoff override (Decisions 12–13); and **Phase 3 template review** — `TemplateStatus.PendingReview`/`Rejected` + review fields, the community-review invariant enforced across create/publish/update/deploy, the admin approve/reject/queue endpoints, edit-after-approval re-review, and the admin review UI.
 
-**Genuinely missing (still to build):** `AbuseReport` + `POST /api/abuse` + manual queue (Phase 4); DMCA agent + notice/counter-notice flow (Phase 5); `ICsamScanner` + node scanner **and replica quarantine on hold** (Phase 6, Decision 14); block encryption-at-rest (out of scope here, noted for forward-compat). Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav).
+**Genuinely missing (still to build):** `ICsamScanner` + node scanner (Phase 6); **replica quarantine on hold** — a `vm-quarantined` message (mirroring the signed `vm-deleted` event) + a `quarantineOwnerBlocks` that moves offending blocks to a **sealed store** instead of deleting (Phase 6, Decision 14 — grounded 2026-07-08 as a preserve-not-purge sibling of the working `vm-deleted` path; serve-deny + GC-exemption fall out of the move, announce decays on the ~24h TTL). Open: the sealed evidence store and the shared-block (`cidHasOtherOwners`) policy. Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav).
+
+### 3.1 Replication flow (lazysync, Phase J) — the seam Phase 6 hooks
+
+Grounded in `LazysyncDaemon.cs` / `QmpClient.cs` (the code). *The design doc `MIGRATION_SYSTEM_DESIGN.md` §6.1 lagged this — it still describes the superseded `drive-backup` + dirty-bitmap model; corrected separately. Phase J = `blockdev-snapshot` inside an fsfreeze bracket + full `qemu-img convert` + CID-diff, no bitmap.*
+
+The chart shows the **target** structure (all tenant VMs enroll; `RF>0` is the replication tail — Decision 15) with the **CSAM scan seam** (Decision 9, not built) marked. The Phase J *mechanism* (snapshot → convert → CID-diff → push → merge) is current; the change from today's code is that the `RF>0` gate moves from *enrollment* to *after* the universal snapshot/scan stage.
+
+```mermaid
+flowchart TD
+  T0["Cycle timer — every 5 min (5 min startup delay)"]
+  T0 --> ENR{"Enroll VM? Running AND tenant AND NOT ComplianceHold AND IsFullyReady — ALL tenant VMs (Decision 15)"}
+  ENR -->|no| SKIP["Skip: not enrolled"]
+  ENR -->|yes| DISK{"disk.qcow2 exists?"}
+  DISK -->|no| SKIP
+  DISK -->|yes| STATE["Load lazysync.json (Chunks map, Version)"]
+
+  STATE --> OVL["qemu-img create new overlay qcow2 (no backing header) + chown libvirt-qemu + AppArmor grant"]
+  OVL --> FREEZE["guest-fsfreeze-freeze (best-effort; else crash-consistent)"]
+  FREEZE --> SNAP["blockdev-add + blockdev-snapshot: guest writes redirect to new overlay; disk.qcow2 now FROZEN + coherent"]
+  SNAP --> THAW["guest-fsfreeze-thaw"]
+
+  THAW --> SCAN["CSAM SCAN SEAM — universal, Decision 9 (future): mount frozen disk.qcow2 via libguestfs, hash changed media files (file-map change-source)"]
+  SCAN --> SR{"scan result?"}
+  SR -->|"Match"| STOP2["STOP: suspend + preserve + report + quarantine — NEVER replicate"]
+  SR -->|"not finished in budget"| DEFER["Defer this cycle, retry next round (Decision 9)"]
+  SR -->|"non-match: Clean / Unscannable / type-skipped / NotScanned (stub)"| RFGATE{"ReplicationFactor above 0?"}
+  DEFER --> MERGE
+
+  RFGATE -->|"no — RF=0 ephemeral: scanned, NOT replicated"| MERGE
+  RFGATE -->|yes| CONV["qemu-img convert disk.qcow2 to tmp.raw (full merged raw, skip zero regions)"]
+  CONV --> DIFF["ScanChunksAsync: read tmp.raw in 1 MB blocks, skip all-zero, CIDv1 per block, diff vs state.Chunks = changedChunks"]
+  DIFF --> EMPTY{"changedChunks empty?"}
+  EMPTY -->|yes| MERGE
+  EMPTY -->|no| PUSH["PushBlocksAsync: POST each changed block to local BlockStore VM :5090 /blocks"]
+  PUSH --> UPD["Update state: Chunks[offset]=cid, Version++, TotalBytes, LastSyncAt"]
+  UPD --> REG["RegisterManifestAsync to orchestrator: rootCid, version, changed CIDs, RF"]
+  REG --> MERGE["DeleteSnapshotNodeAsync: block-commit overlay into disk.qcow2, job-complete, blockdev-del, rm overlay + tmp.raw"]
+  MERGE --> SAVE["SaveStateAsync (lazysync.json) + NotifyBlockstore (dashboard, fire-and-forget)"]
+
+  PUSH --> STORE["BlockStore VM: store block (FlatFS, content-addressed)"]
+  STORE --> ANN["Announce provider record to DHT + publish CID to GossipSub new-blocks"]
+  ANN --> XOR{"Other BlockStore nodes: XOR distance within adaptive threshold (free space)?"}
+  XOR -->|"yes — RF-closest nodes"| PULL["Bitswap pull block, store replica"]
+  XOR -->|no| IGN["Ignore (DHT provider record = durable fallback)"]
+
+  REG --> RECV["Orchestrator: record currentVersion (nodeId fencing checked)"]
+  PULL -.-> AUD["Orchestrator audit loop: DHT FindProviders(cid) per manifest chunk"]
+  AUD --> CONF{"All chunks have at least RF providers?"}
+  CONF -->|yes| ADV["Advance confirmedVersion (VM Protected)"]
+  CONF -->|no| FLAGN["Flag under-replicated (Kademlia republication recovers; no active push)"]
+```
+
+**Step reference (grounded).**
+
+- **Enrollment (per ~5-min cycle).** *Target (Decision 15):* every tenant VM that is `Status=Running` + `!ComplianceHold` + `IsFullyReady` enters the daemon **regardless of `RF`** — the snapshot + scan stage is universal, and `RF>0` gates only the replication tail. *Current code* still adds `ReplicationFactor > 0` to the filter, so `RF=0` VMs don't yet enter; moving that gate down is the Decision 15 change. System VMs are always excluded.
+- **1 — Coherent snapshot.** Create a fresh overlay qcow2 (no backing header; the backing edge is wired by QEMU), chown `libvirt-qemu`, AppArmor-grant. Inside a `guest-fsfreeze` bracket (best-effort; crash-consistent fallback), `blockdev-add` + `blockdev-snapshot` redirect guest writes to the overlay, freezing `disk.qcow2` at one filesystem-transaction boundary. One QMP round-trip — the VM is not paused for I/O.
+- **1.5 — Flatten.** `qemu-img convert --force-share -f qcow2 -O raw -S 65536 disk.qcow2 → tmp.raw` (backing chain dereferenced, zero regions skipped; safe because `disk.qcow2` is now immutable).
+- **2–4 — Change detection (`ScanChunksAsync`).** Read `tmp.raw` in 1 MB blocks, skip all-zero, CIDv1 per block, diff against `state.Chunks` → `changedChunks`. *(No dirty bitmap — every cycle re-reads and re-hashes the allocated disk.)* Empty → skip to merge.
+- **5 — Push (`PushBlocksAsync`).** POST each changed block to the local BlockStore VM (`:5090 /blocks`).
+- **6 — Update state.** `Chunks[offset]=cid`; `Version++`; `TotalBytes`, `LastSyncAt`.
+- **7 — Register manifest.** `RegisterManifestAsync` → orchestrator (`rootCid`, version, changed CIDs, RF). Orchestrator validates `nodeId == vm.NodeId` (fencing), records `currentVersion`; no replication plan returned.
+- **8 — Merge + cleanup (`DeleteSnapshotNodeAsync`).** `block-commit` overlay → `disk.qcow2` → `job-complete` → `blockdev-del` → delete overlay + `tmp.raw`. State persisted; dashboard notify is fire-and-forget.
+- **Downstream — scatter (autonomous).** BlockStore VM stores each block (FlatFS), announces a DHT provider record, publishes the CID to GossipSub. Other nodes XOR-filter `distance(peerId, cid)` against an adaptive free-space threshold — only the ≈RF-closest bitswap-pull; DHT records are the durable fallback.
+- **Downstream — confirmation (orchestrator audit).** `FindProviders(cid)` per manifest chunk; when all chunks have ≥RF providers, `confirmedVersion` advances (VM `Protected`). Under-replicated chunks flagged, not actively pushed.
+
+**Block-store binary API + GC (grounded, `:5090`).** `POST /blocks?cid=&owner=&manifestVersion=` (store), `GET /blocks/{cid}?owner=` (fetch/reconstruct), `POST /blocks/has` (raw presence), `GET /owners/{vmId}` (ownership list), `DELETE /owners/{vmId}` (**purge all a VM's blocks** — used on VM delete), `POST /manifests` (dashboard). GC evicts confirmed-remote blocks first (from a `confirmed/{vmId}.cids` file the orchestrator pushes after each confirm) then LRU. **What is *not* here — and Decision 14 needs:** no per-CID serve-deny, no DHT announce-withdraw, no GC-pin; the only removal is the full purge above. This is why quarantine is unbuilt (Decision 14). *Grounded in the `dht-node` binary (high confidence): DHT provider lookup (`/providers/{cid}` → `FindProvidersAsync`; returns **503 = indeterminate** on an empty routing table or timed-out walk, so a cold DHT can't fake "0 providers" and trigger a reseed), XOR proximity (`/proximity/{cid}` = `SHA256(peerId) XOR SHA256(cid.Hash())`, called by the block-store binary for scatter decisions), and the `new-blocks` + `vm-deleted` GossipSub topics (DHT nodes relay; block-store nodes act — so a network-wide VM-scoped propagation channel already exists). Still unread: nothing major — the block-store binary is now read too.* **Block-store binary (grounded):** FlatFS store + `boxo/bitswap`; four GossipSub topics (`new-blocks`, `vm-deleted`, `presence`, `needs-replica`); LRU GC at 85% (refuses writes at 95%). **Bitswap and GC both operate only on the live blockstore `n.bstore`** — the serve path (`getBlock`) reads from it, GC evicts from it, and `reannouncePass` (~10 min) re-provides it (records expire on a ~24h TTL). The `vm-deleted` path is **HMAC-signed + anti-replay**, and `deleteOwnerBlocks` skips CIDs shared with another VM (`cidHasOtherOwners`). No serve-deny / pin / sealed-store primitive exists — which is exactly why quarantine (Decision 14) is a *move-to-sealed* sibling of this path rather than a new subsystem.
+
+**CSAM seam (per Decisions 9 & 15).** The scan runs on the frozen snapshot right after step 1, for **every** enrolled VM (universal). Gated on the scan **result**: a `Match` blocks + contains; a completed non-match (`Clean` / `Unscannable` / type-skipped / stub-`NotScanned`) proceeds to the `RF>0` push; a scan not finished in budget defers. `RF=0` VMs stop after the scan (nothing to replicate) and don't need the convert/CID-diff — their scan change-source is the **file map**, not `changedChunks`. **Merge-back (step 8) is the deadline:** a slow scan defers (per-file cap → `Unscannable`) rather than holding the frozen disk open. Containers (`DeploymentMode.Container`, no overlay) never appear here — reactive-only.
 
 ---
 
@@ -177,33 +253,35 @@ Verified against the repos so future readers don't rediscover it.
 - The admin queue orders by urgency and surfaces prior enforcement history.
 - Takedown from the queue produces a linked `EnforcementActions` record (`reportReference` set).
 
+**Status: ✅ built (2026-07-08)** — all three DoD points met, verified end-to-end by `tests/test-abuse.sh` (26 checks incl. the destructive takedown and the report→enforcement reference link). Two shapes worth recording: `reportReference` rides the existing `EnforcementAction.Reference` field (no new field), and "warn" and "dismiss" share one mechanism (close without withholding service) because there is no notification seam to reuse. See the 2026-07-08 build-log entry.
+
 ---
 
-### Phase 5 — DMCA
-**Goal:** Section 512 safe-harbor process; near-zero new code.
-**Depends on:** Phase 1 (repeat-infringer clause), Phase 4 (intake + queue).
-**Build:**
-- DMCA notices route through `POST /api/abuse` with `category=dmca` (or a thin `POST /api/dmca` alias) → P2/48h in the same manual queue.
-- Capture what makes a notice legally valid — the fields the anonymous Phase-4 intake does **not** collect: complainant identity + contact, a good-faith-belief statement, and a statement under penalty of perjury with a signature (§512(c)(3)). A `dmca` report missing these is a complaint, not an actionable notice; this is the layer that turns one into the other.
-- Counter-notice handling: restore after 10–14 business days unless the claimant files suit (process + admin action).
+### Phase 5 — DMCA (no new code — operational/legal)
+**Goal:** Section 512 safe-harbor process. **No new code** — the mechanism is legal + operational, not a build.
+**Depends on:** Phase 1 (repeat-infringer clause), Phase 4 (intake + queue), and the Designated Agent filing (§2).
+**Process (not code):**
+- Intake reuses the **Phase 4** queue as-is — a DMCA complaint arrives as a `category=dmca` report (P2/48h) or via the agent's published contact channel. No new endpoint.
+- A **valid** notice under §512(c)(3) — complainant identity + contact, good-faith-belief statement, and a statement under penalty of perjury with signature — is verified by the admin/counsel handling it. An anonymous `dmca` report missing these is a complaint, judged on TOS/illegality merits, **not** actioned as a formal DMCA takedown (see the Phase 4 note).
+- Takedown and counter-notice (restore after 10–14 business days unless the claimant files suit) run through the **existing** enforcement and the manual queue — admin actions, not new code.
 
 **Definition of done:**
-- A valid DMCA notice produces a tracked queue item with a 48h SLA and reference ID.
-- The Designated Agent filing is complete (counsel/admin item) — without it, the code path has no legal effect.
+- The **Designated Agent** is filed with the Copyright Office (the load-bearing item — without it there is no safe harbor).
+- The repeat-infringer policy is in the ToS (Phase 1) and applied through the existing enforcement.
 
 ---
 
 ### Phase 6 — CSAM Node-Level Scanning (hardest, last)
 **Goal:** Proactive known-CSAM filtering at the only layer with plaintext whole files, with human-confirmed enforcement.
 **Depends on:** Phase 2 (audit + blacklist on confirmation). External: Microsoft CSAM API + NCMEC accounts.
-**Layer note:** node-FS is the correct layer by elimination, but it is an **inherently partial** control — blind to guest-side LUKS/dm-crypt/LVM. Complemented by Phase 3 (generation pipelines) and Phase 4 (reactive). Never presented as a guarantee.
+**Layer note:** node-FS is the correct layer by elimination, but it is an **inherently partial** control. It sees decoded whole files written to a tenant overlay — and nothing else: blind to guest-side LUKS/dm-crypt/LVM, to content served from memory or over the (encrypted) network, to novel/AI-generated material in no hash database, to containers (no overlay), and to a VM that dies before its first scan cycle. Expanding the surface to memory/network does **not** help and is the wrong move: perceptual hashing needs decoded whole files (unavailable from RAM or ciphertext), the feared GPU-generation case is both never-on-disk *and* novel (nothing to match), and content-level memory/network interception is a wiretap posture the law does not require (§2258A imposes no general-monitoring duty). So node-FS is one layer in a set — template-publish scan (Phase 3, central, highest-leverage), reactive abuse reports (Phase 4, P0/2h — the front line for everything inspection can't reach), and deterrence (wallet + bond + traceability + enforcement). Never presented as a guarantee.
 
 **Build (staged):**
-1. `ICsamScanner` interface + stub returning `IsClean = true`, wired at the seam between `ScanChunksAsync` and `PushBlocksAsync`. Lands the integration point with zero behavior change.
+1. `ICsamScanner` interface + honest stub — **`IsClean = true` but the file/VM state is recorded as `NotScanned`, never `Clean`** (a matcher-less stub must not manufacture coverage). Enrolled per Decision 15 over **every tenant VM**, not only the `RF>0` lazysync seam: for `RF>0` it runs on the frozen snapshot ahead of `PushBlocksAsync` (Decision 9); for `RF=0` it runs as a detection-only pass on its own change-source. Lands the integration point with zero behaviour change.
 2. **VM hold/suspend primitive — already built (see §7), reused here.** The plan originally called for `VmStatus.Suspended` lifecycle transitions; per Decision 10 this is instead the orthogonal `VirtualMachine.ComplianceHold` flag, built end-to-end and hardened: admin suspend-vm/resume-vm, force-stop on hold, owner cannot restart, persisted on the node and gated at the VM manager, survives node restart, and is not revived by autostart, the health watchdog, re-enforcement, or migration. Phase 6 only needs to *call* `SuspendVmAsync` on a confirmed match — the hold mechanism itself is done. (Deletion-blocked-while-held for evidence preservation still needs wiring on the delete path.)
-3. Real scanner: short-circuit when `changedChunks` is empty; otherwise mount the frozen snapshot via **libguestfs/guestmount (`LIBGUESTFS_BACKEND=direct`)** — reusing the `CloudInitCleaner` pattern, **never** a host-kernel nbd mount of adversarial FS; per-file diff over magic-byte-typed image/video files against a persisted `{ path → size, mtime, hash }` map; read each genuinely-changed whole file; submit **hashes only** to the Microsoft CSAM Matching API.
-3a. **Replica quarantine on hold (Decision 14).** Suspending a matched VM already halts *further* replication (lazysync excludes held VMs), but its already-replicated blocks remain announced and fetchable in the block-store/DHT. Phase 6 must add quarantine for a content hold: **stop announcing and stop serving** those blocks to new fetchers, while **retaining them under seal** for the NCMEC report and any legal hold — never a delete. This is the containment half that the hold itself does not cover.
-4. Replication ordering per Decision 9: scan-before-replicate; defer cycle on budget overrun; surface the deferred/non-redundant state via the existing `LazysyncStatus` field rather than a new flag.
+3. Real scanner: short-circuit when no media files changed (per the file map — **not** replication's `changedChunks`, which `RF=0` VMs don't produce); otherwise mount the frozen snapshot via **libguestfs/guestmount (`LIBGUESTFS_BACKEND=direct`)** — reusing the `CloudInitCleaner` pattern, **never** a host-kernel nbd mount of adversarial FS; per-file diff over magic-byte-typed image/video files against a persisted `{ path → size, mtime, hash }` map; read each genuinely-changed whole file; submit **hashes only** to the Microsoft CSAM Matching API. A file too large to hash within budget resolves to `Unscannable` (never `Clean`) and falls to the reactive path — a per-file cap keeps one huge file from stalling the cycle, complementing Decision 9's per-cycle defer. Scan state is `NotScanned → Clean | Match | Unscannable`; none is ever silently upgraded to `Clean`.
+3a. **Replica quarantine on hold (Decision 14).** Suspending a matched VM already halts *further* replication (lazysync excludes held VMs), but its already-replicated blocks remain announced and fetchable in the block-store/DHT. Phase 6 must add quarantine for a content hold: **stop announcing and stop serving** those blocks to new fetchers, while **retaining them under seal** for the NCMEC report and any legal hold — never a delete. **Grounded design (see Decision 14): this is a preserve-not-purge sibling of the existing, working `vm-deleted` path**, not a from-scratch capability — a `vm-quarantined` message mirroring the signed `vm-deleted` event, plus a `quarantineOwnerBlocks` that **moves blocks out of the live blockstore into a sealed store** (serve-deny and GC-exemption fall out for free, since bitswap and GC only touch the live store; announce decays on the ~24h provider-record TTL once dropped from the reprovide pass). Open design questions: the sealed evidence store, and the `cidHasOtherOwners` shared-block policy. Still the largest *net-new* piece of Phase 6, but well-scoped.
+4. Replication gate per Decision 9: block the push on a **Match** (contain, never replicate); **defer** the cycle if the scan didn't finish in budget (retry, surfaced via the existing `LazysyncStatus` field, not a new flag); otherwise a completed non-match — including `NotScanned` while no matcher is wired — proceeds to the `RF>0` push. Replication is never blocked merely by the absence of a matcher.
 5. Orchestrator endpoints: `POST /api/admin/csam-report` (node-auth), `POST /api/admin/vms/{id}/suspend`, `POST /api/admin/vms/{id}/unsuspend` (returns 501 until the review flow exists — intentional).
 
 **Enforcement (non-negotiable):** no automated action. A hash match suspends the VM (protective, reversible) and alerts a human; NCMEC reporting + wallet blacklisting happen **only after human confirmation**. Protects against false positives and adversarial poisoning.
@@ -213,7 +291,9 @@ Verified against the repos so future readers don't rediscover it.
 - Scanning never mounts an untrusted guest FS on the host kernel.
 - A match suspends the VM and preserves the overlay; the VM cannot be resumed or deleted by user/automated paths.
 - No NCMEC report or blacklist is ever written without a recorded human confirmation in `EnforcementActions`.
-- Unscanned content is never replicated; a budget overrun defers and is visible via `LazysyncStatus`.
+- Replication is gated on the scan **result**: a `Match` is never replicated (and is quarantined); a scan not finished in budget defers and is visible via `LazysyncStatus`; a completed non-match (`Clean` / `Unscannable` / type-skipped) replicates. Replication is **never** blocked merely because a matcher isn't wired — the honest `NotScanned` stub-state still replicates (else the stub would halt the platform).
+- Every tenant VM with a writable overlay is scanned regardless of `ReplicationFactor` (Decision 15); `RF=0` VMs are not silently exempt. Containers and system VMs are explicitly out of the node-FS surface, not accidentally missed.
+- Scanner state is only ever `NotScanned`, `Clean`, `Match`, or `Unscannable` — no path renders "not scanned" or "couldn't scan" as `Clean`, and no external/compliance claim represents stub-clean as coverage.
 
 ---
 
@@ -225,7 +305,7 @@ Correct `PROJECT_FEATURES.md` §10 CSAM subsection: replace "hash-based detectio
 
 ## 6. Cross-Phase Notes
 
-- **Forward-compat with encryption-at-rest:** because the CSAM scan runs on plaintext before push and defer only postpones push, a future DEK/AES-256-GCM step slots in between scan and push without reopening Phase 6.
+- **Forward-compat with encryption-at-rest:** because the CSAM scan runs on plaintext before push and defer only postpones push, a future DEK/AES-256-GCM step slots in between scan and push without reopening Phase 6. **Open question when that step lands — CID = `hash(plaintext)` or `hash(ciphertext)`?** `hash(plaintext)` leaves a fetching node unable to verify ciphertext against the CID without the key (breaks BitSwap integrity); `hash(ciphertext)` gives the same file different CIDs under different VM keys (loses cross-VM dedup, and re-keying re-addresses every block). A real fork — convergent encryption vs. per-VM keys vs. verify-by-other-means — to settle before building encryption. The scan is unaffected (pre-encrypt regardless).
 - **Single gate, many stores:** KISS is preserved by one predicate (`IsWalletBlockedAsync`), not by forcing one store. Two stores for two genuinely different concepts is alignment, not duplication.
 - **Audit is the evidentiary spine:** `EnforcementActions` is append-only and retained indefinitely. Every enforcement path (takedown, abuse action, CSAM confirmation) writes to it.
 
@@ -290,6 +370,51 @@ Dated record of what has actually landed, so status is read from here rather tha
 
 **Author-side lifecycle + details.** `my-templates.js`: `PendingReview` locks to Cancel-only; `Rejected` shows the reason with Resubmit; a published template and its in-progress revision render as a **single card** (the revision panel carries its own Publish / Edit / Discard); a read-only details modal ("Show") carries the New version action. `CancelReviewAsync` (author withdraws `PendingReview` → `Draft`). The now-dead `DeployableSignature()` was removed.
 
+### 2026-07-08 (Phase 4) — abuse reporting: intake → queue → enforcement
+
+**Anonymous intake.** Public `POST /api/abuse` (`[AllowAnonymous]`) files an `AbuseReport` into `abuse_reports` with a per-year `ABU-YYYY-NNNNN` reference (atomic counter in `abuse_counters`) and a deterministic category→priority/SLA map (`AbuseTriage`, no AI). Fails closed: strict schema + field caps + a 16 KB body cap, and — since the app had no rate limiter — a .NET built-in per-IP limiter scoped to just this endpoint (`AddRateLimiter` / `[EnableRateLimiting("abuse-intake")]`, 5/min). Intake stores only the reported pointer + text, never fetched content (CSAM-safe). Self-contained store mirroring `WalletBlocklistService`.
+
+**Admin queue + resolve.** `GET /api/admin/abuse` returns open reports (priority then age), each joined with the target wallet's `GetActionsAsync` enforcement history (deduped per wallet). `POST /api/admin/abuse/{ref}/resolve` — dismiss / warn close the report without withholding service (distinguished by the note); takedown calls the existing `IEnforcementService.SuspendAsync`. Threading the report reference into the audit record is the only Phase-2 change: `SuspendAsync`/`SuspendVmAsync` gained an optional `reference` flowing into the existing `EnforcementAction.Reference` (backward-safe; the two positional callers name their `ct:`).
+
+**Admin UI.** `admin-abuse.js` — an "Abuse Reports" page mirroring `admin-templates.js`, wired through `app.js`/`index.html` like the other admin surfaces (revealed by `applyAdminVisibility`, enforced server-side). Priority badges + target enforcement history per report; dismiss / warn / takedown, takedown behind a confirm.
+
+**A 500-bug fix surfaced by the tests.** The global `ErrorHandlingMiddleware` flattened `BadHttpRequestException` (which carries 413/400) to 500, so oversized/malformed requests returned 500 app-wide; added a case that honors the carried status.
+
+**Verified** end-to-end by `tests/test-abuse.sh` (26 checks, incl. the real suspend → audit-link → unsuspend cycle). Deliberately not built: user notification for "warn", VM-scoped takedown (a variant of the wallet suspend), and DMCA notice validity (Phase 5).
+
+### 2026-07-08 (Phase 6) — CSAM design reconciled & integrated (design, not built)
+
+Reconciled the Phase 6 design against `COMPLIANCE.md` §3 and the current code, and folded the result into this plan (the standalone reconciliation note is retired — this document is the single source). No Phase 6 code shipped; it remains gated on external prerequisites (§2: Microsoft CSAM API, NCMEC).
+
+- **Fleet-coverage correction (Decision 15).** The scan was scoped to the `RF>0` lazysync seam, leaving `RF=0` (ephemeral) VMs unscanned — a safety property riding a durability opt-in. Inverted: scan every tenant VM; replication + Decision 9's gate is the `RF>0` tail. Surfaced the `RF=0` change-source question (overlay allocated clusters vs. reintroduced scan bitmap) and the container/system-VM out-of-scope surfaces.
+- **Coverage model made explicit** in the Phase 6 layer note: node-FS is one partial layer; memory/network scanning is the wrong move (method + posture + no general-monitoring duty); template-publish, reactive, and deterrence carry the rest.
+- **Scan-state honesty:** `NotScanned → Clean | Match | Unscannable`, never silently `Clean`; a per-file cap → `Unscannable` complements Decision 9's per-cycle defer.
+- **encrypt × CID** open question recorded against the encryption-at-rest cross-phase note.
+- **Correction to my own earlier take:** an "async, replicate-then-scan" reframe I had floated is *wrong* for CSAM — Decision 9's scan-before-replicate (contain before spreading unscanned blocks) is the right axis. Not adopted.
+
+### 2026-07-08 (Phase 6, cont.) — replication-gate correction + plan de-stale
+
+- **Replication gate corrected (Decision 9, Phase 6 step 4, DoD).** "Never publish *unscanned* content" was too absolute — it would halt all replication in the stub era (everything is honestly `NotScanned`) and strand VMs on an `Unscannable` file. Corrected to gate on the *result*: a **Match** blocks + contains; a scan **not finished in budget** defers and retries; a **completed non-match** (`Clean` / `Unscannable` / type-skipped) — and `NotScanned` while no matcher is wired — **proceeds**. Only a positive match blocks the push. The proposed `scan → clean? → rf>0? → replicate` becomes `scan → match? (stop) : rf>0? → replicate`.
+- **Enrollment/gate restructure (Decision 15) reflected in the flow docs.** All tenant VMs enter the daemon; the `RF>0` gate moves from *enrollment* to *after* the universal snapshot/scan stage. For `RF=0` the scan uses the file-map change-source, not replication's `changedChunks`.
+- **Lazysync doc fixed.** `MIGRATION_SYSTEM_DESIGN.md` §6.1 was a phase behind the code (drive-backup + dirty bitmaps); corrected to Phase J (`blockdev-snapshot` + full `qemu-img convert` + CID-diff, no bitmap) and §6.1.5 marked superseded. A fine-grained replication flowchart grounded in `LazysyncDaemon.cs` is now folded into this plan as **§3.1** (the standalone flow doc is retired — single source).
+- **Phase 5 (DMCA) is no new code.** Recorded as operational/legal (Designated Agent + manual notice handling on the Phase 4 queue); the header now points to Phase 6 as the first unbuilt *code* pillar.
+
+### 2026-07-08 (Phase 6, cont.) — downstream replication grounded; Decision 14 quarantine gap found
+
+Grounded the block-store/DHT downstream against the C# code (`BlockStoreController`, `LazysyncManager`, `LibvirtVmManager`, `NodeService`) and the binary's HTTP API surface. Confirmed: the block-store API (`POST /blocks`, `GET /blocks/{cid}`, `POST /blocks/has`, `GET`/`DELETE /owners/{vmId}`, `POST /manifests`), the audit/confirmation loop (sample CIDs → `FindProviders` → `ConfirmedCids` → `ConfirmedVersion` at ≥RF → `Protected`; drain → reseed), and GC (confirmed-remote first, then LRU). Folded the API surface into §3.1.
+
+**Finding — Decision 14 (quarantine) is blocked on unbuilt primitives.** The binary has **no** per-CID serve-deny, **no** DHT announce-withdraw, and **no** GC-pin; the only removal is `DELETE /owners/{vmId}` (a full purge — the opposite of preserve), and GC can evict a block left in place. And blocks have already scattered to the RF-closest other nodes, which keep serving them — so quarantine must be **network-wide**, needing an orchestrator→binary command channel that doesn't exist. Recorded in Decision 14, Phase 6 step 3a, and §3 (missing) as the largest unbuilt piece of Phase 6. Not grounded: the Go binary's GossipSub/bitswap/XOR internals (corroborated by C# comments, not read).
+
+### 2026-07-08 (Phase 6, cont.) — `dht-node` source read; quarantine-channel correction
+
+Read the uploaded `dht-node` Go source (`main.go`, `go.mod`, `build.sh`). It's the libp2p DHT/pubsub infrastructure binary — **not** the block-store binary. Now grounded to high confidence: DHT provider lookup (`/providers/{cid}` → `FindProvidersAsync`, **503-on-indeterminate** so a cold routing table can't fake "0 providers"), XOR proximity (`/proximity/{cid}` = `SHA256(peerId) XOR SHA256(cid.Hash())`, used by the block-store binary for scatter decisions), and the `new-blocks` + `vm-deleted` GossipSub topics (relayed by DHT nodes).
+
+**Correction to the entry above:** I claimed the network-wide command channel "doesn't exist." It does — `decloud/blockstore/vm-deleted` is a live GossipSub topic that propagates a VM-scoped action to every block-store holder mesh-wide. Quarantine reuses this pattern with a new message type (quarantine, not delete); "stop announcing" is mostly "stop re-providing" (provider records expire on TTL). Decision 14, §3, and §3.1 updated. The remaining gap is narrower: the block-store binary honoring a quarantine message as **preserve-not-purge** (serve-deny + stop-republish + GC-pin) — still unread, since that binary wasn't in these files.
+
+### 2026-07-08 (Phase 6, cont.) — `blockstore-node` source read; quarantine estimate revised down
+
+Read the uploaded block-store binary (`decloud-blockstore` — FlatFS + `boxo/bitswap` + four GossipSub topics + LRU GC). The `vm-deleted` path is HMAC-signed + anti-replay; `deleteOwnerBlocks` skips shared CIDs (`cidHasOtherOwners`). **Key structural fact: bitswap and GC both operate only on the live blockstore `n.bstore`.** So the three things I'd called separate new primitives collapse into one move: quarantine = **move offending blocks out of `n.bstore` into a sealed store** — serve-deny (bitswap serves only from `n.bstore`), GC-exemption (GC evicts only from `n.bstore`), and announce-decay (drop from `reannouncePass`; ~24h provider TTL) all fall out of that move — plus a `vm-quarantined` message mirroring the signed `vm-deleted` event. **This revises my earlier "three new primitives, largest unbuilt piece, blocked" estimate down to a well-scoped, preserve-not-purge sibling of a proven path.** Decision 14, Phase 6 step 3a, §3, and §3.1 updated. Open design questions: the sealed evidence store, and the shared-block (`cidHasOtherOwners`) policy. *(Honest note: this is the third grounding pass to refine Decision 14 — each read shrank the gap. The lesson is in the plan: don't size unbuilt work from the design docs; read the binary.)*
+
 ### Open follow-up (deliberate, not a regression to fix blindly)
 
 **Crashed-VM auto-recovery.** With the watchdog no longer starting Stopped VMs, a tenant VM that crashes on a *healthy* node stays Stopped/Error until the owner restarts it. The orchestrator follows node-reported state and only redeploys VMs whose node is *offline* (the migration scan) — there is no "should be Running but is Stopped on a healthy node → StartVm" loop today. If auto-recovery is wanted, it belongs in orchestrator reconciliation and needs an explicit desired/intended run-state to distinguish a crash from an owner stop (the same distinction the node deliberately refuses to guess). Decide before launch; do not restore the indiscriminate node-side restart.
@@ -299,3 +424,5 @@ Dated record of what has actually landed, so status is read from here rather tha
 **Template versioning (Phase 3 enhancement) — ✅ built (2026-06-28).** Keeping the approved version live while a draft revision is reviewed separately is now built (draft-revision model; see the 2026-06-28 build-log entry). Superseded slice 1b.
 
 **Private community templates route to review.** Slice 1's publish gate keys on `IsCommunity`, not visibility, so a Private (author-only, never amplified) community template also lands in the review queue. If undesired, that's a one-line refinement (`IsCommunity && Visibility == Public → PendingReview`).
+
+**Abuse queue — deliberate omissions (Phase 4).** "warn" records a decision but does not notify the reported party — there is no notification mechanism to reuse, and one wasn't invented; wire it if/when a notification system exists. Takedown suspends the target *wallet* (`SuspendAsync`); a VM-scoped variant (`SuspendVmAsync`) is a small addition if reports commonly target a single VM. A wallet with no account falls through to the denylist **block** (the compliance surface), not duplicated in the abuse controller. Runs of `test-abuse.sh` seed reports that stay `Open` — smoke-test noise to dismiss, not real reports.
