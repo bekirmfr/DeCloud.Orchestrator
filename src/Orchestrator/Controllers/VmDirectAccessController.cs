@@ -45,7 +45,7 @@ public class VmDirectAccessController : ControllerBase
         if (vm == null)
             return NotFound(new { error = "VM not found" });
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
             return Forbid();
 
         return null;

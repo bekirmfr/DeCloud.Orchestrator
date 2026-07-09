@@ -117,7 +117,7 @@ public class VmsController : ControllerBase
         }
 
         // Check ownership (unless admin)
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
@@ -146,7 +146,7 @@ public class VmsController : ControllerBase
             return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
@@ -201,7 +201,7 @@ public class VmsController : ControllerBase
             return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
@@ -253,7 +253,7 @@ public class VmsController : ControllerBase
         if (vm == null)
             return NotFound(ApiResponse<bool>.Fail("NOT_FOUND", "VM not found"));
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
             return Forbid();
 
         if (vm.Status != VmStatus.Error)
@@ -424,7 +424,7 @@ public class VmsController : ControllerBase
             return NotFound(ApiResponse<VmMetrics>.Fail("NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
@@ -451,7 +451,7 @@ public class VmsController : ControllerBase
             return NotFound(ApiResponse<VmConsoleResponse>.Fail("NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
@@ -508,7 +508,7 @@ public class VmsController : ControllerBase
                 "NOT_FOUND", "VM not found"));
         }
 
-        if (vm.OwnerId != userId && !User.IsInRole("admin"))
+        if (vm.OwnerId != userId && !User.IsInRole("Admin"))
         {
             return Forbid();
         }
