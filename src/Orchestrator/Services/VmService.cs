@@ -674,6 +674,19 @@ public class VmService : IVmService
             return false;
         }
 
+        // Evidence preservation: a held VM cannot be deleted by ANY caller —
+        // owner, admin endpoint, cleanup service, or takedown. Lift the hold
+        // first (POST /api/admin/compliance/resume-vm), deliberately.
+        // Service-boundary guard; the controller check remains as the
+        // user-facing error message.
+        if (vm.ComplianceHold)
+        {
+            _logger.LogWarning(
+                "Refusing to delete VM {VmId} — administratively held (evidence preservation)",
+                vmId);
+            return false;
+        }
+
         if (userId != null && vm.OwnerId != userId)
         {
             _logger.LogWarning(
