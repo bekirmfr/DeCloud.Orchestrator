@@ -24,11 +24,12 @@
 //              EnforcementAction.Reference"). If the live signature differs,
 //              adjust the call below accordingly.
 
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
+using Orchestrator.Models;
 using Orchestrator.Persistence;
+using System.Security.Claims;
 
 namespace Orchestrator.Controllers;
 
@@ -91,22 +92,28 @@ public class CsamReportController : ControllerBase
             return NotFound(new { error = "VM not found" });
         }
 
-        // ── 1. File into the EXISTING Phase 4 queue (csam → P0/2h) ────────────
+        // ── 1. File into the EXISTING Phase 4 queue (Csam → P0/2h) ────────────
+        // SubmitAsync assigns the ABU-YYYY-NNNNN reference and derives priority/SLA
+        // from the category. Intake requires persistence (Available) — if the store
+        // is down it throws, we fall through to the suspend, and the node retries
+        // the report next cycle. Never accepted-and-dropped, by the service's own
+        // contract.
         string? reference = null;
         try
         {
-            reference = await _abuse.FileReportAsync(          // [VERIFY-1]
-                category: "csam",
-                targetType: "vm",
-                targetId: req.VmId,
+            var report = await _abuse.SubmitAsync(
+                category: AbuseCategory.Csam,
+                reportedResource: $"vm:{req.VmId}",
                 description:
                     $"Node-level CSAM scanner reported a known-hash match on VM {req.VmId}. " +
                     $"hash={req.MatchedFileHash}, db={req.DbSource ?? "unknown"}, " +
                     $"detectedAt={req.DetectedAt:O}, reportingNode={nodeId}. " +
                     "Automated protective suspend applied (if reporter is the authoritative host); " +
                     "human confirmation required before NCMEC report or wallet blacklist.",
-                reporter: $"node:{nodeId}",
+                targetWallet: vm.OwnerId,
+                reporterContact: $"node:{nodeId}",
                 ct: ct);
+            reference = report.Reference;
         }
         catch (Exception ex)
         {
