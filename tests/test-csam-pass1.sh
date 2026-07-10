@@ -59,7 +59,7 @@ if [ -n "$TEST_VM_ID" ]; then
 
   # Owner start must also be refused while held (existing Phase 2 behavior —
   # regression check that this pass didn't disturb it).
-  code=$(acurl -X POST "$ORCH_URL/api/vms/$TEST_VM_ID/actions" -d '{"action":"Start"}')
+  code=$(acurl -X POST "$ORCH_URL/api/vms/$TEST_VM_ID/action" -d '{"action":"Start"}')
   if [ "$code" = "400" ]; then ok "Start while held → 400"; else bad "Start while held → $code"; fi
 
   code=$(acurl -X POST "$ORCH_URL/api/admin/compliance/resume-vm" \

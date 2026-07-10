@@ -816,6 +816,13 @@ const ESCROW_AUTHOR_ABI = [
     "function nodeWithdraw(uint256 amount) external"  // 0 = withdraw full balance
 ];
 
+// Escrow ABI for the contract owner (platform treasury)
+const ESCROW_OWNER_ABI = [
+    "function owner() view returns (address)",
+    "function platformFees() view returns (uint256)",
+    "function withdrawPlatformFees(address to, uint256 amount) external"
+];
+
 /**
  * Show the balance detail modal
  */
@@ -924,6 +931,18 @@ function createBalanceModal() {
                     </div>
                 </div>
 
+                <!-- Platform Revenue (contract owner only) -->
+                <div class="bm-divider" id="bm-platform-divider" style="display: none;"></div>
+                <div class="bm-earnings-section" id="bm-platform-section" style="display: none;">
+                    <div class="bm-earnings-header">
+                        <span class="bm-section-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                            Platform Revenue
+                        </span>
+                    </div>
+                    <div class="bm-earnings-body" id="bm-platform-body"></div>
+                </div>
+
                 <!-- Divider -->
                 <div class="bm-divider"></div>
 
@@ -956,12 +975,135 @@ window.openDepositFromBalance = function () {
  * Load all data into the balance modal
  */
 async function loadBalanceModalData() {
-    // Load balance and earnings in parallel
     await Promise.all([
         loadBalanceBreakdown(),
-        loadEarningsSection()
+        loadEarningsSection(),
+        loadPlatformSection()
     ]);
 }
+
+/**
+ * Resolve an escrow contract bound to the connected signer.
+ * Returns null when the wallet isn't connected or the contract isn't configured.
+ */
+async function getEscrowFor(abi) {
+    const signer = window.ethersSigner ? window.ethersSigner() : null;
+    if (!signer) return null;
+
+    const res = window.api
+        ? await window.api('/api/payment/deposit-info')
+        : await fetch('/api/payment/deposit-info', {
+            headers: {
+                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+            }
+        });
+    if (!res.ok) return null;
+
+    const result = await res.json();
+    const config = result.data || result;
+    if (!config.escrowContractAddress) return null;
+
+    return {
+        signer,
+        escrow: new ethers.Contract(config.escrowContractAddress, abi, signer)
+    };
+}
+
+/**
+ * Platform revenue, shown only to the escrow contract's owner.
+ *
+ * Authorization is the contract's own `onlyOwner`, enforced by the EVM. This
+ * check decides what to *render*; it grants nothing. A non-owner who forces
+ * the section open still has their transaction reverted on chain.
+ */
+async function loadPlatformSection() {
+    const section = document.getElementById('bm-platform-section');
+    const divider = document.getElementById('bm-platform-divider');
+    const container = document.getElementById('bm-platform-body');
+    if (!section || !container) return;
+
+    // Fail closed: stays hidden unless we positively confirm ownership.
+    section.style.display = 'none';
+    if (divider) divider.style.display = 'none';
+
+    try {
+        const ctx = await getEscrowFor(ESCROW_OWNER_ABI);
+        if (!ctx) return;
+
+        // getAddress() normalizes both sides to checksum form, so this compares
+        // addresses rather than string casing.
+        const [ownerAddr, myAddr] = await Promise.all([
+            ctx.escrow.owner(),
+            ctx.signer.getAddress()
+        ]);
+        if (ethers.getAddress(ownerAddr) !== ethers.getAddress(myAddr)) return;
+
+        const feesRaw = await ctx.escrow.platformFees();
+        const fees = parseFloat(ethers.formatUnits(feesRaw, 6));
+
+        section.style.display = 'flex';
+        if (divider) divider.style.display = 'block';
+
+        container.innerHTML = `
+            <div class="bm-earnings-row">
+                <div class="bm-earnings-info">
+                    <span class="bm-earnings-amount">${fees.toFixed(2)} USDC</span>
+                    <span class="bm-earnings-sublabel">Accrued platform fees</span>
+                </div>
+                <button class="bm-btn bm-btn-withdraw" id="bm-btn-withdraw-platform"
+                        onclick="window.withdrawPlatformFees()" ${fees <= 0 ? 'disabled' : ''}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Withdraw
+                </button>
+            </div>
+        `;
+    } catch (error) {
+        console.error('[Balance Modal] Failed to load platform revenue:', error);
+        // Ownership unproven — stay hidden.
+    }
+}
+
+window.withdrawPlatformFees = async function () {
+    const btn = document.getElementById('bm-btn-withdraw-platform');
+    try {
+        const ctx = await getEscrowFor(ESCROW_OWNER_ABI);
+        if (!ctx) { showToast('error', 'Wallet not connected'); return; }
+
+        const to = await ctx.signer.getAddress();
+
+        // withdrawPlatformFees has no "0 = full balance" convention (unlike
+        // nodeWithdraw). Pass the exact accrued amount. Between this read and
+        // the transaction mining, platformFees can only grow — settlement adds
+        // to it, and only the owner can subtract — so `amount <= platformFees`
+        // still holds. Any fees accrued in that window remain for next time.
+        const amount = await ctx.escrow.platformFees();
+        if (amount === 0n) { showToast('warning', 'No fees to withdraw'); return; }
+
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<div class="bm-spinner-sm"></div> Confirming...`;
+        }
+
+        const tx = await ctx.escrow.withdrawPlatformFees(to, amount);
+        if (btn) btn.innerHTML = `<div class="bm-spinner-sm"></div> Waiting...`;
+        await tx.wait();
+
+        showToast('success', 'Platform fees withdrawn');
+    } catch (error) {
+        if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+            showToast('warning', 'Transaction rejected');
+        } else {
+            showToast('error', `Withdrawal failed: ${error.message}`);
+        }
+    } finally {
+        await loadPlatformSection();   // rerenders the button in either case
+    }
+};
 
 /**
  * Load balance breakdown data
@@ -1068,7 +1210,7 @@ async function loadEarningsSection() {
                     <span class="bm-earnings-amount">${pending.toFixed(2)} USDC</span>
                     <span class="bm-earnings-sublabel">Pending Earnings</span>
                 </div>
-                <button class="bm-btn bm-btn-withdraw" onclick="window.withdrawFromBalanceModal()" ${pending <= 0 ? 'disabled' : ''}>
+                <button class="bm-btn bm-btn-withdraw" id="bm-btn-withdraw-earnings" onclick="window.withdrawFromBalanceModal()" ${pending <= 0 ? 'disabled' : ''}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="7 10 12 15 17 10"/>
@@ -1113,7 +1255,7 @@ window.withdrawFromBalanceModal = async function () {
         );
 
         // Disable button during transaction
-        const btn = document.querySelector('.bm-btn-withdraw');
+        const btn = document.getElementById('bm-btn-withdraw-earnings');
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = `<div class="bm-spinner-sm"></div> Confirming...`;
