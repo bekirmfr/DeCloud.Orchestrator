@@ -36,9 +36,17 @@ public class PaymentController : ControllerBase
     // ═══════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Get deposit information for user
+    /// Deployment constants for the payment system: contract addresses, chain,
+    /// explorer, minimum deposit, confirmation depth.
+    ///
+    /// Anonymous by design. Nothing here depends on the caller — this method
+    /// never touches User — and every field is already public on-chain (the
+    /// escrow address is the destination of every deposit transaction). The
+    /// class-level [Authorize] would only make the client's config load fail
+    /// for an authentication reason it has no way to act on.
     /// </summary>
     [HttpGet("deposit-info")]
+    [AllowAnonymous]
     public ActionResult<ApiResponse<DepositInfoResponse>> GetDepositInfo()
     {
         var response = new DepositInfoResponse

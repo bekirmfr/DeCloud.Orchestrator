@@ -497,9 +497,14 @@
     font-family: 'JetBrains Mono', monospace;
 }
 
+.balance-amount.stale {
+    opacity: 0.45;
+}
+
 .balance-amount.low-balance {
     color: #f59e0b;
     animation: pulse-warning 2s ease-in-out infinite;
+    color: var(--accent-danger);
 }
 
 @keyframes pulse-warning {
@@ -1350,10 +1355,6 @@
     padding: 2px 8px;
     border-radius: var(--radius-full);
     letter-spacing: 0.5px;
-}
-
-.balance-amount.low-balance {
-    color: var(--accent-danger);
 }
 
 .btn-deposit {

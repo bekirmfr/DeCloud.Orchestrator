@@ -14,7 +14,6 @@ import {
 } from './ssh-wallet.js';
 import {
     initializePayment,
-    setAuthToken,
     getBalance,
     showDepositModal,
     showBalanceModal,
@@ -250,14 +249,13 @@ async function initializeAppKit() {
                 localStorage.setItem('authToken', accessToken);
                 CONFIG.wallet = user?.walletAddress || connectedAddress;
                 if (CONFIG.wallet) localStorage.setItem('wallet', CONFIG.wallet);
-                try { setAuthToken(accessToken); } catch { /* access-token mirror is best-effort */ }
                 if (appKitModal) appKitModal.close();
                 showDashboard();
                 setupTokenRefresh();
                 refreshData();
                 gateTosAfterEntry();
                 if (ethersSigner) {
-                    initializePayment(ethersSigner, accessToken)
+                    initializePayment(ethersSigner)
                         .catch(e => console.warn('[Payment] init failed:', e?.message));
                 }
             },
@@ -336,11 +334,17 @@ function setupAppKitListeners() {
 
                     // Session-restore path: SIWE getSession restores the session
                     // WITHOUT firing onAuthenticated, so payment init must happen
-                    // here. On fresh login authToken is still null at this point,
-                    // so onAuthenticated remains the sole initializer for that
-                    // path — no double init. Also covers wallet account switches.
+                    // here. Also covers wallet account switches.
+                    //
+                    // authToken is read as "sign-in has completed", not as
+                    // something payment needs — initializePayment takes no token,
+                    // and deposit-info is anonymous. On fresh login it is still
+                    // null at this point, so this branch skips and onAuthenticated
+                    // is the sole initializer for that path. Without it both would
+                    // run, since onAuthenticated does not check
+                    // isPaymentInitialized() before calling.
                     if (authToken && !isPaymentInitialized()) {
-                        initializePayment(ethersSigner, authToken)
+                        initializePayment(ethersSigner)
                             .catch(e => console.warn('[Payment] init failed:', e?.message));
                     }
 
@@ -484,7 +488,6 @@ async function restoreSession() {
     if (storedToken && storedWallet && decodeJwtExpMs(storedToken) > Date.now() + 30_000) {
         authToken = storedToken;
         CONFIG.wallet = storedWallet;
-        try { setAuthToken(authToken); } catch { /* access-token mirror is best-effort */ }
         initializeAppKit().catch(e => console.log('[AppKit] Background init failed:', e));
         setupTokenRefresh();
         showDashboard();
@@ -657,7 +660,6 @@ function refreshAuthToken() {
                 authToken = data.data.accessToken;
                 currentUser = data.data.user;
                 localStorage.setItem('authToken', authToken);
-                try { setAuthToken(authToken); } catch { /* access-token mirror is best-effort */ }
                 console.log('[Auth] Token refreshed successfully');
                 return true;
             }
@@ -879,12 +881,23 @@ async function refreshData() {
  * Load and display user balance
  */
 async function loadUserBalance() {
+    const balanceEl = document.getElementById('user-balance');
     try {
         const balance = await getBalance();
         updateBalanceDisplay(balance);
+        balanceEl?.classList.remove('stale');
+        balanceEl?.removeAttribute('title');
         return balance;
     } catch (error) {
         console.warn('[Balance] Failed to load:', error.message);
+        // Keep the last known figure — blanking it on a momentary RPC blip is
+        // worse than showing it — but stop presenting it as current. api() has
+        // already disconnected if the session is dead, so reaching here means a
+        // transport or chain failure: the number is true, just not fresh.
+        if (balanceEl) {
+            balanceEl.classList.add('stale');
+            balanceEl.title = `Could not refresh: ${error.message}`;
+        }
         return null;
     }
 }
@@ -929,12 +942,13 @@ async function handleBalanceCardClick() {
     }
 
     if (!isPaymentInitialized()) {
-        // The signer may have been acquired just now by getReadySigner(),
-        // bypassing the subscribeAccount init. Same rule, same trigger —
-        // signer + token now coexist — applied at the on-demand seam.
-        // Fail closed if init genuinely fails.
+    // The signer may have been acquired just now by getReadySigner(),
+    // bypassing the subscribeAccount init. Same trigger, applied at the
+    // on-demand seam. No token check: the user is already inside the
+    // dashboard, and initializePayment does not need one.
+    // Fail closed if init genuinely fails.
         try {
-            await initializePayment(signer, authToken);
+            await initializePayment(signer);
         } catch (e) {
             console.warn('[Payment] init failed:', e?.message);
             showToast('Payment system not available', 'error');

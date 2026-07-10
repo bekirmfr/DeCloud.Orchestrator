@@ -31,72 +31,86 @@ const ESCROW_ABI = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 let depositConfig = null;
+let depositConfigPromise = null;
 let usdcContract = null;
 let escrowContract = null;
 let currentSigner = null;
-let authToken = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HTTP
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The app's HTTP client (app.js `api()`). It attaches the access token,
+ * refreshes it on 401 and retries, and disconnects the session when the server
+ * definitively rejects the refresh — so a 401 never reaches a caller, and this
+ * module holds no token of its own.
+ *
+ * Reached through window because app.js imports payment.js and so cannot be
+ * imported from here. Extracting api() into a shared module would make this an
+ * ordinary import; that is a separate change.
+ */
+function api(path, options) {
+    if (!window.api) throw new Error('HTTP client unavailable — app.js has not loaded');
+    return window.api(path, options);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEPOSIT CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The one place /api/payment/deposit-info is fetched.
+ *
+ * The response is deployment constants — contract addresses, chain id,
+ * confirmation depth — fixed for the life of the process, so there is nothing
+ * to invalidate. The in-flight promise is memoized so the three parallel loads
+ * in loadBalanceModalData() share a single request, and cleared on failure so
+ * a later call retries.
+ */
+export async function loadDepositConfig() {
+    if (depositConfig) return depositConfig;
+
+    if (!depositConfigPromise) {
+        depositConfigPromise = fetchDepositConfig();
+        depositConfigPromise.catch(() => { depositConfigPromise = null; });
+    }
+
+    depositConfig = await depositConfigPromise;
+    return depositConfig;
+}
+
+async function fetchDepositConfig() {
+    const response = await api('/api/payment/deposit-info');
+
+    if (!response.ok) {
+        throw new Error(`Deposit config unavailable (HTTP ${response.status})`);
+    }
+
+    const result = await response.json();
+    const config = result.data ?? result;
+
+    if (!config?.usdcTokenAddress || !config?.escrowContractAddress) {
+        throw new Error('Payments are not configured on this deployment');
+    }
+
+    return config;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Set the authentication token
- * @param {string} token - JWT auth token
- */
-export function setAuthToken(token) {
-    authToken = token;
-}
-
-/**
  * Initialize payment module
  * @param {ethers.Signer} signer - Ethers signer from connected wallet
- * @param {string} token - Optional auth token (can also use setAuthToken)
  */
-export async function initializePayment(signer, token = null) {
-    if (token) {
-        authToken = token;
-    }
-
-    // Get token from localStorage if not provided
-    if (!authToken) {
-        authToken = localStorage.getItem('authToken');
-    }
-
-    if (!authToken) {
-        throw new Error('No auth token available. Please authenticate first.');
-    }
-
+export async function initializePayment(signer) {
     currentSigner = signer;
 
-    // Fetch deposit config from orchestrator
-    const response = await fetch('/api/payment/deposit-info', {
-        headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'Content-Type': 'application/json'
-        }
-    });
+    await loadDepositConfig();
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[Payment] Failed to fetch deposit info:', response.status, errorText);
-        throw new Error('Failed to fetch deposit info');
-    }
-
-    const result = await response.json();
-
-    if (!result.success || !result.data) {
-        throw new Error(result.message || 'Invalid deposit info response');
-    }
-
-    depositConfig = result.data;
-
-    // Validate config
-    if (!depositConfig.usdcTokenAddress || !depositConfig.escrowContractAddress) {
-        throw new Error('Invalid deposit configuration: missing contract addresses');
-    }
-
-    // Initialize contracts
+// Initialize contracts
     usdcContract = new ethers.Contract(
         depositConfig.usdcTokenAddress,
         ERC20_ABI,
@@ -137,13 +151,6 @@ export async function initializePayment(signer, token = null) {
  */
 export function isInitialized() {
     return depositConfig !== null && usdcContract !== null && escrowContract !== null;
-}
-
-/**
- * Get current deposit configuration
- */
-export function getDepositConfig() {
-    return depositConfig;
 }
 
 /**
@@ -466,26 +473,14 @@ export async function depositUSDC(amount, onProgress = () => { }) {
  * @returns {Promise<{balance: number, tokenSymbol: string, pendingDeposits: number}>}
  */
 export async function getBalance() {
-    if (!authToken) {
-        authToken = localStorage.getItem('authToken');
-    }
-
-    if (!authToken) {
-        throw new Error('Not authenticated');
-    }
-
-    const response = await fetch('/api/payment/balance', {
-        headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'Content-Type': 'application/json'
-        }
-    });
+    // api() refreshes an expired access token and retries; if the server
+    // definitively rejects the session it disconnects and throws with a message
+    // saying so. A 401 therefore never arrives here — a bad response is a real
+    // server or transport failure, and the message says which.
+    const response = await api('/api/payment/balance');
 
     if (!response.ok) {
-        if (response.status === 401) {
-            throw new Error('Authentication expired');
-        }
-        throw new Error('Failed to fetch balance');
+        throw new Error(`Failed to fetch balance (HTTP ${response.status})`);
     }
 
     const result = await response.json();
@@ -983,31 +978,21 @@ async function loadBalanceModalData() {
 }
 
 /**
- * Resolve an escrow contract bound to the connected signer.
- * Returns null when the wallet isn't connected or the contract isn't configured.
+ * The connected wallet's signer, or null. "No wallet connected" is a normal UI
+ * state, not a failure — callers render for it rather than catch it. Keeping it
+ * out of getEscrow() is why getEscrow() can report its failures honestly.
  */
-async function getEscrowFor(abi) {
-    const signer = window.ethersSigner ? window.ethersSigner() : null;
-    if (!signer) return null;
+function getSigner() {
+    return window.ethersSigner ? window.ethersSigner() : null;
+}
 
-    const res = window.api
-        ? await window.api('/api/payment/deposit-info')
-        : await fetch('/api/payment/deposit-info', {
-            headers: {
-                'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-            }
-        });
-    if (!res.ok) return null;
-
-    const result = await res.json();
-    const config = result.data || result;
-    if (!config.escrowContractAddress) return null;
-
-    return {
-        signer,
-        escrow: new ethers.Contract(config.escrowContractAddress, abi, signer)
-    };
+/**
+ * An escrow contract bound to the given signer. Throws when the config cannot
+ * be loaded; the thrown message names the cause.
+ */
+async function getEscrow(abi, signer) {
+    const config = await loadDepositConfig();
+    return new ethers.Contract(config.escrowContractAddress, abi, signer);
 }
 
 /**
@@ -1027,19 +1012,21 @@ async function loadPlatformSection() {
     section.style.display = 'none';
     if (divider) divider.style.display = 'none';
 
+    const signer = getSigner();
+    if (!signer) return;
+
     try {
-        const ctx = await getEscrowFor(ESCROW_OWNER_ABI);
-        if (!ctx) return;
+        const escrow = await getEscrow(ESCROW_OWNER_ABI, signer);
 
         // getAddress() normalizes both sides to checksum form, so this compares
         // addresses rather than string casing.
         const [ownerAddr, myAddr] = await Promise.all([
-            ctx.escrow.owner(),
-            ctx.signer.getAddress()
+            escrow.owner(),
+            signer.getAddress()
         ]);
         if (ethers.getAddress(ownerAddr) !== ethers.getAddress(myAddr)) return;
 
-        const feesRaw = await ctx.escrow.platformFees();
+        const feesRaw = await escrow.platformFees();
         const fees = parseFloat(ethers.formatUnits(feesRaw, 6));
 
         section.style.display = 'flex';
@@ -1070,18 +1057,20 @@ async function loadPlatformSection() {
 
 window.withdrawPlatformFees = async function () {
     const btn = document.getElementById('bm-btn-withdraw-platform');
-    try {
-        const ctx = await getEscrowFor(ESCROW_OWNER_ABI);
-        if (!ctx) { showToast('error', 'Wallet not connected'); return; }
 
-        const to = await ctx.signer.getAddress();
+    const signer = getSigner();
+    if (!signer) { showToast('error', 'Connect your wallet first'); return; }
+
+    try {
+        const escrow = await getEscrow(ESCROW_OWNER_ABI, signer);
+        const to = await signer.getAddress();
 
         // withdrawPlatformFees has no "0 = full balance" convention (unlike
         // nodeWithdraw). Pass the exact accrued amount. Between this read and
         // the transaction mining, platformFees can only grow — settlement adds
         // to it, and only the owner can subtract — so `amount <= platformFees`
         // still holds. Any fees accrued in that window remain for next time.
-        const amount = await ctx.escrow.platformFees();
+        const amount = await escrow.platformFees();
         if (amount === 0n) { showToast('warning', 'No fees to withdraw'); return; }
 
         if (btn) {
@@ -1089,7 +1078,7 @@ window.withdrawPlatformFees = async function () {
             btn.innerHTML = `<div class="bm-spinner-sm"></div> Confirming...`;
         }
 
-        const tx = await ctx.escrow.withdrawPlatformFees(to, amount);
+        const tx = await escrow.withdrawPlatformFees(to, amount);
         if (btn) btn.innerHTML = `<div class="bm-spinner-sm"></div> Waiting...`;
         await tx.wait();
 
@@ -1098,7 +1087,9 @@ window.withdrawPlatformFees = async function () {
         if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
             showToast('warning', 'Transaction rejected');
         } else {
-            showToast('error', `Withdrawal failed: ${error.message}`);
+            // ethers v6 puts the decoded revert reason in shortMessage
+            // ("Exceeds available fees"); message is the raw call data.
+            showToast('error', `Withdrawal failed: ${error.shortMessage ?? error.message}`);
         }
     } finally {
         await loadPlatformSection();   // rerenders the button in either case
@@ -1164,41 +1155,14 @@ async function loadEarningsSection() {
     const container = document.getElementById('bm-earnings-body');
     if (!container) return;
 
+    const signer = getSigner();
+    if (!signer) {
+        container.innerHTML = '<span class="bm-earnings-note">Connect wallet to view earnings</span>';
+        return;
+    }
+
     try {
-        const signer = window.ethersSigner ? window.ethersSigner() : null;
-        if (!signer) {
-            container.innerHTML = '<span class="bm-earnings-note">Connect wallet to view earnings</span>';
-            return;
-        }
-
-        // Get deposit config for contract address
-        const configResponse = window.api
-            ? await window.api('/api/payment/deposit-info')
-            : await fetch('/api/payment/deposit-info', {
-                headers: {
-                    'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-
-        if (!configResponse.ok) {
-            container.innerHTML = '<span class="bm-earnings-note">Unavailable</span>';
-            return;
-        }
-
-        const configResult = await configResponse.json();
-        const config = configResult.data || configResult;
-
-        if (!config.escrowContractAddress) {
-            container.innerHTML = '<span class="bm-earnings-note">Not configured</span>';
-            return;
-        }
-
-        const escrow = new ethers.Contract(
-            config.escrowContractAddress,
-            ESCROW_AUTHOR_ABI,
-            signer
-        );
+        const escrow = await getEscrow(ESCROW_AUTHOR_ABI, signer);
 
         const address = await signer.getAddress();
         const pendingRaw = await escrow.nodePendingPayouts(address);
@@ -1222,7 +1186,10 @@ async function loadEarningsSection() {
         `;
     } catch (error) {
         console.error('[Balance Modal] Failed to load earnings:', error);
-        container.innerHTML = '<span class="bm-earnings-note">Unable to load earnings</span>';
+        // loadDepositConfig() and api() both throw with a message naming the
+        // cause — "Session expired", "Network error", "not configured". Show it.
+        container.innerHTML =
+            `<span class="bm-earnings-note">${escapeHtml(error.message)}</span>`;
     }
 }
 
@@ -1230,29 +1197,14 @@ async function loadEarningsSection() {
  * Withdraw earnings from the balance modal
  */
 window.withdrawFromBalanceModal = async function () {
+    const signer = getSigner();
+    if (!signer) {
+        showToast('error', 'Connect your wallet first');
+        return;
+    }
+
     try {
-        const signer = window.ethersSigner ? window.ethersSigner() : null;
-        if (!signer) {
-            showToast?.('error', 'Wallet not connected');
-            return;
-        }
-
-        const configResponse = window.api
-            ? await window.api('/api/payment/deposit-info')
-            : await fetch('/api/payment/deposit-info', {
-                headers: {
-                    'Authorization': `Bearer ${authToken || localStorage.getItem('authToken')}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-        const configResult = await configResponse.json();
-        const config = configResult.data || configResult;
-
-        const escrow = new ethers.Contract(
-            config.escrowContractAddress,
-            ESCROW_AUTHOR_ABI,
-            signer
-        );
+        const escrow = await getEscrow(ESCROW_AUTHOR_ABI, signer);
 
         // Disable button during transaction
         const btn = document.getElementById('bm-btn-withdraw-earnings');
@@ -1275,9 +1227,9 @@ window.withdrawFromBalanceModal = async function () {
         ]);
     } catch (error) {
         if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-            showToast?.('warning', 'Transaction rejected');
+            showToast('warning', 'Transaction rejected');
         } else {
-            showToast?.('error', `Withdrawal failed: ${error.message}`);
+            showToast('error', `Withdrawal failed: ${error.shortMessage ?? error.message}`);
         }
         // Restore button state
         await loadEarningsSection();
@@ -1288,11 +1240,3 @@ window.withdrawFromBalanceModal = async function () {
 function showToast(type, message) {
     sharedShowToast(message, type);
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// EXPORTS
-// ═══════════════════════════════════════════════════════════════════════════
-
-export {
-    depositConfig
-};
