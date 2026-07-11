@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { escapeHtml, sanitizeUrl, showToast as sharedShowToast, isPerDeployPricing, renderMarkdown } from './utils.js';
+import { submitTemplateDeploy, afterDeploySuccess } from './deploy-submit.js';
 
 // ============================================
 // MODULE STATE
@@ -583,68 +584,31 @@ export async function deployFromTemplate() {
             ? _cbDeployHandle.getConstraints()
             : [];
 
-        const response = await api(`/api/marketplace/templates/${templateId}/deploy`, {
-            method: 'POST',
-            body: JSON.stringify({
-                vmName: vmName,
-                environmentVariables: collectDeployVariables(),
-                customSpec: {
-                    virtualCpuCores: cpu,
-                    memoryBytes: memory,
-                    diskBytes: disk,
-                    imageId: 'ubuntu-22.04',
-                    gpuMode: gpuMode,
-                    gpuVramBytes: gpuVramBytes,
-                    requiresGpu: gpuMode !== 0,
-                    qualityTier: qualityTier,
-                    bandwidthTier: bandwidthTier,
-                    replicationFactor: replicationFactor,
-                    constraints: deployConstraints.length > 0 ? deployConstraints : null
-                }
-            })
+        // Submission (fetch, ToS-gate retry, error shapes) and the
+        // post-success ritual (password modal, toast, navigation) live in
+        // deploy-submit.js — the ONE deploy path, shared with the Deploy
+        // from Repo form. This function only reads its own DOM.
+        const result = await submitTemplateDeploy(templateId, {
+            vmName,
+            environmentVariables: collectDeployVariables(),
+            customSpec: {
+                virtualCpuCores: cpu,
+                memoryBytes: memory,
+                diskBytes: disk,
+                imageId: 'ubuntu-22.04',
+                gpuMode: gpuMode,
+                gpuVramBytes: gpuVramBytes,
+                requiresGpu: gpuMode !== 0,
+                qualityTier: qualityTier,
+                bandwidthTier: bandwidthTier,
+                replicationFactor: replicationFactor,
+                constraints: deployConstraints.length > 0 ? deployConstraints : null
+            }
         });
 
-        const text = await response.text();
-        let data;
-        try {
-            data = text ? JSON.parse(text) : {};
-        } catch {
-            throw new Error(response.ok ? 'Invalid response from server' : `Server error (${response.status})`);
-        }
-
-        if (data.success || response.ok) {
-            console.log('[Template Detail] Deployment successful:', data.data || data);
-
-            const vmId = (data.data || data).vmId;
-            const password = (data.data || data).password;
-
-            // Close modal
-            closeDeployTemplateModal();
-
-            // Show password modal if we got a valid password (human-readable format)
-            if (password && !password.includes('_') && password.includes('-')) {
-                if (window.showPasswordModal) {
-                    await window.showPasswordModal(vmId, vmName, password);
-                } else {
-                    console.warn('[Template Detail] Password modal not available');
-                    showToast('warning', `VM created! Password: ${password} - Please save it!`);
-                }
-            }
-
-            // Show success message
-            showToast('success', `VM "${vmName}" is being deployed!`);
-
-            // Navigate to VMs page
-            setTimeout(() => {
-                window.showPage('virtual-machines');
-            }, 1000);
-        } else {
-            // ToS may be the blocker (admins skip the entry gate; a tenant's acceptance
-            // can lapse on a version bump). Surface the gate via app.js and retry once —
-            // after acceptance the status check returns false, so this can't loop.
-            if (await window.handleDeployTosGate?.()) { return await deployFromTemplate(); }
-            throw new Error(data.error || 'Deployment failed');
-        }
+        console.log('[Template Detail] Deployment successful:', result);
+        closeDeployTemplateModal();
+        await afterDeploySuccess(result, vmName);
     } catch (error) {
         console.error('[Template Detail] Deployment failed:', error);
         alert(`Deployment failed: ${error.message}`);

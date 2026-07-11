@@ -507,8 +507,7 @@
     color: var(--accent-danger);
 }
 
-@keyframes pulse-warning {
-
+@keyframes pulse-warning {s
     0%,
     100% {
         opacity: 1;

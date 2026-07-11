@@ -1,0 +1,191 @@
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Deploy from Repository — modal + button
+     Paste the modal alongside the other .modal-overlay blocks in index.html.
+     Paste the button next to the existing "Create VM" button in the
+     Virtual Machines page header (and/or the marketplace header).
+     Uses only existing dashboard classes — no new CSS required.
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+<!-- BUTTON — place beside the Create VM button -->
+<button class="btn btn-secondary" onclick="window.repoDeploy.openRepoDeployModal()">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+        <path d="M9 18c-4.51 2-5-2-7-2" />
+    </svg>
+    Deploy from Repo
+</button>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="repo-deploy-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 class="modal-title">Deploy from Repository</h2>
+            <button class="modal-close" onclick="window.repoDeploy.closeRepoDeployModal()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+
+            <div class="form-group">
+                <label class="form-label">VM Name</label>
+                <input type="text" class="form-input" id="rd-vm-name" placeholder="my-app"
+                       maxlength="40" oninput="previewVmName(this, 'rd-vm-name-preview')">
+                <p class="form-help" id="rd-vm-name-preview">A unique suffix will be appended automatically</p>
+            </div>
+
+            <!-- ── Source ─────────────────────────────────────────── -->
+            <div class="form-section">
+                <h3 class="form-section-title">Source</h3>
+                <div class="form-group">
+                    <label class="form-label">Repository URL</label>
+                    <input type="text" class="form-input" id="rd-source-url"
+                           placeholder="https://github.com/you/your-app"
+                           spellcheck="false" autocomplete="off">
+                    <p class="form-help" id="rd-source-url-error" style="display:none; color:#ef4444;"></p>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Branch, tag, or commit</label>
+                        <input type="text" class="form-input" id="rd-source-ref"
+                               placeholder="HEAD (default branch)" spellcheck="false">
+                    </div>
+                    <div class="form-group" style="display:flex; align-items:center; padding-top:24px;">
+                        <label class="filter-label">
+                            <input type="checkbox" id="rd-private-toggle">
+                            <span>Private repository</span>
+                        </label>
+                    </div>
+                </div>
+                <div id="rd-private-section" style="display:none;">
+                    <div class="form-group">
+                        <label class="form-label">Deploy key (private half)</label>
+                        <textarea class="form-input" id="rd-deploy-key" rows="4"
+                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                                  spellcheck="false" autocomplete="off"
+                                  style="font-family:monospace; font-size:11px; -webkit-text-security:disc;"></textarea>
+                        <p class="form-help" id="rd-deploy-key-error" style="display:none; color:#ef4444;"></p>
+                        <p class="form-help">
+                            Use a read-only, single-repo deploy key. It will be visible to the
+                            node operator hosting your VM and deleted from the VM after cloning.
+                            Revoke it after deploy.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Application ────────────────────────────────────── -->
+            <div class="form-section">
+                <h3 class="form-section-title">Application</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">App port</label>
+                        <input type="number" class="form-input" id="rd-app-port"
+                               value="8080" min="1" max="65535">
+                        <p class="form-help" id="rd-app-port-error" style="display:none; color:#ef4444;"></p>
+                        <p class="form-help">
+                            The port your app listens on inside the container — we expose it
+                            at your VM's URL. <code>$PORT</code> is set to this value.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Database</label>
+                        <select class="form-input" id="rd-database">
+                            <option value="none">None</option>
+                            <option value="postgres">PostgreSQL (DATABASE_URL is injected)</option>
+                            <option value="redis">Redis (REDIS_URL is injected)</option>
+                        </select>
+                    </div>
+                </div>
+                <p class="form-help">
+                    Build detection: a <code>Dockerfile</code> wins, then a compose file
+                    (must publish port 80 itself), then automatic detection (Nixpacks —
+                    Procfiles are honored). Wrong guess? Add a Dockerfile.
+                </p>
+            </div>
+
+            <!-- ── Environment variables ──────────────────────────── -->
+            <div class="form-section">
+                <h3 class="form-section-title">Environment variables</h3>
+                <div id="rd-env-list"></div>
+                <div id="rd-env-paste-wrap" style="display:none; margin-top:8px;">
+                    <textarea class="form-input" id="rd-env-paste-area" rows="5"
+                              placeholder="# Paste your .env or `heroku config -s` output&#10;KEY=value"
+                              spellcheck="false" style="font-family:monospace; font-size:12px;"></textarea>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <button class="btn btn-sm btn-secondary" id="rd-env-add" type="button">+ Add variable</button>
+                    <button class="btn btn-sm btn-secondary" id="rd-env-paste-btn" type="button">Paste .env</button>
+                </div>
+                <p class="form-help" style="margin-top:8px;">
+                    Delivered to your app via <code>--env-file</code>. Values are transported
+                    through cloud-init and are visible to the node operator hosting your VM.
+                </p>
+            </div>
+
+            <!-- ── Advanced: specs (collapsed) ────────────────────── -->
+            <div class="form-section">
+                <div id="rd-advanced-toggle" style="display:flex; align-items:center; cursor:pointer;">
+                    <h3 class="form-section-title" style="margin-bottom:0;">
+                        <span id="rd-advanced-icon">▶</span> Resources
+                    </h3>
+                </div>
+                <div id="rd-advanced-body" style="display:none; margin-top:12px;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">CPU Cores</label>
+                            <input type="number" class="form-input" id="rd-cpu" value="2" min="2" max="32">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Memory (MB)</label>
+                            <input type="number" class="form-input" id="rd-memory" value="4096" min="4096" step="512">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Disk (GB)</label>
+                            <input type="number" class="form-input" id="rd-disk" value="25" min="25">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Quality Tier</label>
+                            <select class="form-input" id="rd-quality-tier">
+                                <option value="0">Dedicated (Premium)</option>
+                                <option value="1" selected>Standard</option>
+                                <option value="2">Balanced</option>
+                                <option value="3">Burstable</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Bandwidth Tier</label>
+                            <select class="form-input" id="rd-bandwidth-tier">
+                                <option value="0">Basic (10 Mbps)</option>
+                                <option value="1">Standard (50 Mbps)</option>
+                                <option value="2">Performance (100 Mbps)</option>
+                                <option value="3" selected>Default</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Replication</label>
+                            <select class="form-input" id="rd-replication-factor">
+                                <option value="0" selected>Ephemeral</option>
+                                <option value="3">Replicated (3x)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="form-help">
+                        Builds compile your code on the VM — the minimums here are the
+                        template's honest floor, not the platform default.
+                    </p>
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button class="btn btn-secondary" type="button"
+                        onclick="window.repoDeploy.closeRepoDeployModal()">Cancel</button>
+                <button class="btn btn-primary" id="rd-deploy-btn" type="button" disabled>Deploy</button>
+            </div>
+        </div>
+    </div>
+</div>

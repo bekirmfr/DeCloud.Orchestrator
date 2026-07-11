@@ -2953,6 +2953,8 @@ final_message: |
             () => BuildCoolifyTemplateAsync(ct), ct);
         await TryUpsertComposeAsync("leaderboard",
             () => BuildLeaderboardTemplateAsync(ct), ct);
+        await TryUpsertComposeAsync("repo-deploy",
+            () => BuildRepoDeployTemplateAsync(ct), ct);
     }
 
     private async Task TryUpsertComposeAsync(
