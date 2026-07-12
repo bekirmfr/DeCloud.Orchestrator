@@ -14,6 +14,7 @@
  */
 
 import { resolveTemplate, submitTemplateDeploy, afterDeploySuccess } from './deploy-submit.js';
+import { showToast } from './utils.js';
 
 const TEMPLATE_SLUG = 'platform-repo-deploy';
 
@@ -58,8 +59,44 @@ function esc(s) {
 const $ = id => document.getElementById(id);
 
 function setFieldError(id, msg) {
-    const el = $(id + '-error');
-    if (el) { el.textContent = msg || ''; el.style.display = msg ? '' : 'none'; }
+    let el = $(id + '-error');
+    if (!el) {
+        // Create on demand — the form must not depend on error <p> elements
+        // existing in the markup (a missing element must not mean a
+        // silently missing message).
+        const field = $(id);
+        if (!field) return;
+        el = document.createElement('p');
+        el.id = id + '-error';
+        el.className = 'form-help';
+        el.style.color = '#ef4444';
+        el.style.display = 'none';
+        field.insertAdjacentElement('afterend', el);
+    }
+    el.textContent = msg || '';
+    el.style.display = msg ? '' : 'none';
+}
+
+/**
+ * One quiet line under the action buttons naming still-empty required
+ * fields. Empty-required is not an error while the user is still filling
+ * the form — red "required" text on a field they haven't reached yet is
+ * noise. Invalid input (a malformed URL, a bad port) is an error and gets
+ * red text on the field itself.
+ */
+function showMissingHint(missing) {
+    let el = $('rd-missing-hint');
+    if (!el) {
+        const btn = $('rd-deploy-btn');
+        if (!btn || !btn.parentElement) return;
+        el = document.createElement('p');
+        el.id = 'rd-missing-hint';
+        el.className = 'form-help';
+        el.style.cssText = 'text-align:right; margin-top:6px;';
+        btn.parentElement.insertAdjacentElement('afterend', el);
+    }
+    el.textContent = missing.length ? `To deploy, fill in: ${missing.join(', ')}.` : '';
+    el.style.display = missing.length ? '' : 'none';
 }
 
 // ─── validation ─────────────────────────────────────────────────────────
@@ -73,11 +110,14 @@ function validRepoUrl(url) {
 
 function validateForm() {
     let ok = true;
+    const missing = [];
+
+    if (!$('rd-vm-name').value.trim()) missing.push('VM name');
 
     const url = $('rd-source-url').value.trim();
     if (!url) {
-        setFieldError('rd-source-url', 'Repository URL is required.');
-        ok = false;
+        missing.push('repository URL');
+        setFieldError('rd-source-url', '');
     } else if (!validRepoUrl(url)) {
         setFieldError('rd-source-url', 'Use https://host/owner/repo or git@host:owner/repo.');
         ok = false;
@@ -96,8 +136,8 @@ function validateForm() {
     if ($('rd-private-toggle').checked) {
         const key = $('rd-deploy-key').value.trim();
         if (!key) {
-            setFieldError('rd-deploy-key', 'Paste the private half of your deploy key, or turn off "Private repository".');
-            ok = false;
+            missing.push('deploy key (or turn off "Private repository")');
+            setFieldError('rd-deploy-key', '');
         } else if (!key.includes('BEGIN')) {
             setFieldError('rd-deploy-key', 'This does not look like a private key (missing BEGIN header).');
             ok = false;
@@ -110,12 +150,11 @@ function validateForm() {
 
     const envOk = validateEnvRows();
 
-    const vmName = $('rd-vm-name').value.trim();
-    if (!vmName) ok = false; // no red text needed; button stays disabled
-
+    showMissingHint(missing);
+    const valid = ok && envOk && missing.length === 0;
     const btn = $('rd-deploy-btn');
-    if (btn) btn.disabled = !(ok && envOk);
-    return ok && envOk;
+    if (btn) btn.disabled = !valid;
+    return valid;
 }
 
 // ─── reserved names ─────────────────────────────────────────────────────
@@ -231,7 +270,7 @@ function pasteEnvClicked() {
     area.value = '';
     wrap.style.display = 'none';
     validateForm();
-    window.showToast?.('success', `${entries.length} variable${entries.length === 1 ? '' : 's'} added`);
+    showToast(`${entries.length} variable${entries.length === 1 ? '' : 's'} added`, 'success');
 }
 
 function collectEnvVars() {
@@ -248,7 +287,14 @@ function collectEnvVars() {
 
 export async function openRepoDeployModal() {
     const modal = $('repo-deploy-modal');
-    if (!modal) return;
+    if (!modal) {
+        console.error('[Repo Deploy] #repo-deploy-modal not found in the page — is the modal markup in index.html?');
+        return;
+    }
+    // Wire (or re-verify wiring) at open: the modal must work regardless
+    // of module load order or whether any bootstrap code called
+    // initRepoDeploy(). Idempotent — safe on every open.
+    initRepoDeploy();
 
     // Reset to a clean slate every open.
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-deploy-key'].forEach(id => { if ($(id)) $(id).value = ''; });
@@ -284,9 +330,8 @@ export async function openRepoDeployModal() {
         }
     } catch (e) {
         console.error('[Repo Deploy] Could not resolve template', e);
-        window.showToast?.('error',
-            'The Deploy from Repository template is not available. ' +
-            'Check that the orchestrator seeded platform-repo-deploy.');
+        showToast('The Deploy from Repository template is not available. ' +
+            'Check that the orchestrator seeded platform-repo-deploy.', 'error');
         closeRepoDeployModal();
         return;
     }
@@ -381,7 +426,7 @@ async function deployClicked() {
         });
     } catch (error) {
         console.error('[Repo Deploy] Deployment failed:', error);
-        window.showToast?.('error', error.message || 'Deployment failed');
+        showToast(error.message || 'Deployment failed', 'error');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Deploy';
@@ -390,14 +435,38 @@ async function deployClicked() {
 
 // ─── wiring ──────────────────────────────────────────────────────────────
 
+let _wired = false;
 export function initRepoDeploy() {
-    $('rd-private-toggle')?.addEventListener('change', togglePrivate);
-    $('rd-advanced-toggle')?.addEventListener('click', toggleAdvanced);
-    $('rd-env-add')?.addEventListener('click', () => addEnvRow());
-    $('rd-env-paste-btn')?.addEventListener('click', pasteEnvClicked);
-    $('rd-deploy-btn')?.addEventListener('click', deployClicked);
+    if (_wired) return;
+    if (!$('repo-deploy-modal')) return;   // markup not parsed yet — openRepoDeployModal retries
+    if (document.querySelectorAll('#repo-deploy-modal').length > 1) {
+        console.warn('[Repo Deploy] Duplicate #repo-deploy-modal in the page — remove one. getElementById only ever sees the first, so the visible copy may be inert.');
+    }
+
+    // Fail loudly, not optionally: a missing element here is an
+    // integration bug, and silent ?. chaining is how the last one hid.
+    const wire = (id, event, handler) => {
+        const el = $(id);
+        if (!el) { console.error(`[Repo Deploy] #${id} missing — modal markup out of date?`); return; }
+        el.addEventListener(event, handler);
+    };
+    wire('rd-private-toggle', 'change', togglePrivate);
+    wire('rd-advanced-toggle', 'click', toggleAdvanced);
+    wire('rd-env-add', 'click', () => addEnvRow());
+    wire('rd-env-paste-btn', 'click', pasteEnvClicked);
+    wire('rd-deploy-btn', 'click', deployClicked);
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-app-port', 'rd-deploy-key']
-        .forEach(id => $(id)?.addEventListener('input', validateForm));
+        .forEach(id => wire(id, 'input', validateForm));
+
+    _wired = true;
 }
 
 window.repoDeploy = { openRepoDeployModal, closeRepoDeployModal, initRepoDeploy };
+
+// Self-initialize on load — index.html includes this file as a module,
+// so no app.js changes are needed.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initRepoDeploy);
+} else {
+    initRepoDeploy();
+}
