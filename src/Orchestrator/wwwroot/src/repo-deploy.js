@@ -14,7 +14,6 @@
  */
 
 import { resolveTemplate, submitTemplateDeploy, afterDeploySuccess } from './deploy-submit.js';
-import { showToast } from './utils.js';
 
 const TEMPLATE_SLUG = 'platform-repo-deploy';
 
@@ -63,129 +62,6 @@ function setFieldError(id, msg) {
     if (el) { el.textContent = msg || ''; el.style.display = msg ? '' : 'none'; }
 }
 
-// ─── build detection (browser-side, public GitHub API only) ─────────────
-//
-// Mirrors the guest's build precedence so the user sees, before deploying,
-// what provision.sh will pick. CRITICAL: this runs in the USER'S browser
-// against GitHub's PUBLIC API — never through the orchestrator. Sending the
-// URL to the backend to inspect would be an SSRF primitive (SOURCE_URL
-// pointed at the orchestrator's own network); the whole reason detection
-// lives in the guest is that the guest is where untrusted URLs are safe.
-//
-// PRECEDENCE MUST STAY IDENTICAL to provision.sh's build phase:
-//   Dockerfile → docker-compose → Nixpacks (auto-detect).
-// If you change one, change the other. See tenant-vms/repo-deploy/
-// cloud-init.yaml, "phase: build".
-//
-// This is a PREVIEW, not a promise: it only works for public github.com
-// repos (unauthenticated API, 60 req/hr/IP, no private repos), and the
-// guest's precedence remains the single source of truth. It never blocks
-// the deploy button — on private/rate-limited/non-GitHub it degrades to a
-// neutral "detected on deploy" note.
-
-const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml'];
-
-// Nixpacks-ish provider hints, only to enrich the "auto-detect" label — the
-// decision is still just "no Dockerfile, no compose → Nixpacks". These are
-// cosmetic; being wrong here costs nothing because the guest re-detects.
-const PROVIDER_HINTS = [
-    ['package.json', 'Node.js'], ['requirements.txt', 'Python'], ['pyproject.toml', 'Python'],
-    ['go.mod', 'Go'], ['Cargo.toml', 'Rust'], ['Gemfile', 'Ruby'],
-    ['composer.json', 'PHP'], ['pom.xml', 'Java'], ['build.gradle', 'Java'],
-    ['Procfile', 'Procfile'], ['deno.json', 'Deno'], ['mix.exs', 'Elixir'],
-];
-
-let _detectSeq = 0; // guards against out-of-order async responses
-
-/** Parse owner/repo from a github.com URL. Returns null for anything else. */
-function parseGithub(url) {
-    const m = url.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
-    return m ? { owner: m[1], repo: m[2] } : null;
-}
-
-function setDetect(state, text) {
-    const el = $('rd-detect');
-    if (!el) return;
-    // states: hidden | checking | result | note
-    el.style.display = state === 'hidden' ? 'none' : '';
-    el.className = 'form-help rd-detect rd-detect-' + state;
-    el.textContent = text || '';
-}
-
-/**
- * Detect the build method the guest would choose, from the repo's top-level
- * file listing. Same precedence as provision.sh.
- */
-async function detectBuild(url, ref) {
-    const seq = ++_detectSeq;
-    const gh = parseGithub(url);
-
-    // Non-GitHub or private-looking: we can't preview. Say so neutrally.
-    if (!gh) {
-        setDetect('note', 'Build method will be auto-detected on deploy (Dockerfile → compose → Nixpacks).');
-        return;
-    }
-
-    setDetect('checking', 'Checking repository…');
-    const refQuery = ref && ref !== 'HEAD' ? `?ref=${encodeURIComponent(ref)}` : '';
-    let files;
-    try {
-        const r = await fetch(
-            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/${refQuery}`,
-            { headers: { Accept: 'application/vnd.github+json' } });
-        if (seq !== _detectSeq) return; // a newer keystroke superseded this
-        if (r.status === 404) {
-            setDetect('note', 'Private or not found — the build is auto-detected on deploy (add a deploy key for private repos).');
-            return;
-        }
-        if (r.status === 403) { // rate limited
-            setDetect('note', 'Build method will be auto-detected on deploy.');
-            return;
-        }
-        if (!r.ok) {
-            setDetect('note', 'Build method will be auto-detected on deploy.');
-            return;
-        }
-        files = await r.json();
-        if (seq !== _detectSeq) return;
-    } catch {
-        if (seq !== _detectSeq) return;
-        setDetect('note', 'Build method will be auto-detected on deploy.');
-        return;
-    }
-
-    if (!Array.isArray(files)) {
-        setDetect('note', 'Build method will be auto-detected on deploy.');
-        return;
-    }
-    const names = new Set(files.filter(f => f.type === 'file').map(f => f.name));
-
-    // ── same precedence as provision.sh ──
-    if (names.has('Dockerfile')) {
-        setDetect('result', 'Detected: Dockerfile — your Dockerfile will build the app.');
-        return;
-    }
-    const compose = COMPOSE_NAMES.find(n => names.has(n));
-    if (compose) {
-        setDetect('result', `Detected: ${compose} — must publish port 80 itself.`);
-        return;
-    }
-    const hint = PROVIDER_HINTS.find(([f]) => names.has(f));
-    setDetect('result', hint
-        ? `Detected: auto-build (Nixpacks) — looks like ${hint[1]}.`
-        : 'Detected: auto-build (Nixpacks).');
-}
-
-// Debounced trigger so we don't hit the API on every keystroke.
-let _detectTimer = null;
-function scheduleDetect() {
-    clearTimeout(_detectTimer);
-    const url = $('rd-source-url').value.trim();
-    if (!url || !validRepoUrl(url)) { setDetect('hidden'); return; }
-    _detectTimer = setTimeout(
-        () => detectBuild(url, $('rd-source-ref').value.trim()), 500);
-}
-
 // ─── validation ─────────────────────────────────────────────────────────
 
 /** https://host/path or git@host:path. Everything else is rejected. */
@@ -209,12 +85,19 @@ function validateForm() {
         setFieldError('rd-source-url', '');
     }
 
-    const port = parseInt($('rd-app-port').value, 10);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        setFieldError('rd-app-port', 'Port must be between 1 and 65535.');
-        ok = false;
-    } else {
+    // Port is optional: blank means "use the default", which provision.sh
+    // applies as APP_PORT=8080. Only validate a value the user actually typed.
+    const portRaw = $('rd-app-port').value.trim();
+    if (portRaw === '') {
         setFieldError('rd-app-port', '');
+    } else {
+        const port = parseInt(portRaw, 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            setFieldError('rd-app-port', 'Port must be between 1 and 65535.');
+            ok = false;
+        } else {
+            setFieldError('rd-app-port', '');
+        }
     }
 
     if ($('rd-private-toggle').checked) {
@@ -355,7 +238,7 @@ function pasteEnvClicked() {
     area.value = '';
     wrap.style.display = 'none';
     validateForm();
-    showToast(`${entries.length} variable${entries.length === 1 ? '' : 's'} added`, 'success');
+    window.showToast?.('success', `${entries.length} variable${entries.length === 1 ? '' : 's'} added`);
 }
 
 function collectEnvVars() {
@@ -386,7 +269,6 @@ export async function openRepoDeployModal() {
     setFieldError('rd-source-url', '');
     setFieldError('rd-app-port', '');
     setFieldError('rd-deploy-key', '');
-    setDetect('hidden');
 
     if (window.openStaticModal) window.openStaticModal(modal);
     else modal.classList.add('active');
@@ -409,8 +291,9 @@ export async function openRepoDeployModal() {
         }
     } catch (e) {
         console.error('[Repo Deploy] Could not resolve template', e);
-        showToast('The Deploy from Repository template is not available. ' +
-            'Check that the orchestrator seeded platform-repo-deploy.', 'error');
+        window.showToast?.('error',
+            'The Deploy from Repository template is not available. ' +
+            'Check that the orchestrator seeded platform-repo-deploy.');
         closeRepoDeployModal();
         return;
     }
@@ -429,23 +312,7 @@ export function closeRepoDeployModal() {
 
 function togglePrivate() {
     $('rd-private-section').style.display = $('rd-private-toggle').checked ? '' : 'none';
-    updateDeployKeyHelp();
     validateForm();
-}
-
-/**
- * Point the "create a deploy key" link at the specific repo's settings when
- * we can parse a GitHub URL, else GitHub's generic docs. A link, not an
- * OAuth flow — the credential stays a user-created, read-only, single-repo
- * key the platform never holds.
- */
-function updateDeployKeyHelp() {
-    const link = $('rd-deploy-key-help');
-    if (!link) return;
-    const gh = parseGithub($('rd-source-url').value.trim());
-    link.href = gh
-        ? `https://github.com/${gh.owner}/${gh.repo}/settings/keys/new`
-        : 'https://docs.github.com/authentication/connecting-to-github-with-ssh/managing-deploy-keys';
 }
 
 function toggleAdvanced() {
@@ -465,7 +332,9 @@ async function deployClicked() {
     const vmName = $('rd-vm-name').value.trim();
     const sourceUrl = $('rd-source-url').value.trim();
     const sourceRef = $('rd-source-ref').value.trim() || 'HEAD';
-    const appPort = parseInt($('rd-app-port').value, 10);
+    // Blank → default 8080, matching provision.sh's APP_PORT=${APP_PORT:-8080}.
+    // We set $PORT to this in the app's env, so any app reading $PORT honors it.
+    const appPort = $('rd-app-port').value.trim() || '8080';
     const database = $('rd-database').value;
     const deployKey = $('rd-private-toggle').checked ? $('rd-deploy-key').value.trim() : '';
 
@@ -521,7 +390,7 @@ async function deployClicked() {
         });
     } catch (error) {
         console.error('[Repo Deploy] Deployment failed:', error);
-        showToast(error.message || 'Deployment failed', 'error');
+        window.showToast?.('error', error.message || 'Deployment failed');
     } finally {
         btn.disabled = false;
         btn.textContent = 'Deploy';
@@ -538,18 +407,6 @@ export function initRepoDeploy() {
     $('rd-deploy-btn')?.addEventListener('click', deployClicked);
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-app-port', 'rd-deploy-key']
         .forEach(id => $(id)?.addEventListener('input', validateForm));
-    // Build detection runs off the URL and ref (debounced, browser-side).
-    $('rd-source-url')?.addEventListener('input', scheduleDetect);
-    $('rd-source-url')?.addEventListener('input', updateDeployKeyHelp);
-    $('rd-source-ref')?.addEventListener('input', scheduleDetect);
 }
 
 window.repoDeploy = { openRepoDeployModal, closeRepoDeployModal, initRepoDeploy };
-
-// Self-initialize on load — index.html includes this file as a module,
-// so no app.js changes are needed.
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initRepoDeploy);
-} else {
-    initRepoDeploy();
-}
