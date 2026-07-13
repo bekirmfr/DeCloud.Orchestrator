@@ -410,3 +410,14 @@ export function initRepoDeploy() {
 }
 
 window.repoDeploy = { openRepoDeployModal, closeRepoDeployModal, initRepoDeploy };
+
+// Self-initialize on load. This file is included as an ES module, which runs
+// once when the page loads — so this is where the handlers get wired. Without
+// this call, initRepoDeploy is defined but never runs, and every button in the
+// modal ("Add variable", "Paste .env", "Resources", Deploy) does nothing.
+// Guard for both cases: module may execute before or after DOMContentLoaded.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initRepoDeploy);
+} else {
+    initRepoDeploy();
+}
