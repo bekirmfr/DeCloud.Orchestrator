@@ -59,44 +59,131 @@ function esc(s) {
 const $ = id => document.getElementById(id);
 
 function setFieldError(id, msg) {
-    let el = $(id + '-error');
-    if (!el) {
-        // Create on demand — the form must not depend on error <p> elements
-        // existing in the markup (a missing element must not mean a
-        // silently missing message).
-        const field = $(id);
-        if (!field) return;
-        el = document.createElement('p');
-        el.id = id + '-error';
-        el.className = 'form-help';
-        el.style.color = '#ef4444';
-        el.style.display = 'none';
-        field.insertAdjacentElement('afterend', el);
-    }
-    el.textContent = msg || '';
-    el.style.display = msg ? '' : 'none';
+    const el = $(id + '-error');
+    if (el) { el.textContent = msg || ''; el.style.display = msg ? '' : 'none'; }
+}
+
+// ─── build detection (browser-side, public GitHub API only) ─────────────
+//
+// Mirrors the guest's build precedence so the user sees, before deploying,
+// what provision.sh will pick. CRITICAL: this runs in the USER'S browser
+// against GitHub's PUBLIC API — never through the orchestrator. Sending the
+// URL to the backend to inspect would be an SSRF primitive (SOURCE_URL
+// pointed at the orchestrator's own network); the whole reason detection
+// lives in the guest is that the guest is where untrusted URLs are safe.
+//
+// PRECEDENCE MUST STAY IDENTICAL to provision.sh's build phase:
+//   Dockerfile → docker-compose → Nixpacks (auto-detect).
+// If you change one, change the other. See tenant-vms/repo-deploy/
+// cloud-init.yaml, "phase: build".
+//
+// This is a PREVIEW, not a promise: it only works for public github.com
+// repos (unauthenticated API, 60 req/hr/IP, no private repos), and the
+// guest's precedence remains the single source of truth. It never blocks
+// the deploy button — on private/rate-limited/non-GitHub it degrades to a
+// neutral "detected on deploy" note.
+
+const COMPOSE_NAMES = ['compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml'];
+
+// Nixpacks-ish provider hints, only to enrich the "auto-detect" label — the
+// decision is still just "no Dockerfile, no compose → Nixpacks". These are
+// cosmetic; being wrong here costs nothing because the guest re-detects.
+const PROVIDER_HINTS = [
+    ['package.json', 'Node.js'], ['requirements.txt', 'Python'], ['pyproject.toml', 'Python'],
+    ['go.mod', 'Go'], ['Cargo.toml', 'Rust'], ['Gemfile', 'Ruby'],
+    ['composer.json', 'PHP'], ['pom.xml', 'Java'], ['build.gradle', 'Java'],
+    ['Procfile', 'Procfile'], ['deno.json', 'Deno'], ['mix.exs', 'Elixir'],
+];
+
+let _detectSeq = 0; // guards against out-of-order async responses
+
+/** Parse owner/repo from a github.com URL. Returns null for anything else. */
+function parseGithub(url) {
+    const m = url.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+    return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+function setDetect(state, text) {
+    const el = $('rd-detect');
+    if (!el) return;
+    // states: hidden | checking | result | note
+    el.style.display = state === 'hidden' ? 'none' : '';
+    el.className = 'form-help rd-detect rd-detect-' + state;
+    el.textContent = text || '';
 }
 
 /**
- * One quiet line under the action buttons naming still-empty required
- * fields. Empty-required is not an error while the user is still filling
- * the form — red "required" text on a field they haven't reached yet is
- * noise. Invalid input (a malformed URL, a bad port) is an error and gets
- * red text on the field itself.
+ * Detect the build method the guest would choose, from the repo's top-level
+ * file listing. Same precedence as provision.sh.
  */
-function showMissingHint(missing) {
-    let el = $('rd-missing-hint');
-    if (!el) {
-        const btn = $('rd-deploy-btn');
-        if (!btn || !btn.parentElement) return;
-        el = document.createElement('p');
-        el.id = 'rd-missing-hint';
-        el.className = 'form-help';
-        el.style.cssText = 'text-align:right; margin-top:6px;';
-        btn.parentElement.insertAdjacentElement('afterend', el);
+async function detectBuild(url, ref) {
+    const seq = ++_detectSeq;
+    const gh = parseGithub(url);
+
+    // Non-GitHub or private-looking: we can't preview. Say so neutrally.
+    if (!gh) {
+        setDetect('note', 'Build method will be auto-detected on deploy (Dockerfile → compose → Nixpacks).');
+        return;
     }
-    el.textContent = missing.length ? `To deploy, fill in: ${missing.join(', ')}.` : '';
-    el.style.display = missing.length ? '' : 'none';
+
+    setDetect('checking', 'Checking repository…');
+    const refQuery = ref && ref !== 'HEAD' ? `?ref=${encodeURIComponent(ref)}` : '';
+    let files;
+    try {
+        const r = await fetch(
+            `https://api.github.com/repos/${gh.owner}/${gh.repo}/contents/${refQuery}`,
+            { headers: { Accept: 'application/vnd.github+json' } });
+        if (seq !== _detectSeq) return; // a newer keystroke superseded this
+        if (r.status === 404) {
+            setDetect('note', 'Private or not found — the build is auto-detected on deploy (add a deploy key for private repos).');
+            return;
+        }
+        if (r.status === 403) { // rate limited
+            setDetect('note', 'Build method will be auto-detected on deploy.');
+            return;
+        }
+        if (!r.ok) {
+            setDetect('note', 'Build method will be auto-detected on deploy.');
+            return;
+        }
+        files = await r.json();
+        if (seq !== _detectSeq) return;
+    } catch {
+        if (seq !== _detectSeq) return;
+        setDetect('note', 'Build method will be auto-detected on deploy.');
+        return;
+    }
+
+    if (!Array.isArray(files)) {
+        setDetect('note', 'Build method will be auto-detected on deploy.');
+        return;
+    }
+    const names = new Set(files.filter(f => f.type === 'file').map(f => f.name));
+
+    // ── same precedence as provision.sh ──
+    if (names.has('Dockerfile')) {
+        setDetect('result', 'Detected: Dockerfile — your Dockerfile will build the app.');
+        return;
+    }
+    const compose = COMPOSE_NAMES.find(n => names.has(n));
+    if (compose) {
+        setDetect('result', `Detected: ${compose} — must publish port 80 itself.`);
+        return;
+    }
+    const hint = PROVIDER_HINTS.find(([f]) => names.has(f));
+    setDetect('result', hint
+        ? `Detected: auto-build (Nixpacks) — looks like ${hint[1]}.`
+        : 'Detected: auto-build (Nixpacks).');
+}
+
+// Debounced trigger so we don't hit the API on every keystroke.
+let _detectTimer = null;
+function scheduleDetect() {
+    clearTimeout(_detectTimer);
+    const url = $('rd-source-url').value.trim();
+    if (!url || !validRepoUrl(url)) { setDetect('hidden'); return; }
+    _detectTimer = setTimeout(
+        () => detectBuild(url, $('rd-source-ref').value.trim()), 500);
 }
 
 // ─── validation ─────────────────────────────────────────────────────────
@@ -110,14 +197,11 @@ function validRepoUrl(url) {
 
 function validateForm() {
     let ok = true;
-    const missing = [];
-
-    if (!$('rd-vm-name').value.trim()) missing.push('VM name');
 
     const url = $('rd-source-url').value.trim();
     if (!url) {
-        missing.push('repository URL');
-        setFieldError('rd-source-url', '');
+        setFieldError('rd-source-url', 'Repository URL is required.');
+        ok = false;
     } else if (!validRepoUrl(url)) {
         setFieldError('rd-source-url', 'Use https://host/owner/repo or git@host:owner/repo.');
         ok = false;
@@ -136,8 +220,8 @@ function validateForm() {
     if ($('rd-private-toggle').checked) {
         const key = $('rd-deploy-key').value.trim();
         if (!key) {
-            missing.push('deploy key (or turn off "Private repository")');
-            setFieldError('rd-deploy-key', '');
+            setFieldError('rd-deploy-key', 'Paste the private half of your deploy key, or turn off "Private repository".');
+            ok = false;
         } else if (!key.includes('BEGIN')) {
             setFieldError('rd-deploy-key', 'This does not look like a private key (missing BEGIN header).');
             ok = false;
@@ -150,11 +234,12 @@ function validateForm() {
 
     const envOk = validateEnvRows();
 
-    showMissingHint(missing);
-    const valid = ok && envOk && missing.length === 0;
+    const vmName = $('rd-vm-name').value.trim();
+    if (!vmName) ok = false; // no red text needed; button stays disabled
+
     const btn = $('rd-deploy-btn');
-    if (btn) btn.disabled = !valid;
-    return valid;
+    if (btn) btn.disabled = !(ok && envOk);
+    return ok && envOk;
 }
 
 // ─── reserved names ─────────────────────────────────────────────────────
@@ -287,14 +372,7 @@ function collectEnvVars() {
 
 export async function openRepoDeployModal() {
     const modal = $('repo-deploy-modal');
-    if (!modal) {
-        console.error('[Repo Deploy] #repo-deploy-modal not found in the page — is the modal markup in index.html?');
-        return;
-    }
-    // Wire (or re-verify wiring) at open: the modal must work regardless
-    // of module load order or whether any bootstrap code called
-    // initRepoDeploy(). Idempotent — safe on every open.
-    initRepoDeploy();
+    if (!modal) return;
 
     // Reset to a clean slate every open.
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-deploy-key'].forEach(id => { if ($(id)) $(id).value = ''; });
@@ -308,6 +386,7 @@ export async function openRepoDeployModal() {
     setFieldError('rd-source-url', '');
     setFieldError('rd-app-port', '');
     setFieldError('rd-deploy-key', '');
+    setDetect('hidden');
 
     if (window.openStaticModal) window.openStaticModal(modal);
     else modal.classList.add('active');
@@ -350,7 +429,23 @@ export function closeRepoDeployModal() {
 
 function togglePrivate() {
     $('rd-private-section').style.display = $('rd-private-toggle').checked ? '' : 'none';
+    updateDeployKeyHelp();
     validateForm();
+}
+
+/**
+ * Point the "create a deploy key" link at the specific repo's settings when
+ * we can parse a GitHub URL, else GitHub's generic docs. A link, not an
+ * OAuth flow — the credential stays a user-created, read-only, single-repo
+ * key the platform never holds.
+ */
+function updateDeployKeyHelp() {
+    const link = $('rd-deploy-key-help');
+    if (!link) return;
+    const gh = parseGithub($('rd-source-url').value.trim());
+    link.href = gh
+        ? `https://github.com/${gh.owner}/${gh.repo}/settings/keys/new`
+        : 'https://docs.github.com/authentication/connecting-to-github-with-ssh/managing-deploy-keys';
 }
 
 function toggleAdvanced() {
@@ -435,30 +530,18 @@ async function deployClicked() {
 
 // ─── wiring ──────────────────────────────────────────────────────────────
 
-let _wired = false;
 export function initRepoDeploy() {
-    if (_wired) return;
-    if (!$('repo-deploy-modal')) return;   // markup not parsed yet — openRepoDeployModal retries
-    if (document.querySelectorAll('#repo-deploy-modal').length > 1) {
-        console.warn('[Repo Deploy] Duplicate #repo-deploy-modal in the page — remove one. getElementById only ever sees the first, so the visible copy may be inert.');
-    }
-
-    // Fail loudly, not optionally: a missing element here is an
-    // integration bug, and silent ?. chaining is how the last one hid.
-    const wire = (id, event, handler) => {
-        const el = $(id);
-        if (!el) { console.error(`[Repo Deploy] #${id} missing — modal markup out of date?`); return; }
-        el.addEventListener(event, handler);
-    };
-    wire('rd-private-toggle', 'change', togglePrivate);
-    wire('rd-advanced-toggle', 'click', toggleAdvanced);
-    wire('rd-env-add', 'click', () => addEnvRow());
-    wire('rd-env-paste-btn', 'click', pasteEnvClicked);
-    wire('rd-deploy-btn', 'click', deployClicked);
+    $('rd-private-toggle')?.addEventListener('change', togglePrivate);
+    $('rd-advanced-toggle')?.addEventListener('click', toggleAdvanced);
+    $('rd-env-add')?.addEventListener('click', () => addEnvRow());
+    $('rd-env-paste-btn')?.addEventListener('click', pasteEnvClicked);
+    $('rd-deploy-btn')?.addEventListener('click', deployClicked);
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-app-port', 'rd-deploy-key']
-        .forEach(id => wire(id, 'input', validateForm));
-
-    _wired = true;
+        .forEach(id => $(id)?.addEventListener('input', validateForm));
+    // Build detection runs off the URL and ref (debounced, browser-side).
+    $('rd-source-url')?.addEventListener('input', scheduleDetect);
+    $('rd-source-url')?.addEventListener('input', updateDeployKeyHelp);
+    $('rd-source-ref')?.addEventListener('input', scheduleDetect);
 }
 
 window.repoDeploy = { openRepoDeployModal, closeRepoDeployModal, initRepoDeploy };

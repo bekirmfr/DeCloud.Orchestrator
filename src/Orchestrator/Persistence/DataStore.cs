@@ -1352,7 +1352,7 @@ public class DataStore
                 {
                     ["amd64"] = new(
                         "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img",
-                        ""),
+                        "ec3cdc1bf496078f645ccc8ac823e17609658753477ebc4e5fb730729ac5b434"),
                     ["arm64"] = new(
                         "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-arm64.img",
                         ""),

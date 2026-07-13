@@ -1162,6 +1162,7 @@
                                placeholder="https://github.com/you/your-app"
                                spellcheck="false" autocomplete="off">
                         <p class="form-help" id="rd-source-url-error" style="display:none; color:#ef4444;"></p>
+                        <p class="form-help rd-detect" id="rd-detect" style="display:none;"></p>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
@@ -1188,6 +1189,8 @@
                                 Use a read-only, single-repo deploy key. It will be visible to the
                                 node operator hosting your VM and deleted from the VM after cloning.
                                 Revoke it after deploy.
+                                <a href="#" id="rd-deploy-key-help" target="_blank" rel="noopener"
+                                   style="color:#00d4aa;">Create one for this repo →</a>
                             </p>
                         </div>
                     </div>
