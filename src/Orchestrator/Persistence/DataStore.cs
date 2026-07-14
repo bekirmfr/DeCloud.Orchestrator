@@ -1373,7 +1373,7 @@ public class DataStore
                 {
                     ["amd64"] = new(
                         "https://cloud.debian.org/images/cloud/bookworm/20260518-2482/debian-12-generic-amd64-20260518-2482.qcow2",
-                        ""),
+                        "5ed2aa781af2e9a3d686f34cc0c9d0a19fcdcc022afa032d840b522020884e0f"),
                     ["arm64"] = new(
                         "https://cloud.debian.org/images/cloud/bookworm/20260518-2482/debian-12-generic-arm64-20260518-2482.qcow2",
                         ""),
