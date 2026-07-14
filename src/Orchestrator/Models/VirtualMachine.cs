@@ -50,6 +50,19 @@ public class VirtualMachine
 
     // State
     public VmStatus Status { get; set; } = VmStatus.Pending;
+    /// <summary>
+    /// The owner's standing intent for this VM's run-state. Written ONLY by
+    /// intent-bearing transitions (see VmLifecycleManager.TransitionAsync):
+    /// any arrival at Running stamps Running; Manual/Compliance stops stamp
+    /// Stopped. Observation triggers (Heartbeat, NodeOffline, Timeout,
+    /// CommandFailed) never touch it — that is the entire point: after a crash,
+    /// Status says Stopped while DesiredStatus still says Running, and the
+    /// TenantVmReconciler acts on exactly that gap.
+    ///
+    /// Null = legacy record predating this field. Unknown intent → the
+    /// reconciler fails closed and skips. One explicit owner Start seeds it.
+    /// </summary>
+    public VmStatus? DesiredStatus { get; set; }
     public VmPowerState PowerState { get; set; } = VmPowerState.Off;
     public string? StatusMessage { get; set; }
 

@@ -130,7 +130,11 @@ public class VmLifecycleManager : IVmLifecycleManager
         [VmStatus.Pending] = [VmStatus.Scheduling, VmStatus.Provisioning, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Scheduling] = [VmStatus.Provisioning, VmStatus.Pending, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Provisioning] = [VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
-        [VmStatus.Running] = [VmStatus.Stopping, VmStatus.Error, VmStatus.Deleting],
+        // Stopped added: a guest crash is a legal, direct stop. The graceful
+        // path (Running→Stopping→Stopped) is unaffected; Manual stops still go
+        // through Stopping. Entering Stopped fires OnVmStoppedAsync (ingress
+        // cleanup + final billing) — exactly correct for a crash.
+        [VmStatus.Running] = [VmStatus.Stopping, VmStatus.Stopped, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Stopping] = [VmStatus.Stopped, VmStatus.Running, VmStatus.Error, VmStatus.Deleting],
         [VmStatus.Stopped] = [VmStatus.Provisioning, VmStatus.Running, VmStatus.Deleting, VmStatus.Error],
         [VmStatus.Deleting] = [VmStatus.Deleted, VmStatus.Error, VmStatus.Running], // Running = recovery from false-positive delete
@@ -221,14 +225,31 @@ public class VmLifecycleManager : IVmLifecycleManager
             case VmStatus.Running:
                 vm.PowerState = VmPowerState.Running;
                 vm.StartedAt ??= context.CompletedAt ?? DateTime.UtcNow;
+                // A VM only reaches Running through deploy, a StartVm ack, or a
+                // heartbeat confirming one of those — always intent-bearing.
+                vm.DesiredStatus = VmStatus.Running;
                 break;
+
+            case VmStatus.Stopping:
+                // Owner/admin stop begins here (Manual) or via compliance.
+                // Observation triggers never produce Stopping, but gate anyway.
+                if (context.Trigger is TransitionTrigger.Manual or TransitionTrigger.Compliance)
+                    vm.DesiredStatus = VmStatus.Stopped;
+                break;
+
             case VmStatus.Stopped:
                 vm.PowerState = VmPowerState.Off;
                 vm.StoppedAt = context.CompletedAt ?? DateTime.UtcNow;
+                // Heartbeat-reported Stopped (a crash) must NOT stamp — that is the
+                // gap the reconciler exists to close. Only deliberate stops do.
+                if (context.Trigger is TransitionTrigger.Manual or TransitionTrigger.Compliance)
+                    vm.DesiredStatus = VmStatus.Stopped;
                 break;
+
             case VmStatus.Deleted:
                 vm.PowerState = VmPowerState.Off;
                 vm.StoppedAt ??= DateTime.UtcNow;
+                vm.DesiredStatus = VmStatus.Stopped;   // terminal; keeps record coherent
                 break;
         }
 

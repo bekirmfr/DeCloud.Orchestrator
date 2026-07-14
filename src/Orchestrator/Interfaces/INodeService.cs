@@ -45,6 +45,14 @@ public interface INodeService
     Task CutoffSuspendedNodeNowAsync(string nodeId, string reason, CancellationToken ct = default);
 
     /// <summary>
+    /// Transitions every Running VM on the node to Error and classifies its
+    /// LazysyncStatus from manifest state. Idempotent (filters Status==Running).
+    /// Callers: TenantVmReconciler (level-triggered, Offline nodes) and
+    /// CutoffSuspendedNodeNowAsync (explicit compliance cutoff, Suspended node).
+    /// </summary>
+    Task MarkNodeVmsAsErrorAsync(string nodeId);
+
+    /// <summary>
     /// Set scheduling-ready flag. Lightweight, JWT-authenticated.
     /// </summary>
     Task<NodeLoginResponse> LoginNodeAsync(string nodeId, CancellationToken ct = default);

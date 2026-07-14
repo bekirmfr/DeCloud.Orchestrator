@@ -143,8 +143,19 @@ public class VmSchedulerService : BackgroundService
         // compliance-suspended (operator blocked — drain replicated VMs to clean
         // nodes). The same migration pipeline serves both; only the trigger differs.
         var allNodesForScan = await dataStore.GetAllNodesAsync();
+        // Migration is the one action here whose cost is asymmetric: it commits an
+        // authority transfer and (by zombie rules) the destruction of the source
+        // copy on reconnect. Cheap reversible actions (mark-Error, ingress, billing
+        // pause) stay on the 2-minute signal; migration alone waits out the window
+        // in which sleeping-laptop nodes routinely reappear. Measured from
+        // LastSeenAt, so it includes the 2-minute detection time. Suspended nodes
+        // are exempt — they are online; their drain is deliberate, not a guess.
+        var migrationGraceWindow = TimeSpan.FromMinutes(5);   // tunable
+        var scanNow = DateTime.UtcNow;
         var evacuateNodeIds = allNodesForScan
-            .Where(n => n.Status == NodeStatus.Offline || n.Status == NodeStatus.Suspended)
+            .Where(n => n.Status == NodeStatus.Suspended ||
+                        (n.Status == NodeStatus.Offline &&
+                         scanNow - n.LastSeenAt > migrationGraceWindow))
             .Select(n => n.Id)
             .ToHashSet();
         var suspendedNodeIds = allNodesForScan

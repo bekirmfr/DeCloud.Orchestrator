@@ -3078,7 +3078,11 @@ public class NodeService : INodeService
                     }
                 });
 
-                await MarkNodeVmsAsErrorAsync(node.Id);
+                // VM sweeping is owned by TenantVmReconciler as a level-triggered rule
+                // (node Offline ⇒ no Running VMs), re-evaluated every cycle. The old
+                // call here was edge-triggered: an orchestrator crash between marking
+                // the node Offline and finishing the sweep left VMs stuck Running
+                // forever (this scan only looks at Online nodes, so it never re-fired).
 
                 // Start tracking downtime for reputation
                 // Record the moment node went offline
@@ -3142,7 +3146,7 @@ public class NodeService : INodeService
     ///   confirmedVersion < version       → Recovering    (stale confirmed copy)
     ///   confirmedVersion == version      → Migrating     (fully caught up, no data loss)
     /// </summary>
-    private async Task MarkNodeVmsAsErrorAsync(string nodeId)
+    public async Task MarkNodeVmsAsErrorAsync(string nodeId)
     {
         var nodeVms = await _dataStore.GetVmsByNodeAsync(nodeId);
 
