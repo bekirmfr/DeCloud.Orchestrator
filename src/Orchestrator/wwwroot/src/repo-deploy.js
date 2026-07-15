@@ -18,20 +18,25 @@ import { resolveTemplate, submitTemplateDeploy, afterDeploySuccess } from './dep
 const TEMPLATE_SLUG = 'platform-repo-deploy';
 
 let _template = null;          // resolved template doc (cached per page load)
-let _platformKeys = null;      // Set of reserved variable names (lowercased)
 
-// Names the platform or this template owns. Used as the fallback when the
-// platform-variables fetch fails — for a *reserved-name* check we fall
-// CLOSED to this core list (unlike the generic form's display filtering,
-// which falls open): silently letting HOSTNAME through would be silently
-// overwritten by Layer 3 later, and silent is the one thing a form must
-// never be.
-const CORE_RESERVED = [
-    'vm_id', 'vm_name', 'hostname', 'orchestrator_url', 'ca_public_key',
-    'ssh_authorized_keys_block', 'password_config_block', 'admin_password',
-    'ssh_password_auth', 'decloud_domain', 'decloud_password',
-    'ssh_public_keys', 'deploy_conf_b64', 'app_env_b64', 'deploy_key_b64',
-];
+// NOTE ON RESERVED NAMES — deliberately absent.
+//
+// These rows become /etc/decloud/app.env, which is fed to the app via
+// `docker run --env-file`. That is a different namespace from the cloud-init
+// template variables (__VM_ID__, __HOSTNAME__, __ADMIN_PASSWORD__, ...): a
+// different file, rendered in a different pass, read by a different consumer.
+// An app variable named ADMIN_PASSWORD or HOSTNAME cannot collide with them,
+// so this form previously rejected perfectly ordinary names for a collision
+// that could not happen.
+//
+// The names the platform genuinely writes INTO app.env are DATABASE_URL and
+// REDIS_URL — and provision.sh already defers to the user for both:
+//     grep -q '^DATABASE_URL=' app.env || printf ... >> app.env
+// The user's value wins; the platform only fills a gap. Nothing to reserve.
+//
+// That leaves PORT, which `docker run -e PORT=...` really does override.
+// It is checked by name in validateEnvRows() below, where the message can
+// point at the App port field instead of just refusing the name.
 
 // ─── helpers ────────────────────────────────────────────────────────────
 
@@ -125,25 +130,6 @@ function validateForm() {
     return ok && envOk;
 }
 
-// ─── reserved names ─────────────────────────────────────────────────────
-
-async function getReservedNames() {
-    if (_platformKeys) return _platformKeys;
-    const keys = new Set(CORE_RESERVED);
-    try {
-        const r = await window.api('/api/marketplace/platform-variables');
-        const data = await r.json();
-        const body = data.data || data;
-        for (const list of [body.static, body.dynamic]) {
-            if (Array.isArray(list)) list.forEach(n => keys.add(String(n).toLowerCase()));
-        }
-    } catch (e) {
-        console.warn('[Repo Deploy] platform-variables fetch failed; using core reserved list', e);
-    }
-    _platformKeys = keys;
-    return keys;
-}
-
 // ─── env var rows ────────────────────────────────────────────────────────
 
 function addEnvRow(key = '', value = '') {
@@ -169,7 +155,6 @@ function addEnvRow(key = '', value = '') {
 }
 
 function validateEnvRows() {
-    const reserved = _platformKeys || new Set(CORE_RESERVED);
     let ok = true;
     const seen = new Set();
     document.querySelectorAll('.rd-env-row').forEach(row => {
@@ -180,10 +165,10 @@ function validateEnvRows() {
         if (key) {
             if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
                 msg = 'Letters, digits and underscores only; cannot start with a digit.';
-            } else if (reserved.has(key.toLowerCase())) {
-                msg = `${key} is set by the platform and would be silently overwritten — pick another name.`;
             } else if (key.toUpperCase() === 'PORT') {
-                msg = 'PORT is set automatically to your app port.';
+                // The only name the platform really overrides: `docker run -e
+                // PORT=...` beats --env-file, so a value set here is ignored.
+                msg = 'PORT comes from the App port field above — set it there.';
             } else if (seen.has(key.toLowerCase())) {
                 msg = 'Duplicate key.';
             }
@@ -220,10 +205,19 @@ function parseDotEnv(text) {
     return entries;
 }
 
-function pasteEnvClicked() {
+/**
+ * Turn whatever is in the paste box into rows. Returns the number committed.
+ *
+ * Only the rows carry data to the deploy — text sitting in the textarea is
+ * invisible to collectEnvVars(). So this must run on every path that can lead
+ * to a deploy: the button, leaving the box (blur), and deployClicked itself.
+ * Previously it ran ONLY on a second button click, so the natural flow —
+ * paste, then hit Deploy — silently discarded every variable and produced an
+ * empty app.env with no error anywhere.
+ */
+function commitPastedEnv() {
     const area = $('rd-env-paste-area');
-    const wrap = $('rd-env-paste-wrap');
-    if (wrap.style.display === 'none') { wrap.style.display = ''; area.focus(); return; }
+    if (!area || !area.value.trim()) return 0;
     const entries = parseDotEnv(area.value);
     // Merge into existing rows: same key updates in place.
     const existing = {};
@@ -236,9 +230,25 @@ function pasteEnvClicked() {
         else addEnvRow(k, v);
     }
     area.value = '';
-    wrap.style.display = 'none';
+    const wrap = $('rd-env-paste-wrap');
+    if (wrap) wrap.style.display = 'none';
     validateForm();
-    window.showToast?.('success', `${entries.length} variable${entries.length === 1 ? '' : 's'} added`);
+    if (entries.length) {
+        window.showToast?.('success', `${entries.length} variable${entries.length === 1 ? '' : 's'} added`);
+    }
+    return entries.length;
+}
+
+function pasteEnvClicked() {
+    const area = $('rd-env-paste-area');
+    const wrap = $('rd-env-paste-wrap');
+    // Box hidden and nothing pending → just reveal it. Otherwise commit.
+    if (wrap.style.display === 'none' && !area.value.trim()) {
+        wrap.style.display = '';
+        area.focus();
+        return;
+    }
+    commitPastedEnv();
 }
 
 function collectEnvVars() {
@@ -277,7 +287,6 @@ export async function openRepoDeployModal() {
     // Warm caches; prefill specs from the template's RecommendedSpec so
     // the advanced section starts honest (the server merges MinimumSpec
     // regardless — the form cannot under-provision).
-    getReservedNames();
     try {
         _template = _template || await resolveTemplate(TEMPLATE_SLUG);
         const rec = _template.recommendedSpec || _template.RecommendedSpec;
@@ -326,7 +335,9 @@ function toggleAdvanced() {
 // ─── submit ──────────────────────────────────────────────────────────────
 
 async function deployClicked() {
-    await getReservedNames();          // ensure the real list before final check
+    // Commit anything still sitting in the paste box before reading the rows.
+    // Without this, "paste then hit Deploy" loses every variable silently.
+    commitPastedEnv();
     if (!validateForm()) return;
 
     const vmName = $('rd-vm-name').value.trim();
@@ -404,6 +415,9 @@ export function initRepoDeploy() {
     $('rd-advanced-toggle')?.addEventListener('click', toggleAdvanced);
     $('rd-env-add')?.addEventListener('click', () => addEnvRow());
     $('rd-env-paste-btn')?.addEventListener('click', pasteEnvClicked);
+    // Leaving the paste box commits it — pasting then clicking anywhere else
+    // (including Deploy) turns the text into rows rather than dropping it.
+    $('rd-env-paste-area')?.addEventListener('blur', commitPastedEnv);
     $('rd-deploy-btn')?.addEventListener('click', deployClicked);
     ['rd-vm-name', 'rd-source-url', 'rd-source-ref', 'rd-app-port', 'rd-deploy-key']
         .forEach(id => $(id)?.addEventListener('input', validateForm));
