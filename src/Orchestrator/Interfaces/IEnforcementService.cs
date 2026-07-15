@@ -18,12 +18,14 @@ public record EnforcementResult(bool Success, string? Error, string? Message, in
 /// </summary>
 public interface IEnforcementService
 {
-    /// <summary>Suspend a wallet (User.Status = Suspended) and stop its running VMs.
+    /// <summary>Suspend a wallet (User.Status = Suspended), stop its running VMs, suspend
+    /// any nodes it operates, and archive its Published community templates.
     /// <paramref name="reference"/> is an optional external reference (e.g. an abuse report
     /// id) recorded on the enforcement action so the takedown is traceable to its cause.</summary>
     Task<EnforcementResult> SuspendAsync(string walletAddress, string reason, string actor, string? reference = null, CancellationToken ct = default);
 
-    /// <summary>Lift a suspension (User.Status = Active). Does not auto-restart VMs.</summary>
+    /// <summary>Lift a suspension (User.Status = Active). Does not auto-restart VMs, and does
+    /// not un-archive templates — the author republishes, which re-enters review.</summary>
     Task<EnforcementResult> UnsuspendAsync(string walletAddress, string reason, string actor, CancellationToken ct = default);
 
     /// <summary>Suspend a single VM by id: stop it and hold it so the owner cannot restart it.

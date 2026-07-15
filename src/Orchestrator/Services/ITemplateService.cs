@@ -58,6 +58,19 @@ public interface ITemplateService
     /// <summary>Admin: list community templates awaiting review (oldest first).</summary>
     Task<List<VmTemplate>> GetPendingReviewTemplatesAsync();
 
+    /// <summary>
+    /// Compliance: archive every Published community template authored by a wallet, as
+    /// part of a takedown. Templates are the amplification surface — one public template
+    /// deploys many times — so withholding service from an author must also pull their
+    /// live listings, not just stop their VMs. Returns the number archived.
+    ///
+    /// Scope: Published + IsCommunity only. Platform templates are admin-authored (not
+    /// this wallet's), and Draft/PendingReview/Rejected are already unreachable to
+    /// others. NOT reversed on unsuspend — an archived template returns only by the
+    /// author republishing, which re-enters admin review.
+    /// </summary>
+    Task<int> ArchiveAuthorTemplatesAsync(string authorId, CancellationToken ct = default);
+
     Task<TemplateValidationResult> ValidateTemplateAsync(VmTemplate template);
     // ════════════════════════════════════════════════════════════════════════
     // Deployment Helpers

@@ -17,6 +17,7 @@ public sealed class EnforcementService : IEnforcementService
     private readonly IUserService _userService;
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
+    private readonly ITemplateService _templateService;
     private readonly DataStore _dataStore;
     private readonly ILogger<EnforcementService> _logger;
     private readonly AddressUtil _addr = new();
@@ -26,6 +27,7 @@ public sealed class EnforcementService : IEnforcementService
         IUserService userService,
         IVmService vmService,
         INodeService nodeService,
+        ITemplateService templateService,
         DataStore dataStore,
         ILogger<EnforcementService> logger)
     {
@@ -33,6 +35,7 @@ public sealed class EnforcementService : IEnforcementService
         _userService = userService;
         _vmService = vmService;
         _nodeService = nodeService;
+        _templateService = templateService;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -100,7 +103,7 @@ public sealed class EnforcementService : IEnforcementService
         // operates. Stop (not delete) — reversible, disk state preserved. Existing
         // tenant VMs on a suspended node keep running; graceful drain is a separate
         // step, and login is gated so the operator cannot re-enable scheduling.
-        var (stopped, nodesSuspended) = await WithholdServiceAsync(wallet, ct);
+        var (stopped, nodesSuspended, templatesArchived) = await WithholdServiceAsync(wallet, ct);
 
         await _blocklist.RecordActionAsync(new EnforcementAction
         {
@@ -112,13 +115,14 @@ public sealed class EnforcementService : IEnforcementService
             Metadata = new()
             {
                 ["vmsStopped"] = stopped.ToString(),
-                ["nodesSuspended"] = nodesSuspended.ToString()
+                ["nodesSuspended"] = nodesSuspended.ToString(),
+                ["templatesArchived"] = templatesArchived.ToString()
             }
         }, ct);
 
         _logger.LogInformation(
-            "Suspended {Wallet}; stopped {VmCount} VM(s), suspended {NodeCount} node(s)",
-            wallet, stopped, nodesSuspended);
+            "Suspended {Wallet}; stopped {VmCount} VM(s), suspended {NodeCount} node(s), archived {TemplateCount} template(s)",
+            wallet, stopped, nodesSuspended, templatesArchived);
         return EnforcementResult.Ok(stopped);
     }
 
@@ -192,13 +196,19 @@ public sealed class EnforcementService : IEnforcementService
     // ── Withhold-of-service primitives ───────────────────────────────────────
 
     /// <summary>
-    /// Stop the wallet's running VMs (reversible — disk state preserved) and suspend
-    /// any nodes it operates. Node suspension pauses scheduling and marks the node
-    /// Suspended; existing tenant VMs keep running (graceful drain/cutoff is a
-    /// separate step) and login is gated so the operator cannot re-enable scheduling.
+    /// Withhold service from a wallet, on all three surfaces it can reach others through:
+    /// stop its running VMs (reversible — disk state preserved), suspend any nodes it
+    /// operates, and archive its Published community templates. Node suspension pauses
+    /// scheduling and marks the node Suspended; existing tenant VMs keep running (graceful
+    /// drain/cutoff is a separate step) and login is gated so the operator cannot re-enable
+    /// scheduling. Templates are archived because they are the amplification surface — a
+    /// takedown that leaves the actor's live listings deployable by everyone else is not a
+    /// takedown; review cleared the content, not the author. Not reversed on unsuspend (the
+    /// author republishes → re-review); nodes and VMs are infrastructure, a published
+    /// template is distribution.
     /// Never touches funds.
     /// </summary>
-    private async Task<(int vmsStopped, int nodesSuspended)> WithholdServiceAsync(
+    private async Task<(int vmsStopped, int nodesSuspended, int templatesArchived)> WithholdServiceAsync(
         string walletAddress, CancellationToken ct)
     {
         var wallet = _addr.ConvertToChecksumAddress(walletAddress);
@@ -214,7 +224,8 @@ public sealed class EnforcementService : IEnforcementService
         }
 
         var nodesSuspended = await SuspendOperatorNodesAsync(wallet, ct);
-        return (vmsStopped, nodesSuspended);
+        var templatesArchived = await _templateService.ArchiveAuthorTemplatesAsync(wallet, ct);
+        return (vmsStopped, nodesSuspended, templatesArchived);
     }
 
     /// <summary>
@@ -276,10 +287,10 @@ public sealed class EnforcementService : IEnforcementService
         // A targeted block withholds service immediately: stop the wallet's running
         // VMs and suspend any nodes it operates. Bulk import is data-only — it does
         // NOT enforce per wallet (see BulkImportBlocksAsync).
-        var (vmsStopped, nodesSuspended) = await WithholdServiceAsync(walletAddress, ct);
+        var (vmsStopped, nodesSuspended, templatesArchived) = await WithholdServiceAsync(walletAddress, ct);
         _logger.LogInformation(
-            "Blocked {Wallet} ({Source}); stopped {VmCount} VM(s), suspended {NodeCount} node(s)",
-            walletAddress, source, vmsStopped, nodesSuspended);
+            "Blocked {Wallet} ({Source}); stopped {VmCount} VM(s), suspended {NodeCount} node(s), archived {TemplateCount} template(s)",
+            walletAddress, source, vmsStopped, nodesSuspended, templatesArchived);
     }
 
     public async Task<bool> UnblockAsync(string walletAddress, BlockSource source, string reason, string actor, CancellationToken ct = default)

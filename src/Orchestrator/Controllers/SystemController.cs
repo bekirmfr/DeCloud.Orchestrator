@@ -141,7 +141,7 @@ public class SystemController : ControllerBase
     /// Get recent events (for debugging/monitoring)
     /// </summary>
     [HttpGet("events")]
-    [Authorize(Roles = "admin")]
+    [Authorize(Roles = "Admin")]
     public ActionResult<ApiResponse<List<OrchestratorEvent>>> GetEvents(
         [FromQuery] int limit = 100,
         [FromQuery] string? type = null)
@@ -163,7 +163,7 @@ public class SystemController : ControllerBase
     /// Get pending command acknowledgments (for monitoring/debugging)
     /// </summary>
     [HttpGet("commands/pending")]
-    [Authorize(Roles = "admin")]
+    [Authorize(Roles = "Admin")]
     public ActionResult<ApiResponse<List<PendingCommandDto>>> GetPendingCommands()
     {
         var pending = _dataStore.GetPendingAcks()

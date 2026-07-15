@@ -18,6 +18,20 @@
 #   … TOKEN=… RUN_TAKEDOWN=1 TAKEDOWN_WALLET='0x…' ./test-abuse.sh         # + destructive takedown (see note)
 #   … THROTTLE_SECONDS=0 …                                                 # if the server rate limit is raised
 #
+# Takedown template limb (2026-07-16) — optional fixtures, only used when
+# RUN_TAKEDOWN=1. A takedown withholds service on all three surfaces the wallet
+# reaches others through: its VMs, its nodes, and its published templates.
+#   TAKEDOWN_TEMPLATE_ID='<id|slug>'   a PUBLISHED + PUBLIC + COMMUNITY template
+#                                      authored by TAKEDOWN_WALLET. Checks it is
+#                                      archived + delisted by the takedown, and
+#                                      NOT resurrected by the unsuspend.
+#                                      ⚠ NOT restored by this script: republish
+#                                        it by hand afterwards (it re-enters review).
+#   PENDING_TEMPLATE_ID='<id|slug>'    a PENDINGREVIEW template authored by
+#                                      TAKEDOWN_WALLET. Checks an admin cannot
+#                                      approve it while the author is suspended.
+#                                      Non-destructive (the approve must fail).
+#
 # Requires: bash, curl, jq.  Exit code: 0 if all checks pass, 1 otherwise.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -26,12 +40,14 @@ BASE_URL="${BASE_URL:-http://localhost:5050}"
 ABUSE_URL="$BASE_URL/api/abuse"
 ADMIN="$BASE_URL/api/admin/abuse"
 COMPLIANCE="$BASE_URL/api/admin/compliance"
+MARKET="$BASE_URL/api/marketplace"
 THROTTLE_SECONDS="${THROTTLE_SECONDS:-15}"
 
 pass=0; fail=0
 GREEN=$'\e[32m'; RED=$'\e[31m'; DIM=$'\e[2m'; RST=$'\e[0m'
 ok()  { printf '%s  ✓ %s%s\n' "$GREEN" "$*" "$RST"; pass=$((pass+1)); }
 bad() { printf '%s  ✗ %s%s\n' "$RED"   "$*" "$RST"; fail=$((fail+1)); }
+skip(){ printf '%s  – %s%s\n' "$DIM"   "$*" "$RST"; }
 throttle() { if [ "$THROTTLE_SECONDS" -gt 0 ]; then sleep "$THROTTLE_SECONDS"; fi; }
 for t in curl jq; do command -v "$t" >/dev/null 2>&1 || { echo "Missing required tool: $t" >&2; exit 2; }; done
 
@@ -48,6 +64,20 @@ post_json() { req POST "$ABUSE_URL" "" "$1"; }   # slice-1 intake calls (behavio
 expect_status() { if [ "$HTTP" = "$1" ]; then ok "$2 (HTTP $HTTP)"; else bad "$2 — expected $1, got $HTTP ${DIM}${BODY}${RST}"; fi; }
 field() { local v; v="$(printf '%s' "$BODY" | jq -r "$1 // empty" 2>/dev/null || true)"; printf '%s' "$v"; }
 pick()  { local a b; a="$(field ".data.$1")"; b="$(field ".$1")"; [ -n "$a" ] && printf '%s' "$a" || printf '%s' "$b"; }
+
+# ── template helpers (MarketplaceController returns raw objects/arrays, not the
+#    ApiResponse wrapper — tolerate both, and accept enum-as-name or enum-as-int:
+#    TemplateStatus { Draft=0, Published=1, Archived=2, PendingReview=3, Rejected=4 }
+#    — PendingReview/Rejected were APPENDED, so 0/1/2 are unchanged.)
+tpl_status()  { printf '%s' "$BODY" | jq -r '(.status // .data.status) | tostring' 2>/dev/null || true; }
+is_published(){ [ "$1" = "Published" ] || [ "$1" = "1" ]; }
+is_archived() { [ "$1" = "Archived" ]  || [ "$1" = "2" ]; }
+# true when the current BODY (a template listing) contains this id or slug
+list_has() {
+  printf '%s' "$BODY" | jq -e --arg i "$1" \
+    '[ (if type=="array" then . else (.data // .templates // []) end)[]? | (.id, .slug) ] | index($i) != null' \
+    >/dev/null 2>&1
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLICE 1 — public intake  (always runs)
@@ -145,7 +175,31 @@ else
 
   # takedown (DESTRUCTIVE, opt-in) — acts on REF2 with an overridden target wallet
   if [ "${RUN_TAKEDOWN:-0}" = "1" ] && [ -n "${TAKEDOWN_WALLET:-}" ] && [ -n "$REF2" ]; then
-    printf '%s⚠ takedown will SUSPEND %s and stop its VMs (then unsuspend; VMs stay stopped)%s\n' "$RED" "$TAKEDOWN_WALLET" "$RST"
+    printf '%s⚠ takedown will SUSPEND %s, stop its VMs, suspend its nodes, and ARCHIVE its\n' "$RED" "$TAKEDOWN_WALLET"
+    printf '  published community templates (then unsuspend; VMs stay stopped and templates\n'
+    printf '  stay archived — republish them by hand, they re-enter review)%s\n' "$RST"
+
+    # ── Fixture baseline: the template limb only proves something if the template
+    #    is live BEFORE the takedown. Verify, or the post-checks pass vacuously.
+    TPL_BASELINE=0
+    if [ -n "${TAKEDOWN_TEMPLATE_ID:-}" ]; then
+      req GET "$MARKET/templates/$TAKEDOWN_TEMPLATE_ID" "$TOKEN"
+      TPL_ST="$(tpl_status)"
+      if [ "$HTTP" = "200" ] && is_published "$TPL_ST"; then
+        req GET "$MARKET/templates" ""
+        if list_has "$TAKEDOWN_TEMPLATE_ID"; then
+          TPL_BASELINE=1
+          ok "fixture: $TAKEDOWN_TEMPLATE_ID is Published and publicly listed before takedown"
+        else
+          bad "fixture: $TAKEDOWN_TEMPLATE_ID is Published but NOT publicly listed — is it Private? (delist check would pass vacuously)"
+        fi
+      else
+        bad "fixture: $TAKEDOWN_TEMPLATE_ID is not Published (HTTP $HTTP, status '$TPL_ST') — template limb not exercised"
+      fi
+    else
+      skip "template limb skipped (set TAKEDOWN_TEMPLATE_ID=<published community template of $TAKEDOWN_WALLET>)"
+    fi
+
     req POST "$ADMIN/$REF2/resolve" "$TOKEN" "{\"action\":\"takedown\",\"reason\":\"smoke takedown\",\"targetWallet\":\"$TAKEDOWN_WALLET\"}"
     if [ "$HTTP" = "200" ]; then
       [ "$(field '.data.status')" = "Actioned" ] && ok "takedown → Actioned" || bad "takedown status → expected Actioned, got '$(field '.data.status')'"
@@ -155,11 +209,74 @@ else
       else
         bad "no enforcement action carries reference $REF2"
       fi
+
+      # ── Template limb: archived, delisted, and counted on the audit row ──────
+      if [ "$TPL_BASELINE" = "1" ]; then
+        req GET "$MARKET/templates/$TAKEDOWN_TEMPLATE_ID" "$TOKEN"
+        TPL_ST="$(tpl_status)"
+        if [ "$HTTP" = "200" ] && is_archived "$TPL_ST"; then
+          ok "takedown archived the author's published template"
+        elif [ "$HTTP" = "404" ]; then
+          skip "template fetch → 404 after takedown (endpoint may hide non-published templates); relying on the delist check below"
+        else
+          bad "template not Archived after takedown (HTTP $HTTP, status '$TPL_ST')"
+        fi
+
+        req GET "$MARKET/templates" ""
+        if [ "$HTTP" = "200" ] && ! list_has "$TAKEDOWN_TEMPLATE_ID"; then
+          ok "archived template is delisted from the public marketplace"
+        else
+          bad "archived template still listed publicly (HTTP $HTTP) — amplification surface still open"
+        fi
+
+        # The count rides the existing enforcement action's metadata.
+        req GET "$COMPLIANCE/actions?wallet=$TAKEDOWN_WALLET" "$TOKEN"
+        if printf '%s' "$BODY" | jq -e --arg r "$REF2" \
+             'any(.data[]?; .reference == $r and ((.metadata.templatesArchived // "0") | tonumber) >= 1)' >/dev/null 2>&1; then
+          ok "audit row records templatesArchived ≥ 1"
+        else
+          bad "enforcement action for $REF2 has no templatesArchived ≥ 1 in metadata"
+        fi
+      fi
+
+      # ── Approve-path gate: a PendingReview submission from a now-suspended
+      #    author must not be approvable (InvalidOperationException → 409).
+      if [ -n "${PENDING_TEMPLATE_ID:-}" ]; then
+        req POST "$MARKET/templates/$PENDING_TEMPLATE_ID/approve" "$TOKEN"
+        if [ "$HTTP" = "409" ]; then
+          ok "approve refused for suspended author's pending template → 409"
+        elif [ "$HTTP" = "200" ]; then
+          bad "approve SUCCEEDED for a suspended author's template — takedown undone by the review queue"
+          printf '%s    ⚠ that template is now Published; archive it manually.%s\n' "$RED" "$RST"
+        else
+          bad "approve → expected 409, got $HTTP ${DIM}${BODY}${RST}"
+        fi
+      else
+        skip "approve-gate check skipped (set PENDING_TEMPLATE_ID=<pendingreview template of $TAKEDOWN_WALLET>)"
+      fi
     else
       bad "takedown → expected 200, got $HTTP ${DIM}${BODY}${RST}"
     fi
+
     req POST "$COMPLIANCE/unsuspend" "$TOKEN" "{\"wallet\":\"$TAKEDOWN_WALLET\",\"reason\":\"smoke cleanup\"}"
     [ "$HTTP" = "200" ] && ok "cleanup: unsuspended $TAKEDOWN_WALLET (restart its VMs manually)" || bad "cleanup unsuspend → got $HTTP — UNSUSPEND $TAKEDOWN_WALLET MANUALLY"
+
+    # Unsuspend restores nodes; it must NOT silently republish an archived template.
+    # (Deliberate asymmetry: a node is infrastructure, a published template is
+    #  distribution — it returns only by the author republishing → re-review.)
+    if [ "$TPL_BASELINE" = "1" ]; then
+      req GET "$MARKET/templates/$TAKEDOWN_TEMPLATE_ID" "$TOKEN"
+      TPL_ST="$(tpl_status)"
+      if [ "$HTTP" = "404" ]; then
+        skip "post-unsuspend template fetch → 404; confirm manually that it is still Archived"
+      elif is_archived "$TPL_ST"; then
+        ok "unsuspend leaves the template archived (no silent republish)"
+      else
+        bad "template status is '$TPL_ST' after unsuspend — expected still Archived"
+      fi
+      printf '%s  ⚠ %s stays ARCHIVED by design — republish it manually to restore the fixture.%s\n' \
+        "$DIM" "$TAKEDOWN_TEMPLATE_ID" "$RST"
+    fi
   else
     printf '%s  – takedown skipped (destructive). Set RUN_TAKEDOWN=1 TAKEDOWN_WALLET=0x… to run it.%s\n' "$DIM" "$RST"
   fi

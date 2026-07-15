@@ -1,4 +1,3 @@
-using DeCloud.Shared.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
@@ -451,7 +450,7 @@ public class NodesController : ControllerBase
     /// Remove a node from the network
     /// </summary>
     [HttpDelete("{nodeId}")]
-    [Authorize(Roles = "admin")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<bool>>> Remove(string nodeId)
     {
         try

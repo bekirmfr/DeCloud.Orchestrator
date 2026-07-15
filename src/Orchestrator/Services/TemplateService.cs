@@ -500,6 +500,16 @@ public class TemplateService : ITemplateService
             throw new InvalidOperationException(
                 $"Template is not pending review (status: {template.Status}).");
 
+        // ── Compliance: enforcement gate ─────────────────────────────────────────
+        // The publish gate ran when the author submitted; a wallet can be suspended or
+        // denylisted while its submission waits in the queue. Approving then would push
+        // a taken-down author's template live — the exact amplification a takedown
+        // exists to stop. Same predicate as publish, checked at action time.
+        if (await _blocklist.IsWalletBlockedAsync(template.AuthorId))
+            throw new InvalidOperationException(
+                "The author of this template is suspended or blocked; it cannot be approved. " +
+                "Lift the enforcement action first if that is intended.");
+
         // A revision promotes onto its live parent in place instead of self-publishing, so
         // the parent keeps its id, slug, reviews, and deploy history — and the live version
         // is never pulled from the marketplace during review.
@@ -589,6 +599,40 @@ public class TemplateService : ITemplateService
 
     public async Task<List<VmTemplate>> GetPendingReviewTemplatesAsync()
         => await _dataStore.GetTemplatesByStatusAsync(TemplateStatus.PendingReview);
+
+    public async Task<int> ArchiveAuthorTemplatesAsync(string authorId, CancellationToken ct = default)
+    {
+        // All statuses come back; we act only on live community listings.
+        var mine = await GetTemplatesByAuthorAsync(authorId);
+        var live = mine.Where(t => t.IsCommunity && t.Status == TemplateStatus.Published).ToList();
+        if (live.Count == 0) return 0;
+
+        var archived = 0;
+        foreach (var t in live)
+        {
+            try
+            {
+                t.Status = TemplateStatus.Archived;
+                t.UpdatedAt = DateTime.UtcNow;
+                await _dataStore.SaveTemplateAsync(t);
+                archived++;
+                _logger.LogWarning(
+                    "Compliance: archived template {TemplateId} ({Name}) authored by {AuthorId}",
+                    t.Id, t.Name, authorId);
+            }
+            catch (Exception ex)
+            {
+                // Keep going: one failed write must not leave the rest of an author's
+                // listings live. The count returned is what actually landed, and it is
+                // recorded on the enforcement action.
+                _logger.LogError(ex, "Compliance: failed to archive template {TemplateId}", t.Id);
+            }
+        }
+
+        // Category counts tally Published + Public only, so they are now stale.
+        if (archived > 0) await UpdateCategoryCountsAsync();   // [VERIFY-A]
+        return archived;
+    }
 
     public async Task<VmTemplate> CancelReviewAsync(string templateId, string requesterId)
     {

@@ -1,8 +1,19 @@
 # DeCloud Platform — Compliance & Legal Framework
 
-**Last Updated:** 2026-04-08
-**Status:** Planned — Pre-Launch Requirement
-**Purpose:** Authoritative reference for DeCloud's content policy, legal liability framework, abuse handling, and enforcement architecture.
+**Last Updated:** 2026-07-16
+**Status:** Active — pre-launch. Pillars 2, 3, 4 built; Pillar 1 first pass built (seam + gate + report chain), real matcher gated on external prerequisites. See `COMPLIANCE_INTEGRATION_PLAN.md` §7 for build state.
+**Purpose:** Authoritative reference for DeCloud's **content policy, legal obligations, and compliance philosophy** — what the platform undertakes to do and why.
+
+> **Document ownership (read this first).**
+> This document owns the **legal framework**: the pillars, the obligations, the
+> policy, the reasoning. It does **not** own implementation. Endpoints,
+> interfaces, collection schemas, and mechanisms are the **design of record** in
+> `COMPLIANCE_INTEGRATION_PLAN.md` (§1 Locked Decisions, §3 code-grounded state,
+> §7 build log). Where this document once specified a mechanism and a locked
+> decision has since superseded it, the decision wins and this document points
+> to it rather than restating it. Do not implement from a code sample here
+> without checking the plan; where the two conflict, the plan is authoritative
+> for *how*, this document for *what and why*.
 
 ---
 
@@ -131,9 +142,9 @@ LazysyncDaemon — incremental cycle:
 
 2. Map changed blocks → changedChunks offsets  (existing)
 
-3. Mount overlay read-only via nbd             (new)
-   → qemu-nbd --connect=/dev/nbdN disk.qcow2
-   → mount -o ro /dev/nbdNpX /mnt/vm-scan
+3. Mount frozen disk read-only via libguestfs  (new)
+   → guestmount, LIBGUESTFS_BACKEND=direct      (CloudInitCleaner pattern)
+   → NEVER a host-kernel nbd mount — see below
 
 4. Resolve files touching changedChunks        (new)
    → walk filesystem inode table
@@ -148,8 +159,7 @@ LazysyncDaemon — incremental cycle:
    → collect any matches
 
 6. Unmount (always — even on match)            (new)
-   → umount /mnt/vm-scan
-   → qemu-nbd --disconnect /dev/nbdN
+   → tear down the libguestfs appliance
 
 7a. IF MATCH FOUND:
     → suspend VM locally (halt replication, preserve process for evidence)
@@ -164,6 +174,19 @@ LazysyncDaemon — incremental cycle:
     → blockstore publishes via GossipSub               (existing)
     → register manifest with orchestrator              (existing)
 ```
+
+> **Mount discipline — non-negotiable (host security).** The guest filesystem
+> under scan is **adversarial input**: a tenant can craft a corrupt or malicious
+> filesystem specifically to attack whatever parses it. `qemu-nbd` + `mount`
+> parses that filesystem **in the host kernel**, where a bug is a host
+> compromise — from an unprivileged tenant, on a node hosting other tenants.
+> Scanning therefore uses **libguestfs/`guestmount` with
+> `LIBGUESTFS_BACKEND=direct`** (the pattern `CloudInitCleaner` already uses),
+> which parses the filesystem inside a throwaway appliance VM, not the host
+> kernel. The mount is **owned by the scanner** behind `ICsamScanner`, so the
+> discipline lives in exactly one place and a non-scanning (stub) build never
+> mounts at all. This is a hard rule, not a preference: never mount an
+> untrusted guest filesystem on the host kernel.
 
 #### CSAM Database Source
 
@@ -245,32 +268,44 @@ Intentionally blocked — unsuspend requires human confirmation by design.
 
 ### Node Agent Interface
 
-```csharp
-public interface ICsamScanner
-{
-    /// <summary>
-    /// Scans files in the mounted overlay that touch the given block offsets.
-    /// mountPath is the read-only nbd mount point.
-    /// offsets is the set of changedChunks byte offsets from the current cycle.
-    /// Returns IsClean=true if no match found.
-    /// </summary>
-    Task<CsamScanResult> ScanAsync(
-        string vmId,
-        string mountPath,
-        IReadOnlySet<long> offsets,
-        CancellationToken ct);
-}
+> **Mechanism owned by the plan.** The seam is built; its exact shape is the
+> design of record in `COMPLIANCE_INTEGRATION_PLAN.md` (Decisions 9 & 15, Phase 6
+> step 1, and the 2026-07-08 → 10 build-log entry) and in
+> `src/DeCloud.NodeAgent.Core/Interfaces/ICsamScanner.cs`. What this document
+> owns is the **honesty obligation** below.
 
-public record CsamScanResult(
-    bool IsClean,
-    string? MatchedFileHash = null,
-    string? MatchedFilePath = null,
-    string? DatabaseSource = null);
+The node agent calls a scanner behind `ICsamScanner` on the frozen disk, before
+any replication. The scanner is given the **frozen disk path** and owns its own
+read-only mount (see the mount discipline above). It returns an outcome, not a
+boolean:
+
+```
+NotScanned  — no matcher wired, or the scan did not run
+Clean       — scanned, no match against the hash database
+Match       — positive hash match
+Unscannable — could not be hashed (too large for budget, undecodable, etc.)
 ```
 
-Stub implementation returns `IsClean = true` immediately. LazysyncDaemon calls
-`ScanAsync` between mount and encrypt steps so the real implementation slots in
-without pipeline changes.
+**The honesty invariant (non-negotiable).** *"Not scanned" must never read as
+"clean."* A matcher-less stub returns **`NotScanned`** — never `Clean`. No path
+upgrades `NotScanned` or `Unscannable` to `Clean`; the shipped
+`NullCsamScanner` refuses to return `Clean` even when a test hook explicitly
+asks it to, and the caller clamps any `Clean` to `NotScanned` while no matcher
+is enabled. A stub that reported `Clean` would be **worse than no scanner at
+all**: it would manufacture false assurance about child-safety coverage — to
+operators, to auditors, and eventually in a legal filing.
+
+**Consequently, until a real matcher is wired:** no external surface (UI, API,
+badge, marketing, compliance claim) may represent stub state as scanning
+coverage. The honest claim is *"reactive detection + template-publish review"* —
+**not** *"proactive CSAM scanning."* Today every VM's recorded scan state is
+truthfully `NotScanned`.
+
+**Replication is gated on the scan *result*, not on the presence of a matcher.**
+Only a positive `Match` blocks (suspend + preserve + report). `NotScanned`,
+`Clean`, `Unscannable`, and type-skipped all proceed — otherwise the stub would
+halt the entire platform, and one un-hashable file would strand a VM forever. A
+scan that does not finish within its budget defers to the next cycle.
 
 ### Template Review Gate (Complementary Control)
 
@@ -305,7 +340,7 @@ receive only ciphertext and cannot scan.
 
 A Terms of Service for a wallet-authenticated platform serves four distinct purposes — none of which is primarily "let us sue the user":
 
-1. **Establishes the platform's right to act** — suspend wallets, forfeit escrow, terminate VMs — without those actions being challengeable as arbitrary.
+1. **Establishes the platform's right to act** — suspend wallets, terminate VMs, refuse service — without those actions being challengeable as arbitrary. (Enforcement is **withhold-of-service only**; the platform does not touch deposited funds — see §7.)
 2. **Creates DMCA safe harbor** — 17 U.S.C. § 512 protection requires a ToS, a DMCA agent, and a defined takedown process. Without it, the platform is fully liable for user-hosted content.
 3. **Defines law enforcement cooperation** — the legal framework under which wallet addresses and deployment logs are shared with authorities upon valid legal process.
 4. **Establishes user responsibility as a public record** — Section 230 (US) and Article 14 (EU) shields require that a ToS exist and be presented to users.
@@ -330,11 +365,11 @@ Beyond standard platform ToS language, these clauses are required for the wallet
 
 **User responsibility clause:** "You are solely responsible for all content deployed, stored, or transmitted through VMs and infrastructure associated with your wallet address."
 
-**Escrow forfeiture clause:** "In the event of a verified Terms of Service violation, the platform may apply any escrow balance held under your wallet address toward investigation costs, takedown costs, and platform damages. Remaining balance after cost recovery will be returned to the wallet address."
+**Cost recovery — reserved, not enforced (Decision 2):** the ToS may reserve a *future* right to escrow-based cost recovery **only if counsel advises it is worth having**, and must state plainly that no such capability exists today. `DeCloudEscrow.sol` v3 has **no function that can move user funds** (explicit contract comment: *"There is NO admin function to drain user funds"*) and `withdrawBalance()` has no pause or freeze gate — a user can always exit. A ToS clause claiming a seizure power the contract cannot perform is worse than no clause: it misstates the platform's capabilities to users, counsel, and courts. Enforcement is withhold-of-service only (§7); the fund-sacrosanct invariant is treated as a **regulatory asset**, not a limitation. The shipped ToS draft (`src/Orchestrator/Compliance/terms-of-service.md` §8) carries this as a reserved right, flagged as not technically enforced.
 
 **Blockchain transparency notice:** "You acknowledge that your wallet address and all associated on-chain transactions are permanently recorded on a public blockchain. The platform may share your wallet address and associated transaction history with law enforcement agencies upon receipt of a valid legal request."
 
-**Prohibited content clause:** An explicit enumeration of prohibited content categories (CSAM, illegal marketplaces, C2 infrastructure, etc.) with acknowledgment that the escrow forfeiture and wallet suspension provisions apply to these categories without prior notice.
+**Prohibited content clause:** An explicit enumeration of prohibited content categories (CSAM, illegal marketplaces, C2 infrastructure, etc.) with acknowledgment that wallet suspension, VM termination, and blacklisting apply to these categories without prior notice.
 
 **Cooperation clause:** "The platform will cooperate with law enforcement agencies and regulatory bodies upon receipt of valid legal process, including but not limited to court orders, subpoenas, and NCMEC CyberTipline mandates."
 
@@ -422,7 +457,7 @@ Every action taken on an abuse report is logged to an append-only `EnforcementAc
 {
   "actionId": "ENF-2026-00089",
   "reportReference": "ABU-2026-00123",
-  "actionType": "wallet_suspension | vm_termination | template_archive | escrow_forfeiture | ncmec_report",
+  "actionType": "wallet_suspension | vm_termination | template_archive | node_suspension | ncmec_report",
   "targetWallet": "0x...",
   "targetVmId": "...",
   "targetTemplateId": "...",
@@ -550,22 +585,44 @@ Authorization: Bearer <admin-token>
 **What it orchestrates atomically:**
 1. Terminate all running VMs owned by the wallet
 2. Archive all public templates authored by the wallet
-3. Add wallet to `SuspendedWallets`
-4. Apply escrow forfeiture if applicable (manual step requiring separate confirmation)
+3. Record the block/suspension (the denylist + `User.Status` boundaries behind one predicate — see above)
+4. Suspend any nodes the wallet operates, and withhold settlement to it
 5. Write to `EnforcementActions` audit log
 6. Return summary of actions taken
 
+**No step touches funds.** There is no forfeiture step — see below.
+
 This single endpoint replaces ad-hoc use of the VM delete endpoint for enforcement actions and ensures the audit trail is always written.
 
-### Escrow Forfeiture
+### Escrow Forfeiture — Removed From Scope (Decision 2)
 
-Escrow forfeiture is a separate, deliberately manual step requiring explicit admin confirmation. It is not bundled into the standard takedown because:
+**The platform does not, and cannot, seize or freeze user funds. This is
+deliberate and is not a deferral.**
 
-- It is irreversible
-- It requires proportionality judgment (forfeit all vs. forfeit amount covering damages)
-- It may require legal counsel review for large balances
+- `DeCloudEscrow.sol` v3 has **no function that can move user funds** — the
+  contract says so explicitly (*"There is NO admin function to drain user
+  funds"*) — and `withdrawBalance()` has no pause or freeze gate, so a user can
+  always exit. Forfeiture would require a **contract redeployment** through the
+  migration path.
+- Faking usage to drain a balance through the settlement path is a defeatable
+  override and an anti-pattern; it is not a design, and it will not be built.
+- Enforcement is therefore **withhold-of-service only**: refuse to schedule,
+  terminate what is running, suspend operated nodes, withhold settlement to a
+  blocked payee, blacklist the wallet. Money that was deposited stays the
+  user's.
 
-The `DeCloudEscrow.sol` contract's authorized caller mechanism allows the orchestrator to call settlement functions against a wallet. The ToS establishes the legal basis for this action.
+**Why this is an asset, not a gap.** A platform that cannot touch custodied
+value has a materially simpler regulatory posture (see the money-transmission /
+custody question on the counsel checklist), and "user funds are sacrosanct" is a
+promise the *contract itself* keeps — not one the operator asks to be trusted
+on. Withholding service is sufficient to stop abuse; seizing deposits is not
+what stops it.
+
+**What remains available:** settlement to a blocked *operator* wallet is
+**withheld, not forfeited** — the usage records persist unsettled and settle
+normally if the wallet is later cleared (Decision 13). Permanent forfeiture in a
+sanctions context is an out-of-band **legal** action, never a settlement-loop
+decision.
 
 ---
 
@@ -631,7 +688,7 @@ The platform should communicate clearly in the ToS and onboarding that wallet ad
 | Enforcement Action | Mechanism |
 |---|---|
 | Stop the user immediately | Wallet suspension + VM termination |
-| Financial penalty | Escrow forfeiture (ToS clause, no court order required) |
+| Financial penalty | **None at platform level** — deposits are always withdrawable (Decision 2). The only financial friction is that returning after a blacklist costs a fresh escrow bond. |
 | Prevent return | Wallet blacklist (new wallet costs real money) |
 | Law enforcement cooperation | Wallet address + on-chain tx history + deployment logs |
 | DMCA compliance | Takedown + counter-notice process |
@@ -642,7 +699,8 @@ The platform should communicate clearly in the ToS and onboarding that wallet ad
 |---|---|
 | Identify the human behind a wallet | Law enforcement (court order → exchange KYC) |
 | Criminal prosecution | Law enforcement + prosecutors |
-| Civil damages beyond escrow | Plaintiff + courts |
+| Civil damages | Plaintiff + courts |
+| Recovery of platform costs from a violator | Counsel + courts (no platform-level seizure exists) |
 
 The platform's role ends at providing records, cooperating with valid legal process, and taking platform-level enforcement action. This is the correct scope and is sufficient for the "reasonable steps" legal standard.
 
@@ -684,12 +742,14 @@ All items required before public launch:
 - [ ] `POST /api/admin/takedown` — atomic takedown endpoint with audit logging
 - [ ] `EnforcementActions` append-only collection
 - [ ] Wallet blacklist check in VM creation path (`VmService.cs`)
-- [ ] Escrow forfeiture admin tool (separate from takedown, requires explicit confirmation)
+- [x] ~~Escrow forfeiture admin tool~~ — **must not be built** (Decision 2): the contract has no fund-moving function and enforcement is withhold-of-service only.
 
 ### Technical — CSAM Filtering
-- [ ] NCMEC hash database integration at Block Store ingestion
-- [ ] Block quarantine mechanism (remove from serving, preserve for evidence)
-- [ ] Automated NCMEC CyberTipline report trigger on detection
+- [x] ~~NCMEC hash database integration at Block Store ingestion~~ — **must not be built** (§3, Decision 1): block-level hash matching is technically infeasible (1 MB raw sectors are not decodable whole files). The detection surface is **node-level filesystem scanning**.
+- [x] ~~*Automated* NCMEC CyberTipline report trigger on detection~~ — **must not be built** (§3, and the enforcement rule below): automated enforcement on a hash match is prohibited. A match suspends the VM (protective, reversible) and raises a P0 item; **a human confirms before any NCMEC report or blacklist.**
+- [ ] Real matcher behind the built `ICsamScanner` seam — gated on the Microsoft CSAM Matching API agreement (see Administrative above). The seam, the honest stub, fleet-wide enrollment, the result-gate, and the node→P0-queue report chain are **built** (plan §7, 2026-07-08 → 10).
+- [ ] **NCMEC CyberTipline reporting procedure** — human-operated, off the P0 queue. Gated on the CyberTipline account (see Administrative above). *This is the live gap: the abuse intake is deployed, so a credible report can arrive today and create a reporting obligation with no registered channel to discharge it.*
+- [ ] Replica quarantine for the retroactive / backlog / bypassed-origin cases — designed (plan Decision 14: admin CID declaration → signed broadcast → move-to-sealed + CID denylist), **deferred**; open item is the sealed evidence store (counsel). The reactive P0 path is the interim control.
 
 ### Technical — ToS
 - [ ] ToS version document with hash
