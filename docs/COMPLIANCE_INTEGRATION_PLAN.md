@@ -2,8 +2,18 @@
 
 **Status:** Active — build sequencing for the pre-launch compliance framework
 **Created:** 2026-06-26
-**Updated:** 2026-07-14 — Phase 6 **pass 1 built and verified** (scanner seam + honest stub, fleet-wide enrollment per Decision 15, the Decision 9 result-gate, and the node `csam-report` → P0 queue → protective-suspend chain; 8/8 orchestrator + 16/16 node smoke tests). D1 settled and recorded (scan-only dirty bitmap — not built; lands with the real matcher). Hold propagation hardened: heartbeat `HeldVmIds` diffing (holds and releases), autostart discipline, watchdog truce. Phase 4 admin UI shipped. Phases 1–5 as previously recorded: ToS built; Enforcement Core complete (three-chokepoint gate, hardened single-VM hold, operator-node takedown chain with settlement withheld); Template Review Gate with draft-revision versioning; Abuse Reporting intake → P0 queue → enforcement; DMCA = no new code (operational/legal). The real matcher and NCMEC reporting remain gated on §2; the honest external claim is still *"reactive detection + template-publish review"*, not *"proactive CSAM scanning"*. See the build log (§7) for detail and the open follow-ups.
-**References:** `COMPLIANCE.md` (authoritative spec), `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
+**Updated:** 2026-07-16 — **Documentation audit (§7):** this plan verified clean against the repos; `COMPLIANCE.md` was badly stale and has been revised (it claimed an escrow-forfeiture power the contract cannot perform, prescribed a host-kernel nbd mount the design forbids, instructed a `Clean` stub, and carried a checklist contradicting its own body). Two role-case defects fixed (Decision 8). **Gap closed:** takedown now archives the wallet's published community templates — it previously left them live and deployable. Phase 6 **pass 1 built and verified** (scanner seam + honest stub, fleet-wide enrollment per Decision 15, the Decision 9 result-gate, and the node `csam-report` → P0 queue → protective-suspend chain; 8/8 orchestrator + 16/16 node smoke tests). D1 settled and recorded (scan-only dirty bitmap — not built; lands with the real matcher). Hold propagation hardened: heartbeat `HeldVmIds` diffing, autostart discipline, watchdog truce. Phases 1–5 as previously recorded: ToS built (text still counsel-gated); Enforcement Core complete; Template Review Gate with draft-revision versioning; Abuse Reporting intake → P0 queue → enforcement; DMCA = no new code. The real matcher and NCMEC reporting remain gated on §2; the honest external claim is still *"reactive detection + template-publish review"*, not *"proactive CSAM scanning"*. See the build log (§7).
+**References:** `COMPLIANCE.md`, `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
+
+> **Document ownership (settled 2026-07-16).** `COMPLIANCE.md` owns the **legal
+> framework** — the pillars, obligations, policy, and philosophy: *what* the
+> platform undertakes and *why*. **This plan owns the design of record** —
+> decisions, mechanisms, and build state: *how*, and *what has landed*. Both
+> documents previously claimed authority, which is how the spec drifted into
+> specifying superseded and unsafe mechanisms for three weeks without anyone
+> noticing. The spec no longer names endpoints, interfaces, or schemas; where it
+> once did, it points here. **Read build state from §7, never from the spec's
+> checklist.**
 **Scope:** Turns the four-pillar framework in `COMPLIANCE.md` into a dependency-ordered build plan, grounded in the current code in `DeCloud.Orchestrator`, `DeCloud.NodeAgent`, `DeCloud.Shared`, and the `DeCloudEscrow.sol` contract.
 
 This plan supersedes scattered "Planned" notes where they conflict. Where it states a decision, that decision was made deliberately and should not be silently reverted; reopen it explicitly if a new constraint appears.
@@ -39,7 +49,7 @@ These hold across all phases. They are the result of design discussion, not defa
    `TransitionTrigger.Compliance` + `NonCompliantSince`/`NonComplianceReason` already exist and mean *geographic/locality* compliance (migrate a VM off a node whose locality violates constraints). Do not overload it. Use `Enforcement` / `VmStatus.Suspended` for legal enforcement.
 
 8. **Admin role string is `"Admin"`.**
-   `AdminUserInitializer` assigns `"Admin"`. `SystemController` has a pre-existing bug using lowercase `"admin"` in `[Authorize(Roles = "admin")]` that silently fails the role check. Do not replicate it; new admin endpoints use `"Admin"`.
+   `AdminUserInitializer` assigns `"Admin"`. Lowercase `"admin"` silently fails the role check — both `IsInRole` and the `Roles` attribute are exact string comparisons, so a lowercase check never matches a real admin. It fails **closed**, which is why it stays invisible until someone tries the endpoint. This bit twice: eight `IsInRole("admin")` **call** sites across `VmsController`/`VmDirectAccessController` (fixed 2026-07-10; found by the Phase 6 smoke test, having silently denied admins any authority over user VMs), and the `[Authorize(Roles = "admin")]` **attribute** on `SystemController` (fixed 2026-07-16; found by the doc audit — the earlier sweep's grep matched only the call form, which is how it survived). Both forms are `"Admin"` everywhere now. When checking, grep **both**: `grep -rn 'IsInRole("admin")\|Roles = "admin"\|Roles="admin"' src/ --include=*.cs`
 
 9. **CSAM replication ordering = scan-before-replicate; gate on the scan *result*, not on "clean".**
    The scan runs on the frozen snapshot before `PushBlocksAsync`, and replication is gated on its result — the four states (`NotScanned | Clean | Match | Unscannable`) are **not** a clean/not-clean binary:
@@ -73,6 +83,9 @@ These hold across all phases. They are the result of design discussion, not defa
 15. **CSAM scan scope is decoupled from replication factor — every tenant VM with a writable overlay is scanned, `RF=0` included.**
    Hooking the scan at the lazysync `ScanChunks→Push` seam scopes it to `ReplicationFactor > 0`; `RF=0` (ephemeral) VMs are skipped by lazysync entirely (Decision 12 already treats them as non-durable), so they would never be scanned — making a safety property a side effect of a durability opt-in a user can simply decline. Invert it: **scan every tenant VM with a writable overlay; replication — and Decision 9's scan-before-replicate gate — is the `RF>0` tail on the same frozen snapshot.** For `RF>0` the scan shares lazysync's snapshot access and gates the push; for `RF=0` the scan is detection-only (no replication to gate) and needs its own lightweight change-source — the qcow2 overlay's allocated clusters, or a scan-only dirty bitmap. Today's full-export CID-diff is too costly to run per ephemeral VM just to scan. **On the bitmap (D1 note):** it was dropped not as dead weight but because replication moved from *overlay-only* (ship the overlay's changed blocks, tracked by the bitmap) to *full merged-image* capture — overlay-only broke base-image coherence during **cross-node reconstruction** (the target node assembling base image + overlay pieces didn't line up), so the fix was to capture a self-contained merged image and diff it by content hash, which left the bitmap purposeless. That failure was a *replication-reconstruction* problem; a scan-only bitmap (or an overlay-allocated-clusters read) never reconstructs anything cross-node — it's just a local "what did the guest write" read-filter — so the bug that killed the bitmap does **not** apply to reusing one for scanning. Settle this before building. **Out of scope for node-FS scanning:** system VMs (vetted platform code, no tenant data), and **containers** (`DeploymentMode.Container` has no qcow2 overlay — a separate surface, covered only reactively for now).
    **D1 settled (2026-07-08): the `RF=0` change-source is a scan-only persistent QEMU dirty bitmap (option b) — recorded now, built with the real matcher.** The grounding overturned the earlier lean toward overlay-allocated-clusters (option a). Option (a)'s premise — "read the overlay's allocation to learn what changed" — does not hold in the Phase J flow as coded: `SyncVmAsync` merges the overlay back into `disk.qcow2` at the end of **every** cycle (step 8), so between cycles there is no overlay to read, and a self-contained `disk.qcow2`'s allocation is cumulative since creation, not "since last cycle." To make (a) work, the RF=0 flow would have to keep a live overlay across the inter-cycle window (defer the merge one cycle, juggle a 2-deep backing chain, extend crash-recovery and the delete path) — i.e. it does not *reuse* state QEMU already keeps; it would have to *create and maintain* that state by restructuring the proven, coherence-critical snapshot machinery. Option (b) is additive and self-contained: `block-dirty-bitmap-add` (persistent) once per enrolled VM, one `query-named-block-nodes` dirty-count read per cycle, and a `block-dirty-bitmap-clear` at the frozen point. count == 0 ⇒ skip the snapshot **and** the guestmount entirely — and the mount (libguestfs appliance boot, seconds per VM) is the actual per-cycle cost the signal exists to avoid on nodes dense with idle ephemeral VMs. Fail-closed for a safety scan means failing toward *more* scanning: a missing/unreadable bitmap is treated as dirty, never as quiet. The bug that killed the old bitmap was a replication-reconstruction failure and does not apply (per the D1 note above). One caveat recorded honestly: the bitmap's semantics across the blockdev-snapshot + block-commit dance (clear right after `CreateSnapshotAsync`; the later commit re-dirties the window's writes so they count next cycle — content-correct, timing-shifted) is reasoned from QEMU 8.2.2 documentation, not yet executed — smoke-test it when the real matcher lands, before relying on count==0 to skip scans.
+
+16. **No ToS re-sign grace period — a version bump invalidates every prior acceptance immediately.**
+   `COMPLIANCE.md` promised 30 days before VM creation is blocked after a material bump; the code never had a window (the acceptance cache keys on version **+ hash**, so a bump self-invalidates), and the code is right. Decided 2026-07-16: **no grace period; the document was corrected to the code.** The version is bumped *because something material changed* — often because counsel required it — so a grace window is a period during which the platform knowingly serves users under terms it has already decided are inadequate, and it exists for no other purpose. The right to act (Decision 4/5's whole point) rests on the user having agreed to the terms **in force**; a window is a hole in exactly that. Compliance is also near-frictionless: the gate surfaces at deploy time, the user signs, the deploy proceeds — a bump costs one signature at next use, not a lockout. **Existing VMs keep running**: the gate is on *new* deployment, since pulling a running workload over a paperwork lapse would be a penalty, not a gate. Two consequences accepted deliberately: (a) **non-interactive clients break at the bump** — an API/script deploy gets `TOS_NOT_ACCEPTED` with no modal to click, which is correct (automation has no more right to deploy under superseded terms than a human) but makes a bump an *operational event* to announce; (b) **any byte change is a bump** — the hash is over the document's exact bytes, so a whitespace edit invalidates every acceptance exactly as a new clause does. Treat the ToS text and `Tos:Version` as one deliberate, reviewed change; never an incidental edit. *Do not reintroduce a grace period without a counsel finding that a notice period is legally required — that is the only argument that survives.*
 
 ---
 
@@ -108,7 +121,7 @@ Verified against the repos so future readers don't rediscover it.
 
 **Built since this plan was written (2026-06-27 — see §7 for detail):** `TosAcceptance` + `TosService` + `TosController` + VM-create ToS gate (Phase 1); `IWalletBlocklistService.IsWalletBlockedAsync` + `BlockedWallets`/`BlockSource` + `EnforcementActions` audit + `EnforcementService` + `AdminComplianceController` + admin-compliance UI, **with the gate wired at all three chokepoints** — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync` (Phase 2 core, DoD met); the single-VM hold end-to-end — `VirtualMachine.ComplianceHold`, `SetVmComplianceHoldAsync`, `Suspend/ResumeVmAsync`, heartbeat re-enforcement, node-side persisted hold + VM-manager gate + autostart-disable + watchdog skip + migration exclusion + **lazysync exclusion**; the **complete operator-node takedown** — suspend the operator's nodes + login gate, withhold settlement, drain replicated VMs, hard cutoff once drained, and the immediate-cutoff override (Decisions 12–13); and **Phase 3 template review** — `TemplateStatus.PendingReview`/`Rejected` + review fields, the community-review invariant enforced across create/publish/update/deploy, the admin approve/reject/queue endpoints, edit-after-approval re-review, and the admin review UI.
 
-**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` + fleet enrollment + result-gate + `csam-report` chain are **built and verified** — Phase 6 pass 1, 2026-07-10; see §7) plus the D1 dirty bitmap that lands with it; **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav).
+**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` + fleet enrollment + result-gate + `csam-report` chain are **built and verified** — Phase 6 pass 1, 2026-07-10; see §7) plus the D1 dirty bitmap that lands with it; **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb and the two role-case defects found by that audit are fixed — see §7.)*
 
 ### 3.1 Replication flow (lazysync, Phase J) — the seam Phase 6 hooks
 
@@ -183,7 +196,7 @@ flowchart TD
 ## 4. Phase Sequence (easy → hard, by dependency)
 
 ### Phase 1 — Terms of Service
-**Status:** ✅ Built (2026-06-27). `TosAcceptance` model + `tos_acceptances` collection; `TosService` (version from config, hash computed from the embedded document, positive cache, fail-closed when the document is absent); `TosController` `GET/POST /api/tos` with EIP-191 signature verification reusing the existing primitive; VM-create gate wired (surfaced as a 4xx creation-gate failure, and template deploy routes through `CreateVmAsync`). **Remaining:** the embedded ToS text + repeat-infringer clause (counsel), and confirm the 30-day re-sign flow.
+**Status:** ✅ Built (2026-06-27). `TosAcceptance` model + `tos_acceptances` collection; `TosService` (version from config, hash computed from the embedded document, positive cache, fail-closed when the document is absent); `TosController` `GET/POST /api/tos` with EIP-191 signature verification reusing the existing primitive; VM-create gate wired (surfaced as a 4xx creation-gate failure, and template deploy routes through `CreateVmAsync`). **Remaining:** the embedded ToS text + repeat-infringer clause (counsel — **wallets are signing a draft today**). *Re-sign grace window settled 2026-07-16: **none** — a bump invalidates every prior acceptance immediately, which is what the code already did; `COMPLIANCE.md` was corrected to match (Decision 16). Nothing to build.*
 **Goal:** Legal basis that makes every later enforcement action defensible; DMCA safe-harbor prerequisite.
 **Depends on:** existing wallet-signature primitive (built). Touches the VM-create path.
 **Build:**
@@ -191,7 +204,7 @@ flowchart TD
 - Static ToS document + stored hash. Includes the **repeat-infringer-termination** clause (required for §512). The escrow-forfeiture clause is included **only** as a reserved future right *if counsel approves* — flagged as not technically enforced.
 - `GET /api/tos` (current version + hash), `POST /api/tos/accept` (verify signature recovers the wallet, store acceptance).
 - Acceptance gate in the VM-create path.
-- Version-bump re-sign flow; VM creation blocked after 30 days without re-sign (existing VMs keep running).
+- Version-bump re-sign flow; VM creation blocked **immediately** on a bump until the wallet signs the new version+hash — no grace period (Decision 16). Existing VMs keep running.
 
 **Definition of done:**
 - A wallet cannot create a VM without a stored, signature-verified acceptance of the current ToS version+hash.
@@ -203,7 +216,7 @@ flowchart TD
 ---
 
 ### Phase 2 — Enforcement Core (the spine)
-**Status:** ✅ Built (2026-06-27), DoD met. `IWalletBlocklistService` (singleton; owns `blocked_wallets` + `enforcement_actions`; `IsWalletBlockedAsync` = `User.Status == Suspended` OR any denylist source, checksum-normalized, source-scoped removal, bulk import); `EnforcementService` scoped facade (suspend/unsuspend wallet + stop its VMs, per-VM suspend/resume, block/unblock/bulk); `BlockedWallet`/`BlockSource`, `EnforcementAction`/`EnforcementActionType`; `AdminComplianceController` (`[Authorize(Roles="Admin")]`, `/api/admin/compliance/*`) + `admin-compliance.js` UI. The gate is now wired at **all three** chokepoints — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync`. **Extended beyond the original DoD** with the complete operator-node takedown (Decisions 12–13): suspend the operator's nodes + gate re-login, withhold settlement to a blocked payee, drain replicated VMs via the migration pipeline, hard cutoff once drained (manifest-guarded), and the immediate-cutoff admin override (`POST /api/admin/compliance/cutoff`). **This area is complete.**
+**Status:** ✅ Built (2026-06-27), DoD met. `IWalletBlocklistService` (singleton; owns `blocked_wallets` + `enforcement_actions`; `IsWalletBlockedAsync` = `User.Status == Suspended` OR any denylist source, checksum-normalized, source-scoped removal, bulk import); `EnforcementService` scoped facade (suspend/unsuspend wallet + stop its VMs + suspend its nodes + **archive its published community templates** (added 2026-07-16), per-VM suspend/resume, block/unblock/bulk); `BlockedWallet`/`BlockSource`, `EnforcementAction`/`EnforcementActionType`; `AdminComplianceController` (`[Authorize(Roles="Admin")]`, `/api/admin/compliance/*`) + `admin-compliance.js` UI. The gate is now wired at **all three** chokepoints — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync`. **Extended beyond the original DoD** with the complete operator-node takedown (Decisions 12–13): suspend the operator's nodes + gate re-login, withhold settlement to a blocked payee, drain replicated VMs via the migration pipeline, hard cutoff once drained (manifest-guarded), and the immediate-cutoff admin override (`POST /api/admin/compliance/cutoff`). **This area is complete.** *(One limb of the Build list below — "archive templates" — was missing until 2026-07-16: it was named in Build but not in the DoD, so the DoD passed while the limb was absent. See the audit entry in §7.)*
 **Goal:** The single gate, the audit trail, and the atomic takedown that Phases 3, 4, and 6 all call into.
 **Depends on:** admin auth (built), VM termination (built), template archiving (`Archived` exists). Phase 1 provides the legal basis.
 **Build:**
@@ -329,7 +342,7 @@ Dated record of what has actually landed, so status is read from here rather tha
 
 ### 2026-06-27 — Phase 1, Phase 2 core, and the single-VM compliance hold
 
-**Phase 1 — Terms of Service.** `TosAcceptance` + `TosService` + `TosController`; EIP-191 signature verification; VM-create ToS gate (fail-closed when the document is absent). Remaining: ToS text + repeat-infringer clause (counsel); confirm the 30-day re-sign flow.
+**Phase 1 — Terms of Service.** `TosAcceptance` + `TosService` + `TosController`; EIP-191 signature verification; VM-create ToS gate (fail-closed when the document is absent). Remaining: ToS text + repeat-infringer clause (counsel). Re-sign grace: settled — none (Decision 16).
 
 **Phase 2 — Enforcement Core.** `IWalletBlocklistService` (singleton, owns `blocked_wallets` + `enforcement_actions`, `IsWalletBlockedAsync`, source-scoped denylist, bulk import, append-only audit); `EnforcementService` (scoped facade); `BlockedWallet`/`BlockSource`, `EnforcementAction`/`EnforcementActionType`; `AdminComplianceController` + `admin-compliance.js`. Verify the `RegisterNodeAsync` and `PublishTemplateAsync` chokepoints (the create gate is wired).
 
@@ -466,6 +479,101 @@ Built alongside the pass-1 deploy (maintainer work, verified against the synced 
 - **Watchdog truce.** `VmHealthService` skips administratively held VMs — a held VM's stale guest heartbeat is by design, and "healing" it just fought the hold in a start/stop loop.
 - **Phase 4 frontend.** Admin "Abuse Reports" page (queue + dismiss/warn/takedown) wired into the admin nav; held VMs surfaced on the node dashboard.
 - **Repo-sync verification (2026-07-14):** all pass-1 deliverables present in the live repos as designed and as tested; no drift found between the applied code and the build-log claims above.
+
+### 2026-07-16 — documentation audit: spec revised, two defects found, one gap closed
+
+Read `COMPLIANCE.md` and this plan end to end against the synced repos.
+
+**This plan verified clean.** Every load-bearing "built" claim matches live code,
+comment-level detail included: the ToS gate (fail-closed on an absent document,
+cache keyed on version+hash so a bump auto-invalidates, checked before quota,
+never from the token), the five chokepoints, checksum normalization +
+source-scoped removal, settlement withheld from blocked payees with records left
+unsettled, the rate-limited fail-closed intake with atomic `ABU-YYYY-NNNNN`
+references, `AbuseTriage.Map` exactly as specified, the queue's per-wallet
+history join, the Phase 3 invariant, all of Phase 6 pass 1, and the heartbeat
+hold propagation. No drift between the journal and the code.
+
+**`COMPLIANCE.md` was badly stale, and has been revised.** It predated most of
+the locked decisions and was never updated as they superseded it. Four items
+were worse than stale — it asserted things that were false or unsafe:
+- **Escrow forfeiture as an enforcement power** (in the required ToS clauses,
+  the takedown steps, the §10 liability table, the audit `actionType` enum, and
+  the checklist). Decision 2 removed it: the contract has **no fund-moving
+  function**. A compliance document claiming a capability the contract cannot
+  perform misleads counsel and can be quoted back at us. Removed everywhere; the
+  spec's §7 now argues why the impossibility is a **regulatory asset**.
+- **A host-kernel `qemu-nbd` mount** in the scan pipeline — the exact
+  host-security hole the design forbids. Replaced with the libguestfs rule and
+  its reasoning (adversarial guest FS, parsed by the host kernel, from an
+  unprivileged tenant, on a node hosting others).
+- **"Stub implementation returns `IsClean = true`"** — the manufactured-coverage
+  failure the honesty invariants exist to prevent. Replaced with the invariant.
+- **A checklist contradicting its own body twice**: "NCMEC hash database
+  integration at Block Store ingestion" (the spec's own §3 explains at length why
+  that is infeasible — Decision 1) and "**Automated** NCMEC report trigger" (its
+  own §3 prohibits automated action). Both struck as **must-not-build**, with the
+  reason.
+
+The remaining drift — superseded interfaces/endpoints/schemas (`VmStatus.Suspended`
+hold, body-`nodeId` csam-report, the 501 unsuspend, `SuspendedWallets`, the single
+takedown route), AI triage written in present tense, encryption-at-rest written
+into the pipeline steps, and a template workflow that *understated* what shipped —
+was revised to obligation-level text pointing here. The spec's checklist now
+reflects real state: every technical pillar built except the matcher; nearly
+everything still open is administrative.
+
+**Governance fixed at the root.** Both documents claimed authority — that is not a
+stale-document problem, it is a two-authorities problem, and it is why the drift
+survived three weeks of active work. Ownership is now explicit in both headers:
+**the spec owns the legal framework; this plan owns the design of record.** The
+spec no longer names mechanisms it does not own.
+
+**Defect F1 (fixed).** `SystemController.GetPendingCommands` still carried
+`[Authorize(Roles = "admin")]` — lowercase. The 2026-07-10 sweep fixed the eight
+`IsInRole("admin")` **call** sites; this is the **attribute** form, a different
+grep, and the one Decision 8 originally documented. Failed closed (a monitoring
+endpoint 403'd for real admins; no exposure). Decision 8 rewritten to cover both
+forms and to carry the grep that matches both.
+
+**Gap closed — takedown did not reach templates.** `WithholdServiceAsync` stopped
+the wallet's VMs and suspended its nodes but left its `Published` community
+templates live, listed, and deployable by everyone else — the publish gate only
+refuses *new* publishes by a blocked author. Phase 2's **Build** list named
+"archive templates"; its **DoD** did not — so it shipped without the limb and
+nothing caught it. *(Lesson worth keeping: the DoD is what gets checked. A DoD
+that omits a limb the Build list names will pass green while the limb is
+missing.)* Added `ITemplateService.ArchiveAuthorTemplatesAsync` — archives every
+`Published` + `IsCommunity` template by that wallet and refreshes category counts
+(which tally `Published + Public` only and would otherwise go stale); it lives in
+`TemplateService`, not `EnforcementService`, because enforcement asks and
+templates decide how. `WithholdServiceAsync` returns a third count that rides the
+existing `EnforcementAction.Metadata` (no new action type); fires from
+`SuspendAsync` and targeted `BlockAsync`, never from bulk import. Also gated
+`ApproveTemplateAsync` on `IsWalletBlockedAsync`: the publish gate ran at
+*submit* time, so a wallet suspended while its submission sat in the queue could
+be approved straight to `Published` — a takedown undone by an admin's honest
+mistake. **Deliberately not reversed on unsuspend:** a node is infrastructure and
+comes back; a published template is distribution, and returns only by the author
+republishing, which re-enters review. This is the first enforcement limb that is
+asymmetric on unsuspend — a future reader will assume that is a bug unless this
+paragraph is in front of them. Verified by `tests/test-abuse.sh` (fixture
+baseline → archived → delisted → `templatesArchived` on the audit row → approve
+refused 409 → still archived after unsuspend; the baseline check exists because
+without it the post-checks pass vacuously on an already-archived or Private
+fixture).
+
+**Audit item C1 settled the same day: no ToS re-sign grace period** (Decision 16).
+The spec promised 30 days; the code never had a window and the code is right — a
+bump means the old terms are inadequate, so a window would only serve users under
+terms already judged inadequate. Document corrected to the code; nothing built.
+
+**Still open from the audit:** the §2 counsel/administrative items, **none of
+which are started**. The NCMEC
+gap is **live, not theoretical**: the abuse intake is deployed and public, so a
+credible report can arrive today, and that is *actual knowledge* — §2258A's
+reporting duty attaches to it with no registered channel to discharge it. It is
+not blocked on engineering.
 
 ### Open follow-up (deliberate, not a regression to fix blindly)
 

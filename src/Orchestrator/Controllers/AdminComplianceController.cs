@@ -10,9 +10,10 @@ namespace Orchestrator.Controllers;
 /// <summary>
 /// Admin compliance / takedown surface. Suspend or block a wallet, reverse either, and
 /// read the denylist and the enforcement audit log. Admin-only — uses "Admin" (capital
-/// A), matching the role seeded by AdminUserInitializer and the JWT role claim. (The
-/// lowercase "admin" in SystemController / VmDirectAccessController is a known bug; not
-/// replicated here.) Enforcement is withhold-of-service only: no endpoint touches funds.
+/// A) matching the role seeded by AdminUserInitializer and the JWT role claim — lowercase
+/// "admin" is an exact-comparison mismatch that fails closed and is invisible until an
+/// admin tries the endpoint (see Decision 8; all known sites fixed 2026-07-10/16).
+/// Enforcement is withhold-of-service only: no endpoint touches funds.
 /// </summary>
 [ApiController]
 [Route("api/admin/compliance")]
