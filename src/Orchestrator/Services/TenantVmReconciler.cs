@@ -13,9 +13,29 @@ namespace Orchestrator.Services;
 /// orchestrator restart mid-action changes nothing: the next cycle sees the same
 /// state and reaches the same conclusion.
 ///
-/// Two invariants, evaluated in order:
+/// Three invariants, evaluated in order:
 ///
-///   1. SWEEP — no VM may hold Running status while its node is Offline.
+///   1. UNSTICK — no VM may carry an ActiveCommandId older than the timeout.
+///      Added after incident 2026-07-15 (Finding D): a tenant VM's StartVm
+///      command was acked and correctly cleared in the same request, yet the
+///      marker reappeared and survived ~11 hours, blocking both this
+///      reconciler and the migration scanner (both gate on ActiveCommandId
+///      being empty). Root cause, confirmed by reading DataStore.cs directly:
+///      the orchestrator keeps an in-memory ActiveVMs cache that (a) loads
+///      EVERY non-deleted VM verbatim from Mongo on every restart, Stopped/
+///      Error included, and (b) gets pushed back out to Mongo wholesale,
+///      once a minute, by a background full-sync (cache always wins). If a
+///      restart ever lands while Mongo transiently shows a stale command
+///      marker, that snapshot enters the cache and the sync loop re-asserts
+///      it over Mongo every 60 seconds afterward — a self-reinforcing loop,
+///      not a one-off race. CleanupExpiredCommands does not cover this: its
+///      rollback is migration-specific (restores NodeId/TargetNodeId), so a
+///      stuck plain StartVm/StopVm is out of its scope entirely. This step
+///      fills that gap. Scoped to General-role VMs, matching this
+///      reconciler's own remit — System VMs have their own node-side
+///      reconciler and are not this service's business.
+///
+///   2. SWEEP — no VM may hold Running status while its node is Offline.
 ///      Delegates to NodeService.MarkNodeVmsAsErrorAsync (the single
 ///      implementation; also called explicitly by the compliance cutoff).
 ///      Idempotent: the method filters on Status==Running, so already-swept
@@ -30,22 +50,26 @@ namespace Orchestrator.Services;
 ///      collapsing that drain is an explicit admin action
 ///      (CutoffSuspendedNodeNowAsync), not a standing invariant.
 ///
-///   2. RESUME — a tenant VM whose owner wants it Running (DesiredStatus),
+///   3. RESUME — a tenant VM whose owner wants it Running (DesiredStatus),
 ///      that is observed Error/Stopped, on an ONLINE node, with nothing in
 ///      flight, gets a StartVm command. The node-Online gate is what keeps
 ///      this loop and the migration scanner from ever racing: offline-node
 ///      VMs belong to the DR pipeline (RF>0 → migrate; RF0 → Lost, nothing
 ///      is possible), online-node VMs belong here. Stamping ActiveCommandId
 ///      would otherwise exclude the VM from the migration scanner's filter
-///      and block disaster recovery.
+///      and block disaster recovery. A VM unstuck by invariant 1 this same
+///      cycle becomes eligible here on the next cycle (30s later) — the
+///      candidate snapshot below is taken once, before UNSTICK's writes;
+///      not worth a second fetch for a delay this small against a VM that
+///      was already stuck for 5+ minutes.
 ///
 /// What this service deliberately does NOT do:
 ///   - It never calls TransitionAsync for the resume path. Status moves to
 ///     Running through the existing CommandAck/Heartbeat paths, which carry
 ///     all the side effects (ingress, ports, billing) already proven correct.
-///   - It has no retry/timeout bookkeeping of its own. ActiveCommandId is
-///     the in-flight guard, and StaleCommandCleanupService already clears
-///     it after 5 minutes for every command type — one janitor, not two.
+///   - Every write in this file goes through DataStore.SaveVmAsync, never a
+///     raw Mongo update — see invariant 1's note on why a Mongo-only write
+///     would be silently undone by the cache/sync-loop within a minute.
 ///   - A crash-looping guest will loop start → crash → start, paced by the
 ///     reconcile interval plus boot time (~1/min). That is restart=always
 ///     semantics, visible in the VM's Messages. If damping is ever needed,
@@ -58,20 +82,19 @@ public class TenantVmReconciler : BackgroundService
 
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(30);
 
-    // Debounce for the ack→heartbeat gap: a StartVm ack clears ActiveCommandId
-    // seconds before the node's next heartbeat reports Running (round-trips of
-    // 15–22s observed), so one reconcile tick can land in the gap and re-issue.
-    // The duplicate is harmless (2026-07-14: node absorbed it, VM came up) —
-    // this only quiets it. In-memory on purpose; see class doc philosophy.
-    private static readonly TimeSpan StartDebounce = TimeSpan.FromSeconds(90);
-    private readonly Dictionary<string, DateTime> _lastStartIssuedAt = new();
-
     // After an orchestrator restart, node.LastSeenAt is stale until first
     // heartbeats land, so nodes look Offline for up to ~30s. Sweeping during
     // that window would Error healthy VMs (they self-heal via heartbeat, but
     // the ingress/billing churn is avoidable). Same rationale and value as
     // VmSchedulerService's startup delay.
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
+
+    // Same 5-minute convention used elsewhere in this codebase (e.g.
+    // CleanupExpiredCommands) for "how long is too long for a command to go
+    // unacknowledged." No real command — ack or expiry-driven rollback —
+    // takes anywhere near this long, so anything older is definitionally
+    // stuck, regardless of which mechanism failed to clear it.
+    private static readonly TimeSpan StaleCommandTimeout = TimeSpan.FromMinutes(5);
 
     public TenantVmReconciler(
         IServiceProvider serviceProvider,
@@ -111,7 +134,18 @@ public class TenantVmReconciler : BackgroundService
 
         var allNodes = await dataStore.GetAllNodesAsync();
 
-        // ── Invariant 1: SWEEP ───────────────────────────────────────────────
+        // Fetched once, used by invariants 1 and 3. Queries MongoDB directly
+        // for the same reason ScanMigratingVmsAsync does: the in-memory
+        // ActiveVMs dict may lag writes that went through the MongoDB-only
+        // path (MarkNodeVmsAsErrorAsync, lifecycle transitions) — and, per
+        // invariant 1's doc, may itself be holding a stale snapshot loaded
+        // at startup. Mongo is the one place both invariants can trust.
+        var allVms = await dataStore.GetAllVMsAsync();
+
+        // ── Invariant 1: UNSTICK ─────────────────────────────────────────────
+        await UnstickStaleCommandsAsync(allVms, dataStore, ct);
+
+        // ── Invariant 2: SWEEP ───────────────────────────────────────────────
         // Offline only — see class doc for why Suspended is excluded.
         foreach (var node in allNodes.Where(n => n.Status == NodeStatus.Offline))
         {
@@ -119,16 +153,11 @@ public class TenantVmReconciler : BackgroundService
             await nodeService.MarkNodeVmsAsErrorAsync(node.Id);
         }
 
-        // ── Invariant 2: RESUME ──────────────────────────────────────────────
+        // ── Invariant 3: RESUME ──────────────────────────────────────────────
         var onlineNodeIds = allNodes
             .Where(n => n.Status == NodeStatus.Online)
             .Select(n => n.Id)
             .ToHashSet();
-
-        // Query MongoDB directly for the same reason ScanMigratingVmsAsync does:
-        // the in-memory ActiveVMs dict may lag writes that went through the
-        // MongoDB-only path (MarkNodeVmsAsErrorAsync, lifecycle transitions).
-        var allVms = await dataStore.GetAllVMsAsync();
 
         var candidates = allVms
             .Where(v =>
@@ -148,8 +177,9 @@ public class TenantVmReconciler : BackgroundService
                 // are the DR pipeline's, and stamping ActiveCommandId here
                 // would exclude them from its filter and block migration.
                 onlineNodeIds.Contains(v.NodeId) &&
-                // In-flight guard. StaleCommandCleanupService clears this
-                // after 5 minutes if the command is never acknowledged.
+                // In-flight guard. Invariant 1 (UNSTICK, above) clears this
+                // after StaleCommandTimeout if no ack ever lands — this
+                // reconciler owns its own janitor for its own command type.
                 string.IsNullOrEmpty(v.ActiveCommandId) &&
                 // Migration-in-progress guard. MigrateVmAsync stamps both
                 // fields; the timeout rollback in CleanupExpiredCommands
@@ -181,6 +211,78 @@ public class TenantVmReconciler : BackgroundService
     }
 
     /// <summary>
+    /// Clears ActiveCommandId/Type/IssuedAt on any General-role VM where the
+    /// marker has outlived StaleCommandTimeout with no ack or expiry ever
+    /// having cleared it — see the class doc (invariant 1) for why this
+    /// exists and why it must go through SaveVmAsync rather than a direct
+    /// Mongo write. Purely corrective: never touches Status or DesiredStatus,
+    /// only the command-tracking fields. A VM freed here becomes a RESUME
+    /// candidate on the next cycle once it also satisfies that invariant's
+    /// own conditions (desired=Running, node online, etc.).
+    /// </summary>
+    private async Task UnstickStaleCommandsAsync(
+        IReadOnlyList<VirtualMachine> allVms,
+        DataStore dataStore,
+        CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow - StaleCommandTimeout;
+
+        var stuck = allVms
+            .Where(v =>
+                v.Role == VmRole.General &&
+                v.ActiveCommandId != null &&
+                v.ActiveCommandIssuedAt is { } issuedAt &&
+                issuedAt < cutoff)
+            .ToList();
+
+        foreach (var vm in stuck)
+        {
+            if (ct.IsCancellationRequested) return;
+
+            try
+            {
+                // Re-fetch: confirm it's still stuck before touching it — a
+                // concurrent ack may have cleared it between the scan above
+                // and now. Same idempotency shape as IssueStartVmAsync.
+                var fresh = await dataStore.GetVmAsync(vm.Id);
+                if (fresh?.ActiveCommandId == null ||
+                    fresh.ActiveCommandIssuedAt is not { } freshIssuedAt ||
+                    freshIssuedAt >= cutoff)
+                {
+                    continue;
+                }
+
+                var staleCommandId = fresh.ActiveCommandId;
+                var staleAge = DateTime.UtcNow - freshIssuedAt;
+
+                fresh.ActiveCommandId = null;
+                fresh.ActiveCommandType = null;
+                fresh.ActiveCommandIssuedAt = null;
+                fresh.UpdatedAt = DateTime.UtcNow;
+                fresh.PushMessage(
+                    $"Cleared stale command marker ({staleCommandId}, " +
+                    $"{staleAge.TotalMinutes:F0}min old) — no ack or expiry ever landed.",
+                    VmMessageLevel.Warning, "reconciler");
+
+                // SaveVmAsync, not a raw Mongo update — see class doc,
+                // invariant 1. A Mongo-only clear here would be silently
+                // reverted by DataStore's periodic cache→Mongo full-sync
+                // within 60 seconds if this VM is sitting in ActiveVMs.
+                await dataStore.SaveVmAsync(fresh);
+
+                _logger.LogWarning(
+                    "TenantVmReconciler: cleared stale ActiveCommandId {CommandId} on VM {VmId} " +
+                    "({AgeMinutes:F0}min old, no ack/expiry ever landed)",
+                    staleCommandId, fresh.Id, staleAge.TotalMinutes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to clear stale command marker for VM {VmId}", vm.Id);
+            }
+        }
+    }
+
+    /// <summary>
     /// Enqueues a StartVm command for one VM, mirroring MigrateVmAsync's
     /// mechanics exactly: re-fetch + idempotency gate, stamp ActiveCommand*,
     /// RegisterCommand, DeliverCommandAsync. Status is deliberately NOT
@@ -191,17 +293,6 @@ public class TenantVmReconciler : BackgroundService
         DataStore dataStore,
         INodeCommandService commandService)
     {
-        // Debounce: skip if we issued a StartVm for this VM within the gap
-        // window, even though ActiveCommandId is already cleared by the ack.
-        if (_lastStartIssuedAt.TryGetValue(vm.Id, out var lastIssued) &&
-            DateTime.UtcNow - lastIssued < StartDebounce)
-        {
-            _logger.LogDebug(
-                "VM {VmId}: StartVm issued {Sec:F0}s ago — debouncing",
-                vm.Id, (DateTime.UtcNow - lastIssued).TotalSeconds);
-            return;
-        }
-
         // Re-fetch + idempotency gate — another cycle or a concurrent actor
         // (owner clicking Start, migration scanner after a node flap) may
         // have acted since the scan snapshot.
@@ -240,8 +331,6 @@ public class TenantVmReconciler : BackgroundService
         );
 
         await commandService.DeliverCommandAsync(fresh.NodeId!, command);
-
-        _lastStartIssuedAt[fresh.Id] = DateTime.UtcNow;
 
         _logger.LogInformation(
             "Auto-resume StartVm {CommandId} delivered to node {NodeId} for VM {VmId}",
