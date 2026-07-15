@@ -58,6 +58,14 @@ public class TenantVmReconciler : BackgroundService
 
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(30);
 
+    // Debounce for the ack→heartbeat gap: a StartVm ack clears ActiveCommandId
+    // seconds before the node's next heartbeat reports Running (round-trips of
+    // 15–22s observed), so one reconcile tick can land in the gap and re-issue.
+    // The duplicate is harmless (2026-07-14: node absorbed it, VM came up) —
+    // this only quiets it. In-memory on purpose; see class doc philosophy.
+    private static readonly TimeSpan StartDebounce = TimeSpan.FromSeconds(90);
+    private readonly Dictionary<string, DateTime> _lastStartIssuedAt = new();
+
     // After an orchestrator restart, node.LastSeenAt is stale until first
     // heartbeats land, so nodes look Offline for up to ~30s. Sweeping during
     // that window would Error healthy VMs (they self-heal via heartbeat, but
@@ -183,6 +191,17 @@ public class TenantVmReconciler : BackgroundService
         DataStore dataStore,
         INodeCommandService commandService)
     {
+        // Debounce: skip if we issued a StartVm for this VM within the gap
+        // window, even though ActiveCommandId is already cleared by the ack.
+        if (_lastStartIssuedAt.TryGetValue(vm.Id, out var lastIssued) &&
+            DateTime.UtcNow - lastIssued < StartDebounce)
+        {
+            _logger.LogDebug(
+                "VM {VmId}: StartVm issued {Sec:F0}s ago — debouncing",
+                vm.Id, (DateTime.UtcNow - lastIssued).TotalSeconds);
+            return;
+        }
+
         // Re-fetch + idempotency gate — another cycle or a concurrent actor
         // (owner clicking Start, migration scanner after a node flap) may
         // have acted since the scan snapshot.
@@ -221,6 +240,8 @@ public class TenantVmReconciler : BackgroundService
         );
 
         await commandService.DeliverCommandAsync(fresh.NodeId!, command);
+
+        _lastStartIssuedAt[fresh.Id] = DateTime.UtcNow;
 
         _logger.LogInformation(
             "Auto-resume StartVm {CommandId} delivered to node {NodeId} for VM {VmId}",

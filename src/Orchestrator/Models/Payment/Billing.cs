@@ -62,6 +62,7 @@ public enum BillingTrigger
 {
     Periodic,           // Periodic timer (every 5 min)
     VmStop,             // VM stopped - bill final usage
+    VmStart,   // VM entered Running — open a fresh billing period, bill nothing
     Manual,             // Admin trigger
     BalanceAdded,       // User added balance - resume billing
     HeartbeatResumed    // Node heartbeat returned after staleness - resume billing

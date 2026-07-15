@@ -360,6 +360,20 @@ public class VmLifecycleManager : IVmLifecycleManager
                 vm.Id, vm.Services.Count);
         }
 
+        // 0. Open a fresh billing period — MUST precede the early PrivateIp
+        // return below so it fires unconditionally. VmStop closed the previous
+        // period at stop time; without this, CurrentPeriodStart stays frozen at
+        // that close and the first billing event after a restart bills the
+        // entire downtime as runtime (incident 2026-07-14: 12h34m of powered-off
+        // time billed as 0.2516 USDC on HeartbeatResumed). VmStop/VmStart are
+        // the symmetric pair: every leave-Running bills-and-closes, every
+        // enter-Running opens-at-now.
+        await SafeExecuteAsync(async () =>
+        {
+            var billingService = _serviceProvider.GetRequiredService<BillingService>();
+            await billingService.EnqueueBillingAsync(vm.Id, BillingTrigger.VmStart, "VM entered running state");
+        }, "Billing period reset", vm.Id);
+
         // 1. Ingress registration — does NOT require PrivateIp.
         // Caddy routes to the node agent (node.PublicIp / CgnatInfo.TunnelIp), not the VM's
         // private IP. Registering here unconditionally ensures ingress is always active after

@@ -196,6 +196,23 @@ public class BillingService : BackgroundService
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // VM START — OPEN A FRESH PERIOD
+        // ═══════════════════════════════════════════════════════════════════════
+        // The period before the stop was already final-billed by VmStop; the
+        // stop→start gap must not exist as billable time. Runs before the
+        // staleness guard (a reset is valid regardless of heartbeat state).
+        // Deliberately does NOT touch IsPaused — a balance-hold pause must
+        // survive a restart, and only BalanceAdded may lift it.
+
+        if (evt.Trigger == BillingTrigger.VmStart)
+        {
+            vm.BillingInfo.CurrentPeriodStart = DateTime.UtcNow;
+            await _dataStore.SaveVmAsync(vm);
+            _logger.LogInformation("VM {VmId}: billing period reset (VmStart)", vm.Id);
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // HEARTBEAT-STALENESS GUARD
         // ═══════════════════════════════════════════════════════════════════════
         // Billing follows node liveness. If the host hasn't heartbeat recently,

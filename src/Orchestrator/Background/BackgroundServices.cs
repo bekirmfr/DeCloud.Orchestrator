@@ -28,6 +28,18 @@ public class NodeHealthMonitorService : BackgroundService
     {
         _logger.LogInformation("Node Health Monitor started");
 
+        // Startup grace: after an orchestrator restart, node.LastSeenAt reflects
+        // heartbeats received by the PREVIOUS process — stale by however long
+        // the orchestrator itself was down, not the node. Without this delay,
+        // every deploy marks every node offline (observed 2026-07-14 21:08:52:
+        // both nodes, "no heartbeat for 2.1/2.3 minutes" during a ~2-min
+        // rebuild), emitting false NodeOffline events and recording false
+        // reputation downtime against nodes that never blinked. Two minutes of
+        // silence lets real heartbeats refresh LastSeenAt first. Genuinely-dead
+        // nodes are still caught — detection just starts 2 minutes later,
+        // matching TenantVmReconciler's and VmSchedulerService's startup delays.
+        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
