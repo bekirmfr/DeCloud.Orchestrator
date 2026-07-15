@@ -75,7 +75,11 @@ public interface ICentralIngressService
     Task<bool> ReloadAllAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Batch-restores routes for all Running VMs on orchestrator startup.
+    /// Batch-restores routes on orchestrator startup for every active VM that has
+    /// ingress enabled — regardless of the VM's current Status. Status is liveness
+    /// and is unknowable at startup (no heartbeat has arrived yet); a route is
+    /// intent and is durable. See OnVmStoppedAsync for the intent-vs-state rule
+    /// this upholds.
     /// Populates _routes without triggering a per-VM Caddy reload,
     /// then performs a single reload at the end.
     /// Bypasses AutoRegisterOnStart — startup restoration is always required.
@@ -241,7 +245,33 @@ public class CentralIngressService : ICentralIngressService
         // Create or update route
         var subdomain = GenerateSubdomain(vm);
 
-        string nodeHost = node.CgnatInfo?.TunnelIp ?? node.PublicIp;
+        // Upstream selection. For a node behind CGNAT the public IP is NOT a
+        // fallback — it cannot accept inbound connections, so routing to it
+        // builds a healthy-looking route that silently blackholes. The relay
+        // tunnel IP is the only valid upstream. If it isn't known yet (e.g. the
+        // relay assignment is mid-rebuild and CgnatInfo has been cleared), there
+        // is no upstream at all — fail closed rather than publish a wrong one.
+        // IsBehindCgnat is derived from HardwareInventory.Network.NatType, so it
+        // stays true even while CgnatInfo is null.
+        string nodeHost;
+        if (node.IsBehindCgnat)
+        {
+            var tunnelIp = node.CgnatInfo?.TunnelIp;
+            if (string.IsNullOrEmpty(tunnelIp))
+            {
+                _logger.LogWarning(
+                    "Cannot register route for VM {VmId}: node {NodeId} is behind CGNAT but has " +
+                    "no relay tunnel IP yet. Refusing to route via its public IP ({PublicIp}), " +
+                    "which is unreachable inbound. Route will be created once a relay is assigned.",
+                    vmId, vm.NodeId, node.PublicIp);
+                return null;
+            }
+            nodeHost = tunnelIp;
+        }
+        else
+        {
+            nodeHost = node.PublicIp;
+        }
 
         var route = new CentralIngressRoute
         {
@@ -413,29 +443,73 @@ public class CentralIngressService : ICentralIngressService
 
         // Use ActiveVMs (in-memory hot cache) — already loaded by DataStore.LoadStateFromDatabaseAsync.
         // Filtering here avoids a second full MongoDB scan on startup.
-        var runningVms = _dataStore.GetActiveVMs()
-            .Where(v => v.Status == VmStatus.Running &&
-                        v.IngressConfig?.DefaultSubdomainEnabled != false)
+        //
+        // Intent, not liveness. This mirrors OnVmStoppedAsync: a route describes the
+        // user's intent that a hostname should reach a VM; whether that VM answers
+        // right now is state. We must not gate restoration on vm.Status, because at
+        // startup no heartbeat has arrived yet — every VM on a not-yet-reporting node
+        // is persisted as Error, so a Status == Running filter matches nothing, and
+        // the ReloadAllAsync below then pushes that empty set over a Caddy config
+        // that still holds every live tenant route. Restoring on intent means a route
+        // may briefly point at a VM that is genuinely down; Caddy answers 502, which
+        // is truthful and self-corrects the moment the VM answers. NXDOMAIN for every
+        // tenant is not truthful, and does not self-correct until a heartbeat lands.
+        var routableVms = _dataStore.GetActiveVMs()
+            .Where(v => v.IngressConfig?.DefaultSubdomainEnabled != false)
             .ToList();
 
         _logger.LogInformation(
-            "Restoring ingress routes for {Count} Running VMs on startup", runningVms.Count);
+            "Restoring ingress routes for {Count} VMs with ingress enabled on startup",
+            routableVms.Count);
 
         int restored = 0;
         int skipped = 0;
 
-        foreach (var vm in runningVms)
+        foreach (var vm in routableVms)
         {
-            if (string.IsNullOrEmpty(vm.NodeId)) { skipped++; continue; }
+            // A skip here is not benign: this VM has ingress enabled, and the
+            // ReloadAllAsync below is a full replace, so skipping means its
+            // hostname stops resolving until something re-registers it. Log it.
+            if (string.IsNullOrEmpty(vm.NodeId))
+            {
+                _logger.LogWarning(
+                    "Ingress restore: VM {VmId} ({VmName}) has ingress enabled but no NodeId — " +
+                    "its hostname will not be served until it re-registers", vm.Id, vm.Name);
+                skipped++;
+                continue;
+            }
 
             var node = await _dataStore.GetNodeAsync(vm.NodeId);
-            if (node == null) { skipped++; continue; }
+            if (node == null)
+            {
+                _logger.LogWarning(
+                    "Ingress restore: VM {VmId} ({VmName}) references unknown node {NodeId} — " +
+                    "its hostname will not be served until it re-registers", vm.Id, vm.Name, vm.NodeId);
+                skipped++;
+                continue;
+            }
 
             // Build route directly — no per-VM Caddy reload.
             // We call ReloadAllAsync once at the end.
             var subdomain = GenerateSubdomain(vm);
-            var nodeHost = node.CgnatInfo?.TunnelIp ?? node.PublicIp ?? string.Empty;
-            if (string.IsNullOrEmpty(nodeHost)) { skipped++; continue; }
+
+            // Same rule as RegisterVmAsync: never route a CGNAT node via its
+            // public IP — the tunnel IP is the only upstream that works.
+            var nodeHost = node.IsBehindCgnat
+                ? node.CgnatInfo?.TunnelIp ?? string.Empty
+                : node.PublicIp ?? string.Empty;
+
+            if (string.IsNullOrEmpty(nodeHost))
+            {
+                _logger.LogWarning(
+                    "Ingress restore: node {NodeId} has no usable upstream address " +
+                    "(behind CGNAT: {IsCgnat}) — cannot build a route for VM {VmId} ({VmName}); " +
+                    "its hostname will not be served until a relay is assigned and the VM " +
+                    "re-registers. Expected only while a CGNAT relay assignment is being rebuilt.",
+                    vm.NodeId, node.IsBehindCgnat, vm.Id, vm.Name);
+                skipped++;
+                continue;
+            }
 
             _routes[vm.Id] = new CentralIngressRoute
             {

@@ -2274,8 +2274,23 @@ public class NodeService : INodeService
         if (relayNode == null)
             return false;
 
-        if (relayNode.Status != NodeStatus.Online)
-            return false;
+        // Deliberately NOT gated on relayNode.Status == NodeStatus.Online.
+        //
+        // Node.Status is liveness, and it is meaningless immediately after an
+        // orchestrator restart: no node has heartbeated yet, so every relay reads
+        // Offline. A CGNAT node whose heartbeat lands before its relay's (a few
+        // seconds is enough) would see its perfectly good assignment declared
+        // invalid, get torn down (peer removed, CgnatInfo cleared), and then fail
+        // to find a replacement because the candidate scan reads the same empty
+        // liveness cache — leaving the node with no tunnel until the next
+        // heartbeat re-assigns the identical relay. Destroying durable state on
+        // the basis of "I haven't heard from it yet" is not a validity test.
+        //
+        // The checks below are the durable ones, and they are sufficient:
+        // RelayInfo.Status is maintained independently by RelayHealthMonitor,
+        // which marks a genuinely dead relay Offline — so a relay that has really
+        // gone away still fails this method and still triggers reassignment.
+        // Node.Status added nothing here except a false negative at boot.
 
         if (relayNode.RelayInfo == null)
             return false;
