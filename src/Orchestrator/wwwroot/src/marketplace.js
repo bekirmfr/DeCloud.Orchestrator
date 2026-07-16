@@ -363,6 +363,13 @@ export async function openNodeDetail(nodeId) {
     modal.classList.add('active');
     body.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">Loading node details...</p>';
 
+    // Set the report link BEFORE the fetch, not after it succeeds: a node whose
+    // details won't load is exactly the kind of node someone might want to report.
+    const reportLink = document.getElementById('node-report-link');
+    if (reportLink) {
+        reportLink.href = '/report.html?resource=' + encodeURIComponent('node:' + nodeId);
+    }
+
     try {
         const response = await fetch(`${orchestratorUrl}/api/marketplace/nodes/${encodeURIComponent(nodeId)}`);
         const data = await response.json();

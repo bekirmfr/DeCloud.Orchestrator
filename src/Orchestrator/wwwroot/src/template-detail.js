@@ -141,6 +141,16 @@ function renderTemplateDetail(template) {
     const container = document.getElementById('template-detail-content');
     if (!container) return;
 
+    // Prefill the abuse-report link with what this modal is showing, so a reporter
+    // never has to describe which template they mean. 'template:{slug}' matches the
+    // convention already in the queue (test-abuse.sh posts 'template:...'), and a
+    // slug is what a reviewer can look up.
+    const reportLink = document.getElementById('template-report-link');
+    if (reportLink && template.slug) {
+        reportLink.href = '/report.html?resource=' +
+            encodeURIComponent('template:' + template.slug);
+    }
+
     // Format specs
     const minCpu = template.minimumSpec?.virtualCpuCores || 0;
     const minMemory = (template.minimumSpec?.memoryBytes || 0) / (1024 * 1024 * 1024);

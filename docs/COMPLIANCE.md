@@ -1,6 +1,6 @@
 # DeCloud Platform — Compliance & Legal Framework
 
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-07-16 (late — ToS acceptance now gates every door a wallet can act through, and a node operator accepts inside the declaration they already sign; see §4)
 **Status:** Active — pre-launch. Pillars 2, 3, 4 built; Pillar 1 first pass built (seam + gate + report chain), real matcher gated on external prerequisites. See `COMPLIANCE_INTEGRATION_PLAN.md` §7 for build state.
 **Purpose:** Authoritative reference for DeCloud's **content policy, legal obligations, and compliance philosophy** — what the platform undertakes to do and why.
 
@@ -461,6 +461,51 @@ Beyond standard platform ToS language, these clauses are required for the wallet
 **Prohibited content clause:** An explicit enumeration of prohibited content categories (CSAM, illegal marketplaces, C2 infrastructure, etc.) with acknowledgment that wallet suspension, VM termination, and blacklisting apply to these categories without prior notice.
 
 **Cooperation clause:** "The platform will cooperate with law enforcement agencies and regulatory bodies upon receipt of valid legal process, including but not limited to court orders, subpoenas, and NCMEC CyberTipline mandates."
+
+### How Acceptance Is Obtained — two doors, one agreement
+
+A wallet accepts by **signing a message that names the version and the SHA-256 of
+the document's exact bytes**. There are two places that happens, and they write the
+same record:
+
+1. **The web app.** Connect a wallet, read the terms, sign. Required before
+   deploying a VM or creating/publishing a community template.
+2. **`decloud register`.** A node operator already signs a declaration about their
+   node. That declaration **names the terms**, so the one signature declares
+   locality *and* accepts the ToS. The CLI fetches the current terms, prints them
+   in full, and requires the operator to type `accept` before building the message.
+
+**Why the second door exists at all.** An operator hosts other people's workloads
+and is responsible for the infrastructure under their wallet — they need to be
+bound at least as much as a tenant does. Sending them to a web page to sign a
+*second* acceptance, with the *same wallet*, at the *same moment*, for the *same
+act*, would be ceremony without meaning. Folding the terms into the declaration is
+also **stronger**: it binds the acceptance to the exact bytes the operator was
+shown, at the moment of signing, rather than to "this wallet accepted something,
+somewhere, once."
+
+**One wallet, one agreement.** Both doors write the same acceptance record, so an
+operator who registers a node has thereby accepted for VM creation and templates
+too — and a tenant who accepted on the web can register a node without signing
+again (they will still be shown the terms, and still type `accept`, because the
+declaration must name what they are signing).
+
+**Where acceptance is required** — the same doors the enforcement gate uses, since
+both ask *may this wallet do this?*: VM creation, community-template creation and
+publication, and node registration. Checked **server-side at action time, never
+from a token claim** — a token carries a stale snapshot, and a bump must bite
+immediately (below).
+
+**Two deliberate exceptions:**
+- **Node login is not gated.** An agent logs in on every start; gating it would
+  drop every node in the fleet out of scheduling the moment the terms are bumped —
+  an outage for a paperwork reason, falling on tenants who are not party to it.
+  Registration is the operator's acceptance point; login is the resumption of
+  service already established.
+- **Platform-curated templates are exempt.** They are authored by the platform,
+  not by a user of it; the user agreement does not govern the platform's
+  relationship with itself. (Same reasoning that exempts platform-operated system
+  VMs from the VM gate.)
 
 ### ToS Versioning — no grace period (decided 2026-07-16)
 
@@ -939,7 +984,7 @@ obligation set; the plan is the record of what has landed.
 - [ ] Retain legal counsel familiar with CFAA, DMCA, and 18 U.S.C. § 2258A
 - [ ] File DMCA Designated Agent with US Copyright Office ($6, https://www.copyright.gov/dmca-directory/) — **the load-bearing item for §512**: without it, the entire DMCA process in §8 confers no safe harbor. One form, $6.
 - [ ] Establish NCMEC CyberTipline account and reporting procedure — **the live gap.** The abuse intake is deployed and public, so a credible CSAM report can arrive today; that is *actual knowledge*, and §2258A's reporting duty attaches to it with no registered channel to discharge it. Not blocked on engineering.
-- [ ] Draft + counsel-review the ToS text — **wallets are signing a draft today.** The acceptance machinery is built and gating VM creation, but the embedded document says "NOT YET IN EFFECT. REQUIRES LEGAL REVIEW." Every enforcement action the ToS is meant to make defensible currently rests on unreviewed text. Includes the §512 repeat-infringer clause, and the reserved cost-recovery clause **only if counsel advises** (§4).
+- [ ] Draft + counsel-review the ToS text — **wallets are signing a draft today, and now they are reading it while they do.** Since 2026-07-16 `decloud register` prints the full document in the operator's terminal and asks them to type `accept`: they are looking at a page headed *"DRAFT — NOT YET IN EFFECT. REQUIRES LEGAL REVIEW"* and being asked to accept it, while their wallet signs its hash as a binding attestation. The machinery is honest — it pins exactly the bytes shown. It is the bytes that are not ready. This moves from *pre-launch* to **before onboarding one more operator**. The acceptance machinery is built and gating VM creation, but the embedded document says "NOT YET IN EFFECT. REQUIRES LEGAL REVIEW." Every enforcement action the ToS is meant to make defensible currently rests on unreviewed text. Includes the §512 repeat-infringer clause, and the reserved cost-recovery clause **only if counsel advises** (§4).
 - [ ] Counsel: **money-transmission / custody classification** — does any fund-control capability trigger MSB/custody obligations? (Decision 2's answer is that the platform has none; confirm that is the right posture.)
 - [ ] Counsel: **OFAC sanctioned-address screening** — the SDN list includes wallet addresses. The denylist's sanctions-source import path is **built and unused**: no list has been imported. Strict-liability territory, and the platform pays USDC to node operators.
 - [ ] **A hash-matching provider agreement** — gates the real matcher. Candidates: PhotoDNA Cloud (Microsoft), CSAI Match (Google), Shield (Project Arachnid), Image Intercept (IWF) — see §3. All free-or-near-free once vetted; vetting takes weeks. **Apply to several in parallel** (the seam is provider-agnostic), but settle the jurisdiction question with counsel first: it determines which door is the right one.

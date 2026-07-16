@@ -2,7 +2,7 @@
 
 **Status:** Active — build sequencing for the pre-launch compliance framework
 **Created:** 2026-06-26
-**Updated:** 2026-07-16 — **Documentation audit (§7):** this plan verified clean against the repos; `COMPLIANCE.md` was badly stale and has been revised (it claimed an escrow-forfeiture power the contract cannot perform, prescribed a host-kernel nbd mount the design forbids, instructed a `Clean` stub, and carried a checklist contradicting its own body). Two role-case defects fixed (Decision 8). **Gap closed:** takedown now archives the wallet's published community templates — it previously left them live and deployable. Phase 6 **pass 1 built and verified** (scanner seam + honest stub, fleet-wide enrollment per Decision 15, the Decision 9 result-gate, and the node `csam-report` → P0 queue → protective-suspend chain; 8/8 orchestrator + 16/16 node smoke tests). D1 settled and recorded (scan-only dirty bitmap — not built; lands with the real matcher). Hold propagation hardened: heartbeat `HeldVmIds` diffing, autostart discipline, watchdog truce. Phases 1–5 as previously recorded: ToS built (text still counsel-gated); Enforcement Core complete; Template Review Gate with draft-revision versioning; Abuse Reporting intake → P0 queue → enforcement; DMCA = no new code. The real matcher and NCMEC reporting remain gated on §2; the honest external claim is still *"reactive detection + template-publish review"*, not *"proactive CSAM scanning"*. See the build log (§7).
+**Updated:** 2026-07-16 (late) — **ToS gates + node declaration pass, verified.** The ToS gate had lived at exactly one door (`CreateVmAsync`); templates and node registration were ungated server-side. Gates now sit at the same chokepoints as the blocklist, and the **node declaration itself carries the ToS version + hash**, so an operator's one signature declares locality *and* accepts the terms (Decision 17). Reading the signing path to attach it turned up three further defects, each a comment describing a protection that did not exist: signature freshness was computed and discarded; the declaration's country/region/machine were never compared to what was recorded; and refusals surfaced as HTTP 500. All fixed and verified (`test-tos-gates.sh` 11/12 + 10/10). **Earlier the same day:** documentation audit — this plan verified clean against the repos, `COMPLIANCE.md` revised (it claimed an escrow-forfeiture power the contract cannot perform, prescribed a host-kernel nbd mount the design forbids, instructed a `Clean` stub, and carried a checklist contradicting its own body); two role-case defects fixed (Decision 8); takedown now archives the wallet's published templates. Phase 6 **pass 1 built and verified**; D1 recorded (scan-only dirty bitmap — not built). Hold propagation hardened. Phases 1–5 as recorded: ToS built (**text still counsel-gated — operators are typing 'accept' on a document headed "NOT YET IN EFFECT"**); Enforcement Core complete; Template Review Gate; Abuse Reporting; DMCA = no new code. The real matcher and clearinghouse reporting remain gated on §2; the honest external claim is still *"reactive detection + template-publish review"*. See §7.
 **References:** `COMPLIANCE.md`, `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
 
 > **Document ownership (settled 2026-07-16).** `COMPLIANCE.md` owns the **legal
@@ -87,6 +87,12 @@ These hold across all phases. They are the result of design discussion, not defa
 16. **No ToS re-sign grace period — a version bump invalidates every prior acceptance immediately.**
    `COMPLIANCE.md` promised 30 days before VM creation is blocked after a material bump; the code never had a window (the acceptance cache keys on version **+ hash**, so a bump self-invalidates), and the code is right. Decided 2026-07-16: **no grace period; the document was corrected to the code.** The version is bumped *because something material changed* — often because counsel required it — so a grace window is a period during which the platform knowingly serves users under terms it has already decided are inadequate, and it exists for no other purpose. The right to act (Decision 4/5's whole point) rests on the user having agreed to the terms **in force**; a window is a hole in exactly that. Compliance is also near-frictionless: the gate surfaces at deploy time, the user signs, the deploy proceeds — a bump costs one signature at next use, not a lockout. **Existing VMs keep running**: the gate is on *new* deployment, since pulling a running workload over a paperwork lapse would be a penalty, not a gate. Two consequences accepted deliberately: (a) **non-interactive clients break at the bump** — an API/script deploy gets `TOS_NOT_ACCEPTED` with no modal to click, which is correct (automation has no more right to deploy under superseded terms than a human) but makes a bump an *operational event* to announce; (b) **any byte change is a bump** — the hash is over the document's exact bytes, so a whitespace edit invalidates every acceptance exactly as a new clause does. Treat the ToS text and `Tos:Version` as one deliberate, reviewed change; never an incidental edit. *Do not reintroduce a grace period without a counsel finding that a notice period is legally required — that is the only argument that survives.*
 
+17. **The ToS identity travels inside any wallet-signed attestation that constitutes onboarding — it is not proven separately.**
+   Settled 2026-07-16 (maintainer's design; it replaced a worse proposal of mine — a separate `HasAcceptedCurrentAsync` gate on `RegisterNodeAsync` that would have sent the operator to the web app to sign a **second** acceptance, with the **same wallet**, for the **same act**). The node declaration is already a wallet-signed attestation about this node; the ToS acceptance is a wallet-signed attestation by the same wallet at the same moment. **They are the same signature.** So `decloud register` fetches the current terms, prints them in full, requires a typed `accept`, and folds `Terms of Service version:` + `Terms of Service hash:` into the signed message. The orchestrator matches both against `tos.GetCurrent()` — **read out of the signed text, never from a request field**, which the signature does not cover — and calls `RecordAcceptanceAsync`, writing the same record the web flow writes (keyed `wallet:version`). **One wallet, one agreement, two doors into it:** an operator who registers a node has thereby accepted for VM creation and templates too (verified 2026-07-16: a wallet that never touched the web flow reads `accepted: true`).
+   Both lines are required: **the version is a label, the hash is the commitment.** Version-only would make the node acceptance weaker than the web one and would silently pass whenever the document is edited without a bump (Decision 16 notes a whitespace edit *is* a bump).
+   This is a rule, not a one-off. Any future flow where a wallet signs its way onto the platform names the terms in the message it signs, rather than proving acceptance through a second channel.
+   **Corollary — the gate belongs at the same doors as the blocklist.** Both answer *may this wallet do this?*, so they sit adjacent, in the same style, at the same service boundary: VM create, template create + publish, node registration. **Not** node login: `AutoLoginIfNotLoggedOutAsync` runs on every agent start, so gating it would drop the whole fleet out of scheduling on a bump — an outage for a paperwork reason, landing on tenants who are not party to it. Registration is the operator's acceptance point; login is resumption of service already established. Platform-curated templates are exempt (`IsCommunity == false` — admin-authored, the platform's own content), exactly as system VMs are exempt from the VM gate.
+
 ---
 
 ## 2. Counsel / Administrative Items (non-code, pre-launch)
@@ -122,7 +128,15 @@ Verified against the repos so future readers don't rediscover it.
 
 **Built since this plan was written (2026-06-27 — see §7 for detail):** `TosAcceptance` + `TosService` + `TosController` + VM-create ToS gate (Phase 1); `IWalletBlocklistService.IsWalletBlockedAsync` + `BlockedWallets`/`BlockSource` + `EnforcementActions` audit + `EnforcementService` + `AdminComplianceController` + admin-compliance UI, **with the gate wired at all three chokepoints** — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync` (Phase 2 core, DoD met); the single-VM hold end-to-end — `VirtualMachine.ComplianceHold`, `SetVmComplianceHoldAsync`, `Suspend/ResumeVmAsync`, heartbeat re-enforcement, node-side persisted hold + VM-manager gate + autostart-disable + watchdog skip + migration exclusion + **lazysync exclusion**; the **complete operator-node takedown** — suspend the operator's nodes + login gate, withhold settlement, drain replicated VMs, hard cutoff once drained, and the immediate-cutoff override (Decisions 12–13); and **Phase 3 template review** — `TemplateStatus.PendingReview`/`Rejected` + review fields, the community-review invariant enforced across create/publish/update/deploy, the admin approve/reject/queue endpoints, edit-after-approval re-review, and the admin review UI.
 
-**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` + fleet enrollment + result-gate + `csam-report` chain are **built and verified** — Phase 6 pass 1, 2026-07-10; see §7) plus the D1 dirty bitmap that lands with it; **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb and the two role-case defects found by that audit are fixed — see §7.)*
+**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` + fleet enrollment + result-gate + `csam-report` chain are **built and verified** — Phase 6 pass 1, 2026-07-10; see §7) plus the D1 dirty bitmap that lands with it; **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb, the two role-case defects, the ToS gates at every door, the discarded freshness verdict, the unbound declaration, and the refusals-reported-as-500 are all fixed — see §7.)*
+
+> **The two gates travel together.** As of 2026-07-16 the ToS gate sits at the same
+> doors as the blocklist gate — VM create, template create + publish, node
+> registration — because both answer *may this wallet do this?* (Decision 17's
+> corollary). The exceptions are deliberate and documented in place: node **login**
+> is blocklist-gated but not ToS-gated (gating it would drop the fleet on a bump),
+> and the settlement loop is blocklist-only (there is no wallet present to prompt).
+> When adding a chokepoint, add both — or write down why not.
 
 ### 3.1 Replication flow (lazysync, Phase J) — the seam Phase 6 hooks
 
@@ -204,11 +218,12 @@ flowchart TD
 - `TosAcceptance` model + collection: `{ walletAddress, tosVersion, tosHash, signature, signedAt }`.
 - Static ToS document + stored hash. Includes the **repeat-infringer-termination** clause (required for §512). The escrow-forfeiture clause is included **only** as a reserved future right *if counsel approves* — flagged as not technically enforced.
 - `GET /api/tos` (current version + hash), `POST /api/tos/accept` (verify signature recovers the wallet, store acceptance).
-- Acceptance gate in the VM-create path.
+- Acceptance gate at **every door a wallet can act through**, server-side at action time, never from a token claim: VM create, community-template create **and** publish, and node registration (Decision 17). Not node login — see Decision 17's corollary. Platform templates exempt.
 - Version-bump re-sign flow; VM creation blocked **immediately** on a bump until the wallet signs the new version+hash — no grace period (Decision 16). Existing VMs keep running.
 
 **Definition of done:**
-- A wallet cannot create a VM without a stored, signature-verified acceptance of the current ToS version+hash.
+- A wallet cannot create a VM, **create or publish a community template, or register a node** without a stored, signature-verified acceptance of the current ToS version+hash. *(Widened 2026-07-16. The original DoD named only VM creation — and the code satisfied it exactly, which is precisely why templates stayed ungated for months while this section read as done. See the lesson in §7.)*
+- For a node, the acceptance is **carried in the declaration itself** and recorded from it (Decision 17); an operator never signs twice.
 - A material ToS version bump re-prompts; the new hash is stored alongside the prior acceptance.
 - Signature verification reuses the existing primitive (no new crypto introduced).
 
@@ -576,7 +591,144 @@ credible report can arrive today, and that is *actual knowledge* — §2258A's
 reporting duty attaches to it with no registered channel to discharge it. It is
 not blocked on engineering.
 
+### 2026-07-16 (late) — ToS gates at every door; the declaration carries the acceptance
+
+**Reported from testing:** a user could create a template without ever accepting
+the ToS. True — the gate lived at exactly one door (`CreateVmAsync`). Phase 1's
+DoD said *"a wallet cannot create a VM without a stored acceptance"* and the code
+did exactly that, so the hole passed green for months. The frontend gates on entry
+(`gateTosAfterEntry`), which is UX only: admin-exempt by design, and invisible to
+anyone calling the API. **Second time in one week a DoD narrower than the design
+hid an open door** (the first: takedown's missing template limb). The DoD is what
+gets checked; a DoD that names fewer doors than the design intends will pass while
+the others stand open.
+
+**Gates now sit where the blocklist gates sit** (Decision 17's corollary):
+`TemplateService.CreateTemplateAsync` and `PublishTemplateAsync` (community only —
+platform templates are admin-authored and exempt, as system VMs are), and
+`NodeService.RegisterNodeAsync`. **Not** `LoginNodeAsync`, with a comment saying
+why: it runs on every agent start, so gating it would drop the fleet out of
+scheduling on a bump.
+
+**The declaration carries the acceptance (Decision 17) — the maintainer's design,
+and it replaced a worse one of mine.** I had proposed a separate acceptance check
+on registration, which would have sent the operator to the web app to sign a
+second acceptance, same wallet, same moment, same act. Putting the ToS version +
+hash *inside* the declaration means one signature, and — stronger — it binds the
+acceptance to **the exact bytes the operator was shown**, at the moment of
+signing. `decloud register` now fetches `GET /api/tos` (public, no auth), prints
+the full text, requires a typed `accept`, and folds both lines in. Fetched fresh
+every run, never cached: a cached hash would sign terms the operator was not
+shown. Fails closed — no terms, no declaration, no registration; an operator must
+never be able to register by being offline.
+
+**Three further defects, found by reading the signing path to attach the ToS to
+it. Each was a comment describing a protection that did not exist:**
+
+- **Signature freshness was computed and discarded.**
+  `ValidateSignatureTimestamp` returns `"VALID"|"EXPIRED"|"FUTURE"|"LEGACY_FORMAT"`
+  and never throws; STEP 1.6 called it as a bare statement and **threw the answer
+  away**. No freshness was enforced — a declaration signature was valid forever,
+  and registration returns an API key, so any leaked signature was a permanent
+  credential. Now the verdict is acted on, and the helper hands back the timestamp
+  it already parsed (`out signedAtUtc`) so the ToS acceptance records when the
+  operator **signed**, not when the request arrived. Parse once, use twice.
+  *Watch for:* "signature has expired" reports on real registrations are **not** a
+  regression — they are the window working for the first time. The clock starts
+  after `accept` and must cover QR → browser → unlock → sign → paste. If that is
+  genuinely too tight for a human ceremony, widen the window deliberately; do not
+  go back to ignoring the verdict.
+- **The declaration was not bound to the facts recorded.** The signature was
+  verified over `request.Message` while `Country`, `Region` and `MachineId` were
+  read from **request fields** — two independent channels, never compared. An
+  operator could sign `Country: TR` and send `Country: DE`: a valid signature by
+  the real wallet, and DE recorded as the jurisdiction tenants pay a premium for.
+  `NodeLocality` calls the operator's declaration the source of truth for legal
+  jurisdiction; it was an unsigned request field. **MachineId was sharper still:**
+  `nodeId = f(machineId, wallet)`, so a leaked signature plus an attacker's own
+  MachineId would mint a node ID for attacker hardware, registered to the
+  operator's wallet, with an API key returned — attacker-controlled hardware
+  receiving tenant placements under someone else's identity and liability. New
+  STEP 1.9 parses the declared fields out of the signed text (`ReadDeclaredField`,
+  mirroring `ValidateSignatureTimestamp`'s existing pattern) and compares all
+  three. **Compare, not substitute:** a mismatch is real drift between the agent's
+  config and the signed declaration, and the operator should see it rather than
+  have it silently resolved.
+  **A landmine defused first:** the CLI defaulted `region` to `'unknown'` while
+  `NodeMetadataService` defaults to `'default'`. Binding without aligning them
+  would have rejected every node with no explicit region. The CLI comment above
+  that line claimed *"These must match what the registration request sends… or
+  signature verification will fail"* — false twice: verification did not check,
+  **and the defaults did not match.** Fixed together; the ToS requirement forces a
+  CLI upgrade anyway, which made the format change free.
+- **Refusals surfaced as HTTP 500.** `CreateCommunityTemplate` had no
+  `UnauthorizedAccessException` case, so a deliberate refusal fell into the generic
+  catch and returned `500 "Failed to create template"` — telling the caller *we*
+  broke, when in fact *they* needed to accept the terms, with no way to know that.
+  Now 403 carrying the reason. Not `Forbid()`: it sends an empty body, the same
+  mistake in a different costume (cf. `VmsController.Delete`'s empty 403, fixed
+  2026-07-10). Same fix on `PublishTemplate`, where the **blocklist** gate has
+  thrown this type since Phase 3 — a blocked wallet's publish has been reporting
+  as a crash. A gate whose refusal nobody can act on is as useless as no gate; a
+  blocked user seeing "something went wrong" does not file a bug.
+
+**CLI fixes found while wiring it up:** `--orchestrator` had no argparse default,
+so `args.orchestrator` was always `None` — invisible because the parameter was
+dead (its `: str` hint false since it was written), along with
+`DEFAULT_ORCHESTRATOR_URL`. Now resolved `--orchestrator` → the node's own
+`appsettings.Production.json` (`OrchestratorClient.BaseUrl`) → the built-in
+default, **printing which source was used**: the operator is about to accept
+whatever terms that URL serves. The `decloud` wrapper ran `"$wallet_cli" register`
+with no `"$@"`, so no flag ever reached the CLI. And four sites used `cmd` +
+`local x=$?` under `set -euo pipefail`, where a bare failing command exits
+immediately — so the exit code was never captured and every branch after it was
+unreachable, including two `rm -f "$cleanup_path"` calls that leaked downloaded
+scripts in `/tmp`. Fixed with `local x=0; cmd || x=$?`. Ctrl-C now exits with
+*"Cancelled — nothing was written"* rather than a Python traceback: the one moment
+we ask an operator for a legal decision is the worst moment to show them what
+looks like a crash.
+
+**Verified** by `tests/test-tos-gates.sh` (new): ToS document sanity; unaccepted
+wallet refused at template create (403, naming the ToS) and VM create; **accepted
+wallet allowed** (the positive control — without it, §3 could pass because the gate
+refuses everyone); and the binding proven by replaying a real `pending-auth`
+signature with forged country / region / machine, each refused by **STEP 1.9**
+rather than by STEP 3's validation. That test is side-effect free by construction:
+every mutation uses an invalid value that STEP 3 would reject anyway, so it can
+never register anything — it distinguishes bound from unbound by *which* refusal
+comes back. **The payoff confirmed:** a wallet that registered a node and never
+touched the web flow reads `accepted: true`.
+
+**Not yet exercised** (honest gaps, all needing conditions we did not have): the
+`region` default path (the test node has an explicit region); the stale-ToS refusal
+(needs a version bump — it will exercise itself the day counsel's text lands, on a
+day you are already busy, so force it on staging first); and machine binding
+isolated from the country check (staging only — §5c cannot separate them without
+risking a real registration if the binding were missing).
+
+**The week's pattern, worth naming.** Eight defects, and not one was visible from
+outside: `IsInRole("admin")` that could never match; the same bug in attribute form
+that survived the sweep for the first; a takedown limb named in a Build list but
+absent from its DoD; a ToS gate on one door of four; a freshness verdict computed
+and discarded; a jurisdiction claim signed but unbound; a machine identity unbound;
+refusals reported as crashes. **Every one failed closed or failed silent, and every
+one had a comment above it describing the protection as though it worked.** They
+were not found by testing what we built — they were found by reading the thing next
+to it, with the comment deliberately set aside. *A comment asserting a protection
+is a claim that needs a test, not documentation.*
+
 ### Open follow-up (deliberate, not a regression to fix blindly)
+
+**Three ToS/declaration paths verified only by reasoning (2026-07-16).** Not
+defects — conditions we could not create. (a) The CLI/agent `region` default
+alignment (`'unknown'` → `'default'`): the test node has an explicit region, so
+the path the fix protects — a node with no `region` in `settings.json` — is
+untested. Try it on the next fresh node. (b) The stale-ToS refusal: needs a
+version bump. It will exercise itself the day counsel's text lands and every
+acceptance invalidates at once — force it on staging first, not in production on
+a busy day. (c) Machine binding isolated from the country check: `test-tos-gates.sh`
+§5c pairs them so a missing binding still fails safe, which means it cannot prove
+the machine clause alone. Staging only, per the script's checklist item F.
 
 **Crashed-VM auto-recovery.** With the watchdog no longer starting Stopped VMs, a tenant VM that crashes on a *healthy* node stays Stopped/Error until the owner restarts it. The orchestrator follows node-reported state and only redeploys VMs whose node is *offline* (the migration scan) — there is no "should be Running but is Stopped on a healthy node → StartVm" loop today. If auto-recovery is wanted, it belongs in orchestrator reconciliation and needs an explicit desired/intended run-state to distinguish a crash from an owner stop (the same distinction the node deliberately refuses to guess). Decide before launch; do not restore the indiscriminate node-side restart.
 

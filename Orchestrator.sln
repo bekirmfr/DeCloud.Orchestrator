@@ -14,9 +14,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{8A
 		src\Orchestrator\wwwroot\index.html = src\Orchestrator\wwwroot\index.html
 		src\Orchestrator\wwwroot\package.json = src\Orchestrator\wwwroot\package.json
 		src\Orchestrator\wwwroot\README.md = src\Orchestrator\wwwroot\README.md
+		src\Orchestrator\wwwroot\report.html = src\Orchestrator\wwwroot\report.html
 		src\Orchestrator\wwwroot\sign.html = src\Orchestrator\wwwroot\sign.html
 		src\Orchestrator\wwwroot\styles.css = src\Orchestrator\wwwroot\styles.css
 		src\Orchestrator\wwwroot\terminal.html = src\Orchestrator\wwwroot\terminal.html
+		src\Orchestrator\wwwroot\tos.html = src\Orchestrator\wwwroot\tos.html
 		src\Orchestrator\wwwroot\vite.config.js = src\Orchestrator\wwwroot\vite.config.js
 	EndProjectSection
 EndProject

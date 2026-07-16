@@ -76,8 +76,14 @@
             <div class="login-status" id="login-status"></div>
 
             <div class="login-footer">
-                <p>By connecting, you agree to our <a href="#" onclick="return false;">Terms of Service</a></p>
+                <p>
+                    By connecting, you agree to our
+                    <a href="/api/tos" target="_blank" rel="noopener">Terms of Service</a>
+                </p>
                 <p style="margin-top: 8px;">Need help? <a href="#" onclick="return false;">Documentation</a></p>
+                <p style="margin-top: 8px;">
+                    See something wrong? <a href="/report.html">Report abuse</a>
+                </p>
             </div>
         </div>
     </div>
@@ -865,6 +871,10 @@
                 <div class="loading-spinner">Loading node details...</div>
             </div>
             <div class="modal-footer">
+                <a id="node-report-link" href="/report.html" target="_blank" rel="noopener"
+                   style="margin-right:auto; font-size:0.82rem; color:var(--text-muted,#6b7280);">
+                    Report this node
+                </a>
                 <button class="btn btn-secondary" onclick="closeModal('node-detail-modal')">Close</button>
             </div>
         </div>
@@ -887,6 +897,10 @@
                 <div class="loading-spinner">Loading template details...</div>
             </div>
             <div class="modal-footer">
+                <a id="template-report-link" href="/report.html" target="_blank" rel="noopener"
+                   style="margin-right:auto; font-size:0.82rem; color:var(--text-muted,#6b7280);">
+                    Report this template
+                </a>
                 <button class="btn btn-secondary" onclick="window.templateDetail.closeTemplateDetail()">Close</button>
                 <button class="btn btn-primary" id="template-deploy-btn">
                     Deploy This Template
