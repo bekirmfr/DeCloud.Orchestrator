@@ -163,7 +163,7 @@ LazysyncDaemon — incremental cycle:
 
 5. CSAM scan resolved files                    (new)
    → hash each file
-   → call Microsoft CSAM Matching API (or local PhotoDNA)
+   → submit hashes only to the hash-matching provider (see below)
    → collect any matches
 
 6. Unmount (always — even on match)            (new)
@@ -182,6 +182,66 @@ LazysyncDaemon — incremental cycle:
     → register manifest with orchestrator              (existing)
     (RF=0 VMs stop after the scan — there is nothing to replicate)
 ```
+
+> **Mount discipline — non-negotiable (host security).** The guest filesystem
+> under scan is **adversarial input**: a tenant can craft a corrupt or malicious
+> filesystem specifically to attack whatever parses it. `qemu-nbd` + `mount`
+> parses that filesystem **in the host kernel**, where a bug is a host
+> compromise — from an unprivileged tenant, on a node hosting other tenants.
+> Scanning therefore uses **libguestfs/`guestmount` with
+> `LIBGUESTFS_BACKEND=direct`** (the pattern `CloudInitCleaner` already uses),
+> which parses the filesystem inside a throwaway appliance VM, not the host
+> kernel. The mount is **owned by the scanner** behind `ICsamScanner`, so the
+> discipline lives in exactly one place and a non-scanning (stub) build never
+> mounts at all. This is a hard rule, not a preference: never mount an
+> untrusted guest filesystem on the host kernel.
+
+#### The Hash Database — the part that must be obtained, not built
+
+**The matcher is not the scarce component; the database is.** Perceptual hashing
+algorithms are openly available (Meta open-sourced PDQ for images and TMK+PDQF
+for video), so *computing* a hash costs nothing. What cannot be self-supplied is
+a corpus of confirmed-CSAM hashes to compare against — that is held by
+clearinghouses and released only to vetted providers under agreement.
+
+**That gate is correct and must not be treated as a formality to route around.**
+A publicly downloadable CSAM hash list would let offenders test their material
+against it until it stops matching, converting a detection tool into an evasion
+oracle. There is no unvetted option, and the platform should not want one.
+
+**Candidate providers** (all give hash-in / classification-out over an API; all
+are free or near-free to qualified organizations; all require vetting and a
+binding agreement):
+
+| Provider | Operator | Notes |
+|---|---|---|
+| **PhotoDNA Cloud Service** | Microsoft | The de facto standard; free once approved; keys issued only to vetted organizations. |
+| **CSAI Match** + Content Safety API | Google | Free; CSAI Match is video-oriented (built from YouTube's work); the Content Safety API is a *classifier*, complementary to hash matching, and would need its own decision — this framework is known-hash matching only. |
+| **Shield** | Project Arachnid / Canadian Centre for Child Protection | API-driven, image + video, perceptual matching for altered copies. |
+| **Image Intercept** | Internet Watch Foundation (UK) | Membership-based. |
+
+**Not a candidate, despite being the easiest option for most sites:**
+Cloudflare's CSAM Scanning Tool scans content passing **through Cloudflare's
+network**. This platform's detection surface is a frozen disk image on an
+operator's node — the wrong layer entirely. Its access model is no longer
+US-only, which does not help us, because the layer is what disqualifies it.
+
+**Selection is a jurisdiction question first, an engineering question second.**
+NCMEC and 18 U.S.C. § 2258A are US instruments; Project Arachnid is Canadian;
+the IWF is British. **Which provider is the right door depends on where the
+operating entity is incorporated and which reporting regime binds it — a
+question for counsel (§2), to be answered *before* filing applications**, since
+the answer may change which application to file.
+
+**Engineering consequence: none, by design.** The provider sits behind the
+`ICsamScanner` seam as one implementation; the pipeline, the gate, the honesty
+invariants, and the report chain are all provider-agnostic. Apply to more than
+one in parallel — vetting takes weeks, they cost nothing, and the seam does not
+care which approves first. **Do not let one vendor's name become the plan's
+critical path.**
+
+Whichever is chosen: node agents need outbound HTTPS to that provider's
+endpoint, and **only hashes leave the node — never file content.**
 
 > **Mount discipline — non-negotiable (host security).** The guest filesystem
 > under scan is **adversarial input**: a tenant can craft a corrupt or malicious
@@ -882,7 +942,7 @@ obligation set; the plan is the record of what has landed.
 - [ ] Draft + counsel-review the ToS text — **wallets are signing a draft today.** The acceptance machinery is built and gating VM creation, but the embedded document says "NOT YET IN EFFECT. REQUIRES LEGAL REVIEW." Every enforcement action the ToS is meant to make defensible currently rests on unreviewed text. Includes the §512 repeat-infringer clause, and the reserved cost-recovery clause **only if counsel advises** (§4).
 - [ ] Counsel: **money-transmission / custody classification** — does any fund-control capability trigger MSB/custody obligations? (Decision 2's answer is that the platform has none; confirm that is the right posture.)
 - [ ] Counsel: **OFAC sanctioned-address screening** — the SDN list includes wallet addresses. The denylist's sanctions-source import path is **built and unused**: no list has been imported. Strict-liability territory, and the platform pays USDC to node operators.
-- [ ] Microsoft CSAM Matching API account + agreement — gates the real matcher (weeks of vetting; apply early).
+- [ ] **A hash-matching provider agreement** — gates the real matcher. Candidates: PhotoDNA Cloud (Microsoft), CSAI Match (Google), Shield (Project Arachnid), Image Intercept (IWF) — see §3. All free-or-near-free once vetted; vetting takes weeks. **Apply to several in parallel** (the seam is provider-agnostic), but settle the jurisdiction question with counsel first: it determines which door is the right one.
 - [ ] Retroactive review of seed templates (Private Browser, Shadowsocks) against the review rubric — platform-authored is not exempt.
 
 ### Technical — Enforcement — ✅ built (plan §7)
@@ -896,7 +956,7 @@ obligation set; the plan is the record of what has landed.
 ### Technical — CSAM Filtering
 - [x] ~~NCMEC hash database integration at Block Store ingestion~~ — **must not be built** (§3, Decision 1): block-level hash matching is technically infeasible (1 MB raw sectors are not decodable whole files). The detection surface is **node-level filesystem scanning**.
 - [x] ~~*Automated* NCMEC CyberTipline report trigger on detection~~ — **must not be built** (§3, and the enforcement rule below): automated enforcement on a hash match is prohibited. A match suspends the VM (protective, reversible) and raises a P0 item; **a human confirms before any NCMEC report or blacklist.**
-- [ ] Real matcher behind the built `ICsamScanner` seam — gated on the Microsoft CSAM Matching API agreement (see Administrative above). The seam, the honest stub, fleet-wide enrollment, the result-gate, and the node→P0-queue report chain are **built** (plan §7, 2026-07-08 → 10).
+- [ ] Real matcher behind the built `ICsamScanner` seam — gated on a hash-matching provider agreement (see Administrative above; the seam is provider-agnostic). The seam, the honest stub, fleet-wide enrollment, the result-gate, and the node→P0-queue report chain are **built** (plan §7, 2026-07-08 → 10).
 - [ ] **NCMEC CyberTipline reporting procedure** — human-operated, off the P0 queue. Gated on the CyberTipline account (see Administrative above). *This is the live gap: the abuse intake is deployed, so a credible report can arrive today and create a reporting obligation with no registered channel to discharge it.*
 - [ ] Replica quarantine for the retroactive / backlog / bypassed-origin cases — designed (plan Decision 14: admin CID declaration → signed broadcast → move-to-sealed + CID denylist), **deferred**; open item is the sealed evidence store (counsel). The reactive P0 path is the interim control.
 

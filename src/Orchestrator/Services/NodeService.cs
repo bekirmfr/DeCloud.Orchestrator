@@ -247,7 +247,28 @@ public class NodeService : INodeService
         // =====================================================
         // STEP 1.6: Validate Signature Freshness
         // =====================================================
-        ValidateSignatureTimestamp(request.Message);
+        // The verdict must be ACTED ON. Until 2026-07-16 this call discarded its
+        // return value, so EXPIRED and FUTURE were computed and thrown away — a
+        // captured declaration signature stayed valid forever, and registration
+        // hands back an API key. Replay protection is the whole reason the window
+        // exists.
+        //
+        // LEGACY_FORMAT/null (pre-canonical messages with a Unix-epoch timestamp)
+        // are tolerated here, as the helper intends. Note this tolerance is now
+        // mostly theoretical: STEP 1.8 requires the ToS lines, which only the
+        // canonical (ISO-timestamped) message carries — so a legacy declaration is
+        // refused a few lines below regardless.
+        var freshness = ValidateSignatureTimestamp(request.Message, out var signedAtUtc);
+        if (freshness is "EXPIRED" or "FUTURE")
+        {
+            _logger.LogWarning(
+                "Node registration rejected: signature timestamp {Verdict} for wallet {Wallet}",
+                freshness, request.WalletAddress);
+            throw new UnauthorizedAccessException(
+                "This node declaration's signature has expired or its timestamp is in the " +
+                "future (clock skew). Re-run 'decloud register' to sign a fresh declaration.");
+        }
+        var signedAtUnix = new DateTimeOffset(signedAtUtc.ToUniversalTime()).ToUnixTimeSeconds();
 
         // =====================================================
         // STEP 1.7: Enforcement Gate (compliance)
@@ -264,6 +285,139 @@ public class NodeService : INodeService
                 request.WalletAddress);
             throw new UnauthorizedAccessException(
                 "This wallet is not permitted to register a node.");
+        }
+
+        // =====================================================
+        // STEP 1.8: Terms of Service Gate (compliance)
+        // =====================================================
+        // An operator hosts other people's workloads and is responsible for the
+        // infrastructure under their wallet — they need to be bound by the terms at
+        // least as much as a tenant does. The signature above proves the wallet;
+        // this proves the agreement. Checked server-side at action time.
+        //
+        // The operator accepts in the web app with the same wallet used for
+        // `decloud register`; the agent retries registration with backoff, so a
+        // rejected registration succeeds once they have signed. This gate is on
+        // REGISTRATION only — never on login (see the note in LoginNodeAsync) —
+        // so already-registered nodes keep running: the ToS gates new service, not
+        // service already in flight (Decision 16's principle).
+        var tos = _serviceProvider.GetRequiredService<ITosService>();
+        if (!await tos.HasAcceptedCurrentAsync(request.WalletAddress, ct))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: wallet {Wallet} has not accepted the current ToS",
+                request.WalletAddress);
+            throw new UnauthorizedAccessException(
+                "This wallet must accept the current Terms of Service before registering a node. " +
+                "Sign in to the DeCloud web app with this wallet, accept the terms, then re-run " +
+                "'decloud register'.");
+        }
+
+        // =====================================================
+        // STEP 1.8: Terms of Service — the declaration IS the acceptance
+        // =====================================================
+        // An operator hosts other people's workloads and is responsible for the
+        // infrastructure under their wallet, so they must be bound by the terms at
+        // least as much as a tenant is. Rather than make them accept separately in
+        // the web app (a second signature, by the same wallet, for the same act),
+        // the node declaration itself names the terms: `decloud register` fetches
+        // the current ToS, shows it, and folds its version + hash into the message
+        // the operator signs. STEP 1.5 has already proven that signature.
+        //
+        // The version and hash are read out of the SIGNED TEXT — never from a
+        // request field. A field beside the signature is not covered by it, so a
+        // caller could sign an old declaration and claim a new version. Same rule
+        // as node identity on the csam-report endpoint: the credential is the
+        // source, never the body.
+        //
+        // Matching against the CURRENT version+hash is what makes a stale
+        // acceptance fail closed: an operator who signed v1.0.0 cannot register
+        // once v1.1.0 is in effect — they re-run `decloud register`, are shown the
+        // new terms, and sign those. Consistent with Decision 16 (no grace period).
+        var currentTos = tos.GetCurrent();
+
+        var expectedVersionLine = $"Terms of Service version: {currentTos.Version}";
+        var expectedHashLine = $"Terms of Service hash: {currentTos.Hash}";
+
+        if (string.IsNullOrEmpty(request.Message) ||
+            !request.Message.Contains(expectedVersionLine, StringComparison.Ordinal) ||
+            !request.Message.Contains(expectedHashLine, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: signed declaration does not accept the current " +
+                "ToS ({Version}/{HashPrefix}…) for wallet {Wallet}",
+                currentTos.Version, currentTos.Hash[..Math.Min(12, currentTos.Hash.Length)],
+                request.WalletAddress);
+            throw new UnauthorizedAccessException(
+                $"This node declaration does not accept the current Terms of Service " +
+                $"({currentTos.Version}). Update the agent if needed, then re-run " +
+                $"'decloud register' — it will show the current terms and include them " +
+                $"in the message you sign.");
+        }
+
+        // The signature over that text IS the acceptance — the same record the web
+        // flow writes (keyed wallet:version), so an operator who registers a node has
+        // thereby accepted for every other gate too. One wallet, one agreement.
+        // Recorded here rather than after STEP 2+: the operator did sign it, and a
+        // later failure (say, an invalid country code) does not unsign it.
+        await tos.RecordAcceptanceAsync(
+            request.WalletAddress, request.Signature!, signedAtUnix, ct);   // [VERIFY-A]
+
+        _logger.LogInformation(
+            "ToS {Version} accepted by {Wallet} via node declaration",
+            currentTos.Version, request.WalletAddress);
+
+        // =====================================================
+        // STEP 1.9: Bind the declaration to what was signed
+        // =====================================================
+        // Until 2026-07-16 the signature was verified over request.Message while
+        // locality was read from request.Country / request.Region — two independent
+        // channels, never compared. An operator could sign "Country: TR" and send
+        // "Country: DE": a valid signature by the real wallet, and DE recorded as
+        // the jurisdiction tenants pay a premium for. NodeLocality calls the
+        // operator's declaration the source of truth for legal jurisdiction; this
+        // is what makes that true.
+        //
+        // Compare rather than substitute: a mismatch means the agent's config and
+        // the signed declaration disagree, which the operator must see and fix —
+        // silently preferring the signed value would paper over a real drift.
+        var declaredMachineId = ReadDeclaredField(request.Message!, "Machine ID:");
+        if (declaredMachineId is null ||
+            !string.Equals(declaredMachineId, request.MachineId?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: declaration/request machine mismatch for {Wallet} — " +
+                "signed '{Declared}' vs sent '{Sent}'",
+                request.WalletAddress, declaredMachineId ?? "(absent)", request.MachineId);
+            throw new UnauthorizedAccessException(
+                "This node declaration was signed for a different machine. Re-run " +
+                "'decloud register' on the machine being registered.");
+        }
+
+        var declaredCountry = ReadDeclaredField(request.Message!, "Country:");
+        var declaredRegion = ReadDeclaredField(request.Message!, "Region:");
+
+        if (declaredCountry is null || declaredRegion is null)
+        {
+            throw new UnauthorizedAccessException(
+                "This node declaration does not state a country and region. Re-run " +
+                "'decloud register' with a current agent to sign a complete declaration.");
+        }
+
+        var sentCountry = (request.Country ?? "ZZ").Trim();
+        var sentRegion = (request.Region ?? "default").Trim();
+
+        if (!string.Equals(declaredCountry, sentCountry, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(declaredRegion, sentRegion, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Node registration rejected: declaration/request locality mismatch for {Wallet} — " +
+                "signed ({DeclC}/{DeclR}) vs sent ({SentC}/{SentR})",
+                request.WalletAddress, declaredCountry, declaredRegion, sentCountry, sentRegion);
+            throw new UnauthorizedAccessException(
+                $"This node's locality settings changed after the declaration was signed " +
+                $"(signed {declaredCountry}/{declaredRegion}, sent {sentCountry}/{sentRegion}). " +
+                $"Re-run 'decloud register' to sign the current settings.");
         }
 
         // =====================================================
@@ -574,6 +728,15 @@ public class NodeService : INodeService
         // Thrown as InvalidOperationException so the controller maps it to
         // LOGIN_REJECTED (400) rather than a 500.
         // -----------------------------------------------------------------
+        // ── Compliance: deliberately NOT ToS-gated ───────────────────────────────
+        // The blocklist check above belongs here — a blocked operator must not
+        // re-enter scheduling. A ToS check does NOT: AutoLoginIfNotLoggedOutAsync
+        // runs on every agent startup, so gating login would drop every node in the
+        // fleet out of scheduling the moment a ToS version is bumped — a fleet-wide
+        // outage for a paperwork reason, landing on tenants who are not party to it.
+        // Registration is the operator's acceptance point (STEP 1.8); login is the
+        // resumption of service already established. Mirrors the tenant rule: a bump
+        // blocks NEW VMs, it does not stop running ones (Decision 16).
         var blocklist = _serviceProvider.GetRequiredService<IWalletBlocklistService>();
         if (node.Status == NodeStatus.Suspended ||
             await blocklist.IsWalletBlockedAsync(node.WalletAddress, ct))
@@ -1016,8 +1179,10 @@ public class NodeService : INodeService
     ///                     (pre-canonical format, skip validation)
     ///   null            — couldn't determine (treat as legacy)
     /// </summary>
-    private static string? ValidateSignatureTimestamp(string message)
+    private static string? ValidateSignatureTimestamp(string message, out DateTime signedAtUtc)
     {
+        signedAtUtc = DateTime.UtcNow;   // fallback for legacy/unparseable messages
+
         if (string.IsNullOrWhiteSpace(message))
             return null;
 
@@ -1051,6 +1216,8 @@ public class NodeService : INodeService
             return "LEGACY_FORMAT";
         }
 
+        signedAtUtc = signedAt;
+
         var now = DateTime.UtcNow;
         var age = now - signedAt;
 
@@ -1065,6 +1232,27 @@ public class NodeService : INodeService
             return "FUTURE";
 
         return "VALID";
+    }
+
+    /// <summary>
+    /// Read a declared field out of the canonical signing message, e.g.
+    /// "Country:    TR" → "TR". Returns null if the line is absent.
+    ///
+    /// The signed text is the declaration; the request body is transport. Any field
+    /// the orchestrator records as an operator's attestation must be read from — or
+    /// checked against — this text, or the signature attests to nothing.
+    /// </summary>
+    private static string? ReadDeclaredField(string message, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return null;
+
+        foreach (var line in message.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return trimmed[prefix.Length..].Trim();
+        }
+        return null;
     }
 
     /// <summary>

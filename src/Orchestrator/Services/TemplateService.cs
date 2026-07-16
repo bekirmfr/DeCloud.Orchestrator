@@ -16,6 +16,7 @@ public class TemplateService : ITemplateService
     private readonly DataStore _dataStore;
     private readonly ICentralIngressService _ingressService;
     private readonly IWalletBlocklistService _blocklist;
+    private readonly ITosService _tos;
     private readonly ILogger<TemplateService> _logger;
 
     // Cloud-init variable pattern: ${VARIABLE_NAME}
@@ -31,11 +32,13 @@ public class TemplateService : ITemplateService
         DataStore dataStore,
         ICentralIngressService ingressService,
         IWalletBlocklistService blocklist,
+        ITosService tos,
         ILogger<TemplateService> logger)
     {
         _dataStore = dataStore;
         _ingressService = ingressService;
         _blocklist = blocklist;
+        _tos = tos;
         _logger = logger;
     }
 
@@ -158,6 +161,17 @@ public class TemplateService : ITemplateService
 
     public async Task<VmTemplate> CreateTemplateAsync(VmTemplate template)
     {
+        // ── Compliance: Terms of Service gate (community templates only) ─────────
+        // Publication is the surface that matters, and it is gated separately — but
+        // a draft is still content stored on the platform for a wallet, and failing
+        // here rather than at publish is both honest and kinder: nobody should
+        // compose an entire template only to be told at the last step that they
+        // never agreed to the terms. Platform-curated templates are exempt (see the
+        // publish gate). Author identity comes from the caller-set AuthorId, which
+        // MarketplaceController takes from the authenticated principal.
+        if (template.IsCommunity && !await _tos.HasAcceptedCurrentAsync(template.AuthorId))
+            throw new UnauthorizedAccessException(
+                "You must accept the current Terms of Service before creating a template.");
         try
         {
             // Validate before creating
@@ -381,6 +395,18 @@ public class TemplateService : ITemplateService
         // action time, server-side; the reason is deliberately not surfaced.
         if (await _blocklist.IsWalletBlockedAsync(template.AuthorId))
             throw new UnauthorizedAccessException("This account is not permitted to publish templates.");
+
+        // ── Compliance: Terms of Service gate (community templates only) ─────────
+        // Publishing puts content in front of every user of the platform, so the
+        // author must be bound by the terms that make it actionable — the same
+        // reason the VM-create gate exists. Checked server-side at action time,
+        // never via a JWT claim, so a version bump bites immediately (Decision 16).
+        // Platform-curated templates are admin-authored — the platform's own
+        // content, not a user's — and are exempt, exactly as system VMs are exempt
+        // from the VM-create gate.
+        if (template.IsCommunity && !await _tos.HasAcceptedCurrentAsync(template.AuthorId))
+            throw new UnauthorizedAccessException(
+                "You must accept the current Terms of Service before publishing a template.");
 
         if (template.Status == TemplateStatus.Published)
             throw new InvalidOperationException("Template is already published");
