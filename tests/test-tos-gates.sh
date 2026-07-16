@@ -67,6 +67,15 @@ req() {
   HTTP="$(curl "${args[@]}" 2>/dev/null || true)"; BODY="$(cat "$tmp")"; rm -f "$tmp"
 }
 field() { printf '%s' "$BODY" | jq -r "$1 // empty" 2>/dev/null || true; }
+# Booleans need their own reader. jq's `//` treats `false` as ABSENT, so
+# `.accepted // empty` silently turns a real `false` into "" — the very value
+# these checks exist to detect. Select by type instead, and try both the
+# ApiResponse-wrapped and bare shapes. Prints "true", "false", or "MISSING".
+bool_field() {
+  printf '%s' "$BODY" | jq -r \
+    "[.data.$1, .$1] | map(select(type == \"boolean\")) | if length > 0 then (.[0] | tostring) else \"MISSING\" end" \
+    2>/dev/null || printf 'MISSING'
+}
 # Case-insensitive substring over the whole body (error text lives in different
 # shapes across controllers: {error}, {message}, ApiResponse.message).
 body_has() { printf '%s' "$BODY" | grep -qiF "$1"; }
@@ -115,7 +124,7 @@ else
   # Baseline first. Without this the refusals below could be caused by anything
   # (a blocked wallet, a bad token) and we'd score a false pass.
   req GET "$BASE_URL/api/tos/status" "$FRESH_JWT"
-  FRESH_ACCEPTED="$(field '.data.accepted')"
+  FRESH_ACCEPTED="$(bool_field accepted)"
   if [ "$HTTP" = "200" ] && [ "$FRESH_ACCEPTED" = "false" ]; then
     ok "fixture: FRESH_JWT's wallet has NOT accepted (accepted=false)"
     FRESH_OK=1
@@ -127,7 +136,7 @@ else
   if [ "${FRESH_OK:-0}" = "1" ]; then
     # 3a. Template create — the gap this pass was reported for.
     req POST "$BASE_URL/api/marketplace/templates/create" "$FRESH_JWT" \
-      '{"name":"tos gate check","slug":"tos-gate-check-'"$RANDOM"'","version":"1.0.0","category":"other","description":"smoke: must be refused"}'
+      '{"name":"tos gate check","slug":"tos-gate-check-'"$RANDOM"'","version":"1.0.0","category":"other","description":"smoke: must be refused","cloudInitTemplate":"#cloud-config\npackages:\n  - curl\n","estimatedCostPerHour":0.01}'
     if [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ]; then
       bad "template create SUCCEEDED without ToS acceptance — gate missing (delete the template)"
     elif body_has "Terms of Service"; then
@@ -172,15 +181,17 @@ if [ -z "${USER_JWT:-}" ]; then
   warn "without this, §3 could be passing because the gate refuses EVERYONE"
 else
   req GET "$BASE_URL/api/tos/status" "$USER_JWT"
-  if [ "$(field '.data.accepted')" != "true" ]; then
+  if [ "$(bool_field accepted)" != "true" ]; then
     bad "fixture: USER_JWT's wallet has not accepted — it cannot serve as the positive control"
   else
     ok "fixture: USER_JWT's wallet HAS accepted"
     SLUG="tos-positive-$RANDOM"
     req POST "$BASE_URL/api/marketplace/templates/create" "$USER_JWT" \
-      '{"name":"tos positive control","slug":"'"$SLUG"'","version":"1.0.0","category":"other","description":"smoke: must succeed"}'
+      '{"name":"tos positive control","slug":"'"$SLUG"'","version":"1.0.0","category":"other","description":"smoke: must succeed","cloudInitTemplate":"#cloud-config\npackages:\n  - curl\n","estimatedCostPerHour":0.01}'
     if [ "$HTTP" = "200" ] || [ "$HTTP" = "201" ]; then
-      NEW_ID="$(field '.id')"; [ -n "$NEW_ID" ] || NEW_ID="$(field '.data.id')"
+      NEW_ID="$(field '.template.id')"
+      [ -n "$NEW_ID" ] || NEW_ID="$(field '.id')"
+      [ -n "$NEW_ID" ] || NEW_ID="$(field '.data.id')"
       ok "accepted wallet CAN create a template (the gate is a gate, not a wall)"
       if [ -n "$NEW_ID" ]; then
         req DELETE "$BASE_URL/api/marketplace/templates/$NEW_ID" "$USER_JWT"

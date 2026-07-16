@@ -293,6 +293,17 @@ public class MarketplaceController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            // The ToS gate and the blocklist gate in TemplateService both throw this.
+            // They are refusals the caller must be able to ACT on ("accept the terms"),
+            // so the reason has to reach them: without this, a deliberate refusal fell
+            // into the generic catch below and reported "Failed to create template" —
+            // a 500 telling the user WE broke, when in fact THEY need to do something.
+            // Not Forbid(): it sends an empty body, which is the same mistake in a
+            // different costume.
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create community template");
