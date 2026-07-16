@@ -76,7 +76,7 @@
 	     Deliberately does NOT include dist/** (circular) or node_modules/**. -->
 	<ItemGroup>
 		<FrontendSource Include="$(FrontendDir)/src/**/*.js" />
-		<FrontendSource Include="$(FrontendDir)/src/**/*.css" />
+		<FrontendSource Include="$(FrontendDir)/src/**/*.js" />
 		<FrontendSource Include="$(FrontendDir)/public/**" />
 		<FrontendSource Include="$(FrontendDir)/index.html" />
 		<FrontendSource Include="$(FrontendDir)/styles.css" />
@@ -108,11 +108,12 @@
 		<Compile Remove="wwwroot\**" />
 		<Content Remove="$(FrontendDir)/node_modules/**" />
 		<Content Remove="$(FrontendDir)/src/**" />
-		<Content Remove="$(FrontendDir)/public/**" />
+		<!--<Content Remove="$(FrontendDir)/public/**" />-->
 		<Content Remove="$(FrontendDir)/package.json" />
 		<Content Remove="$(FrontendDir)/package-lock.json" />
 		<Content Remove="$(FrontendDir)/vite.config.js" />
 		<Content Remove="$(FrontendDir)/*.md" />
+		<Content Remove="$(FrontendDir)/*.zip" />
 	</ItemGroup>
 	<ItemGroup>
 	  <ProjectReference Include="..\..\..\Decloud.Shared\DeCloud.Shared.csproj" />
