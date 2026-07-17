@@ -2,7 +2,7 @@
 
 **Status:** Active — build sequencing for the pre-launch compliance framework
 **Created:** 2026-06-26
-**Updated:** 2026-07-16 (late) — **ToS gates + node declaration pass, verified.** The ToS gate had lived at exactly one door (`CreateVmAsync`); templates and node registration were ungated server-side. Gates now sit at the same chokepoints as the blocklist, and the **node declaration itself carries the ToS version + hash**, so an operator's one signature declares locality *and* accepts the terms (Decision 17). Reading the signing path to attach it turned up three further defects, each a comment describing a protection that did not exist: signature freshness was computed and discarded; the declaration's country/region/machine were never compared to what was recorded; and refusals surfaced as HTTP 500. All fixed and verified (`test-tos-gates.sh` 11/12 + 10/10). **Earlier the same day:** documentation audit — this plan verified clean against the repos, `COMPLIANCE.md` revised (it claimed an escrow-forfeiture power the contract cannot perform, prescribed a host-kernel nbd mount the design forbids, instructed a `Clean` stub, and carried a checklist contradicting its own body); two role-case defects fixed (Decision 8); takedown now archives the wallet's published templates. Phase 6 **pass 1 built and verified**; D1 recorded (scan-only dirty bitmap — not built). Hold propagation hardened. Phases 1–5 as recorded: ToS built (**text still counsel-gated — operators are typing 'accept' on a document headed "NOT YET IN EFFECT"**); Enforcement Core complete; Template Review Gate; Abuse Reporting; DMCA = no new code. The real matcher and clearinghouse reporting remain gated on §2; the honest external claim is still *"reactive detection + template-publish review"*. See §7.
+**Updated:** 2026-07-17 — **Phase 6 re-scoped: CSAM hash matching is TARGETED ON CAUSE, not proactive (Decision 18, superseding 9 and 15; D1 moot).** The flow is *report → hold + preserve → targeted hash check → human decision → law enforcement*. Prompted by the decision to incorporate in **Estonia (EU)**, which forced the question onto its merits instead of a US-shaped checklist: DSA Art 8 forbids general-monitoring obligations and Art 7 protects voluntary investigation, so nothing requires proactive scanning — while GDPR needs a lawful basis that indiscriminate per-cycle hashing would struggle to justify when a reactive mechanism exists. Targeted matching is also the **only way to confirm a report about a private disk without a human ever seeing the material**, which is the gap the reactive path had. **§2 is now EU-anchored and unanswered — counsel must confirm the frame before anything is filed.** **Earlier:** ToS gates at every door + the node declaration carries the acceptance (Decision 17), plus three defects found reading the signing path (freshness verdict discarded; declaration unbound to what was recorded; refusals reported as 500). Public `report.html` + `tos.html` shipped — the abuse intake had no page, and the login page's ToS link went nowhere. Documentation audit; two role-case defects; takedown now archives templates. Phase 6 pass 1 built and verified, then partly reverted per Decision 18. Phases 1–5 as recorded: ToS built (**text still counsel-gated — operators type 'accept' on a document headed "NOT YET IN EFFECT"**); Enforcement Core; Template Review Gate; Abuse Reporting; DMCA = no new code. The honest external claim remains *"reactive detection + template-publish review"* — which Decision 18 makes **more** accurate, not less. See §7.
 **References:** `COMPLIANCE.md`, `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
 
 > **Document ownership (settled 2026-07-16).** `COMPLIANCE.md` owns the **legal
@@ -51,7 +51,7 @@ These hold across all phases. They are the result of design discussion, not defa
 8. **Admin role string is `"Admin"`.**
    `AdminUserInitializer` assigns `"Admin"`. Lowercase `"admin"` silently fails the role check — both `IsInRole` and the `Roles` attribute are exact string comparisons, so a lowercase check never matches a real admin. It fails **closed**, which is why it stays invisible until someone tries the endpoint. This bit twice: eight `IsInRole("admin")` **call** sites across `VmsController`/`VmDirectAccessController` (fixed 2026-07-10; found by the Phase 6 smoke test, having silently denied admins any authority over user VMs), and the `[Authorize(Roles = "admin")]` **attribute** on `SystemController` (fixed 2026-07-16; found by the doc audit — the earlier sweep's grep matched only the call form, which is how it survived). Both forms are `"Admin"` everywhere now. When checking, grep **both**: `grep -rn 'IsInRole("admin")\|Roles = "admin"\|Roles="admin"' src/ --include=*.cs`
 
-9. **CSAM replication ordering = scan-before-replicate; gate on the scan *result*, not on "clean".**
+9. **~~CSAM replication ordering = scan-before-replicate; gate on the scan *result*.~~ SUPERSEDED by Decision 18 (2026-07-17).** No scan runs in the replication path any more, so there is no result to gate on: replication is not a CSAM control. *(The reasoning below is kept because it explains why a naive "block until proven clean" gate would have been wrong — a lesson that survives the reversal. If a scan ever returns to a hot path, start here.)*
    The scan runs on the frozen snapshot before `PushBlocksAsync`, and replication is gated on its result — the four states (`NotScanned | Clean | Match | Unscannable`) are **not** a clean/not-clean binary:
    - **Match → block + contain.** Never replicate; suspend + preserve + report (§Phase 6).
    - **Not finished this cycle (budget overrun) → defer.** Retry next round; don't publish content the scan hasn't cleared *yet*. Deferral keeps content on the origin and only postpones redundancy — the sole cost is a temporary durability gap if the origin dies mid-window.
@@ -80,7 +80,7 @@ These hold across all phases. They are the result of design discussion, not defa
    **Security-first caveat.** An endpoint that can declare arbitrary CIDs offending and trigger mesh-wide quarantine is a powerful lever: it carries the same HMAC signing as `vm-deleted`, a full audit trail (who declared what, when, on what basis), human-in-the-loop, and guards against declaring legitimate content. That rigor is part of the design, not an add-on.
    **Open (D2): only the sealed evidence store** — where quarantined blocks physically live, encryption at rest, access control, retention, and who authorizes eventual deletion. A custody question for counsel (§2252A handling), tied to the Phase 6 sealed-storage prerequisite (§2). Everything else here is settled. *(Also grounded, high confidence: the DHT provider-lookup — 503-on-indeterminate — and XOR-proximity layer the audit loop and scatter rely on; see §3.1.)*
 
-15. **CSAM scan scope is decoupled from replication factor — every tenant VM with a writable overlay is scanned, `RF=0` included.**
+15. **~~CSAM scan scope is decoupled from replication factor — every tenant VM is scanned, `RF=0` included.~~ SUPERSEDED by Decision 18 (2026-07-17).** The premise was that scanning is a safety property and must not ride a storage decision. That is still true — the change is that scanning is no longer *proactive at all*, so there is no fleet to enrol. `RF > 0` returns to the enrolment filter, because lazysync is once again only about replication. **D1 (the `RF=0` change-source) is moot and will not be built** — a bitmap answers "did anything change since the last cycle?", and there are no cycles. *(Reasoning kept below: it is the record of why the old dirty-bitmap bug did not apply, and why option (a) failed. If proactive scanning is ever revisited, this is the starting point — do not re-derive it.)*
    Hooking the scan at the lazysync `ScanChunks→Push` seam scopes it to `ReplicationFactor > 0`; `RF=0` (ephemeral) VMs are skipped by lazysync entirely (Decision 12 already treats them as non-durable), so they would never be scanned — making a safety property a side effect of a durability opt-in a user can simply decline. Invert it: **scan every tenant VM with a writable overlay; replication — and Decision 9's scan-before-replicate gate — is the `RF>0` tail on the same frozen snapshot.** For `RF>0` the scan shares lazysync's snapshot access and gates the push; for `RF=0` the scan is detection-only (no replication to gate) and needs its own lightweight change-source — the qcow2 overlay's allocated clusters, or a scan-only dirty bitmap. Today's full-export CID-diff is too costly to run per ephemeral VM just to scan. **On the bitmap (D1 note):** it was dropped not as dead weight but because replication moved from *overlay-only* (ship the overlay's changed blocks, tracked by the bitmap) to *full merged-image* capture — overlay-only broke base-image coherence during **cross-node reconstruction** (the target node assembling base image + overlay pieces didn't line up), so the fix was to capture a self-contained merged image and diff it by content hash, which left the bitmap purposeless. That failure was a *replication-reconstruction* problem; a scan-only bitmap (or an overlay-allocated-clusters read) never reconstructs anything cross-node — it's just a local "what did the guest write" read-filter — so the bug that killed the bitmap does **not** apply to reusing one for scanning. Settle this before building. **Out of scope for node-FS scanning:** system VMs (vetted platform code, no tenant data), and **containers** (`DeploymentMode.Container` has no qcow2 overlay — a separate surface, covered only reactively for now).
    **D1 settled (2026-07-08): the `RF=0` change-source is a scan-only persistent QEMU dirty bitmap (option b) — recorded now, built with the real matcher.** The grounding overturned the earlier lean toward overlay-allocated-clusters (option a). Option (a)'s premise — "read the overlay's allocation to learn what changed" — does not hold in the Phase J flow as coded: `SyncVmAsync` merges the overlay back into `disk.qcow2` at the end of **every** cycle (step 8), so between cycles there is no overlay to read, and a self-contained `disk.qcow2`'s allocation is cumulative since creation, not "since last cycle." To make (a) work, the RF=0 flow would have to keep a live overlay across the inter-cycle window (defer the merge one cycle, juggle a 2-deep backing chain, extend crash-recovery and the delete path) — i.e. it does not *reuse* state QEMU already keeps; it would have to *create and maintain* that state by restructuring the proven, coherence-critical snapshot machinery. Option (b) is additive and self-contained: `block-dirty-bitmap-add` (persistent) once per enrolled VM, one `query-named-block-nodes` dirty-count read per cycle, and a `block-dirty-bitmap-clear` at the frozen point. count == 0 ⇒ skip the snapshot **and** the guestmount entirely — and the mount (libguestfs appliance boot, seconds per VM) is the actual per-cycle cost the signal exists to avoid on nodes dense with idle ephemeral VMs. Fail-closed for a safety scan means failing toward *more* scanning: a missing/unreadable bitmap is treated as dirty, never as quiet. The bug that killed the old bitmap was a replication-reconstruction failure and does not apply (per the D1 note above). One caveat recorded honestly: the bitmap's semantics across the blockdev-snapshot + block-commit dance (clear right after `CreateSnapshotAsync`; the later commit re-dirties the window's writes so they count next cycle — content-correct, timing-shifted) is reasoned from QEMU 8.2.2 documentation, not yet executed — smoke-test it when the real matcher lands, before relying on count==0 to skip scans.
 
@@ -92,6 +92,19 @@ These hold across all phases. They are the result of design discussion, not defa
    Both lines are required: **the version is a label, the hash is the commitment.** Version-only would make the node acceptance weaker than the web one and would silently pass whenever the document is edited without a bump (Decision 16 notes a whitespace edit *is* a bump).
    This is a rule, not a one-off. Any future flow where a wallet signs its way onto the platform names the terms in the message it signs, rather than proving acceptance through a second channel.
    **Corollary — the gate belongs at the same doors as the blocklist.** Both answer *may this wallet do this?*, so they sit adjacent, in the same style, at the same service boundary: VM create, template create + publish, node registration. **Not** node login: `AutoLoginIfNotLoggedOutAsync` runs on every agent start, so gating it would drop the whole fleet out of scheduling on a bump — an outage for a paperwork reason, landing on tenants who are not party to it. Registration is the operator's acceptance point; login is resumption of service already established. Platform-curated templates are exempt (`IsCommunity == false` — admin-authored, the platform's own content), exactly as system VMs are exempt from the VM gate.
+
+18. **CSAM hash matching is TARGETED ON CAUSE, not proactive across the fleet. Supersedes Decisions 9 and 15; moots D1.**
+   Settled 2026-07-17, after the decision to incorporate in Estonia (EU) forced the question to be answered on the merits rather than inherited from a US-shaped checklist. **The flow is: report → hold + preserve → targeted hash check → human decision → law enforcement.** An admin invokes a scan of **one** VM when there is cause — a P0 report names it, or a takedown investigation reaches it. Nothing scans on a timer.
+   **Why targeted beats proactive here, in order of weight:**
+   - **It is the missing piece of the reactive path, not a retreat from it.** A CSAM report about a *private* VM was, until now, unconfirmable: the only way to check was for a DeCloud admin to look at the disk — i.e. a human viewing the material. Hash matching confirms or clears a report **without any person ever seeing the content.** That is the whole reason to have a matcher at all, and it only works on the targeted path.
+   - **In the EU, indiscriminate scanning is a legal risk rather than a mitigation.** DSA Art 8 forbids general monitoring obligations, so nothing requires it; Art 7 protects voluntary investigation, so nothing punishes it either. But GDPR needs a lawful basis that survives necessity and proportionality — and hashing every tenant's files every five minutes, when the law does not ask for it and a reactive mechanism exists, is the hard case to argue. Targeted-on-cause is the easy one: specific cause, documented, proportionate. (Note the direction of travel: Parliament rejected indiscriminate *voluntary* scanning of messaging in March 2026 on exactly these grounds, and the Council's CSAR position drops mandatory detection in favour of risk assessment and mitigation.)
+   - **It matches what IaaS actually is.** No IaaS provider scans block storage — not AWS, Hetzner, OVH, DigitalOcean. "Reactive detection + template-publish review" is not a weak posture; it is the industry norm *plus* a review gate most do not have. The plan had been holding DeCloud to a standard nobody meets, inherited rather than chosen.
+   - **The node burden was real and mis-shaped.** Operators run hardware we do not control. A per-cycle scan puts their machine in contact with the material and **creates knowledge**, and knowledge creates duties — for a volunteer, silently. It also cannot hold the matcher credential (below).
+   - **Honest counterweight, recorded so nobody re-discovers it as a gotcha:** reactive detection is *weak* for IaaS. Reports arrive when people SEE things, and nobody sees a private disk. This posture mostly catches what is publicly exposed. That gap is real, accepted deliberately, and is the argument to revisit if the balance changes.
+   **The matcher credential lives on the orchestrator — never on a node.** Providers issue keys to vetted organisations precisely so the corpus cannot become an evasion oracle; a key distributed to anonymous operator hardware defeats that, and would be a fair reason to decline our application. Nodes compute hashes; the orchestrator calls the provider. `ICsamScanner`'s "hashes only leave the node" contract is unchanged — only the recipient is.
+   **What this makes SMALLER, which is the tell that it is the right shape:** a hold **force-stops the VM**, so a targeted scan reads a *quiescent* `disk.qcow2`. No overlay, no fsfreeze, no snapshot, no merge-back, no dirty bitmap — the entire coherence-critical apparatus existed only to scan a *running* VM. `ICsamScanner` needs **no change**: it already takes a `frozenDiskPath` and owns its own read-only mount (a shape chosen so the stub would never mount — it turns out to be exactly right for a held VM's disk). The command rides the existing `GetPendingCommands` poll; no new channel.
+   **Scan state moves to the abuse report, not `lazysync.json`.** This reverses the pass-1 note "no orchestrator-side scan-state field" and for a good reason: under proactive scanning any external field was a coverage claim waiting to be misread; under targeted scanning the result **is evidence for a specific human decision** and belongs with the report it answers.
+   **Unchanged and still correct:** the honesty invariants (a matcher-less build reports `NotScanned`, never `Clean`), the libguestfs/never-host-nbd mount discipline, human confirmation before any report or blacklist, and the external claim — *"reactive detection + template-publish review"*, which this posture makes more accurate rather than less.
 
 ---
 
@@ -105,7 +118,13 @@ These are explicitly **not** engineering decisions. They block launch but not th
 - [ ] File DMCA Designated Agent with the US Copyright Office ($6, https://www.copyright.gov/dmca-directory/).
 - [ ] Establish NCMEC CyberTipline account and reporting procedure.
 - [ ] **A hash-matching provider agreement (Phase 6)** — candidates: PhotoDNA Cloud (Microsoft), CSAI Match (Google), Shield (Project Arachnid / C3P), Image Intercept (IWF). All free-or-near-free once vetted; vetting runs weeks. The `ICsamScanner` seam is provider-agnostic, so **apply to several in parallel** — but see the jurisdiction item below first.
-- [ ] **Counsel: which jurisdiction's regime binds the operating entity?** The plan and `COMPLIANCE.md` are written in the **US frame** throughout (NCMEC CyberTipline, 18 U.S.C. §2258A, the Copyright Office DMCA agent, OFAC). If the entity is not US, several §2 items point at different institutions — Project Arachnid is Canadian, the IWF is British, and the reporting duty may be a different statute with a different clearinghouse. **Answer this before filing any application**, since it determines which door is the right one. *(Raised 2026-07-16 while surveying matcher providers; the US framing was inherited, never decided.)*
+- [ ] **Counsel: confirm the EU/Estonian frame and re-anchor this checklist.** *(Direction chosen 2026-07-17: incorporate in **Estonia (EU)**. Everything below — and all of `COMPLIANCE.md` — was written US-first and inherited, never decided, so much of it now points at the wrong institutions.)* The expected mapping, **for counsel to confirm, not to rely on as written**:
+  - NCMEC / §2258A mandatory reporting → **no EU equivalent duty**. Estonian hotline (Vihjeliin) / INHOPE; voluntary NCMEC reports are still accepted; the planned **EU Centre** would eventually take the triage role the EU currently gets from NCMEC.
+  - DMCA designated agent → **DSA notice-and-action** + a published point of contact. The $6 Copyright Office filing may still be worth it *if* there are US users (§512 protection against US claims), but it stops being the load-bearing item.
+  - OFAC SDN → **EU consolidated sanctions list**. Note USDC is issued by Circle, a US entity, so US nexus does not simply vanish.
+  - Money transmission / custody → **MiCA**, where Decision 2's "the contract has no function that can move user funds" becomes a materially stronger argument than it was.
+  - **New, with no US analogue:** a **GDPR lawful basis + DPIA** for any scanning of tenant data (Decision 18 is written to make this the easy case rather than the hard one), and **DSA** obligations proper (notice-and-action, statements of reasons, point of contact, transparency).
+  - **Direction of travel:** mandatory risk assessments and reporting to the EU Centre are likely to land in the final CSAR framework even though the Council position drops mandatory detection. **Start documenting a risk assessment now** — it costs nothing and is likely to be demanded.
 - [ ] Draft + legally review the ToS document (Phase 1 needs the text + hash).
 - [ ] Retroactive rubric review of the Private Browser (Ultraviolet) and Shadowsocks seed templates (Phase 3).
 
@@ -307,13 +326,40 @@ flowchart TD
 
 ---
 
-### Phase 6 — CSAM Node-Level Scanning (hardest, last)
-**Status:** 🟡 **Pass 1 built and verified (2026-07-08 → 10)** — scanner seam + honest stub, fleet-wide enrollment, the result-gate, and the `csam-report` → P0 queue → protective-suspend chain, proven by 8/8 orchestrator + 16/16 node smoke tests (`test-csam-pass1.sh`, `test-csam-node.sh`). D1 recorded in Decision 15. **Remaining:** the real matcher + D1 bitmap (gated on a hash-matching provider agreement — vendor-agnostic behind the seam; see §2), the reporting procedure (gated on clearinghouse registration + counsel), and the deferred quarantine pass (step 3a / D2). See the 2026-07-08→10 build-log entries; where a step below differs from what shipped, the build log is authoritative.
-**Goal:** Proactive known-CSAM filtering at the only layer with plaintext whole files, with human-confirmed enforcement.
+### Phase 6 — CSAM Hash Matching, Targeted On Cause (hardest, last)
+
+> **RE-SCOPED 2026-07-17 (Decision 18).** This phase was written as *proactive
+> fleet-wide scanning* and is now **targeted on cause**:
+> **report → hold + preserve → targeted hash check → human decision → law
+> enforcement.** Read the whole section through that lens: the pipeline steps
+> below describe the superseded per-cycle design and are kept for their
+> reasoning (mount discipline, the result-gate trap, the layer analysis — all
+> still true), **not as a build spec.** Decisions 9 and 15 are superseded; D1 is
+> moot. **Where a step conflicts with Decision 18, Decision 18 wins.**
+
+**Status:** 🟡 **Pass 1 built and verified (2026-07-08 → 10)**, then partly
+reverted by Decision 18. **Kept:** the `ICsamScanner` seam + honest
+`NullCsamScanner` (unchanged — it already takes a `frozenDiskPath` and owns its
+own read-only mount, which is exactly right for a held VM's quiescent disk), the
+`csam-report` → P0 queue → protective-suspend chain with host fencing,
+delete-while-held at the service boundary, and the single-exit merge-back fix (a
+real bug regardless). **To revert:** fleet-wide enrolment (`RF > 0` returns to
+the `LazysyncDaemon` filter), the result-gate in `SyncVmAsync`, the
+blockstore-decoupling (a replication-only cycle *should* skip with no
+blockstore), and the `lazysync.json` scan record. **Not to build:** the D1 dirty
+bitmap — it answers "did anything change since the last cycle?" and there are no
+cycles.
+**Remaining:** the real matcher behind the seam, invoked by an admin on **one**
+VM (gated on a provider agreement — vendor-agnostic; §2), the reporting procedure
+(gated on clearinghouse registration + counsel), and the deferred quarantine pass
+(step 3a / D2).
+**Goal:** Confirm or clear a *specific* CSAM report about a *specific* VM
+**without any human ever seeing the material** — which is the one thing the
+reactive path could not do, and the whole reason to have a matcher.
 **Depends on:** Phase 2 (audit + blacklist on confirmation). External: a hash-matching provider agreement + a clearinghouse reporting account (§2 — provider and clearinghouse both follow from the jurisdiction question, unanswered).
 **Layer note:** node-FS is the correct layer by elimination, but it is an **inherently partial** control. It sees decoded whole files written to a tenant overlay — and nothing else: blind to guest-side LUKS/dm-crypt/LVM, to content served from memory or over the (encrypted) network, to novel/AI-generated material in no hash database, to containers (no overlay), and to a VM that dies before its first scan cycle. Expanding the surface to memory/network does **not** help and is the wrong move: perceptual hashing needs decoded whole files (unavailable from RAM or ciphertext), the feared GPU-generation case is both never-on-disk *and* novel (nothing to match), and content-level memory/network interception is a wiretap posture the law does not require (§2258A imposes no general-monitoring duty). So node-FS is one layer in a set — template-publish scan (Phase 3, central, highest-leverage), reactive abuse reports (Phase 4, P0/2h — the front line for everything inspection can't reach), and deterrence (wallet + bond + traceability + enforcement). Never presented as a guarantee.
 
-**First pass vs. deferred (scope discipline — simple, effective, honest).** The first build relies on **Decision 9** for containment: scan-before-publish means a match stops at the origin and **never replicates**, so the only containment needed now is **suspend the VM + preserve its overlay** (both already built). No sealed evidence store, no CID-declaration endpoint, no mesh-wide quarantine in this pass.
+**First pass vs. deferred (scope discipline — simple, effective, honest).** *(Decision 18 changes the containment argument, not the conclusion.)* Scanning no longer precedes replication, so a match may be found on material that **has already replicated** — Decision 9's "it never leaves the origin" no longer holds. What holds instead: a targeted scan runs only *after* a hold, and the hold has already force-stopped the VM and frozen its disk, so nothing further replicates from the moment of the report. Containment for this pass remains **hold + preserve** (both built). Replica cleanup for material already pushed is exactly the deferred quarantine pass (D14) — which Decision 18 makes *more* relevant, not less, and which stays deferred on the sealed evidence store (counsel).
 - **This pass (buildable now; only open item is D1):** (1) `ICsamScanner` seam + honest `NullCsamScanner`; (2) fleet-wide enrollment (Decision 15); (3) the result-gate (Decision 9) — `match → suspend + preserve + report`, else `RF>0 → replicate`; (4) `csam-report` → Phase 4 P0 queue → `SuspendVmAsync` + audit. The real matcher stays gated on a provider agreement + the reporting account (§2).
 - **Deferred to a later pass (named, not hidden):** replica quarantine by CID declaration (step 3a / Decision 14) and its **sealed evidence store (D2)**. These cover only what the live scan *can't* — **retroactive** hash-list hits, the **pre-scanner backlog**, a **bypassed origin** — for which the **reactive abuse path (Phase 4, P0)** is the honest interim control. The design is kept (below + Decision 14) for when it's picked up; it is not built now.
 
@@ -717,6 +763,105 @@ were not found by testing what we built — they were found by reading the thing
 to it, with the comment deliberately set aside. *A comment asserting a protection
 is a claim that needs a test, not documentation.*
 
+### 2026-07-17 — Phase 6 re-scoped: targeted-on-cause, not proactive (Decision 18)
+
+**Nothing was built. This is a decision and a revert plan** — recorded before the
+code changes, because the reasoning is the valuable part and reversals without a
+written *why* get quietly re-litigated.
+
+**What prompted it.** The choice to incorporate in **Estonia (EU)** forced a
+question that had never actually been asked: *is proactive fleet-wide scanning
+right, or was it inherited?* It was inherited. The plan was written US-first, and
+"scan everything" arrived with the framing rather than from an argument.
+
+**What the EU frame actually says.** DSA Art 8 forbids general-monitoring
+obligations, so nothing requires it; Art 7 protects voluntary own-initiative
+investigation, so nothing punishes it either. **It is a free choice** — and the
+free choice goes the other way, because GDPR needs a lawful basis surviving
+necessity and proportionality, and hashing every tenant's files every five
+minutes is the hard case to argue when the law does not ask and a reactive
+mechanism already exists. Targeted-on-cause is the easy case. (The March 2026
+rejection of indiscriminate *voluntary* scanning of messaging turned on exactly
+that reasoning; the Council's CSAR position drops mandatory detection in favour of
+risk assessment and mitigation. The ePrivacy derogation drama itself does **not**
+touch us: it covers interpersonal communications, not hosting, and hash-matching
+remains available for hosted environments.)
+
+**The argument that actually decided it, which is not a legal one.** A CSAM report
+about a *private* VM was unconfirmable. The only way to check was for a DeCloud
+admin to look — a human viewing the material. **Hash matching confirms or clears
+the report without any person ever seeing the content.** That is the whole point
+of having a matcher, and it only exists on the targeted path. So this is not a
+retreat from safety; it is the missing piece of the reactive path we already
+built.
+
+**Honest counterweight, recorded so it is not re-discovered as a gotcha:**
+reactive detection is *weak* for IaaS. Reports come from people who SEE things,
+and nobody sees a private disk. This posture mostly catches what is publicly
+exposed. That gap is real and accepted; it is the argument to revisit if the
+balance changes.
+
+**Also true, and worth saying plainly:** no IaaS provider scans block storage —
+not AWS, Hetzner, OVH, DigitalOcean. The plan had been holding DeCloud to a
+standard nobody meets. "Reactive detection + template-publish review" is not a
+weak posture; it is the norm, plus a review gate most do not have.
+
+**The tell that it is the right shape: it makes the system smaller.** A hold
+force-stops the VM, so a targeted scan reads a **quiescent** `disk.qcow2` — no
+overlay, no fsfreeze, no snapshot, no merge-back, no bitmap. That entire
+coherence-critical apparatus existed only because we were scanning a *running* VM.
+And `ICsamScanner` needs **no change**: it already takes a `frozenDiskPath` and
+owns its own read-only mount — a shape argued for on the grounds that the stub
+should never mount, which turns out to be exactly right for a held VM's disk. A
+seam that survives a reversal of the thing it was built for is a seam that was cut
+in the right place.
+
+**Revert list (not yet applied):** `RF > 0` returns to the `LazysyncDaemon`
+enrolment filter; the result-gate comes out of `SyncVmAsync`; blockstore-decoupling
+reverts (a replication-only cycle *should* skip with no blockstore); the
+`lazysync.json` scan record goes. **Keep:** the seam + honest stub, `csam-report`
+(it gains the triggering `ABU-` reference and stops being spontaneous),
+delete-while-held at the service boundary, host fencing, and the single-exit
+merge-back fix — a real bug regardless of who calls the scan. **Do not build:** D1.
+A bitmap answers "did anything change since the last cycle?" and there are no
+cycles. *(Two days after settling D1 with a careful argument, the question
+disappeared. The argument was sound; the premise was not.)*
+
+**Two reversals of my own earlier positions, both for reasons I accept:**
+- **Scan state moves to the abuse report.** Pass 1 recorded "no orchestrator-side
+  scan-state field: any external field is a coverage claim waiting to be misread."
+  Under targeted scanning the result **is evidence for a specific human decision**
+  and belongs with the report it answers. The original reasoning was right for the
+  design it was written against.
+- **The clear-match follow-up dissolves.** The false-positive trap (a `Match` in
+  `lazysync.json` blocking replication forever after a dismissal) was created
+  entirely by the proactive design and vanished with it — no mechanism needed.
+  That is usually the sign a design was carrying weight it did not need.
+
+**Forced by this, and it strengthens the provider application:** the matcher
+credential **lives on the orchestrator, never on a node.** Providers vet
+applicants precisely so the corpus cannot become an evasion oracle; a key
+distributed to anonymous operator hardware defeats that and would be fair grounds
+to decline us. Nodes compute hashes; the orchestrator calls the provider.
+`ICsamScanner`'s "only hashes leave the node" contract is unchanged — only the
+recipient is. The command rides the existing `GetPendingCommands` poll; no new
+channel.
+
+**Containment reasoning changes, conclusion does not.** Decision 9's "a match
+never leaves the origin" no longer holds — a targeted scan may find material that
+already replicated. What holds: the scan runs *after* a hold, and the hold has
+already stopped the VM, so nothing further replicates from the moment of the
+report. Cleanup of already-pushed replicas is the deferred quarantine pass (D14),
+which this makes **more** relevant, not less, and which stays deferred on the
+sealed evidence store (counsel).
+
+**Unchanged:** the honesty invariants (a matcher-less build reports `NotScanned`,
+never `Clean`), the libguestfs / never-host-nbd discipline, human confirmation
+before any report or blacklist. And the external claim — *"reactive detection +
+template-publish review"* — is now **more** accurate than it was, not less. The
+system was built so this decision could be made honestly: every VM reads
+`NotScanned` today, no claim needs walking back, and no user was ever misled.
+
 ### Open follow-up (deliberate, not a regression to fix blindly)
 
 **Three ToS/declaration paths verified only by reasoning (2026-07-16).** Not
@@ -732,7 +877,7 @@ the machine clause alone. Staging only, per the script's checklist item F.
 
 **Crashed-VM auto-recovery.** With the watchdog no longer starting Stopped VMs, a tenant VM that crashes on a *healthy* node stays Stopped/Error until the owner restarts it. The orchestrator follows node-reported state and only redeploys VMs whose node is *offline* (the migration scan) — there is no "should be Running but is Stopped on a healthy node → StartVm" loop today. If auto-recovery is wanted, it belongs in orchestrator reconciliation and needs an explicit desired/intended run-state to distinguish a crash from an owner stop (the same distinction the node deliberately refuses to guess). Decide before launch; do not restore the indiscriminate node-side restart.
 
-**Clearing a node-side match after human dismissal (Phase 6, pass 2 design item).** A recorded `Match` is terminal on the node — the push stays blocked even after `resume-vm`, which is the right fail-closed default but leaves no recovery path for a false positive (inevitable with a real perceptual-hash matcher). The hold itself now releases end-to-end automatically (heartbeat `HeldVmIds` diffing), so the residual gap is exactly one thing: the `csamScan` record in `lazysync.json`. The clear-match action should ride the human review flow (resolve-report → orchestrator → node ack), not a node-local edit. Until then: test/false-positive cleanup is stop agent → remove the `csamScan` object from the VM's `lazysync.json` (keep the chunk map) → start agent.
+**~~Clearing a node-side match after human dismissal.~~ DISSOLVED by Decision 18 (2026-07-17).** The problem was that a `Match` persisted in `lazysync.json` blocked replication forever, even after a human dismissed the report — a false-positive trap with no recovery path. Under targeted scanning there is no per-cycle scan, no `lazysync.json` scan record, and no replication gate: a scan result is evidence attached to **one abuse report**, and dismissing that report is already the whole recovery path. *Worth noting the shape: this was a real problem created entirely by the proactive design, and it disappeared with the design rather than needing a mechanism of its own. That is usually the sign a design was carrying weight it did not need.* False positives remain real (perceptual hashes collide) — they now land where a human is already looking, which is where they belong.
 
 **Replica quarantine on hold (Phase 6, Decision 14).** Holding a VM halts new replication but does not walk back blocks already in the block-store/DHT. The quarantine — stop announcing/serving, retain under seal for evidence — is unbuilt and tracked as Phase 6 step 3a.
 

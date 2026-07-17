@@ -1,6 +1,6 @@
 # DeCloud Platform — Compliance & Legal Framework
 
-**Last Updated:** 2026-07-16 (late — ToS acceptance now gates every door a wallet can act through, and a node operator accepts inside the declaration they already sign; see §4)
+**Last Updated:** 2026-07-17 — **Pillar 1 re-scoped: CSAM hash matching is targeted on cause, not proactive** (see §3). Also: ToS acceptance gates every door a wallet can act through, and a node operator accepts inside the declaration they already sign (§4).
 **Status:** Active — pre-launch. Pillars 2, 3, 4 built; Pillar 1 first pass built (seam + gate + report chain), real matcher gated on external prerequisites. See `COMPLIANCE_INTEGRATION_PLAN.md` §7 for build state.
 **Purpose:** Authoritative reference for DeCloud's **content policy, legal obligations, and compliance philosophy** — what the platform undertakes to do and why.
 
@@ -21,7 +21,7 @@
 
 1. [Philosophy & Scope](#1-philosophy--scope)
 2. [The Four Pillars](#2-the-four-pillars)
-3. [Pillar 1 — CSAM Proactive Filtering](#3-pillar-1--csam-proactive-filtering)
+3. [Pillar 1 — CSAM Hash Matching (Targeted On Cause)](#3-pillar-1--csam-hash-matching-targeted-on-cause)
 4. [Pillar 2 — Terms of Service](#4-pillar-2--terms-of-service)
 5. [Pillar 3 — Abuse Reporting & AI Triage](#5-pillar-3--abuse-reporting--ai-triage)
 6. [Pillar 4 — Template Review Gate](#6-pillar-4--template-review-gate)
@@ -73,22 +73,36 @@ The framework rests on four mutually reinforcing pillars. All four are required 
 │                  DeCloud Compliance Stack                        │
 ├─────────────────┬──────────────────┬──────────────┬────────────┤
 │  CSAM           │  Terms of        │  Abuse       │  Template  │
-│  Proactive      │  Service         │  Reporting   │  Review    │
-│  Filtering      │  (with teeth)    │  + AI Triage │  Gate      │
+│  Hash matching  │  Service         │  Reporting   │  Review    │
+│  (on cause)     │  (with teeth)    │  (front line)│  Gate      │
 │                 │                  │              │            │
-│  Keeps platform │  Legal standing  │  Reactive    │  Blocks    │
-│  out of federal │  to act +        │  detection + │  amplifi-  │
-│  criminal       │  DMCA safe       │  triage +    │  cation of │
-│  exposure       │  harbor          │  SLA queue   │  harm at   │
+│  Confirms a     │  Legal standing  │  Reactive    │  Blocks    │
+│  report without │  to act, and     │  detection + │  amplifi-  │
+│  a human seeing │  the hosting     │  triage +    │  cation of │
+│  the material   │  safe harbour    │  SLA queue   │  harm at   │
 │                 │                  │              │  source    │
 └─────────────────┴──────────────────┴──────────────┴────────────┘
 ```
 
-No single pillar is sufficient alone. CSAM filtering without a ToS gives you no right to act on other violations. A ToS without enforcement is theater. Enforcement without abuse reporting means you only act on what you happen to notice. Template review without enforcement is decoration.
+No single pillar is sufficient alone. Hash matching without a ToS gives you no
+right to act on other violations. A ToS without enforcement is theater. Enforcement
+without abuse reporting means you only act on what you happen to notice. Template
+review without enforcement is decoration.
+
+**And the load-bearing pillar is abuse reporting, not hash matching.** Matching
+answers *one* question — "is this file a known image?" — about material someone has
+already pointed us at. It is a confirmation tool, not a discovery tool. Everything
+that actually *finds* things is reactive or preventative: the report, the review
+gate, and the deterrence of a bonded, traceable wallet. Reading this diagram as
+"CSAM filtering is the first line of defence" gets the architecture backwards, and
+would lead someone to under-invest in the pillar that does the work.
+
+*(Pillar 3's triage is deterministic today — a fixed category → priority map. AI
+triage is designed and deferred; see §5.)*
 
 ---
 
-## 3. Pillar 1 — CSAM Proactive Filtering
+## 3. Pillar 1 — CSAM Hash Matching (Targeted On Cause)
 
 ### Why Non-Negotiable
 
@@ -113,88 +127,86 @@ Block-level CSAM checking is therefore technically infeasible and is NOT impleme
 The correct detection surface is the **filesystem layer on the hosting node**, where
 whole files are accessible in their decoded form before replication.
 
-### Detection Architecture — Node-Level Filesystem Scanning
+### Detection Architecture — Node-Level Filesystem Hash Matching
+
+> **Layer, not schedule.** What follows establishes *where* a scan can see
+> anything at all — the node's filesystem, the only layer with decoded whole
+> files. That analysis is unchanged and still correct. **When** a scan runs is a
+> separate question, answered below: on cause, not on a timer.
 
 The hosting node is the only point in the architecture with plaintext access to VM
 overlay data. Detection is performed here, before encryption and before replication,
 on reconstructed files from the overlay filesystem.
 
-#### Scan Scope
+#### When a scan runs — and why not always
 
-| Cycle | Scan Scope | Rationale |
-|---|---|---|
-| **Every cycle** | Files that changed since the last cycle, per the scanner's own file map | Only genuinely-changed image/video files are hashed. A quiet VM costs almost nothing, so there is no reason to exempt a "first" cycle. |
-| **Template publish** | Full filesystem scan of template image | Separate pipeline; gates template availability before any VM can be deployed from it. |
+> **Re-scoped 2026-07-17 (plan Decision 18).** This pillar previously specified
+> **proactive scanning of every tenant VM every five minutes**. It no longer does.
+> The flow is:
+>
+> **report → hold + preserve → targeted hash check → human decision → law enforcement**
+>
+> An administrator runs a hash check against **one** VM when there is cause: a P0
+> report names it, or a takedown investigation reaches it. Nothing scans on a
+> timer. The mechanism is the plan's (`ICsamScanner`, Decision 18); what this
+> document owns is why.
 
-**No cycle is skipped.** An earlier version of this document exempted the first
-(seeding) cycle on the reasoning that a fresh overlay is clean by construction.
-That reasoning is sound but the exemption is not worth having: the scanner's
-change-source already makes a clean cycle nearly free, so skipping buys nothing
-and costs an assumption — that nothing was written before the first cycle ran —
-which is exactly the kind of assumption a hostile tenant is motivated to break.
-Every enrolled tenant VM is scanned every cycle (~5 min, after a 5-minute
-startup delay), regardless of replication factor (plan Decision 15).
+**The reason that decided it is not a legal one.** A CSAM report about a
+**private** VM used to be unconfirmable. The only way to check was for a DeCloud
+administrator to open the disk and look — that is, *a person viewing the
+material*. Hash matching confirms or clears the report **without any human ever
+seeing the content**. That is the entire point of having a matcher, and it exists
+only on the targeted path. This is not a retreat from the reactive posture; it is
+the piece the reactive posture was missing.
 
-**Change-source.** The scan hashes only files that genuinely changed, diffed
-against a persisted `{ path → size, mtime, hash }` map — **not** replication's
-`changedChunks`, which ephemeral `RF=0` VMs never produce. For `RF=0` VMs the
-cheap "did anything change at all" signal is a scan-only QEMU dirty bitmap
-(plan Decision 15, D1).
+**Why not scan everything, always:**
 
-#### Per-Cycle Pipeline
+- **Nothing requires it.** Under the DSA, providers cannot be placed under a
+  general obligation to monitor or actively seek facts indicating illegal
+  activity — and voluntary own-initiative investigation does not forfeit the
+  hosting safe harbour. So this is a free choice, not a compliance debt.
+- **Doing it could be the violation.** Hashing every tenant's files every five
+  minutes is processing personal data, and needs a lawful basis surviving
+  necessity and proportionality — a hard case when the law does not ask for it and
+  a reactive mechanism already exists. Targeted-on-cause is the easy case:
+  specific cause, documented, proportionate.
+- **It is what the industry actually does.** No IaaS provider scans block storage
+  — not AWS, Hetzner, OVH, DigitalOcean. Reactive detection plus a
+  template-publish review gate is the norm *plus* a control most do not have.
+- **It puts the burden in the wrong place.** Node operators run hardware the
+  platform does not control. A per-cycle scan puts their machine in contact with
+  the material and **creates knowledge** — and knowledge creates duties, silently,
+  for a volunteer.
 
-```
-LazysyncDaemon — incremental cycle:
+**The honest cost, stated plainly.** Reactive detection is **weak** for
+infrastructure-as-a-service. Reports arrive because people *see* things, and
+nobody sees a private disk. This posture mostly reaches what is publicly exposed —
+a VM serving a website, a published template. Privately stored material is largely
+beyond it. That gap is real, it is accepted deliberately, and it is the argument
+to revisit if the balance ever changes. **It is not papered over here, and it must
+not be papered over anywhere else.**
 
-1. Export overlay → tmp.raw                    (existing)
+#### The targeted flow
 
-2. Map changed blocks → changedChunks offsets  (existing)
+1. A report names a VM (Pillar 3 intake, `csam` → P0 / 2h), or an investigation
+   reaches it.
+2. **Hold + preserve.** The VM is force-stopped and its disk preserved; deletion
+   is refused while held. Protective and reversible — applied before any human
+   judgement, because it withholds service and nothing else.
+3. **Targeted hash check.** An administrator runs the matcher against that one
+   VM's disk. Because the hold has already stopped the VM, the disk is
+   **quiescent** — no overlay, no filesystem freeze, no snapshot. The disk is
+   mounted **read-only, inside a throwaway appliance VM** (see the mount
+   discipline below), never on the host kernel. Only image/video files are hashed;
+   **only hashes ever leave the node** — never file content.
+4. **A human decides.** Nothing is automatic. A match is evidence attached to that
+   report, not a verdict.
+5. **Law enforcement**, on confirmation, through the reporting procedure (§2).
 
-3. Mount frozen disk read-only via libguestfs  (new)
-   → guestmount, LIBGUESTFS_BACKEND=direct      (CloudInitCleaner pattern)
-   → NEVER a host-kernel nbd mount — see below
-
-4. Resolve files touching changedChunks        (new)
-   → walk filesystem inode table
-   → map block offsets → file paths
-   → collect only files overlapping changedChunks offsets
-   → skip non-file types (journals, swap, inodes)
-   → skip files not decodable as image/video
-
-5. CSAM scan resolved files                    (new)
-   → hash each file
-   → submit hashes only to the hash-matching provider (see below)
-   → collect any matches
-
-6. Unmount (always — even on match)            (new)
-   → tear down the libguestfs appliance
-
-7a. IF MATCH:
-    → record the match on the node BEFORE reporting (a crash must not lose it)
-    → report to the orchestrator over the node's authenticated channel
-    → orchestrator files a P0 (csam) abuse report + applies a protective hold
-    → the VM is force-stopped and its disk preserved; owner cannot restart it
-    → STOP — no blocks pushed, this cycle or any later one, until a human acts
-
-7b. IF NOT A MATCH (Clean / Unscannable / type-skipped / NotScanned):
-    → POST blocks to local blockstore                  (existing)
-    → blockstore publishes via GossipSub               (existing)
-    → register manifest with orchestrator              (existing)
-    (RF=0 VMs stop after the scan — there is nothing to replicate)
-```
-
-> **Mount discipline — non-negotiable (host security).** The guest filesystem
-> under scan is **adversarial input**: a tenant can craft a corrupt or malicious
-> filesystem specifically to attack whatever parses it. `qemu-nbd` + `mount`
-> parses that filesystem **in the host kernel**, where a bug is a host
-> compromise — from an unprivileged tenant, on a node hosting other tenants.
-> Scanning therefore uses **libguestfs/`guestmount` with
-> `LIBGUESTFS_BACKEND=direct`** (the pattern `CloudInitCleaner` already uses),
-> which parses the filesystem inside a throwaway appliance VM, not the host
-> kernel. The mount is **owned by the scanner** behind `ICsamScanner`, so the
-> discipline lives in exactly one place and a non-scanning (stub) build never
-> mounts at all. This is a hard rule, not a preference: never mount an
-> untrusted guest filesystem on the host kernel.
+**The matcher credential never touches a node.** Hash-matching providers issue
+keys to vetted organisations precisely so the corpus cannot become an evasion
+oracle — a key distributed to anonymous operator hardware would defeat that. Nodes
+compute hashes; the platform's own orchestrator calls the provider.
 
 #### The Hash Database — the part that must be obtained, not built
 
