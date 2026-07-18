@@ -147,7 +147,7 @@ Verified against the repos so future readers don't rediscover it.
 
 **Built since this plan was written (2026-06-27 — see §7 for detail):** `TosAcceptance` + `TosService` + `TosController` + VM-create ToS gate (Phase 1); `IWalletBlocklistService.IsWalletBlockedAsync` + `BlockedWallets`/`BlockSource` + `EnforcementActions` audit + `EnforcementService` + `AdminComplianceController` + admin-compliance UI, **with the gate wired at all three chokepoints** — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync` (Phase 2 core, DoD met); the single-VM hold end-to-end — `VirtualMachine.ComplianceHold`, `SetVmComplianceHoldAsync`, `Suspend/ResumeVmAsync`, heartbeat re-enforcement, node-side persisted hold + VM-manager gate + autostart-disable + watchdog skip + migration exclusion + **lazysync exclusion**; the **complete operator-node takedown** — suspend the operator's nodes + login gate, withhold settlement, drain replicated VMs, hard cutoff once drained, and the immediate-cutoff override (Decisions 12–13); and **Phase 3 template review** — `TemplateStatus.PendingReview`/`Rejected` + review fields, the community-review invariant enforced across create/publish/update/deploy, the admin approve/reject/queue endpoints, edit-after-approval re-review, and the admin review UI.
 
-**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` + fleet enrollment + result-gate + `csam-report` chain are **built and verified** — Phase 6 pass 1, 2026-07-10; see §7) plus the D1 dirty bitmap that lands with it; **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb, the two role-case defects, the ToS gates at every door, the discarded freshness verdict, the unbound declaration, and the refusals-reported-as-500 are all fixed — see §7.)*
+**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` remain, **built and verified**; the fleet-enrollment + result-gate + `csam-report` chain that pass 1 built around them was **reverted by Decision 18 / pass 2a** — see §7. D1 is now dead, not pending); **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb, the two role-case defects, the ToS gates at every door, the discarded freshness verdict, the unbound declaration, and the refusals-reported-as-500 are all fixed — see §7.)*
 
 > **The two gates travel together.** As of 2026-07-16 the ToS gate sits at the same
 > doors as the blocklist gate — VM create, template create + publish, node
@@ -520,6 +520,16 @@ Scoped the first Phase 6 build to **active CSAM scanning only**, on the maintain
 
 ### 2026-07-08 → 10 (Phase 6, pass 1) — active-scanning seam built & verified: enrollment, gate, report chain
 
+> **PARTLY REVERTED by Decision 18 / pass 2a (2026-07-17).** This entry is the
+> historical delivery record and is left as written. What survives 2a: the
+> `ICsamScanner` seam, the honest `NullCsamScanner`, the honesty invariants, the
+> libguestfs discipline, the delete-while-held service-boundary fix, and the
+> single-exit merge-back (item 3's "structural fix"). What was reverted: fleet
+> enrolment (item 2), the result-gate (item 3), the `csam-report` chain (item 4),
+> and the `LazysyncState.CsamScan` record. `test-csam-pass1.sh` / `test-csam-node.sh`
+> named below are superseded by `test-compliance-hold.sh` / `test-lazysync-regression.sh`.
+> See the 2026-07-17 (late) pass-2a entry.
+
 **The four items (handout `PHASE6_PASS1_IMPLEMENTATION_HANDOUT.md`) are built; nothing from its §7 was built; §8 invariants hold; D1 recorded (Decision 15).**
 
 - **Item 1 — seam + honest stub.** `ICsamScanner` + `NullCsamScanner` (`Enabled=false`; returns `NotScanned`; a config test hook can force `Match`/`Unscannable` but forcing `Clean` is refused). Two deliberate shape changes from the handout's suggestion, which invited finalizing: the result carries an `Overall` outcome (the thing the gate actually keys on) instead of `AnyMatch`, and the scanner receives the **frozen disk path**, not a mount point — the scanner owns its mount, so the stub never mounts (zero cost) and the read-only libguestfs discipline lives in one place. The honesty wiring stays in the caller: `!Enabled` clamps any `Clean` to `NotScanned`. Scan state persists in `lazysync.json` (`LazysyncState.CsamScan`); old files deserialize to `NotScanned`.
@@ -861,6 +871,93 @@ before any report or blacklist. And the external claim — *"reactive detection 
 template-publish review"* — is now **more** accurate than it was, not less. The
 system was built so this decision could be made honestly: every VM reads
 `NotScanned` today, no claim needs walking back, and no user was ever misled.
+
+### 2026-07-17 (late) — Phase 6 pass 2a: the revert, built and verified
+
+Decision 18 decided targeted-on-cause; this pass **removes the proactive
+machinery** so the decision is true in the code, not just on paper. Pure
+subtraction — the scan stage, the result-gate, the fleet-wide enrolment filter
+(D15), the `csam-report` chain, and the `LazysyncState.CsamScan` record all come
+out; `RF > 0` returns to the enrolment predicate; lazysync is once again only
+about replication. What deliberately stays: the `ICsamScanner` seam + honest
+`NullCsamScanner` + their DI registration (unused between 2a and 2b — a seam
+waiting for its caller), and the single-exit `finally` merge-back (a real
+pre-existing bug fix, unrelated to CSAM). Applied from `PASS2A_EDITS.md`; tested
+per `PASS2A_TEST_RUNBOOK.md` with two rewritten scripts (`test-compliance-hold.sh`,
+`test-lazysync-regression.sh`).
+
+**Verified by regression, not by feature — "lazysync behaves exactly as it did
+before pass 1."** Nine of ten doors green; one untested for a stated reason; none
+failed.
+
+- **RF>0 still replicates (the load-bearing check).** Proven by artefact, not by
+  the test's live window. `48b30a77`'s `lazysync.json` was captured pre-deploy
+  carrying pass-1's `csamScan`; post-deploy the same file reads `version: 55`,
+  `lastSyncAt` today, no `csamScan`. In the 2a build the *only* remaining writer
+  of that file is `LazysyncDaemon.SaveStateAsync`, downstream of `Version++` /
+  `RegisterManifestAsync` / block push (the scan-stage saves were removed with the
+  stage). So the rewrite is proof a full push cycle completed — the VM was merely
+  idle during the test's own window, which is why the regression script fell to
+  its no-push branch there.
+- **RF=0 no longer enrolled** (the headline of the revert): a Running RF=0 VM gets
+  no snapshot line, in a cycle that demonstrably ran. **Idle-VM merge-back still
+  holds** (no orphan overlays). **System/container VMs untouched.**
+- **Old `lazysync.json` with `csamScan` still loads, no shim** — and this is
+  *non-vacuous* only because the pre-deploy capture proved the field was present
+  (with `outcome: 2`, an int-valued enum, the member most likely to break
+  deserialisation). Confirms `JsonOptions.Wire` leaves `UnmappedMemberHandling`
+  unset → `Skip`. **Closes the VERIFY that pass 2's plan flagged.**
+- **`POST /api/compliance/csam-report` → 404** (the controller is deleted, not
+  merely unreachable). Delete/start-while-held still refused with `VM_HELD`; the
+  hold is an audited human admin action; the audit records each run's pair.
+- **No new build warnings** where the scanner was. (`-warnaserror` fails on this
+  repo — 18 pre-existing warnings across 8 unrelated files — so the real check is
+  "nothing new in 2a's diff," which holds. The one CA1416 in `LazysyncDaemon.cs`
+  is pre-existing `File.SetUnixFileMode`, shifted a few lines by the revert, and
+  only fires when building on Windows.)
+
+**One door untested, deliberately: "no local BlockStore VM ⇒ no cycle at all, and
+no VM frozen."** This is the single behaviour change in the diff (pass 1 removed
+the top-of-cycle blockstore skip so the scan wouldn't ride a storage dependency;
+2a restores it). Every node currently runs a local BlockStore VM, so the skip
+can't be reached without stopping one — and `SystemVmReconciler` redeploys a
+stopped BlockStore VM underneath the test. Fighting the reconciler from a script
+would give a result not worth trusting. **Left open with its reason** — it closes
+for free the day a BlockStore-less node exists, or in a disposable environment
+where the reconciler can be paused. An honest gap beats a rigged pass. The risk it
+guards: under pass 1, such a node froze and snapshotted every tenant VM for a push
+that could not happen.
+
+**Two findings worth carrying forward.** (1) On first application the orchestrator
+half was skipped — `CsamReportController.cs` was still on disk, so the controller
+stayed registered and answered `403`, not `404`. The 403-vs-404 distinction in the
+test is what caught it (auth ran ⇒ route matched ⇒ still registered). *Anyone
+rebuilding from `PASS2A_EDITS.md` must confirm the file is actually gone, not
+assume the edit applied.* (2) Two test bugs were mine and are recorded rather than
+hidden: a start-while-held probe sent `{"action":"Start"}` when `VmAction` binds
+as an enum (fails model validation *before* the hold check — a false failure;
+fixed to send the integer and to assert `VM_HELD` specifically, not a bare 400),
+and a couple of grounding probes assumed a response shape before reading it
+(`.status` vs `.data.vm.status`). Same root cause both times — asserting a shape
+unread — and the reason the `ApiResponse<T>` envelope is now checked explicitly.
+
+**Two questions closed.** The historical overlay-leak question (was the pre-fix
+`changedChunks==0` leak ever live?) is **unanswerable** — it can only be seen on a
+*pre-pass-1* node, and pass 1 reached the whole fleet before anyone looked; the
+current clean overlay state confirms the *fix* works, not whether the old bug bit.
+And `JsonOptions.Wire` / `UnmappedMemberHandling`, above.
+
+**Still open:** the `blockstoreAddr == null` early return in `RunCycleAsync` (edit
+1f) was **reconstructed** from Decision-18 reasoning and `FindBlockstoreApiAsync`'s
+`string?` return, **not restored from the pre-pass-1 source** (which was
+unavailable). Behaviour is correct in test; if git history holds the original
+guard, diff against it and record any difference. Full detail:
+`PASS2A_BUILDLOG.md`.
+
+**D1 (the `RF=0` dirty bitmap) is now dead, not deferred** — it answered "what
+changed since the last cycle?", and there are no cycles. The external claim is
+unchanged and now structurally enforced: every VM reads `NotScanned`; *"reactive
+detection + template-publish review."*
 
 ### Open follow-up (deliberate, not a regression to fix blindly)
 

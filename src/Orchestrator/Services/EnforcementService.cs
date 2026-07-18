@@ -18,6 +18,7 @@ public sealed class EnforcementService : IEnforcementService
     private readonly IVmService _vmService;
     private readonly INodeService _nodeService;
     private readonly ITemplateService _templateService;
+    private readonly IAbuseReportService _abuse;
     private readonly DataStore _dataStore;
     private readonly ILogger<EnforcementService> _logger;
     private readonly AddressUtil _addr = new();
@@ -28,6 +29,7 @@ public sealed class EnforcementService : IEnforcementService
         IVmService vmService,
         INodeService nodeService,
         ITemplateService templateService,
+        IAbuseReportService abuse,
         DataStore dataStore,
         ILogger<EnforcementService> logger)
     {
@@ -36,6 +38,7 @@ public sealed class EnforcementService : IEnforcementService
         _vmService = vmService;
         _nodeService = nodeService;
         _templateService = templateService;
+        _abuse = abuse;
         _dataStore = dataStore;
         _logger = logger;
     }
@@ -158,7 +161,7 @@ public sealed class EnforcementService : IEnforcementService
 
     public async Task<EnforcementResult> SuspendVmAsync(string vmId, string reason, string actor, string? reference = null, CancellationToken ct = default)
     {
-        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, true);
+        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, true, reference);
         if (!hold.Success)
             return EnforcementResult.Fail(hold.Error ?? "HOLD_FAILED",
                 hold.Error == "SYSTEM_VM" ? "System VMs cannot be suspended." : "VM not found.");
@@ -177,7 +180,7 @@ public sealed class EnforcementService : IEnforcementService
 
     public async Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default)
     {
-        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, false);
+        var hold = await _vmService.SetVmComplianceHoldAsync(vmId, false, null);
         if (!hold.Success)
             return EnforcementResult.Fail(hold.Error ?? "HOLD_FAILED",
                 hold.Error == "SYSTEM_VM" ? "System VMs are not subject to holds." : "VM not found.");
@@ -190,6 +193,60 @@ public sealed class EnforcementService : IEnforcementService
             ActorWallet = actor,
             Metadata = new() { ["vmId"] = vmId }
         }, ct);
+        return EnforcementResult.Ok(0);
+    }
+
+    public async Task<EnforcementResult> ScanVmAsync(string vmId, string reference, string reason, string actor,
+        CancellationToken ct = default)
+    {
+        // The guard that does four jobs at once (plan §4.2): the VM must be under a
+        // ComplianceHold whose reference matches the one cited. No hold ⇒ no scan;
+        // wrong reference ⇒ no scan. "On cause" is structural, not policy.
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null)
+            return EnforcementResult.Fail("VM_NOT_FOUND", "VM not found.");
+        if (!vm.ComplianceHold)
+            return EnforcementResult.Fail("NOT_HELD",
+                "This VM is not under a compliance hold. Apply the hold first (suspend-vm).");
+        if (string.IsNullOrEmpty(vm.ComplianceHoldReference) ||
+            !string.Equals(vm.ComplianceHoldReference, reference, StringComparison.Ordinal))
+            return EnforcementResult.Fail("REFERENCE_MISMATCH",
+                "The cited report does not match the reference this VM is held under.");
+
+        // The report must exist (the reference is provenance the reviewer will read).
+        var report = await _abuse.GetByReferenceAsync(reference, ct);
+        if (report == null)
+            return EnforcementResult.Fail("REPORT_NOT_FOUND", "No abuse report with that reference.");
+
+        // Issue the command first so we have the id, then record it as Ordered against
+        // the report. If issue fails (no host node), nothing is recorded — nothing to undo.
+        var commandId = await _vmService.RequestScanAsync(vmId, ct);
+        if (commandId == null)
+            return EnforcementResult.Fail("NO_HOST", "VM has no host node to scan.");
+
+        var record = new CsamScanRecord
+        {
+            CommandId = commandId,
+            Status = CsamScanStatus.Ordered,
+            OrderedBy = actor,
+            OrderedAt = DateTime.UtcNow
+        };
+        await _abuse.AppendScanOrderedAsync(reference, record, ct);
+
+        // Audit row: a scan is an admin-only, reason-required, reference-bound compliance
+        // action — the same KIND as everything else here, so it earns an EnforcementAction.
+        await _blocklist.RecordActionAsync(new EnforcementAction
+        {
+            WalletAddress = vm.OwnerId ?? "",
+            Type = EnforcementActionType.ScanVm,
+            Reason = reason,
+            Reference = reference,
+            ActorWallet = actor,
+            Metadata = new() { ["vmId"] = vmId, ["commandId"] = commandId }
+        }, ct);
+
+        _logger.LogInformation("ScanVmAsync: ordered scan {CommandId} for VM {VmId} under {Reference}",
+            commandId, vmId, reference);
         return EnforcementResult.Ok(0);
     }
 

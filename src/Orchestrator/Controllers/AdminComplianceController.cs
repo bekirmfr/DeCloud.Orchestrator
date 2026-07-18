@@ -91,6 +91,23 @@ public partial class AdminComplianceController : ControllerBase
             : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
     }
 
+    [HttpPost("scan-vm")]
+    public async Task<ActionResult<ApiResponse<EnforcementResult>>> ScanVm([FromBody] ScanVmRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.VmId))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("VM_ID_REQUIRED", "A VM id is required."));
+        if (string.IsNullOrWhiteSpace(req.Reference))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("REFERENCE_REQUIRED",
+                "A report reference is required — a scan answers a specific report."));
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(ApiResponse<EnforcementResult>.Fail("REASON_REQUIRED", "A reason is required."));
+
+        var result = await _enforcement.ScanVmAsync(req.VmId, req.Reference, req.Reason, Actor(), ct);
+        return result.Success
+            ? Ok(ApiResponse<EnforcementResult>.Ok(result))
+            : BadRequest(ApiResponse<EnforcementResult>.Fail(result.Error!, result.Message!));
+    }
+
     // ── Operator-node immediate cutoff (override the graceful drain) ──────────
 
     [HttpPost("cutoff")]
@@ -158,5 +175,6 @@ public partial class AdminComplianceController : ControllerBase
 
 public record SuspendRequest(string Wallet, string? Reason);
 public record VmComplianceRequest(string VmId, string? Reason);
+public record ScanVmRequest(string VmId, string Reference, string Reason);
 public record BlockRequest(string Wallet, BlockSource Source, string Reason, string? Reference);
 public record BulkBlockRequest(List<string> Wallets, BlockSource Source, string Reason);

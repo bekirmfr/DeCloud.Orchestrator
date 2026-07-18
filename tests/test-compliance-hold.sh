@@ -86,12 +86,18 @@ if [ -n "$TEST_VM_ID" ]; then
   fi
 
   # Owner start must also be refused while held (Phase 2 behaviour — regression
-  # check that this pass didn't disturb it). Assert the CODE, not just the 400:
-  # a bare 400 also comes from INVALID_ACTION, which would pass vacuously and
-  # tell us nothing about the hold.
-  code=$(acurl -X POST "$ORCH_URL/api/vms/$TEST_VM_ID/action" -d '{"action":"Start"}')
+  # check that this pass didn't disturb it). VmActionRequest.Action binds to the
+  # VmAction ENUM; the API does not accept the string "Start" (that fails model
+  # validation with an RFC-9110 400 before the hold check ever runs). Send the
+  # enum's integer value. Assert on VM_HELD, not the bare 400: a plain 400 also
+  # comes from model validation or INVALID_ACTION, either of which would pass
+  # vacuously and tell us nothing about the hold.
+  #   VmAction: Start=0, Stop=1, Restart=2, Pause=3, Resume=4, ForceStop=5
+  code=$(acurl -X POST "$ORCH_URL/api/vms/$TEST_VM_ID/action" -d '{"action":0}')
   if [ "$code" = "400" ] && grep -q "VM_HELD" /tmp/hold_body; then
     ok "Start while held → 400 VM_HELD"
+  elif [ "$code" = "400" ]; then
+    bad "Start while held → 400 but NOT VM_HELD: $(head -c 160 /tmp/hold_body)"
   else
     bad "Start while held → $code ($(head -c 120 /tmp/hold_body))"
   fi

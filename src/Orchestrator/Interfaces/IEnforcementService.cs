@@ -36,6 +36,17 @@ public interface IEnforcementService
     Task<EnforcementResult> ResumeVmAsync(string vmId, string reason, string actor, CancellationToken ct = default);
 
     /// <summary>
+    /// Order a targeted CSAM hash check on one VM (Phase 6 pass 2b). Refuses unless the VM is
+    /// under a ComplianceHold whose reference matches <paramref name="reference"/> — the hold
+    /// is the "on cause" gate. Appends an Ordered scan record to the named report, issues the
+    /// ScanVm command to the host node, and returns the issued command id in AffectedVms-adjacent
+    /// form via EnforcementResult (Success + the report carries the record). The result lands on
+    /// the report asynchronously when the node acks.
+    /// </summary>
+    Task<EnforcementResult> ScanVmAsync(string vmId, string reference, string reason, string actor,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Immediate-cutoff override: for each of the wallet's already-suspended nodes, collapse
     /// the graceful drain — kill ephemeral/unconfirmed VMs now and migrate confirmed ones from
     /// their replica. The nodes are deregistered once drained. The wallet must already be

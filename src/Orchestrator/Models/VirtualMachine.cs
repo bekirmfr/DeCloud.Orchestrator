@@ -74,6 +74,17 @@ public class VirtualMachine
     /// </summary>
     public bool ComplianceHold { get; set; }
 
+    /// <summary>
+    /// The abuse-report reference (ABU-YYYY-NNNNN) this hold was applied under,
+    /// or null. Set and cleared together with ComplianceHold. This is the
+    /// current-state answer to "what is this VM held for" — distinct from the
+    /// append-only EnforcementAction audit row, which is the history. A targeted
+    /// scan (Phase 6 pass 2b) is permitted only when the caller cites a reference
+    /// that matches this field: the hold IS the "on cause" gate.
+    /// Null on a hold applied before this field existed, and on any unheld VM.
+    /// </summary>
+    public string? ComplianceHoldReference { get; set; }
+
     // Timestamps
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }

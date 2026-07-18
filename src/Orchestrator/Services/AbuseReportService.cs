@@ -104,6 +104,38 @@ public sealed class AbuseReportService : IAbuseReportService
         return await _reports.FindOneAndUpdateAsync(filter, update, opts, ct);
     }
 
+    public async Task<AbuseReport?> AppendScanOrderedAsync(string reference, CsamScanRecord record,
+        CancellationToken ct = default)
+    {
+        if (_reports == null) return null;
+        var filter = Builders<AbuseReport>.Filter.Eq(r => r.Reference, reference);
+        var update = Builders<AbuseReport>.Update.Push(r => r.ScanRecords, record);
+        var opts = new FindOneAndUpdateOptions<AbuseReport> { ReturnDocument = ReturnDocument.After };
+        return await _reports.FindOneAndUpdateAsync(filter, update, opts, ct);
+    }
+
+    public async Task<AbuseReport?> CompleteScanAsync(string commandId, CsamScanStatus status,
+        string outcome, string? matcher, string? fileMap, string? error,
+        CancellationToken ct = default)
+    {
+        if (_reports == null) return null;
+
+        // The record lives inside a report's ScanRecords array, keyed by commandId. Match the
+        // element and set its fields positionally. If nothing matches, the ack was for a scan
+        // this store never recorded as Ordered — return null and let the caller log it.
+        var filter = Builders<AbuseReport>.Filter.ElemMatch(
+            r => r.ScanRecords, sr => sr.CommandId == commandId);
+        var update = Builders<AbuseReport>.Update
+            .Set("ScanRecords.$.Status", status)
+            .Set("ScanRecords.$.Outcome", outcome)
+            .Set("ScanRecords.$.Matcher", matcher)
+            .Set("ScanRecords.$.FileMap", fileMap)
+            .Set("ScanRecords.$.Error", error)
+            .Set("ScanRecords.$.CompletedAt", DateTime.UtcNow);
+        var opts = new FindOneAndUpdateOptions<AbuseReport> { ReturnDocument = ReturnDocument.After };
+        return await _reports.FindOneAndUpdateAsync(filter, update, opts, ct);
+    }
+
     /// <summary>Atomic per-year sequence: one counter doc per year, $inc on each submit.</summary>
     private async Task<long> NextSequenceAsync(int year, CancellationToken ct)
     {

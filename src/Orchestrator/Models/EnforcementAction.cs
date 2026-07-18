@@ -8,7 +8,8 @@ public enum EnforcementActionType
     Unblock,
     TerminateVms,
     SuspendVm,
-    ResumeVm
+    ResumeVm,
+    ScanVm   // a targeted CSAM hash check was ordered
 }
 
 /// <summary>

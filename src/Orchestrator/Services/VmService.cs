@@ -1,5 +1,6 @@
 using DeCloud.Orchestrator.Interfaces.CloudInit;
 using DeCloud.Shared.Enums;
+using DeCloud.Shared.Json;
 using DeCloud.Shared.Models;
 using Microsoft.Extensions.Options;
 using Orchestrator.Interfaces;
@@ -628,7 +629,7 @@ public class VmService : IVmService
         return true;
     }
 
-    public async Task<VmHoldResult> SetVmComplianceHoldAsync(string vmId, bool held)
+    public async Task<VmHoldResult> SetVmComplianceHoldAsync(string vmId, bool held, string? reference = null)
     {
         var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null)
@@ -643,6 +644,7 @@ public class VmService : IVmService
             or VmStatus.Deleted or VmStatus.Deleting);
 
         vm.ComplianceHold = held;
+        vm.ComplianceHoldReference = held ? reference : null;
         vm.UpdatedAt = DateTime.UtcNow;
         vm.PushMessage(
             held ? "Administratively held (compliance)." : "Compliance hold lifted.",
@@ -663,6 +665,29 @@ public class VmService : IVmService
             held ? "set" : "lifted", vmId, stopped);
 
         return new VmHoldResult(true, null, ownerId, stopped);
+    }
+
+    public async Task<string?> RequestScanAsync(string vmId, CancellationToken ct = default)
+    {
+        var vm = await _dataStore.GetVmAsync(vmId);
+        if (vm == null || string.IsNullOrEmpty(vm.NodeId))
+        {
+            _logger.LogWarning("RequestScanAsync: VM {VmId} not found or has no host node", vmId);
+            return null;
+        }
+
+        var commandId = Guid.NewGuid().ToString();
+        var payload = JsonSerializer.Serialize(new { vmId }, JsonOptions.Wire);
+        var command = new NodeCommand(commandId, NodeCommandType.ScanVm, payload);
+
+        // Register for ack routing, but DO NOT stamp ActiveCommand* — a scan is not a
+        // lifecycle command and must not occupy that single slot.
+        _dataStore.RegisterCommand(commandId, vmId, vm.NodeId, NodeCommandType.ScanVm);
+        await _commandService.DeliverCommandAsync(vm.NodeId, command);
+
+        _logger.LogInformation("RequestScanAsync: issued ScanVm {CommandId} for VM {VmId} on node {NodeId}",
+            commandId, vmId, vm.NodeId);
+        return commandId;
     }
 
     public async Task<bool> DeleteVmAsync(string vmId, string? userId = null)

@@ -21,7 +21,7 @@ const MUTED = 'color:var(--text-muted,#888)';
 
 const CATEGORY_LABELS = ['CSAM', 'Malware / C2', 'Illegal marketplace', 'DMCA', 'TOS violation', 'Spam'];
 const PRIORITY_LABELS = ['P0', 'P1', 'P2', 'P3', 'P4'];
-const ACTION_LABELS = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'Terminate VMs', 'Suspend VM', 'Resume VM'];
+const ACTION_LABELS = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'Terminate VMs', 'Suspend VM', 'Resume VM', 'Scan VM'];
 
 // P0 most urgent (red), easing to muted by P4.
 const PRIORITY_STYLE = [
@@ -40,6 +40,16 @@ const actionLabel = t => ACTION_LABELS[idx(t, ACTION_LABELS)] ?? String(t);
 
 const fmtDate = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString(); };
 const shortWallet = w => (w && w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : (w ?? ''));
+
+// The scan-vm endpoint needs the VM id. Reports carry it in reportedResource as
+// "vm:<id>" (the csam-report path wrote exactly that in pass 1). Pull it from the
+// card's data. If a report's resource isn't vm-shaped, the button still POSTs and
+// the server refuses with a clear message — the UI does not pre-judge.
+function r_vmId(cardEl) {
+    const res = cardEl?.querySelector('[data-reported-resource]')?.getAttribute('data-reported-resource') || '';
+    const m = res.match(/^vm:(.+)$/);
+    return m ? m[1] : '';
+}
 
 export function initAdminAbuse(api) {
     _api = api;
@@ -110,6 +120,56 @@ function historyRows(history) {
     }).join('');
 }
 
+// CSAM reports (category 0) get a hash-check section: prior results + a button.
+// The button is enabled only when the report targets a held VM whose reference
+// matches — but the UI cannot see the hold, so it enables on csam+vm reports and
+// lets the server refuse (409/400) with a message. NotScanned must NEVER render
+// as "clean" or a green tick — it is "we have not checked", not "we checked".
+const SCAN_LABELS = {
+    NotScanned: ['Not checked', 'color:var(--text-muted,#888)'],
+    Clean: ['No known match', 'color:#22c55e'],
+    Match: ['KNOWN MATCH', 'color:#ef4444; font-weight:700'],
+    Unscannable: ['Could not read', 'color:#f59e0b'],
+};
+
+function scanRecordRow(sr) {
+    const status = sr.status ?? sr.Status;
+    const outcome = sr.outcome ?? sr.Outcome ?? 'NotScanned';
+    const when = fmtDate(sr.completedAt ?? sr.CompletedAt ?? sr.orderedAt ?? sr.OrderedAt);
+    if (status === 0 || status === 'Ordered')
+        return `<div style="${MUTED}; font-size:0.85rem;">⏳ ordered ${escapeHtml(when)} — awaiting node</div>`;
+    if (status === 2 || status === 'Failed') {
+        const err = escapeHtml(sr.error ?? sr.Error ?? 'scan did not run');
+        return `<div style="font-size:0.85rem; color:#f59e0b;">✗ could not check — ${err} <span style="${MUTED}">(${escapeHtml(when)})</span></div>`;
+    }
+    const [label, style] = SCAN_LABELS[outcome] ?? SCAN_LABELS.NotScanned;
+    const matcher = escapeHtml(sr.matcher ?? sr.Matcher ?? '');
+    return `<div style="font-size:0.85rem; ${style}">● ${escapeHtml(label)}
+            <span style="${MUTED}">— ${matcher} (${escapeHtml(when)})</span></div>`;
+}
+
+function scanSection(r) {
+    const category = r.category ?? r.Category;
+    const isCsam = category === 0 || category === 'Csam';
+    if (!isCsam) return '';
+    const records = r.scanRecords ?? r.ScanRecords ?? [];
+    const ref = escapeHtml(r.reference ?? '');
+    const rows = records.length
+        ? records.map(scanRecordRow).join('')
+        : `<div style="${MUTED}; font-size:0.85rem;">No hash check run yet.</div>`;
+    return `
+    <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border,#333);">
+      <div style="display:flex; align-items:center; gap:8px; justify-content:space-between;">
+        <strong style="font-size:0.85rem;">CSAM hash check</strong>
+        <button class="btn btn-secondary" data-action="scan" data-ref="${ref}"
+                title="Order a targeted hash check. The VM must already be held under this report.">
+          Run hash check
+        </button>
+      </div>
+      <div style="margin-top:6px;">${rows}</div>
+    </div>`;
+}
+
 function card(item) {
     const r = item.report ?? item.Report ?? {};
     const history = item.targetHistory ?? item.TargetHistory ?? [];
@@ -150,6 +210,7 @@ function card(item) {
           <button class="btn btn-secondary" data-action="warn"     data-ref="${ref}" title="Close with a warning note — no service withheld">Warn</button>
           <button class="btn btn-danger"    data-action="takedown" data-ref="${ref}" title="Suspend the target wallet and stop its VMs">Takedown</button>
         </div>
+        ${scanSection(r)}
       </div>`;
 }
 
@@ -164,6 +225,25 @@ function onQueueClick(e) {
 async function resolve(action, btn) {
     const cardEl = btn.closest('[data-report-ref]');
     const ref = btn.dataset.ref;
+
+    // Scan is not a resolution — it orders a hash check and refreshes.
+    if (action === 'scan') {
+        const reason = (cardEl?.querySelector('.aa-reason')?.value || '').trim()
+            || 'targeted CSAM hash check';
+        btn.disabled = true;
+        try {
+            await call('/api/admin/compliance/scan-vm', {
+                vmId: (r_vmId(cardEl) || ''), reference: ref, reason
+            });
+            showToast('Hash check ordered', 'success');
+            loadQueue();
+        } catch (e) {
+            showToast(e.message, 'error');
+            btn.disabled = false;
+        }
+        return;
+    }
+
     const reason = (cardEl?.querySelector('.aa-reason')?.value || '').trim();
     if (!reason) { showToast('A reason is required', 'error'); cardEl?.querySelector('.aa-reason')?.focus(); return; }
 

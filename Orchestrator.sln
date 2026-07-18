@@ -24,7 +24,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Frontend", "Frontend", "{8A
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9B1D8E7F-2345-4CDE-9BCD-EF0123456789}"
 	ProjectSection(SolutionItems) = preProject
-		admin-abuse.js = admin-abuse.js
+		src\Orchestrator\wwwroot\src\admin-abuse.js = src\Orchestrator\wwwroot\src\admin-abuse.js
 		src\Orchestrator\wwwroot\src\admin-compliance.js = src\Orchestrator\wwwroot\src\admin-compliance.js
 		src\Orchestrator\wwwroot\src\admin-templates.js = src\Orchestrator\wwwroot\src\admin-templates.js
 		src\Orchestrator\wwwroot\src\app.js = src\Orchestrator\wwwroot\src\app.js

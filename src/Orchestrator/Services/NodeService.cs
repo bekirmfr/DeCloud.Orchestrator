@@ -1815,6 +1815,55 @@ public class NodeService : INodeService
         await _dataStore.SaveVmAsync(affectedVm);
 
         // ====================================================================
+        // SCAN RESULT — route to the report, never to the VM-status machine
+        // ====================================================================
+        // A ScanVm ack is evidence for one abuse report, not a lifecycle event. It
+        // must land on the report whether the scan succeeded or failed — a failure
+        // that fell through to the VmError path below would be dropped silently
+        // (a held VM is Stopped, matches none of the status branches, and returns
+        // true). Handle it here and return.
+        if (registration?.CommandType == NodeCommandType.ScanVm)
+        {
+            var abuse = _serviceProvider.GetRequiredService<IAbuseReportService>();
+
+            if (ack.Success)
+            {
+                // data carries { outcome, matcher, enabled, files[] }
+                string outcome = "NotScanned";
+                string? matcher = null;
+                string? fileMap = null;
+                try
+                {
+                    var d = JsonDocument.Parse(ack.Data ?? "{}").RootElement;
+                    if (d.TryGetProperty("outcome", out var o)) outcome = o.GetString() ?? "NotScanned";
+                    if (d.TryGetProperty("matcher", out var m)) matcher = m.GetString();
+                    if (d.TryGetProperty("files", out var f) && f.ValueKind == JsonValueKind.Array
+                        && f.GetArrayLength() > 0)
+                        fileMap = f.GetRawText();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "ScanVm ack {CommandId}: unparseable data, recording NotScanned", commandId);
+                }
+
+                var updated = await abuse.CompleteScanAsync(
+                    commandId, CsamScanStatus.Completed, outcome, matcher, fileMap, null);
+                if (updated == null)
+                    _logger.LogWarning("ScanVm ack {CommandId}: no report holds this scan record", commandId);
+            }
+            else
+            {
+                var updated = await abuse.CompleteScanAsync(
+                    commandId, CsamScanStatus.Failed, "NotScanned", null, null,
+                    ack.ErrorMessage ?? "scan failed on node");
+                if (updated == null)
+                    _logger.LogWarning("ScanVm ack {CommandId} (failed): no report holds this scan record", commandId);
+            }
+
+            return true;
+        }
+
+        // ====================================================================
         // HANDLE COMMAND FAILURE
         // ====================================================================
 

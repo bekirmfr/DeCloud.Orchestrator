@@ -71,4 +71,45 @@ public class AbuseReport
     public string? ResolvedBy { get; set; }
     public DateTime? ResolvedAt { get; set; }
     public string? ResolutionNote { get; set; }
+
+    /// <summary>
+    /// Targeted CSAM hash-check results ordered against this report (Phase 6 pass 2b).
+    /// Append-only, newest appended last: a re-scan adds a record, never overwrites, so
+    /// clicking twice cannot erase evidence. Each record moves Ordered → Completed|Failed.
+    /// Empty on every report until a scan is ordered; today every Completed reads
+    /// NotScanned, because the matcher is not wired (2c).
+    /// </summary>
+    public List<CsamScanRecord> ScanRecords { get; set; } = new();
 }
+
+/// <summary>
+/// One ordered scan and its outcome. Status and outcome are two axes, never collapsed:
+/// Failed means the scan did not happen (node refused, VM running, disk missing) and
+/// leaves Outcome at its NotScanned default; Unscannable means the scanner ran and could
+/// not hash — a real content answer. "We couldn't check" must never read as "we checked."
+/// </summary>
+public class CsamScanRecord
+{
+    public string CommandId { get; set; } = string.Empty;
+    public CsamScanStatus Status { get; set; } = CsamScanStatus.Ordered;
+
+    /// <summary>The scanner's outcome once Completed. NotScanned until then, and forever
+    /// on a Failed record. Stored as its string name for a human-readable audit trail.</summary>
+    public string Outcome { get; set; } = "NotScanned";
+
+    /// <summary>Identity+version of whatever produced the outcome — filled by the scanner,
+    /// never by the caller, so 2c's real matcher names itself. "NullCsamScanner" today.</summary>
+    public string? Matcher { get; set; }
+
+    /// <summary>Present only on a Match: the offending file paths + hashes for evidence.</summary>
+    public string? FileMap { get; set; }
+
+    /// <summary>Failure detail on a Failed record (e.g. "VM is running", "disk not found").</summary>
+    public string? Error { get; set; }
+
+    public string OrderedBy { get; set; } = string.Empty;   // admin wallet
+    public DateTime OrderedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
+}
+
+public enum CsamScanStatus { Ordered, Completed, Failed }
