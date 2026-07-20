@@ -1,0 +1,22 @@
+sudo bash install.sh \
+    --mongodb "mongodb+srv://stackfi-admin:n550jpTSEDUFn0Le@clusterstackfi.pxlau.mongodb.net/DeCloud" \
+    --orchestrator-wallet "0xbCbF20BB01e64fa2038B5F307aB2a8dbC314F60D" \
+    --orchestrator-private-key "dee3def1c9cc9e2dca4a107d2ead2c20086a281077afd049c58243d695547dfb" \
+    --blockchain-chain-id "80002" \
+    --blockchain-rpc "https://polygon-amoy.drpc.org" \
+    --escrow-contract "0xa713e6af821f10d6dAac3Da39715e05dc9846d84" \
+    --usdc-token "0x8B0180f2101c8260d49339abfEe87927412494B4" \
+    --confirmations 20 \
+    --ingress-domain "vms.stackfi.tech" \
+    --caddy-email "admin@stackfi.tech" \
+    --cloudflare-token "h51N0EibU86xrixrY6JckkLgUx_L4pG3bwC1I9yh" \
+    --cloudflare-zone-id "d91e384f5398692d936ace46f4d319f7" \
+    --jwt-secret "y416HOHbO12hbQdoZeNvpJq6NdbIpbrce3T0Q1IUMUo=" \
+    --enable-wireguard
+
+curl -sSL https://raw.githubusercontent.com/bekirmfr/DeCloud.NodeAgent/main/install.sh | sudo bash -s -- \
+    --orchestrator https://localhost \
+    --wallet 0xbCbF20BB01e64fa2038B5F307aB2a8dbC314F60D \
+    --name orchestrator-node \
+    --port 5100 \
+    --wg-port 51820

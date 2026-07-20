@@ -288,32 +288,6 @@ public class NodeService : INodeService
         }
 
         // =====================================================
-        // STEP 1.8: Terms of Service Gate (compliance)
-        // =====================================================
-        // An operator hosts other people's workloads and is responsible for the
-        // infrastructure under their wallet — they need to be bound by the terms at
-        // least as much as a tenant does. The signature above proves the wallet;
-        // this proves the agreement. Checked server-side at action time.
-        //
-        // The operator accepts in the web app with the same wallet used for
-        // `decloud register`; the agent retries registration with backoff, so a
-        // rejected registration succeeds once they have signed. This gate is on
-        // REGISTRATION only — never on login (see the note in LoginNodeAsync) —
-        // so already-registered nodes keep running: the ToS gates new service, not
-        // service already in flight (Decision 16's principle).
-        var tos = _serviceProvider.GetRequiredService<ITosService>();
-        if (!await tos.HasAcceptedCurrentAsync(request.WalletAddress, ct))
-        {
-            _logger.LogWarning(
-                "Node registration rejected: wallet {Wallet} has not accepted the current ToS",
-                request.WalletAddress);
-            throw new UnauthorizedAccessException(
-                "This wallet must accept the current Terms of Service before registering a node. " +
-                "Sign in to the DeCloud web app with this wallet, accept the terms, then re-run " +
-                "'decloud register'.");
-        }
-
-        // =====================================================
         // STEP 1.8: Terms of Service — the declaration IS the acceptance
         // =====================================================
         // An operator hosts other people's workloads and is responsible for the
@@ -334,6 +308,7 @@ public class NodeService : INodeService
         // acceptance fail closed: an operator who signed v1.0.0 cannot register
         // once v1.1.0 is in effect — they re-run `decloud register`, are shown the
         // new terms, and sign those. Consistent with Decision 16 (no grace period).
+        var tos = _serviceProvider.GetRequiredService<ITosService>();
         var currentTos = tos.GetCurrent();
 
         var expectedVersionLine = $"Terms of Service version: {currentTos.Version}";
