@@ -134,7 +134,7 @@ public sealed partial class SystemVmTemplateSeeder
             Slug = "system-dht",
             Name = "DHT Peer Node",
             Description = "libp2p Kademlia DHT node for peer discovery, key-value storage, and GossipSub event propagation.",
-            Version = "7.0.0",
+            Version = "8.0.0",
             // Revision is derived from content hash in SeedTemplateAsync.
             Category = "infrastructure",
             AuthorId = "system",
@@ -240,7 +240,7 @@ public sealed partial class SystemVmTemplateSeeder
             Slug = "system-blockstore",
             Name = "Block Store Node",
             Description = "libp2p BitSwap block store for content-addressed storage and data replication.",
-            Version = "3.0.0",
+            Version = "4.0.0",
             // Revision is derived from content hash in SeedTemplateAsync.
             Category = "infrastructure",
             AuthorId = "system",
@@ -358,7 +358,7 @@ public sealed partial class SystemVmTemplateSeeder
         Slug = "system-relay",
         Name = "Relay Node",
         Description = "WireGuard relay for CGNAT traversal and peer-to-peer overlay routing.",
-        Version = "1.0.0",
+        Version = "2.0.0",
         // Revision is derived from content hash in SeedTemplateAsync.
         Category = "infrastructure",
         AuthorId = "system",
