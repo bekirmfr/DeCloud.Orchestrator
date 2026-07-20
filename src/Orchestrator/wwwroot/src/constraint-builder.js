@@ -37,34 +37,34 @@
 // Must stay aligned with ConstraintEvaluator.BuildOperatorRegistry.
 // When a new operator is added to the registry, add it here too.
 const TYPE_OPERATORS = {
-    String:     ['eq', 'neq', 'in', 'not_in',
-                'starts_with', 'ends_with', 'includes',
-                'adjacent_to', 'same_continent_as', 'has_jurisdiction_tag'],
-    Numeric:    ['eq', 'neq', 'in', 'not_in', 'gte', 'lte', 'gt', 'lt'],
-    Boolean:    ['eq', 'neq'],
+    String: ['eq', 'neq', 'in', 'not_in',
+        'starts_with', 'ends_with', 'includes',
+        'adjacent_to', 'same_continent_as', 'has_jurisdiction_tag'],
+    Numeric: ['eq', 'neq', 'in', 'not_in', 'gte', 'lte', 'gt', 'lt'],
+    Boolean: ['eq', 'neq'],
     StringList: ['contains', 'not_contains', 'contains_all', 'contains_any', 'contains_none'],
 };
 
 // Friendly display labels for operators shown in the dropdown.
 const OP_LABEL = {
-    eq:                   '= equals',
-    neq:                  '≠ not equals',
-    in:                   'in list',
-    not_in:               'not in list',
-    gte:                  '≥ at least',
-    lte:                  '≤ at most',
-    gt:                   '> greater than',
-    lt:                   '< less than',
-    contains:             'contains',
-    not_contains:         'not contains',
-    contains_all:         'contains all',
-    contains_any:         'contains any',
-    contains_none:        'contains none',
-    starts_with:          'starts with',
-    ends_with:            'ends with',
-    includes:             'includes (substring)',
-    adjacent_to:          'adjacent to',
-    same_continent_as:    'same continent as',
+    eq: '= equals',
+    neq: '≠ not equals',
+    in: 'in list',
+    not_in: 'not in list',
+    gte: '≥ at least',
+    lte: '≤ at most',
+    gt: '> greater than',
+    lt: '< less than',
+    contains: 'contains',
+    not_contains: 'not contains',
+    contains_all: 'contains all',
+    contains_any: 'contains any',
+    contains_none: 'contains none',
+    starts_with: 'starts with',
+    ends_with: 'ends with',
+    includes: 'includes (substring)',
+    adjacent_to: 'adjacent to',
+    same_continent_as: 'same continent as',
     has_jurisdiction_tag: 'has jurisdiction tag',
 };
 
@@ -80,10 +80,11 @@ async function loadVocabulary(apiBase) {
     if (_vocab) return _vocab;
     try {
         const r = await fetch(`${apiBase}/api/vms/constraint-vocabulary`);
-        const d = r.ok ? await r.json() : {};
+        const body = r.ok ? await r.json() : {};
+        const d = body?.data ?? body;
         _vocab = {
-            targets:     Array.isArray(d.targets)   ? [...d.targets].sort()   : [],
-            operators:   Array.isArray(d.operators) ? [...d.operators].sort() : [],
+            targets: Array.isArray(d.targets) ? [...d.targets].sort() : [],
+            operators: Array.isArray(d.operators) ? [...d.operators].sort() : [],
             targetTypes: d.targetTypes ?? {},
         };
     } catch (e) {
@@ -256,11 +257,11 @@ function makeValueInput(type, operator, currentValue) {
 
     inp.type = 'text';
     inp.placeholder =
-        LIST_OPS.has(operator)           ? 'comma-separated  (e.g. DE, FR, NL)'
-        : operator === 'adjacent_to'     ? 'region code  (e.g. eu-central)'
-        : operator === 'has_jurisdiction_tag' ? 'country code  (e.g. DE)'
-        : type === 'StringList'          ? 'value'
-        :                                  'value  (e.g. eu-central  or  99.5)';
+        LIST_OPS.has(operator) ? 'comma-separated  (e.g. DE, FR, NL)'
+            : operator === 'adjacent_to' ? 'region code  (e.g. eu-central)'
+                : operator === 'has_jurisdiction_tag' ? 'country code  (e.g. DE)'
+                    : type === 'StringList' ? 'value'
+                        : 'value  (e.g. eu-central  or  99.5)';
 
     if (currentValue !== null && currentValue !== undefined)
         inp.value = Array.isArray(currentValue)
@@ -307,7 +308,7 @@ function buildRow(vocab, constraint, locked, onRemove, onChange) {
     tgt.innerHTML = '<option value="">— target —</option>'
         + vocab.targets.map(t =>
             `<option value="${esc(t)}"${constraint?.target === t ? ' selected' : ''}>${esc(t)}</option>`
-          ).join('');
+        ).join('');
 
     // Operator dropdown — filtered by target value type.
     const op = mkEl('select', 'cb-operator');
@@ -315,11 +316,11 @@ function buildRow(vocab, constraint, locked, onRemove, onChange) {
 
     function refreshOps(type, selectedOp) {
         const compatible = TYPE_OPERATORS[type] ?? [];
-        const available  = compatible.filter(o => vocab.operators.includes(o));
+        const available = compatible.filter(o => vocab.operators.includes(o));
         op.innerHTML = '<option value="">— op —</option>'
             + available.map(o =>
                 `<option value="${esc(o)}"${selectedOp === o ? ' selected' : ''}>${esc(OP_LABEL[o] ?? o)}</option>`
-              ).join('');
+            ).join('');
     }
 
     refreshOps(initType, constraint?.operator ?? '');
@@ -331,10 +332,10 @@ function buildRow(vocab, constraint, locked, onRemove, onChange) {
 
     function refreshVal(type, operator, preserveText) {
         const prev = preserveText ? valEl.value : undefined;
-        const nv   = makeValueInput(type, operator, prev ?? null);
+        const nv = makeValueInput(type, operator, prev ?? null);
         nv.disabled = locked;
         nv.addEventListener('change', onChange);
-        nv.addEventListener('input',  onChange);
+        nv.addEventListener('input', onChange);
         valEl.replaceWith(nv);
         valEl = nv;
     }
@@ -353,17 +354,17 @@ function buildRow(vocab, constraint, locked, onRemove, onChange) {
     });
 
     valEl.addEventListener('change', onChange);
-    valEl.addEventListener('input',  onChange);
+    valEl.addEventListener('input', onChange);
 
     // Remove / lock button.
     const rmBtn = mkEl('button', locked ? 'cb-remove cb-remove--locked' : 'cb-remove',
         { type: 'button' });
     if (locked) {
-        rmBtn.title    = 'Required by template — cannot be removed';
+        rmBtn.title = 'Required by template — cannot be removed';
         rmBtn.textContent = '🔒';
         rmBtn.disabled = true;
     } else {
-        rmBtn.title    = 'Remove constraint';
+        rmBtn.title = 'Remove constraint';
         rmBtn.textContent = '✕';
         rmBtn.addEventListener('click', () => onRemove(row));
     }
@@ -376,9 +377,9 @@ function buildRow(vocab, constraint, locked, onRemove, onChange) {
     // Read the row's current state. Querying .cb-value from the DOM avoids
     // stale closure issues when valEl is replaced on target/operator change.
     row._getConstraint = () => {
-        const target   = tgt.value.trim();
+        const target = tgt.value.trim();
         const operator = op.value.trim();
-        const raw      = row.querySelector('.cb-value')?.value?.trim() ?? '';
+        const raw = row.querySelector('.cb-value')?.value?.trim() ?? '';
         if (!target || !operator) return null; // incomplete row — skipped
         const type = vocab.targetTypes[target] ?? 'String';
         return { target, operator, value: parseValue(raw, type, operator) };
@@ -393,8 +394,8 @@ function updatePreview(el, data) {
     const { eligible, totalOnline, rejectionReasons } = data;
     const colour =
         eligible === 0 ? 'var(--color-error,#e53e3e)'
-        : eligible < 3  ? 'var(--color-warning,#d69e2e)'
-        :                  'var(--color-success,#38a169)';
+            : eligible < 3 ? 'var(--color-warning,#d69e2e)'
+                : 'var(--color-success,#38a169)';
     let html = `<span style="font-weight:600;color:${colour}">${eligible}</span> of ${totalOnline} nodes match`;
     if (rejectionReasons?.length) {
         const top = rejectionReasons.slice(0, 3)
@@ -409,13 +410,13 @@ function updatePreview(el, data) {
 // ── mount (public export) ─────────────────────────────────────────────────────
 export async function mount(containerEl, options = {}) {
     const {
-        initial      = [],
-        lockedRows   = [],
-        mode         = 'edit',
-        onChange     = null,
-        apiFetch     = null,   // authenticated fetch — enables preview
-        apiBase      = '',
-        qualityTier  = 'Standard',
+        initial = [],
+        lockedRows = [],
+        mode = 'edit',
+        onChange = null,
+        apiFetch = null,   // authenticated fetch — enables preview
+        apiBase = '',
+        qualityTier = 'Standard',
     } = options;
 
     const readonly = mode === 'readonly';
@@ -432,12 +433,12 @@ export async function mount(containerEl, options = {}) {
     containerEl.innerHTML = '';
 
     const section = mkEl('div', 'cb-section');
-    const toggle  = mkEl('button', 'cb-toggle', { type: 'button', 'aria-expanded': 'false' });
-    const body    = mkEl('div', 'cb-body', { style: 'display:none' });
-    const hint    = mkEl('p', 'cb-hint');
-    const rowsEl  = mkEl('div', 'cb-rows');
-    const footer  = mkEl('div', 'cb-footer');
-    const addBtn  = mkEl('button', 'cb-add-btn', { type: 'button' });
+    const toggle = mkEl('button', 'cb-toggle', { type: 'button', 'aria-expanded': 'false' });
+    const body = mkEl('div', 'cb-body', { style: 'display:none' });
+    const hint = mkEl('p', 'cb-hint');
+    const rowsEl = mkEl('div', 'cb-rows');
+    const footer = mkEl('div', 'cb-footer');
+    const addBtn = mkEl('button', 'cb-add-btn', { type: 'button' });
     const preview = mkEl('div', 'cb-preview', { style: 'display:none' });
     const countEl = mkEl('span', 'cb-toggle-count', { style: 'display:none' });
     const chevron = mkEl('span', 'cb-chevron');
@@ -544,7 +545,7 @@ export async function mount(containerEl, options = {}) {
 
     // ── Populate ──────────────────────────────────────────────────────────────
     lockedRows.forEach(c => addRow(c, true));
-    initial.forEach(c    => addRow(c, false));
+    initial.forEach(c => addRow(c, false));
 
     if (lockedRows.length + initial.length > 0) {
         body.style.display = 'flex';

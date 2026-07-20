@@ -400,15 +400,20 @@ public class VmsController : ControllerBase
     /// </summary>
     [HttpGet("constraint-vocabulary")]
     [AllowAnonymous]
-    public IActionResult GetConstraintVocabulary()
+    public ActionResult<ApiResponse<ConstraintVocabulary>> GetConstraintVocabulary()
     {
-        return Ok(new
-        {
-            targets = _constraintEvaluator.KnownTargets.Order(),
-            targetTypes = _constraintEvaluator.TargetTypes,
-            operators = _constraintEvaluator.KnownOperators.Order()
-        });
+        var vocabulary = new ConstraintVocabulary(
+            _constraintEvaluator.KnownTargets.Order().ToList(),
+            _constraintEvaluator.TargetTypes,
+            _constraintEvaluator.KnownOperators.Order().ToList());
+        return Ok(ApiResponse<ConstraintVocabulary>.Ok(vocabulary));
     }
+
+    /// <summary>Vocabulary for the constraint builder: valid targets, their value types, and operators.</summary>
+    public sealed record ConstraintVocabulary(
+        IReadOnlyList<string> Targets,
+        IReadOnlyDictionary<string, string> TargetTypes,
+        IReadOnlyList<string> Operators);
 
     /// <summary>
     /// Get VM metrics
