@@ -196,7 +196,13 @@ public class RelayNodeService : IRelayNodeService
                 WireGuardConfig = wgConfig,
                 PublicEndpoint = $"https://relay-{relayNode.Locality.Region}-{relayNode.Id[..8]}.{baseDomain}",
                 TunnelStatus = TunnelStatus.Connecting,
-                LastHandshake = null
+                LastHandshake = null,
+                // The CGNAT node's NodeAgent has no local relay obligation, so it
+                // cannot read the relay's fail-closed add-peer token. Deliver it here
+                // (same token the orchestrator uses for the host add-peer), so the
+                // node can authenticate its own system-VM peer registrations.
+                RelayApiToken = relayNode.SystemVmObligations
+                    .FirstOrDefault(o => o.Role == SystemVmRole.Relay)?.AuthToken
             };
 
             // Register CGNAT node with relay VM's WireGuard server
