@@ -44,7 +44,8 @@ export async function getDirectAccessInfo(vmId) {
             throw new Error(`HTTP ${response.status}`);
         }
 
-        return await response.json();
+        const body = await response.json();
+        return body?.data ?? body;
     } catch (error) {
         console.error('Error fetching direct access info:', error);
         throw error;
@@ -65,10 +66,10 @@ export async function allocatePort(vmId, vmPort, protocol = 1, label = null) {
         const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(data.error || `HTTP ${response.status}`);
+            throw new Error((data.error?.message ?? data.error) || `HTTP ${response.status}`);
         }
 
-        return data;
+        return data?.data ?? data;
     } catch (error) {
         console.error('Error allocating port:', error);
         throw error;
@@ -109,10 +110,10 @@ export async function quickAddService(vmId, serviceName) {
         const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(data.error || `HTTP ${response.status}`);
+            throw new Error((data.error?.message ?? data.error) || `HTTP ${response.status}`);
         }
 
-        return data;
+        return data?.data ?? data;
     } catch (error) {
         console.error('Error quick-adding service:', error);
         throw error;
@@ -130,7 +131,8 @@ export async function getAvailableServices(vmId) {
             throw new Error(`HTTP ${response.status}`);
         }
 
-        return await response.json();
+        const body = await response.json();
+        return body?.data ?? body;
     } catch (error) {
         console.error('Error fetching services:', error);
         return { services: [] };
@@ -344,15 +346,15 @@ function renderQuickAddButtons(vmId) {
             <h4>Quick Add Service</h4>
             <div class="quick-add-buttons">
                 ${popularServices.map(service => {
-                    const config = COMMON_SERVICES[service];
-                    return `
+        const config = COMMON_SERVICES[service];
+        return `
                         <button class="quick-add-btn" data-action="quick-add" data-service="${escapeHtml(service)}" title="${escapeHtml(config.label)} - Port ${config.port}">
                             <span class="service-icon">${escapeHtml(config.icon)}</span>
                             <span class="service-name">${escapeHtml(config.label)}</span>
                             <span class="service-port">${config.port}</span>
                         </button>
                     `;
-                }).join('')}
+    }).join('')}
             </div>
         </div>
 
@@ -387,7 +389,7 @@ function renderQuickAddButtons(vmId) {
 /**
  * Quick-add a service
  */
-window.quickAddDirectAccessService = async function(vmId, serviceName) {
+window.quickAddDirectAccessService = async function (vmId, serviceName) {
     try {
         showToast(`Adding ${COMMON_SERVICES[serviceName]?.label || serviceName}...`, 'info');
 
@@ -407,7 +409,7 @@ window.quickAddDirectAccessService = async function(vmId, serviceName) {
 /**
  * Add custom port
  */
-window.addCustomDirectAccessPort = async function(vmId) {
+window.addCustomDirectAccessPort = async function (vmId) {
     const vmPortInput = document.getElementById('custom-vm-port');
     const protocolSelect = document.getElementById('custom-protocol');
     const labelInput = document.getElementById('custom-label');
@@ -444,7 +446,7 @@ window.addCustomDirectAccessPort = async function(vmId) {
 /**
  * Remove a port mapping
  */
-window.removeDirectAccessPort = async function(vmPort) {
+window.removeDirectAccessPort = async function (vmPort) {
     const modal = document.getElementById('direct-access-modal');
     const vmId = modal.dataset.vmId;
 
@@ -470,7 +472,7 @@ window.removeDirectAccessPort = async function(vmPort) {
 /**
  * Copy to clipboard utility
  */
-window.copyToClipboard = function(text) {
+window.copyToClipboard = function (text) {
     navigator.clipboard.writeText(text).then(() => {
         showToast('Copied to clipboard!', 'success');
     }).catch(err => {

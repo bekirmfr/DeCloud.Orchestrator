@@ -39,11 +39,11 @@ public class VmDirectAccessController : ControllerBase
     {
         var userId = GetUserId();
         if (string.IsNullOrEmpty(userId))
-            return Unauthorized(new { error = "User not authenticated" });
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "User not authenticated"));
 
         var vm = await _dataStore.GetVmAsync(vmId);
         if (vm == null)
-            return NotFound(new { error = "VM not found" });
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "VM not found"));
 
         if (vm.OwnerId != userId && !User.IsInRole("Admin"))
             return Forbid();
@@ -56,17 +56,17 @@ public class VmDirectAccessController : ControllerBase
     /// </summary>
     /// <param name="vmId">VM ID</param>
     [HttpGet]
-    public async Task<ActionResult<DirectAccessInfoResponse>> GetDirectAccessInfo(string vmId)
+    public async Task<ActionResult<ApiResponse<DirectAccessInfoResponse>>> GetDirectAccessInfo(string vmId)
     {
         if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
 
         var info = await _directAccessService.GetDirectAccessInfoAsync(vmId);
         if (info == null)
         {
-            return NotFound(new { error = "VM not found or direct access not configured" });
+            return NotFound(ApiResponse<DirectAccessInfoResponse>.Fail("NOT_FOUND", "VM not found or direct access not configured"));
         }
 
-        return Ok(info);
+        return Ok(ApiResponse<DirectAccessInfoResponse>.Ok(info));
     }
 
     /// <summary>
@@ -75,7 +75,7 @@ public class VmDirectAccessController : ControllerBase
     /// <param name="vmId">VM ID</param>
     /// <param name="request">Port allocation request</param>
     [HttpPost("ports")]
-    public async Task<ActionResult<AllocatePortResponse>> AllocatePort(
+    public async Task<ActionResult<ApiResponse<AllocatePortResponse>>> AllocatePort(
         string vmId,
         [FromBody] AllocatePortRequest request)
     {
@@ -93,10 +93,10 @@ public class VmDirectAccessController : ControllerBase
 
         if (!result.Success)
         {
-            return BadRequest(result);
+            return BadRequest(ApiResponse<AllocatePortResponse>.Fail("PORT_ALLOCATION_FAILED", result.Error ?? "Port allocation failed"));
         }
 
-        return Ok(result);
+        return Ok(ApiResponse<AllocatePortResponse>.Ok(result));
     }
 
     /// <summary>
@@ -105,7 +105,7 @@ public class VmDirectAccessController : ControllerBase
     /// <param name="vmId">VM ID</param>
     /// <param name="vmPort">VM port to remove</param>
     [HttpDelete("ports/{vmPort}")]
-    public async Task<ActionResult> RemovePort(string vmId, int vmPort)
+    public async Task<ActionResult<ApiResponse<object>>> RemovePort(string vmId, int vmPort)
     {
         if (await AuthorizeVmAccessAsync(vmId) is { } denied) return denied;
 
@@ -114,7 +114,7 @@ public class VmDirectAccessController : ControllerBase
         var success = await _directAccessService.RemovePortAsync(vmId, vmPort);
         if (!success)
         {
-            return NotFound(new { error = "Port mapping not found" });
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Port mapping not found"));
         }
 
         return NoContent();
@@ -126,7 +126,7 @@ public class VmDirectAccessController : ControllerBase
     /// <param name="vmId">VM ID</param>
     /// <param name="request">Service name (e.g., "ssh", "mysql", "minecraft")</param>
     [HttpPost("quick-add")]
-    public async Task<ActionResult<AllocatePortResponse>> QuickAddService(
+    public async Task<ActionResult<ApiResponse<AllocatePortResponse>>> QuickAddService(
         string vmId,
         [FromBody] QuickAddServiceRequest request)
     {
@@ -142,26 +142,27 @@ public class VmDirectAccessController : ControllerBase
 
         if (!result.Success)
         {
-            return BadRequest(result);
+            return BadRequest(ApiResponse<AllocatePortResponse>.Fail("QUICK_ADD_FAILED", result.Error ?? "Quick-add failed"));
         }
 
-        return Ok(result);
+        return Ok(ApiResponse<AllocatePortResponse>.Ok(result));
     }
 
     /// <summary>
     /// Get list of available quick-add services
     /// </summary>
     [HttpGet("services")]
-    public ActionResult<Dictionary<string, object>> GetAvailableServices()
+    public ActionResult<ApiResponse<IReadOnlyList<DirectAccessServiceInfo>>> GetAvailableServices()
     {
-        var services = CommonServices.Templates.Select(kvp => new
-        {
-            name = kvp.Key,
-            port = kvp.Value.Port,
-            protocol = kvp.Value.Protocol.ToString(),
-            label = kvp.Value.Label
-        }).ToList();
+        var services = CommonServices.Templates.Select(kvp => new DirectAccessServiceInfo(
+            kvp.Key,
+            kvp.Value.Port,
+            kvp.Value.Protocol.ToString(),
+            kvp.Value.Label)).ToList();
 
-        return Ok(new { services });
+        return Ok(ApiResponse<IReadOnlyList<DirectAccessServiceInfo>>.Ok(services));
     }
+
+    /// <summary>One quick-add service template exposed by GET .../services.</summary>
+    public sealed record DirectAccessServiceInfo(string Name, int Port, string Protocol, string Label);
 }
