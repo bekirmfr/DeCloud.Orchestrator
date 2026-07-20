@@ -30,18 +30,18 @@ public class SchedulingConfigController : ControllerBase
     /// </summary>
     /// <returns>Current scheduling configuration</returns>
     [HttpGet]
-    [ProducesResponseType(typeof(SchedulingConfig), 200)]
-    public async Task<ActionResult<SchedulingConfig>> GetConfig()
+    [ProducesResponseType(typeof(ApiResponse<SchedulingConfig>), 200)]
+    public async Task<ActionResult<ApiResponse<SchedulingConfig>>> GetConfig()
     {
         try
         {
             var config = await _configService.GetConfigAsync();
-            return Ok(config);
+            return Ok(ApiResponse<SchedulingConfig>.Ok(config));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get scheduling configuration");
-            return StatusCode(500, new { error = "Failed to retrieve configuration" });
+            return StatusCode(500, ApiResponse<SchedulingConfig>.Fail("INTERNAL_ERROR", "Failed to retrieve configuration"));
         }
     }
 
@@ -51,9 +51,9 @@ public class SchedulingConfigController : ControllerBase
     /// <param name="config">New configuration to apply</param>
     /// <returns>Updated configuration</returns>
     [HttpPut]
-    [ProducesResponseType(typeof(SchedulingConfig), 200)]
-    [ProducesResponseType(typeof(ErrorResponse), 400)]
-    public async Task<ActionResult<SchedulingConfig>> UpdateConfig(
+    [ProducesResponseType(typeof(ApiResponse<SchedulingConfig>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<SchedulingConfig>), 400)]
+    public async Task<ActionResult<ApiResponse<SchedulingConfig>>> UpdateConfig(
         [FromBody] SchedulingConfig config)
     {
         try
@@ -67,25 +67,17 @@ public class SchedulingConfigController : ControllerBase
                 "Scheduling configuration updated to v{Version} by {User}",
                 updated.Version, updatedBy);
 
-            return Ok(updated);
+            return Ok(ApiResponse<SchedulingConfig>.Ok(updated));
         }
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Invalid configuration update attempt");
-            return BadRequest(new ErrorResponse
-            {
-                Error = "Validation failed",
-                Message = ex.Message
-            });
+            return BadRequest(ApiResponse<SchedulingConfig>.Fail("VALIDATION_FAILED", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update scheduling configuration");
-            return StatusCode(500, new ErrorResponse
-            {
-                Error = "Update failed",
-                Message = "An error occurred while updating configuration"
-            });
+            return StatusCode(500, ApiResponse<SchedulingConfig>.Fail("INTERNAL_ERROR", "An error occurred while updating configuration"));
         }
     }
 
@@ -94,8 +86,8 @@ public class SchedulingConfigController : ControllerBase
     /// </summary>
     /// <returns>Success message</returns>
     [HttpPost("reload")]
-    [ProducesResponseType(typeof(SuccessResponse), 200)]
-    public async Task<ActionResult<SuccessResponse>> ReloadConfig()
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    public async Task<ActionResult<ApiResponse<bool>>> ReloadConfig()
     {
         try
         {
@@ -103,19 +95,12 @@ public class SchedulingConfigController : ControllerBase
 
             _logger.LogInformation("Configuration cache cleared and reloaded");
 
-            return Ok(new SuccessResponse
-            {
-                Message = "Configuration reloaded successfully"
-            });
+            return Ok(ApiResponse<bool>.Ok(true));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to reload configuration");
-            return StatusCode(500, new ErrorResponse
-            {
-                Error = "Reload failed",
-                Message = "An error occurred while reloading configuration"
-            });
+            return StatusCode(500, ApiResponse<bool>.Fail("INTERNAL_ERROR", "An error occurred while reloading configuration"));
         }
     }
 
@@ -125,30 +110,22 @@ public class SchedulingConfigController : ControllerBase
     /// <param name="limit">Number of historical versions to return (default: 10)</param>
     /// <returns>List of historical configurations</returns>
     [HttpGet("history")]
-    [ProducesResponseType(typeof(List<SchedulingConfig>), 200)]
-    public async Task<ActionResult<List<SchedulingConfig>>> GetConfigHistory(
+    [ProducesResponseType(typeof(ApiResponse<List<SchedulingConfig>>), 200)]
+    public async Task<ActionResult<ApiResponse<List<SchedulingConfig>>>> GetConfigHistory(
         [FromQuery] int limit = 10)
     {
         try
         {
             if (limit < 1 || limit > 100)
-                return BadRequest(new ErrorResponse
-                {
-                    Error = "Invalid limit",
-                    Message = "Limit must be between 1 and 100"
-                });
+                return BadRequest(ApiResponse<List<SchedulingConfig>>.Fail("INVALID_LIMIT", "Limit must be between 1 and 100"));
 
             var history = await _configService.GetConfigHistoryAsync(limit);
-            return Ok(history);
+            return Ok(ApiResponse<List<SchedulingConfig>>.Ok(history));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get configuration history");
-            return StatusCode(500, new ErrorResponse
-            {
-                Error = "History retrieval failed",
-                Message = "An error occurred while retrieving configuration history"
-            });
+            return StatusCode(500, ApiResponse<List<SchedulingConfig>>.Fail("INTERNAL_ERROR", "An error occurred while retrieving configuration history"));
         }
     }
 
@@ -159,9 +136,9 @@ public class SchedulingConfigController : ControllerBase
     /// <param name="config">Configuration to validate</param>
     /// <returns>Validation result</returns>
     [HttpPost("validate")]
-    [ProducesResponseType(typeof(ValidationResult), 200)]
-    [ProducesResponseType(typeof(ValidationResult), 400)]
-    public ActionResult<ValidationResult> ValidateConfig(
+    [ProducesResponseType(typeof(ApiResponse<bool>), 200)]
+    [ProducesResponseType(typeof(ApiResponse<bool>), 400)]
+    public ActionResult<ApiResponse<bool>> ValidateConfig(
         [FromBody] SchedulingConfig config)
     {
         try
@@ -207,54 +184,15 @@ public class SchedulingConfigController : ControllerBase
 
             if (errors.Any())
             {
-                return BadRequest(new ValidationResult
-                {
-                    IsValid = false,
-                    Errors = errors
-                });
+                return BadRequest(ApiResponse<bool>.Fail("VALIDATION_FAILED", "Configuration validation failed", new Dictionary<string, object> { ["errors"] = errors }));
             }
 
-            return Ok(new ValidationResult
-            {
-                IsValid = true,
-                Message = "Configuration is valid"
-            });
+            return Ok(ApiResponse<bool>.Ok(true));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during configuration validation");
-            return BadRequest(new ValidationResult
-            {
-                IsValid = false,
-                Errors = new List<string> { ex.Message }
-            });
+            return BadRequest(ApiResponse<bool>.Fail("VALIDATION_FAILED", "Configuration validation failed", new Dictionary<string, object> { ["errors"] = new List<string> { ex.Message } }));
         }
     }
-}
-
-/// <summary>
-/// Standard error response
-/// </summary>
-public class ErrorResponse
-{
-    public string Error { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Standard success response
-/// </summary>
-public class SuccessResponse
-{
-    public string Message { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Validation result response
-/// </summary>
-public class ValidationResult
-{
-    public bool IsValid { get; set; }
-    public string? Message { get; set; }
-    public List<string> Errors { get; set; } = new();
 }
