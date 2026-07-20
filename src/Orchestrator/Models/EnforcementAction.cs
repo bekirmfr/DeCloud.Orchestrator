@@ -1,5 +1,8 @@
+using System.Text.Json.Serialization;
+
 namespace Orchestrator.Models;
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum EnforcementActionType
 {
     Suspend,

@@ -118,10 +118,10 @@ public partial class AdminAbuseController : ControllerBase
             report.Reference, action, Actor());
 
         return Ok(ApiResponse<AbuseResolution>.Ok(
-            new AbuseResolution(updated.Reference, updated.Status.ToString(), enforcement?.AffectedVms ?? 0)));
+            new AbuseResolution(updated.Reference, updated.Status, enforcement?.AffectedVms ?? 0)));
     }
 }
 
 public record ResolveRequest(string Action, string Reason, string? TargetWallet);
 public record AbuseQueueItem(AbuseReport Report, List<EnforcementAction> TargetHistory);
-public record AbuseResolution(string Reference, string Status, int AffectedVms);
+public record AbuseResolution(string Reference, AbuseReportStatus Status, int AffectedVms);

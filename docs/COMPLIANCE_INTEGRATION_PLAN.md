@@ -2,7 +2,7 @@
 
 **Status:** Active — build sequencing for the pre-launch compliance framework
 **Created:** 2026-06-26
-**Updated:** 2026-07-17 — **Phase 6 re-scoped: CSAM hash matching is TARGETED ON CAUSE, not proactive (Decision 18, superseding 9 and 15; D1 moot).** The flow is *report → hold + preserve → targeted hash check → human decision → law enforcement*. Prompted by the decision to incorporate in **Estonia (EU)**, which forced the question onto its merits instead of a US-shaped checklist: DSA Art 8 forbids general-monitoring obligations and Art 7 protects voluntary investigation, so nothing requires proactive scanning — while GDPR needs a lawful basis that indiscriminate per-cycle hashing would struggle to justify when a reactive mechanism exists. Targeted matching is also the **only way to confirm a report about a private disk without a human ever seeing the material**, which is the gap the reactive path had. **§2 is now EU-anchored and unanswered — counsel must confirm the frame before anything is filed.** **Earlier:** ToS gates at every door + the node declaration carries the acceptance (Decision 17), plus three defects found reading the signing path (freshness verdict discarded; declaration unbound to what was recorded; refusals reported as 500). Public `report.html` + `tos.html` shipped — the abuse intake had no page, and the login page's ToS link went nowhere. Documentation audit; two role-case defects; takedown now archives templates. Phase 6 pass 1 built and verified, then partly reverted per Decision 18. Phases 1–5 as recorded: ToS built (**text still counsel-gated — operators type 'accept' on a document headed "NOT YET IN EFFECT"**); Enforcement Core; Template Review Gate; Abuse Reporting; DMCA = no new code. The honest external claim remains *"reactive detection + template-publish review"* — which Decision 18 makes **more** accurate, not less. See §7.
+**Updated:** 2026-07-18 — **Phase 6 re-scoped: CSAM hash matching is TARGETED ON CAUSE, not proactive (Decision 18, superseding 9 and 15; D1 moot).** The flow is *report → hold + preserve → targeted hash check → human decision → law enforcement*. Prompted by the decision to incorporate in **Estonia (EU)**, which forced the question onto its merits instead of a US-shaped checklist: DSA Art 8 forbids general-monitoring obligations and Art 7 protects voluntary investigation, so nothing requires proactive scanning — while GDPR needs a lawful basis that indiscriminate per-cycle hashing would struggle to justify when a reactive mechanism exists. Targeted matching is also the **only way to confirm a report about a private disk without a human ever seeing the material**, which is the gap the reactive path had. **§2 is now EU-anchored and unanswered — counsel must confirm the frame before anything is filed.** **Earlier:** ToS gates at every door + the node declaration carries the acceptance (Decision 17), plus three defects found reading the signing path (freshness verdict discarded; declaration unbound to what was recorded; refusals reported as 500). Public `report.html` + `tos.html` shipped — the abuse intake had no page, and the login page's ToS link went nowhere. Documentation audit; two role-case defects; takedown now archives templates. Phase 6 pass 1 built and verified, then partly reverted per Decision 18 (pass 2a); the targeted scan chain rebuilt and verified with the stub (pass 2b, 2026-07-18 — matcher still gated on §2). Phases 1–5 as recorded: ToS built (**text still counsel-gated — operators type 'accept' on a document headed "NOT YET IN EFFECT"**); Enforcement Core; Template Review Gate; Abuse Reporting; DMCA = no new code. The honest external claim remains *"reactive detection + template-publish review"* — which Decision 18 makes **more** accurate, not less. See §7.
 **References:** `COMPLIANCE.md`, `PROJECT_FEATURES.md` §10, `MINECRAFT_VISION_ROADMAP.md`
 
 > **Document ownership (settled 2026-07-16).** `COMPLIANCE.md` owns the **legal
@@ -147,7 +147,7 @@ Verified against the repos so future readers don't rediscover it.
 
 **Built since this plan was written (2026-06-27 — see §7 for detail):** `TosAcceptance` + `TosService` + `TosController` + VM-create ToS gate (Phase 1); `IWalletBlocklistService.IsWalletBlockedAsync` + `BlockedWallets`/`BlockSource` + `EnforcementActions` audit + `EnforcementService` + `AdminComplianceController` + admin-compliance UI, **with the gate wired at all three chokepoints** — `CreateVmAsync`, `RegisterNodeAsync`, `PublishTemplateAsync` (Phase 2 core, DoD met); the single-VM hold end-to-end — `VirtualMachine.ComplianceHold`, `SetVmComplianceHoldAsync`, `Suspend/ResumeVmAsync`, heartbeat re-enforcement, node-side persisted hold + VM-manager gate + autostart-disable + watchdog skip + migration exclusion + **lazysync exclusion**; the **complete operator-node takedown** — suspend the operator's nodes + login gate, withhold settlement, drain replicated VMs, hard cutoff once drained, and the immediate-cutoff override (Decisions 12–13); and **Phase 3 template review** — `TemplateStatus.PendingReview`/`Rejected` + review fields, the community-review invariant enforced across create/publish/update/deploy, the admin approve/reject/queue endpoints, edit-after-approval re-review, and the admin review UI.
 
-**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam (the seam + honest `NullCsamScanner` remain, **built and verified**; the fleet-enrollment + result-gate + `csam-report` chain that pass 1 built around them was **reverted by Decision 18 / pass 2a** — see §7. D1 is now dead, not pending); **replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb, the two role-case defects, the ToS gates at every door, the discarded freshness verdict, the unbound declaration, and the refusals-reported-as-500 are all fixed — see §7.)*
+**Genuinely missing (still to build):** the **real matcher** behind the `ICsamScanner` seam. The seam + honest `NullCsamScanner` remain and the **targeted scan chain around them is now built and verified** (Phase 6 pass 2b, 2026-07-18 — admin orders `scan-vm` on a held VM → node scans → result lands on the report, proven end to end with the stub reporting `NotScanned`; see §7). What pass 1 built and 2a reverted — fleet enrollment, the result-gate, the node-initiated `csam-report` — stays gone; D1 is dead, not pending. Only the matcher itself is gated (§2, on the provider agreement + jurisdiction). **Replica quarantine by CID declaration** — an authenticated admin endpoint that declares offending CID(s) → a signed CID-quarantine broadcast (mirroring the `vm-deleted` path) → per-node move-to-sealed + a durable CID denylist (Phase 6, Decision 14 — grounded 2026-07-08; keying on CID dissolves the shared-block question). Open: the sealed evidence store (custody/counsel). Block encryption-at-rest is out of scope here (noted for forward-compat). *(Phase 4 abuse reporting is now built; Phase 5 DMCA is no-code — see §7.)* Minor, non-load-bearing: a dedicated `CutoffNodes` audit type (currently reuses `TerminateVms` with a `mode` tag), and Phase 3 polish (status-badge colors + a pending-count badge in the nav). *(Verified against the repos 2026-07-16; the takedown's template limb, the two role-case defects, the ToS gates at every door, the discarded freshness verdict, the unbound declaration, and the refusals-reported-as-500 are all fixed — see §7.)*
 
 > **The two gates travel together.** As of 2026-07-16 the ToS gate sits at the same
 > doors as the blocklist gate — VM create, template create + publish, node
@@ -349,10 +349,12 @@ blockstore-decoupling (a replication-only cycle *should* skip with no
 blockstore), and the `lazysync.json` scan record. **Not to build:** the D1 dirty
 bitmap — it answers "did anything change since the last cycle?" and there are no
 cycles.
-**Remaining:** the real matcher behind the seam, invoked by an admin on **one**
-VM (gated on a provider agreement — vendor-agnostic; §2), the reporting procedure
-(gated on clearinghouse registration + counsel), and the deferred quarantine pass
-(step 3a / D2).
+**Built (pass 2b, 2026-07-18):** the admin-invoked single-VM chain — `scan-vm` on
+one held VM, gated on cause, result on the report — proven end to end with the stub.
+**Remaining:** the real matcher behind the seam (gated on a provider agreement —
+vendor-agnostic; §2), the reporting procedure (gated on clearinghouse registration
++ counsel), and the deferred quarantine pass (step 3a / D2). The socket is wired and
+honest; what plugs into it is what's left.
 **Goal:** Confirm or clear a *specific* CSAM report about a *specific* VM
 **without any human ever seeing the material** — which is the one thing the
 reactive path could not do, and the whole reason to have a matcher.
@@ -947,17 +949,140 @@ unread — and the reason the `ApiResponse<T>` envelope is now checked explicitl
 current clean overlay state confirms the *fix* works, not whether the old bug bit.
 And `JsonOptions.Wire` / `UnmappedMemberHandling`, above.
 
-**Still open:** the `blockstoreAddr == null` early return in `RunCycleAsync` (edit
-1f) was **reconstructed** from Decision-18 reasoning and `FindBlockstoreApiAsync`'s
-`string?` return, **not restored from the pre-pass-1 source** (which was
-unavailable). Behaviour is correct in test; if git history holds the original
-guard, diff against it and record any difference. Full detail:
-`PASS2A_BUILDLOG.md`.
+**Closed (2026-07-18):** the `blockstoreAddr == null` early return in `RunCycleAsync`
+(edit 1f) was verified against git history. `git log -S "blockstoreAddr == null"`
+shows the guard entered the file in its first commit (`f49a654`, 2026-03-28) and
+never left — present continuously through pass 1 and into `517f712` (the pre-2a
+working tree). The 2a version is structurally identical to the original:
+top-of-cycle, before VM enumeration, `LogDebug`, `return`. The sole difference is
+one word of log text (2a dropped "running" from "no local BlockStore VM running");
+cosmetic, no behavioural effect. History also settles a related assumption: the
+`RF>0` + `!ComplianceHold` enrolment filter **predates pass 1** (added `de1ff6a`,
+"stop replicating a held VM explicitly"), so pass 1 never removed it and 2a's revert
+touched only the scan stage — a cleaner revert than the plan feared.
+**2a now has no open items.**
 
 **D1 (the `RF=0` dirty bitmap) is now dead, not deferred** — it answered "what
 changed since the last cycle?", and there are no cycles. The external claim is
 unchanged and now structurally enforced: every VM reads `NotScanned`; *"reactive
 detection + template-publish review."*
+
+**Verification detail (door-by-door — folds in the former `PASS2A_BUILDLOG.md`).**
+Ten doors from `PASS2A_EDITS.md` §6; scripts `test-compliance-hold.sh` (7/7) and
+`test-lazysync-regression.sh` (4/4):
+
+| # | Door | How it closed |
+|---|---|---|
+| 1 | RF>0 enrolled | regression check A green (snapshot line = enrolment). A's "idle, no push" message does **not** prove replication — door 2 does. |
+| 2 | RF>0 replication unchanged | **by artefact:** `48b30a77`'s `lazysync.json` went from `csamScan` present (pre-deploy) to `version:55, lastSyncAt` today, no `csamScan` — and the only remaining writer of that file (`LazysyncDaemon.cs:378`) sits downstream of `Version++`/manifest/push, so the rewrite proves a full cycle ran. |
+| 3 | idle-VM merge-back | check E green — no `lazysync-overlay-*.qcow2` persists. The one pass-1 fix 2a keeps. |
+| 4 | no BlockStore ⇒ no cycle | **untested** — see below. |
+| 5 | system/containers not enrolled | `journalctl \| grep "snapshot taken"` over 15 min → only `48b30a77` (General, RF=1, not container). |
+| 6 | old `lazysync.json` loads, no shim | check F green, **non-vacuous** — the pre-deploy capture proved `csamScan` (with int-enum `outcome:2`) was present; it loaded clean, no "corrupt state" warning. Confirms `UnmappedMemberHandling` unset → `Skip`. VERIFY 8.1 closed. |
+| 7 | `csam-report` gone | `→ 404`. **First run returned 403** — the controller deletion had been skipped, `CsamReportController.cs` still on disk; deleted + redeployed → 404. The 403-vs-404 check caught it. |
+| 8 | seam registered + unused | `Program.cs:351` `AddSingleton<ICsamScanner,NullCsamScanner>` present; only other source hit is `NullCsamScanner.cs` itself. No ctor/field/resolve. |
+| 9 | hold is human-admin, delete/start-while-held refused | checks 2–6 green: suspend 200; DELETE-held → `VM_HELD`; start-held → `VM_HELD`; resume 200; audit pair present. |
+| 10 | no new build warnings | all six projects compiled; nothing new at the former scanner sites. (`-warnaserror` fails repo-wide on 18 pre-existing warnings, so the check is "nothing new in the diff"; the lone CA1416 is pre-existing `File.SetUnixFileMode`, Windows-only.) |
+
+Door 4 stays untested because every node runs a local BlockStore VM and
+`SystemVmReconciler` redeploys a stopped one underneath the test — fighting the
+reconciler yields a result not worth trusting; it closes for free on a
+BlockStore-less node. **Kept unchanged on purpose:** the `ICsamScanner` seam +
+`NullCsamScanner` + DI registration; the single-exit `finally`; delete-while-held
+at the service boundary; hold/heartbeat and all ToS/declaration/role-case work.
+**Scripts renamed with the pass:** `test-csam-pass1.sh` → `test-compliance-hold.sh`
+(a property that outlives the pass, and one 2b's guard depends on);
+`test-csam-node.sh` → `test-lazysync-regression.sh` (16 checks → 4; the
+"observe the per-cycle scan" premise no longer exists).
+
+### 2026-07-18 — Phase 6 pass 2b: the targeted scan chain, built and verified with the stub
+
+Pass 2a removed the proactive machinery; 2b builds the thing Decision 18 actually
+wants — *report → hold + preserve → targeted hash check → human decision*. Additive;
+nothing removed. The whole chain is proven end to end **with `NullCsamScanner`
+reporting `NotScanned`**, exactly as pass 1 was de-risked: 2c fills a socket rather
+than designs one. Applied from `PASS2B_EDITS.md`; tested by `test-scan-chain.sh`
+(orchestrator, 10/10), `test-scan-node.sh` (node, 3/3 + 1 correct skip), and a
+documented Failed-branch procedure.
+
+**The chain, and the receipt.** An admin holds a VM under a report reference
+(`suspend-vm {vmId, reason, reference}`), then orders `scan-vm {vmId, reference,
+reason}`; the command rides the existing push/poll loop; the node verifies the VM
+is not running, runs the scanner, and returns the result on the ack's `data`
+channel; the orchestrator lands it on the named report. A real run left this record
+on `ABU-2026-00045`, and it is the proof the whole path works:
+
+> `status: Completed, outcome: NotScanned, matcher: NullCsamScanner`, ordered
+> 07:52:19 → completed 07:52:39 (a 20-second round trip). `completedAt` cannot
+> exist unless the node ran the handler and the ack routed back to *this* report;
+> `NotScanned` proves the honesty clamp held; `NullCsamScanner` is the scanner
+> naming *itself* (2c's real matcher will name itself here with no handler change).
+
+**The guard is the design, and it fails closed on every axis** (refusal matrix, all
+green): no reference → refused; reference that doesn't resolve → refused; VM not
+held → `NOT_HELD`; VM held but under a *different* reference → `REFERENCE_MISMATCH`.
+The precondition and the "on cause" gate are the same fact — a scan happens only
+against a VM formally held under the very report it answers. `VirtualMachine` gained
+`ComplianceHoldReference` (current-state, distinct from the append-only audit row);
+`SetVmComplianceHoldAsync` sets and clears it with the hold; the guard is a field
+read, never a replay of the 200-capped audit log.
+
+**Two design wins carried from the (a)–(d) round, both grounded before coding.**
+(b) A *failed* scan lands as `status: Failed` with the node's reason, not silence —
+the ack is routed to the report **before** the VM-status machine, because a held VM
+is `Stopped`, matches no status branch, and a failure would otherwise return `true`
+and vanish (the exact "discarded freshness verdict" shape from the §7 signing-path
+audit, caught before it shipped). (d) The result rides the existing ack `data`
+channel (as `AllocatePort` does) — **no node-initiated endpoint, no new auth
+surface.** And the scan record is a *list*: a re-scan appends, never overwrites, so
+clicking twice cannot erase evidence.
+
+**A gap found while writing the tests, and closed (§16 of the edits).** The guard
+requires `ComplianceHoldReference` to match, but as first written *nothing
+admin-reachable set it* — `suspend-vm` had no reference field, so a VM held through
+the endpoint recorded null and every scan returned `REFERENCE_MISMATCH`: guard
+correct, feature unreachable. Fixed by giving `suspend-vm` an optional `reference`
+(additive; omitting it records null → that VM simply can't be scanned until re-held
+with one). The refusal matrix passed *before* this; the happy path became reachable
+*after* it — which is exactly what the test showed, red then green.
+
+**Two test bugs were mine and are recorded rather than hidden.** A missing-reference
+check asserted on the controller's `REFERENCE_REQUIRED`, but a non-nullable
+`ScanVmRequest.Reference` fails at model binding *first* (same string-vs-enum shape
+as pass 2a's Start-while-held probe — I made the same class of mistake twice);
+fixed to test the empty-string case that reaches the guard, plus a separate
+omitted-key case, each accepting its correct fail-closed refusal. And a `curl` that
+returned `000` (no response — a transient orchestrator blip mid-run) displayed the
+*previous* request's body, making a network failure read as a logic response; fixed
+to clear the body file per request and abort loudly on `000`. Root cause both
+times: asserting a shape or state without reading what the system actually returns.
+
+**The Failed branch is closed as verified-by-construction (accepted 2026-07-18).**
+Forcing "running AND held" is deliberately hard — the hold force-stops the VM and
+start-while-held is refused, which is correct behaviour, not a test gap. The node's
+running-VM refusal resolves through the *exact same* `NodeService` ack-routing as
+the observed Completed path: same report lookup by `commandId`, same
+`CompleteScanAsync` call, differing only in the status enum (`Failed` vs
+`Completed`) and the error string. Since the `if (ack.Success)` branch is observed
+working (the `ABU-2026-00045` record), its `else` is one enum value away, sharing
+the mechanism rather than adding one. **Decision: accept by construction rather than
+force a flaky race for a green tick** — chasing the race would be effort that does
+not earn its cost, and its unique addition over the observed path is merely that one
+error string reads "running." `test-scan-failed-path.sh` remains in the tree for any
+environment that later wants to observe it directly (or the deterministic
+missing-disk variant, which exercises the same routing without needing a running
+VM), but it is not a prerequisite for considering 2b complete.
+
+**Enums appended, never renumbered:** `NodeCommandType.ScanVm = 10` (the dispatched
+0–9 block, not the 100+ node-local block), `EnforcementActionType.ScanVm = 7`. Every
+scan order writes an audited `EnforcementAction` with the reference and commandId —
+a scan is an admin-only, reason-required, reference-bound compliance action, the
+same *kind* as everything else on that surface.
+
+**Still honest, still `NotScanned`.** With the matcher unwired every outcome is
+`NotScanned`; the UI renders it as "not checked", never a green tick or "clean";
+the external claim is unchanged. 2b built the socket; 2c (below, still gated) fills
+it.
 
 ### Open follow-up (deliberate, not a regression to fix blindly)
 

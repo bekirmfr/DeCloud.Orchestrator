@@ -729,22 +729,22 @@ function createTemplateModal() {
 
 export function setLdTab(tab) {
     const textarea = document.getElementById('ct-long-description');
-    const preview  = document.getElementById('ct-ld-preview');
+    const preview = document.getElementById('ct-ld-preview');
     const writeBtn = document.getElementById('ct-ld-write-btn');
-    const prevBtn  = document.getElementById('ct-ld-preview-btn');
+    const prevBtn = document.getElementById('ct-ld-preview-btn');
     if (!textarea || !preview) return;
 
     if (tab === 'preview') {
         textarea.style.display = 'none';
-        preview.style.display  = '';
+        preview.style.display = '';
         preview.innerHTML = renderMarkdown(textarea.value) || '<span style="color:var(--text-muted,#9ca3af); font-style:italic;">Nothing to preview yet.</span>';
         if (writeBtn) { writeBtn.style.background = 'transparent'; writeBtn.style.color = 'var(--text-muted,#9ca3af)'; }
-        if (prevBtn)  { prevBtn.style.background  = 'var(--accent-primary,#7c3aed)'; prevBtn.style.color = '#fff'; }
+        if (prevBtn) { prevBtn.style.background = 'var(--accent-primary,#7c3aed)'; prevBtn.style.color = '#fff'; }
     } else {
         textarea.style.display = '';
-        preview.style.display  = 'none';
+        preview.style.display = 'none';
         if (writeBtn) { writeBtn.style.background = 'var(--accent-primary,#7c3aed)'; writeBtn.style.color = '#fff'; }
-        if (prevBtn)  { prevBtn.style.background  = 'transparent'; prevBtn.style.color = 'var(--text-muted,#9ca3af)'; }
+        if (prevBtn) { prevBtn.style.background = 'transparent'; prevBtn.style.color = 'var(--text-muted,#9ca3af)'; }
     }
 }
 
@@ -802,10 +802,10 @@ export function updateSubstitutionPreview() {
     }
 
     const COLOR = {
-        static:   { bg: '#14532d', border: '#16a34a', text: '#86efac', label: 'orchestrator' },
-        dynamic:  { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd', label: 'env var' },
+        static: { bg: '#14532d', border: '#16a34a', text: '#86efac', label: 'orchestrator' },
+        dynamic: { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd', label: 'env var' },
         artifact: { bg: '#3b1f5e', border: '#8b5cf6', text: '#c4b5fd', label: 'artifact' },
-        unknown:  { bg: '#292524', border: '#78716c', text: '#a8a29e', label: 'shell/literal' }
+        unknown: { bg: '#292524', border: '#78716c', text: '#a8a29e', label: 'shell/literal' }
     };
 
     container.innerHTML = [...found.entries()].map(([name, kind]) => {
@@ -1100,17 +1100,19 @@ export async function submitTemplate() {
 
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            // Surface the specific field errors, not just the headline. The server
-            // returns { error, errors: [...], warnings: [...] } on a validation failure.
-            const detail = Array.isArray(err.errors) && err.errors.length
-                ? `${err.error || 'Validation failed'}: ${err.errors.join('; ')}`
-                : (err.error || 'Failed to save template');
+            // The server wraps failures as ApiResponse: { error: { code, message,
+            // details: { errors, warnings } } }. Fall back to the older flat shape.
+            const vErrors = err.error?.details?.errors ?? err.errors;
+            const vMsg = err.error?.message ?? err.error ?? 'Failed to save template';
+            const detail = Array.isArray(vErrors) && vErrors.length
+                ? `${vMsg}: ${vErrors.join('; ')}`
+                : vMsg;
             throw new Error(detail);
         }
 
         const result = await response.json().catch(() => null);
         // F3: surface server-side warnings
-        const warnings = result?.warnings ?? [];
+        const warnings = result?.data?.warnings ?? result?.warnings ?? [];
         warnings.forEach(w => showToast('warning', w));
 
         showToast('success', isEdit ? 'Template updated!' : 'Template created as draft!');
@@ -1247,7 +1249,7 @@ export async function publishTemplate(templateId) {
 
         if (!response.ok) {
             const err = await response.json();
-            throw new Error(err.error || 'Failed to publish');
+            throw new Error(err.error?.message ?? err.error ?? 'Failed to publish');
         }
 
         showToast('success', 'Template published!');
@@ -1268,7 +1270,7 @@ export async function deleteTemplate(templateId) {
 
         if (!response.ok) {
             const err = await response.json();
-            throw new Error(err.error || 'Failed to delete');
+            throw new Error(err.error?.message ?? err.error ?? 'Failed to delete');
         }
 
         showToast('success', 'Template deleted');
@@ -1452,10 +1454,10 @@ function templateDetailsModalHtml(t) {
             </div>
             <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end; padding:16px;">
                ${canRevise
-                    ? `<button class="btn btn-primary" onclick="window.myTemplates.reviseFromDetails('${t.id}')">New version</button>`
-                    : (status === 'Published' && hasOpenRevision
-                        ? `<span style="color:var(--warning,#f59e0b); font-size:13px; align-self:center; margin-right:auto;">A new version is already in progress.</span>`
-                        : '')}
+            ? `<button class="btn btn-primary" onclick="window.myTemplates.reviseFromDetails('${t.id}')">New version</button>`
+            : (status === 'Published' && hasOpenRevision
+                ? `<span style="color:var(--warning,#f59e0b); font-size:13px; align-self:center; margin-right:auto;">A new version is already in progress.</span>`
+                : '')}
                 <button class="btn btn-secondary" onclick="window.myTemplates.closeTemplateDetails()">Close</button>
             </div>
         </div>`;

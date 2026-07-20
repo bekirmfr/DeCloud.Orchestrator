@@ -1,6 +1,9 @@
-﻿namespace Orchestrator.Models;
+﻿using System.Text.Json.Serialization;
+
+namespace Orchestrator.Models;
 
 /// <summary>What is being reported. Drives the deterministic priority/SLA (Decision 6).</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AbuseCategory
 {
     Csam,
@@ -11,9 +14,12 @@ public enum AbuseCategory
     Spam
 }
 
-/// <summary>P0 (most urgent) … P4. Stored as its int value, so ascending sort = most urgent first.</summary>
+/// <summary>P0 (most urgent) … P4. BSON still stores the int (Mongo ignores the STJ attribute),
+/// so ascending sort = most urgent first is unchanged; JSON wire is the string name.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AbusePriority { P0, P1, P2, P3, P4 }
 
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AbuseReportStatus { Open, Actioned, Dismissed }
 
 /// <summary>

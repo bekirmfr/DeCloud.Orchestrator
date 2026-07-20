@@ -38,7 +38,7 @@
 **Planned**
 
 10. [Compliance & Legal Framework](#10-compliance--legal-framework)
-    - [CSAM Proactive Filtering](#csam-proactive-filtering)
+    - [CSAM Hash Matching (Targeted On Cause)](#csam-hash-matching-targeted-on-cause)
     - [Terms of Service](#terms-of-service)
     - [Abuse Reporting & AI Triage](#abuse-reporting--ai-triage)
     - [Template Review Gate](#template-review-gate)
@@ -1150,60 +1150,58 @@ The framework rests on four pillars, all required before public launch:
 │                  DeCloud Compliance Stack                        │
 ├─────────────────┬──────────────────┬──────────────┬────────────┤
 │  CSAM           │  Terms of        │  Abuse       │  Template  │
-│  Proactive      │  Service         │  Reporting   │  Review    │
-│  Filtering      │  (with teeth)    │  + AI Triage │  Gate      │
+│  Hash Matching  │  Service         │  Reporting   │  Review    │
+│  (on cause)     │  (with teeth)    │  + AI Triage │  Gate      │
 │                 │                  │              │            │
-│  Keeps platform │  Legal standing  │  Reactive    │  Blocks    │
-│  out of federal │  to act +        │  detection + │  amplifi-  │
-│  criminal       │  DMCA safe       │  triage +    │  cation of │
-│  exposure       │  harbor          │  SLA queue   │  harm at   │
+│  Confirms a     │  Legal standing  │  Reactive    │  Blocks    │
+│  report on one  │  to act +        │  detection + │  amplifi-  │
+│  VM, no human   │  DMCA safe       │  triage +    │  cation of │
+│  sees content   │  harbor          │  SLA queue   │  harm at   │
 │                 │                  │              │  source    │
 └─────────────────┴──────────────────┴──────────────┴────────────┘
 ```
 
 ---
 
-### CSAM Proactive Filtering
+### CSAM Hash Matching (Targeted On Cause)
 
-**Status:** 🔲 Planned — Pre-Launch Requirement (Non-Negotiable)
+**Status:** 🟡 Chain built & verified with the honest stub (Phase 6 passes 2a/2b, 2026-07-18) — real matcher gated on a provider agreement + jurisdiction (see `COMPLIANCE_INTEGRATION_PLAN.md` §2). Today every VM's recorded scan state is truthfully `NotScanned`.
 
-**Why non-negotiable:** CSAM exposure carries federal criminal liability (18 U.S.C. § 2258A / § 2252A). It is the only compliance failure that cannot be remediated retroactively.
+**Why non-negotiable:** CSAM exposure carries criminal liability (in the US, 18 U.S.C. § 2258A / § 2252A; the EU frame under DSA + GDPR is being confirmed by counsel — the platform's launch jurisdiction is Estonia). It is the only compliance failure that cannot be remediated retroactively.
 
-**Why block-level hashing does not work:** The Block Store is content-addressed and stores raw 1 MB disk sectors at arbitrary offsets — filesystem fragments, not whole files. CSAM hash databases (PhotoDNA / NCMEC) operate on whole, decoded image/video files. A file split across non-contiguous blocks never produces a matching hash at the block level. Block-store ingestion hashing is therefore technically infeasible and is NOT the detection surface.
+**Design re-scope (Decision 18, superseding 9 & 15):** an earlier design scanned every tenant VM every lazysync cycle. That was **built (pass 1), then removed (pass 2a)** in favour of *targeted on cause*: a scan runs only against a specific VM named by a specific report, after that VM is already under a compliance hold. The reasons are legal and technical together — DSA Art 8 forbids general-monitoring obligations while Art 7 protects voluntary targeted investigation; GDPR needs a lawful basis that indiscriminate per-cycle hashing would struggle to justify when a reactive mechanism exists; and targeted matching is the *only* way to confirm a report about a private disk **without a human ever seeing the material**, which is the gap the reactive path had. Proactive per-cycle scanning, the scan budget, and scan-before-replicate ordering are **gone**, not deferred.
 
-**Implementation:** Node-level filesystem scanning. The hosting node is the only point in the architecture with plaintext access to whole files, before replication. Detection runs inside the existing lazysync cycle, on the frozen guest-freeze snapshot, at the seam between chunk scan and block push:
-- Short-circuit when the cycle's changed-chunk set is empty (quiet cycles cost nothing).
-- Mount the frozen snapshot read-only via libguestfs/guestmount (`LIBGUESTFS_BACKEND=direct`), reusing the existing `CloudInitCleaner` mount pattern — never a host-kernel nbd mount of an untrusted guest filesystem.
-- Per-file diff over magic-byte-typed image/video files against a persisted `{ path -> size, mtime, hash }` map; read each genuinely-changed whole file.
-- Submit hashes only (never file content) to the Microsoft CSAM Matching API (covers NCMEC + PhotoDNA; no local database to maintain).
+**Why block-level hashing does not work:** The Block Store is content-addressed and stores raw 1 MB disk sectors at arbitrary offsets — filesystem fragments, not whole files. CSAM hash databases (PhotoDNA / NCMEC) operate on whole, decoded image/video files. A file split across non-contiguous blocks never produces a matching hash at the block level. Node-level filesystem access — the hosting node is the only point with plaintext whole files — is the correct surface.
 
-**Replication ordering:** Scan before replicate. If the per-cycle scan budget is exceeded, defer that cycle's replication to the next round rather than publish unscanned content. Deferral keeps content on the origin node (where the guest already wrote it) and only postpones redundancy. Forward-compatible with future encryption-at-rest, which slots in after the scan clears.
+**The flow (built, proven end to end with the stub):**
+1. A report names a VM (`csam` category → P0 / 2h intake), or an investigation reaches it.
+2. **Hold + preserve.** An admin suspends the VM *under the report's reference* (`suspend-vm {vmId, reason, reference}`); it is force-stopped and its disk preserved; deletion is refused while held. Protective and reversible — it withholds service and nothing else, applied before any human judgement.
+3. **Targeted hash check.** The admin orders `scan-vm {vmId, reference, reason}`. The orchestrator's guard refuses unless the VM is held under a reference **matching** the one cited — the hold *is* the on-cause gate. The `ScanVm` command rides the existing node command loop; the node independently verifies the VM is not running (its view cannot be stale the way the orchestrator's can), mounts the quiescent disk read-only inside a throwaway appliance (never a host-kernel nbd mount), and runs the matcher. **Only hashes ever leave the node — never file content.**
+4. **The result lands on the report** via the command ack's existing data channel — no node-initiated endpoint, no new auth surface. A scan that cannot run (e.g. VM still running) lands as `Failed` with the reason, never as silence.
+5. **A human decides.** A match is evidence attached to that report, not a verdict. Report to the clearinghouse, on confirmation, through the reporting procedure (gated — §2).
 
-**Detection response (human-in-the-loop — no automated enforcement):**
-1. VM suspended locally and on the orchestrator (`VmStatus.Suspended`); overlay preserved for evidence; deletion blocked.
-2. Admin alerted with match metadata (file hash, path, database source) — P0, 2-hour SLA.
-3. Human review. NCMEC CyberTipline report and wallet blacklisting occur ONLY after human confirmation (report legally required within 24h of confirmation under 18 U.S.C. § 2258A).
-4. If false positive: VM unsuspended, incident logged, no further action.
-5. Every action written to the append-only `EnforcementActions` audit trail.
+**The matcher credential never touches a node.** Hash-matching providers issue keys to vetted organisations precisely so the corpus cannot become an evasion oracle; a key on anonymous operator hardware would defeat that. Nodes compute hashes; the orchestrator calls the provider.
 
-Automated enforcement on a raw hash match is prohibited — it protects against both false-positive harm and adversarial poisoning of the detector.
+**Honesty invariant (enforced in code, verified):** a matcher-less build reports **`NotScanned`** — never `Clean`. No path upgrades `NotScanned` or `Unscannable` to `Clean`; the shipped `NullCsamScanner` returns `NotScanned` unless a test explicitly forces otherwise, and the handler clamps any `Clean` to `NotScanned` while no matcher is wired. The scan record carries two independent axes — status (Ordered/Completed/Failed) and outcome (NotScanned/Clean/Match/Unscannable) — never collapsed: *"we could not check"* must never read as *"we checked."* Re-scans append; a second click never erases a prior record. Every scan order is written to the append-only `EnforcementActions` audit trail with the reference and command id.
 
-**Limitation:** This is an inherently partial control. It catches known material only, on decodable image/video files, and is blind to guest-side full-disk encryption (LUKS/dm-crypt) and LVM. The Template Review Gate (generation pipelines) and Abuse Reporting (reactive) are the complementary controls. It is never presented as a guarantee.
+**Limitation:** an inherently partial control — known material only, on decodable image/video files, blind to guest-side full-disk encryption (LUKS/dm-crypt) and LVM. The Template Review Gate (generation pipelines) and Abuse Reporting (reactive) are the complementary controls. Never presented as a guarantee. The honest external claim remains *"reactive detection + template-publish review"* — **not** *"proactive CSAM scanning."*
 
-**Key files to create:**
+**Built / gated:**
 
-| File | Purpose |
+| Component | State |
 |---|---|
-| `ICsamScanner` (node agent) | Scan interface; stub returns `IsClean=true`, wired at the lazysync scan->push seam |
-| Node CSAM scanner | guestmount mount + per-file diff + Microsoft CSAM API hash lookup |
-| `VmStatus.Suspended` transitions | `Running -> Suspended` (Enforcement trigger), admin-only unsuspend, deletion blocked while suspended |
-| `POST /api/admin/csam-report` | Node->orchestrator match report (node-auth); suspend + human-review queue |
+| `ICsamScanner` + `NullCsamScanner` (node) | **Built.** Honest stub; returns `NotScanned`; wired into `HandleScanVmAsync`. |
+| `scan-vm` chain (orchestrator → node → report) | **Built & verified** end to end with the stub. Guard fails closed on every axis. |
+| `ComplianceHold` + `ComplianceHoldReference` | **Built.** The hold carries the report reference; delete-while-held refused at the service boundary. |
+| Real matcher (PhotoDNA / equivalent) | **Gated** — provider agreement + vetting + jurisdiction (§2). Plugs into the seam; names itself in the record. |
+| Clearinghouse reporting procedure | **Gated** — registration + counsel. |
+| Replica quarantine by CID declaration | **Deferred** (Decision 14 / D2) — sealed evidence store is the open dependency. |
 
 ---
 
 ### Terms of Service
 
-**Status:** 🔲 Planned — Pre-Launch Requirement
+**Status:** 🟡 Acceptance mechanism built (gates + wallet-signed acceptance carried in the node declaration, Decision 17) — **but the ToS text is counsel-gated and headed "NOT YET IN EFFECT."** Operators currently type "accept" on a document that does not yet legally bind. The plumbing is done; the instrument is not in force until counsel clears the text. See `COMPLIANCE_INTEGRATION_PLAN.md` §7.
 
 **What it achieves:**
 - Legal standing to suspend wallets, forfeit escrow, and terminate VMs without those actions being challengeable as arbitrary
@@ -1225,7 +1223,7 @@ VM creation gated until signature confirmed
 - **Cost recovery (reserved, not yet enforced)** — the platform may introduce escrow-based cost recovery in a future contract version; the current escrow contract has no fund-seizure capability and enforcement is withhold-service-only. Include this clause only if counsel advises (see money-transmission / custody review).
 - **Blockchain transparency** — wallet address and on-chain history shareable with law enforcement upon valid legal process
 - **Prohibited content** — explicit enumeration: CSAM, illegal marketplaces, C2 infrastructure, malware hosting, human trafficking facilitation
-- **Law enforcement cooperation** — platform will cooperate with valid legal process including NCMEC CyberTipline mandates
+- **Law enforcement cooperation** — platform will cooperate with valid legal process. The specific reporting channel is **jurisdiction-dependent and counsel-gated**: NCMEC CyberTipline applies only where the US is a target market; the launch jurisdiction is Estonia/EU, whose equivalent hotline/mechanism counsel must confirm. See `COMPLIANCE_INTEGRATION_PLAN.md` §2 (unanswered — nothing is filed until the frame is confirmed).
 - **Repeat infringer termination** — required for Section 512 DMCA safe harbor
 
 **Key models/collections to create:**
@@ -1391,10 +1389,11 @@ Orchestrates in sequence: VM termination → template archiving → wallet suspe
 **ToS requirement:** Section 512 safe harbor also requires the ToS to state that repeat infringers will be terminated. This clause must be present in the ToS document.
 
 **Pre-launch administrative checklist:**
-- [ ] Retain legal counsel familiar with CFAA, DMCA, and 18 U.S.C. § 2258A
-- [ ] File DMCA Designated Agent (https://www.copyright.gov/dmca-directory/)
-- [ ] Establish NCMEC CyberTipline account and reporting procedure
-- [ ] Draft and legally review ToS document
+- [ ] **Confirm the governing jurisdiction (BLOCKS everything below).** Launch frame is Estonia/EU; DSA + GDPR analysis is counsel-gated and unanswered (`COMPLIANCE_INTEGRATION_PLAN.md` §2). The provider agreement, the reporting channel, and the ToS text all follow from this — do not file, sign, or contract against a US-shaped checklist until counsel confirms the frame.
+- [ ] Retain legal counsel for the governing jurisdiction (US items below — CFAA / DMCA / § 2258A — apply only if the US is a target market)
+- [ ] File DMCA Designated Agent (https://www.copyright.gov/dmca-directory/) — *US only*
+- [ ] Establish the jurisdiction's CSAM reporting account + procedure (NCMEC CyberTipline = US; EU launch needs its national/EU equivalent — counsel-confirmed)
+- [ ] Draft and legally review ToS document — **currently headed "NOT YET IN EFFECT"; the acceptance mechanism ships, the text does not bind until this clears**
 - [ ] Retroactive rubric review of Private Browser and Shadowsocks seed templates
 
 ---

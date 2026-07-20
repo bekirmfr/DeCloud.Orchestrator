@@ -9,7 +9,8 @@
 // applyAdminVisibility() in app.js and grants no privilege itself.
 //
 // AdminAbuseController returns the ApiResponse wrapper ({success,data}), so
-// responses are read via .data (like admin-compliance.js). Enums arrive as NUMBERS.
+// responses are read via .data (like admin-compliance.js). Enums arrive as string names
+// (numbers still tolerated); resolve category/action via the *_NAMES arrays, not the labels.
 // ============================================================================
 
 import { escapeHtml, showToast } from './utils.js';
@@ -22,6 +23,8 @@ const MUTED = 'color:var(--text-muted,#888)';
 const CATEGORY_LABELS = ['CSAM', 'Malware / C2', 'Illegal marketplace', 'DMCA', 'TOS violation', 'Spam'];
 const PRIORITY_LABELS = ['P0', 'P1', 'P2', 'P3', 'P4'];
 const ACTION_LABELS = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'Terminate VMs', 'Suspend VM', 'Resume VM', 'Scan VM'];
+const CATEGORY_NAMES = ['Csam', 'MalwareC2', 'IllegalMarketplace', 'Dmca', 'TosViolation', 'Spam'];
+const ACTION_NAMES = ['Suspend', 'Unsuspend', 'Block', 'Unblock', 'TerminateVms', 'SuspendVm', 'ResumeVm', 'ScanVm'];
 
 // P0 most urgent (red), easing to muted by P4.
 const PRIORITY_STYLE = [
@@ -32,11 +35,11 @@ const PRIORITY_STYLE = [
     'background:rgba(148,163,184,0.12); color:#94a3b8;',
 ];
 
-const idx = (v, arr) => (typeof v === 'number' ? v : Math.max(0, arr.indexOf(v)));
-const categoryLabel = c => CATEGORY_LABELS[idx(c, CATEGORY_LABELS)] ?? String(c);
+const idx = (v, names) => (typeof v === 'number' ? v : Math.max(0, names.indexOf(v)));
+const categoryLabel = c => CATEGORY_LABELS[idx(c, CATEGORY_NAMES)] ?? String(c);
 const priorityLabel = p => PRIORITY_LABELS[idx(p, PRIORITY_LABELS)] ?? String(p);
 const priorityStyle = p => PRIORITY_STYLE[idx(p, PRIORITY_LABELS)] ?? PRIORITY_STYLE[4];
-const actionLabel = t => ACTION_LABELS[idx(t, ACTION_LABELS)] ?? String(t);
+const actionLabel = t => ACTION_LABELS[idx(t, ACTION_NAMES)] ?? String(t);
 
 const fmtDate = s => { if (!s) return ''; const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString(); };
 const shortWallet = w => (w && w.length > 12 ? `${w.slice(0, 6)}…${w.slice(-4)}` : (w ?? ''));

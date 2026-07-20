@@ -403,7 +403,7 @@ public class NodesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search nodes");
-            return StatusCode(500, new { error = "Failed to search nodes" });
+            return StatusCode(500, ApiResponse<List<NodeAdvertisement>>.Fail("NODE_SEARCH_FAILED", "Failed to search nodes"));
         }
     }
 
@@ -425,7 +425,7 @@ public class NodesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get featured nodes");
-            return StatusCode(500, new { error = "Failed to retrieve featured nodes" });
+            return StatusCode(500, ApiResponse<List<NodeAdvertisement>>.Fail("FEATURED_NODES_FAILED", "Failed to retrieve featured nodes"));
         }
     }
 
@@ -502,7 +502,7 @@ public class NodesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get available regions");
-            return StatusCode(500, new { error = "Failed to retrieve available regions" });
+            return StatusCode(500, ApiResponse<List<RegionInfo>>.Fail("REGIONS_FAILED", "Failed to retrieve available regions"));
         }
     }
 
@@ -547,7 +547,7 @@ public class NodesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get available zones for region {Region}", region);
-            return StatusCode(500, new { error = "Failed to retrieve available zones" });
+            return StatusCode(500, ApiResponse<List<ZoneInfo>>.Fail("ZONES_FAILED", "Failed to retrieve available zones"));
         }
     }
 }

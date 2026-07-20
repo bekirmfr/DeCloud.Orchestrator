@@ -52,7 +52,8 @@ async function getPlatformStaticKeys() {
         const data = await response.json();
         // Response shape: { static: [...], dynamic: [...] }
         // PascalCase from C# is camelCased by ConfigureHttpJsonOptions in Program.cs.
-        const list = Array.isArray(data?.static) ? data.static : [];
+        const src = data?.data ?? data;
+        const list = Array.isArray(src?.static) ? src.static : [];
         _platformStaticKeys = new Set(list);
     } catch (error) {
         console.error('[Template Detail] Failed to load platform variables. ' +
@@ -899,7 +900,7 @@ export async function submitReview() {
 
         if (!response.ok) {
             const err = await response.json();
-            throw new Error(err.error || 'Failed to submit review');
+            throw new Error(err.error?.message ?? err.error ?? 'Failed to submit review');
         }
 
         showToast('success', 'Review submitted!');

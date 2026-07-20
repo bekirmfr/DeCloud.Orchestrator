@@ -81,7 +81,7 @@ public sealed partial class AbuseController : ControllerBase
             contact.Length > 0 ? contact : null, ct);
 
         return Ok(ApiResponse<AbuseReceipt>.Ok(
-            new AbuseReceipt(report.Reference, report.Priority.ToString(), report.Sla)));
+            new AbuseReceipt(report.Reference, report.Priority, report.Sla)));
     }
 }
 
@@ -92,4 +92,4 @@ public record AbuseReportRequest(
     string? TargetWallet,
     string? ReporterContact);
 
-public record AbuseReceipt(string Reference, string Priority, string Sla);
+public record AbuseReceipt(string Reference, AbusePriority Priority, string Sla);

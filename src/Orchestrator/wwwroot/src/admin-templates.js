@@ -32,7 +32,7 @@ async function apiCall(path, method = 'GET', body) {
     let json = null;
     try { json = await res.json(); } catch { /* may be empty */ }
     if (!res.ok) {
-        throw new Error((json && (json.error || json.message)) || `Request failed (${res.status})`);
+        throw new Error((json && (json.error?.message ?? json.error ?? json.message)) || `Request failed (${res.status})`);
     }
     return json;
 }
@@ -104,7 +104,7 @@ async function loadQueue() {
     if (summary) summary.textContent = 'Loading…';
     try {
         const templates = await apiCall('/api/marketplace/templates/pending');
-        renderQueue(Array.isArray(templates) ? templates : []);
+        renderQueue(Array.isArray(templates) ? templates : (templates?.data ?? []));
     } catch (e) {
         if (summary) summary.textContent = '';
         if (queue) queue.innerHTML = `<div class="form-section">${escapeHtml(e.message)}</div>`;

@@ -58,7 +58,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<VmTemplate>>> GetTemplates(
+    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetTemplates(
         [FromQuery] string? category = null,
         [FromQuery] bool? requiresGpu = null,
         [FromQuery] string? tags = null,
@@ -81,12 +81,12 @@ public class MarketplaceController : ControllerBase
             };
 
             var templates = await _templateService.GetTemplatesAsync(query);
-            return Ok(templates);
+            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get templates");
-            return StatusCode(500, new { error = "Failed to retrieve templates" });
+            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to retrieve templates"));
         }
     }
 
@@ -95,18 +95,18 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates/featured")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<VmTemplate>>> GetFeaturedTemplates(
+    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetFeaturedTemplates(
         [FromQuery] int limit = 10)
     {
         try
         {
             var templates = await _templateService.GetFeaturedTemplatesAsync(limit);
-            return Ok(templates);
+            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get featured templates");
-            return StatusCode(500, new { error = "Failed to retrieve featured templates" });
+            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to retrieve featured templates"));
         }
     }
 
@@ -115,7 +115,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates/{slugOrId}")]
     [AllowAnonymous]
-    public async Task<ActionResult<VmTemplate>> GetTemplate(string slugOrId)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> GetTemplate(string slugOrId)
     {
         try
         {
@@ -123,22 +123,22 @@ public class MarketplaceController : ControllerBase
                         ?? await _templateService.GetTemplateByIdAsync(slugOrId);
 
             if (template == null)
-                return NotFound(new { error = $"Template '{slugOrId}' not found" });
+                return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{slugOrId}' not found"));
 
             // Private templates: only author can view
             if (template.Visibility == TemplateVisibility.Private)
             {
                 var userId = GetUserId();
                 if (userId == null || template.AuthorId != userId)
-                    return NotFound(new { error = $"Template '{slugOrId}' not found" });
+                    return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{slugOrId}' not found"));
             }
 
-            return Ok(template);
+            return Ok(ApiResponse<VmTemplate>.Ok(template));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get template: {SlugOrId}", slugOrId);
-            return StatusCode(500, new { error = "Failed to retrieve template details" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to retrieve template details"));
         }
     }
 
@@ -152,21 +152,21 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates/my")]
     [Authorize]
-    public async Task<ActionResult<List<VmTemplate>>> GetMyTemplates()
+    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetMyTemplates()
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<List<VmTemplate>>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var templates = await _templateService.GetTemplatesByAuthorAsync(userId);
-            return Ok(templates);
+            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get user templates");
-            return StatusCode(500, new { error = "Failed to retrieve your templates" });
+            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to retrieve your templates"));
         }
     }
 
@@ -175,14 +175,14 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/create")]
     [Authorize]
-    public async Task<IActionResult> CreateCommunityTemplate(
+    public async Task<ActionResult<ApiResponse<TemplateMutationResult>>> CreateCommunityTemplate(
         [FromBody] CreateTemplateRequest request)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<TemplateMutationResult>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var isAdmin = User.IsInRole("Admin");
 
@@ -238,14 +238,10 @@ public class MarketplaceController : ControllerBase
                 foreach (var variable in request.Variables)
                 {
                     if (string.IsNullOrWhiteSpace(variable.Name))
-                        return BadRequest(new { error = "Variable name is required." });
+                        return BadRequest(ApiResponse<TemplateMutationResult>.Fail("BAD_REQUEST", "Variable name is required."));
 
                     if (!seenNames.Add(variable.Name))
-                        return BadRequest(new
-                        {
-                            error = $"Duplicate variable name '{variable.Name}'. " +
-                                    "Variable names must be unique within a template."
-                        });
+                        return BadRequest(ApiResponse<TemplateMutationResult>.Fail("DUPLICATE_VARIABLE", $"Duplicate variable name '{variable.Name}'. " + "Variable names must be unique within a template."));
                 }
                 template.Variables = request.Variables;
             }
@@ -266,7 +262,7 @@ public class MarketplaceController : ControllerBase
                     }
                     catch (ArgumentException ex)
                     {
-                        return BadRequest(new { error = ex.Message });
+                        return BadRequest(ApiResponse<TemplateMutationResult>.Fail("INVALID_ARGUMENT", ex.Message));
                     }
                 }
             }
@@ -274,12 +270,7 @@ public class MarketplaceController : ControllerBase
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
             {
-                return BadRequest(new
-                {
-                    error = "Template validation failed",
-                    errors = validation.Errors,
-                    warnings = validation.Warnings
-                });
+                return BadRequest(ApiResponse<TemplateMutationResult>.Fail("VALIDATION_FAILED", "Template validation failed", new Dictionary<string, object> { ["errors"] = validation.Errors, ["warnings"] = validation.Warnings }));
             }
 
             var created = await _templateService.CreateTemplateAsync(template);
@@ -287,11 +278,11 @@ public class MarketplaceController : ControllerBase
             return CreatedAtAction(
                 nameof(GetTemplate),
                 new { slugOrId = created.Slug },
-                new { template = created, warnings = validation.Warnings });
+                ApiResponse<TemplateMutationResult>.Ok(new TemplateMutationResult(created, validation.Warnings)));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<TemplateMutationResult>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -302,12 +293,12 @@ public class MarketplaceController : ControllerBase
             // a 500 telling the user WE broke, when in fact THEY need to do something.
             // Not Forbid(): it sends an empty body, which is the same mistake in a
             // different costume.
-            return StatusCode(StatusCodes.Status403Forbidden, new { error = ex.Message });
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<TemplateMutationResult>.Fail("FORBIDDEN", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create community template");
-            return StatusCode(500, new { error = "Failed to create template" });
+            return StatusCode(500, ApiResponse<TemplateMutationResult>.Fail("INTERNAL_ERROR", "Failed to create template"));
         }
     }
 
@@ -316,7 +307,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPut("templates/{templateId}")]
     [Authorize]
-    public async Task<IActionResult> UpdateTemplate(
+    public async Task<ActionResult<ApiResponse<TemplateMutationResult>>> UpdateTemplate(
         string templateId,
         [FromBody] VmTemplate template)
     {
@@ -324,11 +315,11 @@ public class MarketplaceController : ControllerBase
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<TemplateMutationResult>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var existing = await _templateService.GetTemplateByIdAsync(templateId);
             if (existing == null)
-                return NotFound(new { error = $"Template '{templateId}' not found" });
+                return NotFound(ApiResponse<TemplateMutationResult>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
 
             // Ownership check
             if (existing.AuthorId != userId)
@@ -343,29 +334,24 @@ public class MarketplaceController : ControllerBase
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
             {
-                return BadRequest(new
-                {
-                    error = "Template validation failed",
-                    errors = validation.Errors,
-                    warnings = validation.Warnings
-                });
+                return BadRequest(ApiResponse<TemplateMutationResult>.Fail("VALIDATION_FAILED", "Template validation failed", new Dictionary<string, object> { ["errors"] = validation.Errors, ["warnings"] = validation.Warnings }));
             }
 
             var updated = await _templateService.UpdateTemplateAsync(template);
-            return Ok(new { template = updated, warnings = validation.Warnings });
+            return Ok(ApiResponse<TemplateMutationResult>.Ok(new TemplateMutationResult(updated, validation.Warnings)));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<TemplateMutationResult>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<TemplateMutationResult>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to update template" });
+            return StatusCode(500, ApiResponse<TemplateMutationResult>.Fail("INTERNAL_ERROR", "Failed to update template"));
         }
     }
 
@@ -374,20 +360,20 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{templateId}/cancel-review")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> CancelReview(string templateId)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> CancelReview(string templateId)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<VmTemplate>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var result = await _templateService.CancelReviewAsync(templateId, userId);
-            return Ok(result);
+            return Ok(ApiResponse<VmTemplate>.Ok(result));
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = $"Template '{templateId}' not found" });
+            return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
         }
         catch (UnauthorizedAccessException)
         {
@@ -395,12 +381,12 @@ public class MarketplaceController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<VmTemplate>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to cancel review: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to cancel review" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to cancel review"));
         }
     }
 
@@ -412,20 +398,20 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{templateId}/revise")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> ReviseTemplate(string templateId)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> ReviseTemplate(string templateId)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<VmTemplate>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var revision = await _templateService.ReviseTemplateAsync(templateId, userId);
-            return Ok(revision);
+            return Ok(ApiResponse<VmTemplate>.Ok(revision));
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = $"Template '{templateId}' not found" });
+            return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
         }
         catch (UnauthorizedAccessException)
         {
@@ -433,12 +419,12 @@ public class MarketplaceController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<VmTemplate>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to revise template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to start a new version" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to start a new version"));
         }
     }
 
@@ -447,19 +433,19 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpDelete("templates/{templateId}")]
     [Authorize]
-    public async Task<ActionResult> DeleteTemplate(string templateId)
+    public async Task<ActionResult<ApiResponse<object>>> DeleteTemplate(string templateId)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var deleted = await _templateService.DeleteTemplateAsync(templateId, userId);
             if (!deleted)
-                return NotFound(new { error = $"Template '{templateId}' not found" });
+                return NotFound(ApiResponse<object>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
 
-            return Ok(new { message = "Template deleted" });
+            return Ok(ApiResponse<object>.Ok(new { message = "Template deleted" }));
         }
         catch (UnauthorizedAccessException)
         {
@@ -468,7 +454,7 @@ public class MarketplaceController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to delete template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to delete template" });
+            return StatusCode(500, ApiResponse<object>.Fail("INTERNAL_ERROR", "Failed to delete template"));
         }
     }
 
@@ -477,16 +463,16 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPatch("templates/{templateId}/publish")]
     [Authorize]
-    public async Task<ActionResult<VmTemplate>> PublishTemplate(string templateId)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> PublishTemplate(string templateId)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<VmTemplate>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var published = await _templateService.PublishTemplateAsync(templateId, userId);
-            return Ok(published);
+            return Ok(ApiResponse<VmTemplate>.Ok(published));
         }
         catch (UnauthorizedAccessException)
         {
@@ -494,16 +480,16 @@ public class MarketplaceController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<VmTemplate>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<VmTemplate>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to publish template" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to publish template"));
         }
     }
 
@@ -519,7 +505,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{templateId}/deploy")]
     [Authorize]
-    public async Task<ActionResult<CreateVmResponse>> DeployTemplate(
+    public async Task<ActionResult<ApiResponse<CreateVmResponse>>> DeployTemplate(
         string templateId,
         [FromBody] DeployTemplateRequest request)
     {
@@ -527,24 +513,24 @@ public class MarketplaceController : ControllerBase
         {
             var userId = GetUserId();
             if (string.IsNullOrEmpty(userId))
-                return Unauthorized(new { error = "User authentication required" });
+                return Unauthorized(ApiResponse<CreateVmResponse>.Fail("UNAUTHORIZED", "User authentication required"));
 
             var template = await _templateService.GetTemplateByIdAsync(templateId);
             if (template == null)
-                return NotFound(new { error = $"Template '{templateId}' not found" });
+                return NotFound(ApiResponse<CreateVmResponse>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
 
             // Visibility check: private templates only deployable by author
             if (template.Visibility == TemplateVisibility.Private && template.AuthorId != userId)
-                return NotFound(new { error = $"Template '{templateId}' not found" });
+                return NotFound(ApiResponse<CreateVmResponse>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
 
             // Archived is closed to everyone.
             if (template.Status == TemplateStatus.Archived)
-                return BadRequest(new { error = "Template has been archived" });
+                return BadRequest(ApiResponse<CreateVmResponse>.Fail("BAD_REQUEST", "Template has been archived"));
 
             // Anything below Published (Draft, PendingReview, Rejected) is deployable
             // only by its author, for testing — never by others until it is approved.
             if (template.Status != TemplateStatus.Published && template.AuthorId != userId)
-                return BadRequest(new { error = "Template is not available for deployment" });
+                return BadRequest(ApiResponse<CreateVmResponse>.Fail("BAD_REQUEST", "Template is not available for deployment"));
 
             // Check balance for paid templates
             if (template.PricingModel == TemplatePricingModel.PerDeploy && template.TemplatePrice > 0)
@@ -552,12 +538,7 @@ public class MarketplaceController : ControllerBase
                 var hasBalance = await _balanceService.HasSufficientBalanceAsync(userId, template.TemplatePrice);
                 if (!hasBalance)
                 {
-                    return BadRequest(new
-                    {
-                        error = "Insufficient balance for template fee",
-                        templatePrice = template.TemplatePrice,
-                        message = $"This template costs {template.TemplatePrice} USDC per deployment. Please deposit more funds."
-                    });
+                    return BadRequest(ApiResponse<CreateVmResponse>.Fail("INSUFFICIENT_BALANCE", $"This template costs {template.TemplatePrice} USDC per deployment. Please deposit more funds.", new Dictionary<string, object> { ["templatePrice"] = template.TemplatePrice }));
                 }
             }
 
@@ -571,13 +552,7 @@ public class MarketplaceController : ControllerBase
                 var floorTier = template.MinimumSpec.QualityTier;
                 if (!QualityTierComparison.MeetsFloor(requestedTier, floorTier))
                 {
-                    return BadRequest(new
-                    {
-                        error = "Requested quality tier is below the template minimum",
-                        requestedTier = requestedTier.ToString(),
-                        minimumTier = floorTier.ToString(),
-                        message = $"This template requires at least the {floorTier} tier."
-                    });
+                    return BadRequest(ApiResponse<CreateVmResponse>.Fail("TIER_TOO_LOW", $"This template requires at least the {floorTier} tier.", new Dictionary<string, object> { ["requestedTier"] = requestedTier.ToString(), ["minimumTier"] = floorTier.ToString() }));
                 }
             }
 
@@ -601,7 +576,7 @@ public class MarketplaceController : ControllerBase
             // Must run before stats tracking so a blocked deploy isn't counted.
             if (string.IsNullOrEmpty(vmResponse.VmId))
             {
-                return BadRequest(new { error = vmResponse.Error ?? "CREATE_ERROR", message = vmResponse.Message });
+                return BadRequest(ApiResponse<CreateVmResponse>.Fail(vmResponse.Error ?? "CREATE_ERROR", vmResponse.Message ?? "Deployment was rejected."));
             }
 
             // Track deployment stats (fire and forget)s
@@ -623,16 +598,16 @@ public class MarketplaceController : ControllerBase
                 template.Name, vmResponse.VmId, userId,
                 template.PricingModel == TemplatePricingModel.PerDeploy ? template.TemplatePrice : 0);
 
-            return Ok(vmResponse);
+            return Ok(ApiResponse<CreateVmResponse>.Ok(vmResponse));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<CreateVmResponse>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to deploy template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to deploy template", details = ex.Message });
+            return StatusCode(500, ApiResponse<CreateVmResponse>.Fail("INTERNAL_ERROR", "Failed to deploy template", new Dictionary<string, object> { ["details"] = ex.Message }));
         }
     }
 
@@ -648,11 +623,11 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{id}/artifacts")]
     [Authorize]
-    [ProducesResponseType(typeof(TemplateArtifact), 200)]
+    [ProducesResponseType(typeof(ApiResponse<TemplateArtifact>), 200)]
     [ProducesResponseType(400)]
     [ProducesResponseType(403)]
     [ProducesResponseType(404)]
-    public async Task<ActionResult<TemplateArtifact>> AddArtifact(
+    public async Task<ActionResult<ApiResponse<TemplateArtifact>>> AddArtifact(
         string id,
         [FromBody] AddArtifactRequest request)
     {
@@ -662,7 +637,7 @@ public class MarketplaceController : ControllerBase
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
         if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
-            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
+            return Conflict(ApiResponse<TemplateArtifact>.Fail("CONFLICT", "A published template can't be edited directly. Use \"New version\" to make changes for review."));
 
         TemplateArtifact artifact;
         try
@@ -671,13 +646,13 @@ public class MarketplaceController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(ApiResponse<TemplateArtifact>.Fail("INVALID_ARGUMENT", ex.Message));
         }
 
         template.Artifacts.Add(artifact);
         await _templateService.SaveTemplateDirectAsync(template);
 
-        return Ok(artifact);
+        return Ok(ApiResponse<TemplateArtifact>.Ok(artifact));
     }
 
     /// <summary>
@@ -850,7 +825,7 @@ public class MarketplaceController : ControllerBase
     [ProducesResponseType(204)]
     [ProducesResponseType(403)]
     [ProducesResponseType(404)]
-    public async Task<IActionResult> RemoveArtifact(string id, string artifactId)
+    public async Task<ActionResult<ApiResponse<object>>> RemoveArtifact(string id, string artifactId)
     {
         var userId = User.FindFirst("wallet")?.Value ?? User.FindFirst("sub")?.Value;
         var template = await _templateService.GetTemplateByIdAsync(id);
@@ -858,7 +833,7 @@ public class MarketplaceController : ControllerBase
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
         if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
-            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
+            return Conflict(ApiResponse<object>.Fail("CONFLICT", "A published template can't be edited directly. Use \"New version\" to make changes for review."));
 
         var removed = template.Artifacts.RemoveAll(a => a.Id == artifactId);
         if (removed == 0) return NotFound();
@@ -879,11 +854,11 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPut("templates/{id}/artifacts/{artifactId}")]
     [Authorize]
-    [ProducesResponseType(typeof(TemplateArtifact), 200)]
+    [ProducesResponseType(typeof(ApiResponse<TemplateArtifact>), 200)]
     [ProducesResponseType(400)]
     [ProducesResponseType(403)]
     [ProducesResponseType(404)]
-    public async Task<ActionResult<TemplateArtifact>> UpdateArtifact(
+    public async Task<ActionResult<ApiResponse<TemplateArtifact>>> UpdateArtifact(
         string id,
         string artifactId,
         [FromBody] AddArtifactRequest request)
@@ -894,11 +869,11 @@ public class MarketplaceController : ControllerBase
         if (template is null) return NotFound();
         if (template.AuthorId != userId) return Forbid();
         if (template.IsCommunity && template.Status == TemplateStatus.Published && !User.IsInRole("Admin"))
-            return Conflict(new { error = "A published template can't be edited directly. Use \"New version\" to make changes for review." });
+            return Conflict(ApiResponse<TemplateArtifact>.Fail("CONFLICT", "A published template can't be edited directly. Use \"New version\" to make changes for review."));
 
         var existing = template.Artifacts.FirstOrDefault(a => a.Id == artifactId);
         if (existing is null)
-            return NotFound(new { error = $"Artifact '{artifactId}' not found." });
+            return NotFound(ApiResponse<TemplateArtifact>.Fail("NOT_FOUND", $"Artifact '{artifactId}' not found."));
 
         // Verify name uniqueness against siblings only — renaming an artifact
         // back to its own current name must not trip the duplicate check.
@@ -911,7 +886,7 @@ public class MarketplaceController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(ApiResponse<TemplateArtifact>.Fail("INVALID_ARGUMENT", ex.Message));
         }
 
         // Preserve the original identity / registration metadata.
@@ -923,7 +898,7 @@ public class MarketplaceController : ControllerBase
         template.Artifacts.Add(built);
 
         await _templateService.SaveTemplateDirectAsync(template);
-        return Ok(built);
+        return Ok(ApiResponse<TemplateArtifact>.Ok(built));
     }
 
 
@@ -936,7 +911,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("reviews/{resourceType}/{resourceId}")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<MarketplaceReview>>> GetReviews(
+    public async Task<ActionResult<ApiResponse<List<MarketplaceReview>>>> GetReviews(
         string resourceType,
         string resourceId,
         [FromQuery] int limit = 50,
@@ -945,13 +920,13 @@ public class MarketplaceController : ControllerBase
         try
         {
             var reviews = await _reviewService.GetReviewsAsync(resourceType, resourceId, limit, skip);
-            return Ok(reviews);
+            return Ok(ApiResponse<List<MarketplaceReview>>.Ok(reviews));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get reviews for {ResourceType}/{ResourceId}",
                 resourceType, resourceId);
-            return StatusCode(500, new { error = "Failed to retrieve reviews" });
+            return StatusCode(500, ApiResponse<List<MarketplaceReview>>.Fail("INTERNAL_ERROR", "Failed to retrieve reviews"));
         }
     }
 
@@ -960,14 +935,14 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("reviews")]
     [Authorize]
-    public async Task<ActionResult<MarketplaceReview>> SubmitReview(
+    public async Task<ActionResult<ApiResponse<MarketplaceReview>>> SubmitReview(
         [FromBody] SubmitReviewRequest request)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<MarketplaceReview>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var review = new MarketplaceReview
             {
@@ -986,24 +961,24 @@ public class MarketplaceController : ControllerBase
             };
 
             var saved = await _reviewService.SubmitReviewAsync(review);
-            return Ok(saved);
+            return Ok(ApiResponse<MarketplaceReview>.Ok(saved));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<MarketplaceReview>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return StatusCode(403, new { error = ex.Message });
+            return StatusCode(403, ApiResponse<MarketplaceReview>.Fail("FORBIDDEN", ex.Message));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<MarketplaceReview>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to submit review");
-            return StatusCode(500, new { error = "Failed to submit review" });
+            return StatusCode(500, ApiResponse<MarketplaceReview>.Fail("INTERNAL_ERROR", "Failed to submit review"));
         }
     }
 
@@ -1012,25 +987,25 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("reviews/{resourceType}/{resourceId}/my")]
     [Authorize]
-    public async Task<ActionResult<MarketplaceReview?>> GetMyReview(
+    public async Task<ActionResult<ApiResponse<MarketplaceReview?>>> GetMyReview(
         string resourceType, string resourceId)
     {
         try
         {
             var userId = GetUserId();
             if (userId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<MarketplaceReview?>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var review = await _reviewService.GetUserReviewAsync(resourceType, resourceId, userId);
             if (review == null)
-                return Ok((MarketplaceReview?)null);
+                return Ok(ApiResponse<MarketplaceReview?>.Ok((MarketplaceReview?)null));
 
-            return Ok(review);
+            return Ok(ApiResponse<MarketplaceReview?>.Ok(review));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get user review");
-            return StatusCode(500, new { error = "Failed to retrieve review" });
+            return StatusCode(500, ApiResponse<MarketplaceReview?>.Fail("INTERNAL_ERROR", "Failed to retrieve review"));
         }
     }
 
@@ -1071,7 +1046,7 @@ public class MarketplaceController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to search nodes");
-            return StatusCode(500, new { error = "Failed to search nodes" });
+            return StatusCode(500, ApiResponse<List<NodeAdvertisement>>.Fail("INTERNAL_ERROR", "Failed to search nodes"));
         }
     }
 
@@ -1087,7 +1062,7 @@ public class MarketplaceController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get featured nodes");
-            return StatusCode(500, new { error = "Failed to retrieve featured nodes" });
+            return StatusCode(500, ApiResponse<List<NodeAdvertisement>>.Fail("INTERNAL_ERROR", "Failed to retrieve featured nodes"));
         }
     }
 
@@ -1099,31 +1074,31 @@ public class MarketplaceController : ControllerBase
         {
             var node = await _nodeService.GetNodeAdvertisementAsync(nodeId);
             if (node == null)
-                return NotFound(new { error = $"Node '{nodeId}' not found" });
+                return NotFound(ApiResponse<NodeAdvertisement>.Fail("NOT_FOUND", $"Node '{nodeId}' not found"));
 
             return Ok(ApiResponse<NodeAdvertisement>.Ok(node));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get node details: {NodeId}", nodeId);
-            return StatusCode(500, new { error = "Failed to retrieve node details" });
+            return StatusCode(500, ApiResponse<NodeAdvertisement>.Fail("INTERNAL_ERROR", "Failed to retrieve node details"));
         }
     }
 
 
     [HttpGet("categories")]
     [AllowAnonymous]
-    public async Task<ActionResult<List<TemplateCategory>>> GetCategories()
+    public async Task<ActionResult<ApiResponse<List<TemplateCategory>>>> GetCategories()
     {
         try
         {
             var categories = await _templateService.GetCategoriesAsync();
-            return Ok(categories);
+            return Ok(ApiResponse<List<TemplateCategory>>.Ok(categories));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get categories");
-            return StatusCode(500, new { error = "Failed to retrieve categories" });
+            return StatusCode(500, ApiResponse<List<TemplateCategory>>.Fail("INTERNAL_ERROR", "Failed to retrieve categories"));
         }
     }
 
@@ -1150,7 +1125,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("platform-variables")]
     [AllowAnonymous]
-    public ActionResult<PlatformVariablesResponse> GetPlatformVariables()
+    public ActionResult<ApiResponse<PlatformVariablesResponse>> GetPlatformVariables()
     {
         try
         {
@@ -1168,12 +1143,12 @@ public class MarketplaceController : ControllerBase
                 .OrderBy(k => k, StringComparer.Ordinal)
                 .ToList();
 
-            return Ok(new PlatformVariablesResponse(statics, dynamics));
+            return Ok(ApiResponse<PlatformVariablesResponse>.Ok(new PlatformVariablesResponse(statics, dynamics)));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list platform variables");
-            return StatusCode(500, new { error = "Failed to retrieve platform variables" });
+            return StatusCode(500, ApiResponse<PlatformVariablesResponse>.Fail("INTERNAL_ERROR", "Failed to retrieve platform variables"));
         }
     }
 
@@ -1183,6 +1158,20 @@ public class MarketplaceController : ControllerBase
     public sealed record PlatformVariablesResponse(
         IReadOnlyList<string> Static,
         IReadOnlyList<string> Dynamic);
+
+    /// <summary>Result of creating/updating a template: the record plus any non-blocking validation warnings.</summary>
+    public sealed record TemplateMutationResult(VmTemplate Template, IReadOnlyList<string> Warnings);
+
+    /// <summary>Response for POST /seed: counts plus a lightweight view of what was seeded.</summary>
+    public sealed record SeedResult(
+        string Message,
+        int TemplateCount,
+        int CategoryCount,
+        IReadOnlyList<SeededTemplate> Templates,
+        IReadOnlyList<SeededCategory> Categories);
+
+    public sealed record SeededTemplate(string Id, string Name, string Slug, string Category);
+    public sealed record SeededCategory(string Id, string Name, string Slug);
 
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1194,19 +1183,14 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<VmTemplate>> CreatePlatformTemplate([FromBody] VmTemplate template)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> CreatePlatformTemplate([FromBody] VmTemplate template)
     {
         try
         {
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
             {
-                return BadRequest(new
-                {
-                    error = "Template validation failed",
-                    errors = validation.Errors,
-                    warnings = validation.Warnings
-                });
+                return BadRequest(ApiResponse<VmTemplate>.Fail("VALIDATION_FAILED", "Template validation failed", new Dictionary<string, object> { ["errors"] = validation.Errors, ["warnings"] = validation.Warnings }));
             }
 
             var created = await _templateService.CreateTemplateAsync(template);
@@ -1214,16 +1198,16 @@ public class MarketplaceController : ControllerBase
             return CreatedAtAction(
                 nameof(GetTemplate),
                 new { slugOrId = created.Slug },
-                created);
+                ApiResponse<VmTemplate>.Ok(created));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<VmTemplate>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create platform template");
-            return StatusCode(500, new { error = "Failed to create template" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to create template"));
         }
     }
 
@@ -1232,17 +1216,17 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates/pending")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<List<VmTemplate>>> GetPendingTemplates()
+    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetPendingTemplates()
     {
         try
         {
             var templates = await _templateService.GetPendingReviewTemplatesAsync();
-            return Ok(templates);
+            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to list pending templates");
-            return StatusCode(500, new { error = "Failed to list pending templates" });
+            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to list pending templates"));
         }
     }
 
@@ -1251,29 +1235,29 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{templateId}/approve")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<VmTemplate>> ApproveTemplate(string templateId)
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> ApproveTemplate(string templateId)
     {
         try
         {
             var reviewerId = GetUserId();
             if (reviewerId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<VmTemplate>.Fail("UNAUTHORIZED", "Authentication required"));
 
             var approved = await _templateService.ApproveTemplateAsync(templateId, reviewerId);
-            return Ok(approved);
+            return Ok(ApiResponse<VmTemplate>.Ok(approved));
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = $"Template '{templateId}' not found" });
+            return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<VmTemplate>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to approve template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to approve template" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to approve template"));
         }
     }
 
@@ -1282,37 +1266,37 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("templates/{templateId}/reject")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<VmTemplate>> RejectTemplate(
+    public async Task<ActionResult<ApiResponse<VmTemplate>>> RejectTemplate(
         string templateId, [FromBody] RejectTemplateRequest request)
     {
         try
         {
             var reviewerId = GetUserId();
             if (reviewerId == null)
-                return Unauthorized(new { error = "Authentication required" });
+                return Unauthorized(ApiResponse<VmTemplate>.Fail("UNAUTHORIZED", "Authentication required"));
 
             if (string.IsNullOrWhiteSpace(request?.Reason))
-                return BadRequest(new { error = "A rejection reason is required" });
+                return BadRequest(ApiResponse<VmTemplate>.Fail("BAD_REQUEST", "A rejection reason is required"));
 
             var rejected = await _templateService.RejectTemplateAsync(templateId, reviewerId, request.Reason);
-            return Ok(rejected);
+            return Ok(ApiResponse<VmTemplate>.Ok(rejected));
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = $"Template '{templateId}' not found" });
+            return NotFound(ApiResponse<VmTemplate>.Fail("NOT_FOUND", $"Template '{templateId}' not found"));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(ApiResponse<VmTemplate>.Fail("INVALID_OPERATION", ex.Message));
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(ApiResponse<VmTemplate>.Fail("INVALID_ARGUMENT", ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to reject template: {TemplateId}", templateId);
-            return StatusCode(500, new { error = "Failed to reject template" });
+            return StatusCode(500, ApiResponse<VmTemplate>.Fail("INTERNAL_ERROR", "Failed to reject template"));
         }
     }
 
@@ -1323,7 +1307,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpPost("seed")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult> SeedTemplates([FromQuery] bool force = false)
+    public async Task<ActionResult<ApiResponse<SeedResult>>> SeedTemplates([FromQuery] bool force = false)
     {
         try
         {
@@ -1332,19 +1316,17 @@ public class MarketplaceController : ControllerBase
             var templates = await _templateService.GetTemplatesAsync(new TemplateQuery());
             var categories = await _templateService.GetCategoriesAsync();
 
-            return Ok(new
-            {
-                message = "Templates seeded successfully",
-                templateCount = templates.Count,
-                categoryCount = categories.Count,
-                templates = templates.Select(t => new { t.Id, t.Name, t.Slug, t.Category }).ToList(),
-                categories = categories.Select(c => new { c.Id, c.Name, c.Slug }).ToList()
-            });
+            return Ok(ApiResponse<SeedResult>.Ok(new SeedResult(
+                "Templates seeded successfully",
+                templates.Count,
+                categories.Count,
+                templates.Select(t => new SeededTemplate(t.Id, t.Name, t.Slug, t.Category)).ToList(),
+                categories.Select(c => new SeededCategory(c.Id, c.Name, c.Slug)).ToList())));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to seed templates");
-            return StatusCode(500, new { error = "Failed to seed templates", details = ex.Message });
+            return StatusCode(500, ApiResponse<SeedResult>.Fail("SEED_FAILED", "Failed to seed templates", new Dictionary<string, object> { ["details"] = ex.Message }));
         }
     }
 
