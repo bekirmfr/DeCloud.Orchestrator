@@ -69,6 +69,12 @@
 		<!-- Build frontend automatically in Release mode (for production) -->
 		<BuildFrontend Condition="'$(Configuration)' == 'Release'">true</BuildFrontend>
 		<BuildFrontend Condition="'$(Configuration)' == 'Debug'">false</BuildFrontend>
+
+		<!-- New React app (frontend migration, Option A): wwwroot-next -> wwwroot/dist-app,
+		     served at /app. Same Release/Debug split as the legacy build. -->
+		<FrontendNextDir>wwwroot-next</FrontendNextDir>
+		<BuildFrontendNext Condition="'$(Configuration)' == 'Release'">true</BuildFrontendNext>
+		<BuildFrontendNext Condition="'$(Configuration)' == 'Debug'">false</BuildFrontendNext>
 	</PropertyGroup>
 
 	<!-- Frontend source files tracked for incremental build.
@@ -80,6 +86,17 @@
 		<FrontendSource Include="$(FrontendDir)/public/**" />
 		<FrontendSource Include="$(FrontendDir)/index.html" />
 		<FrontendSource Include="$(FrontendDir)/styles.css" />
+	</ItemGroup>
+
+	<!-- New app source files tracked for incremental build (TS/TSX/CSS).
+	     Output is wwwroot/dist-app; node_modules and dist-app are not inputs. -->
+	<ItemGroup>
+		<FrontendSourceNext Include="$(FrontendNextDir)/src/**/*" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/public/**" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/index.html" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/package.json" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/vite.config.ts" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/tsconfig*.json" />
 	</ItemGroup>
 
 	<!-- ============================================== -->
@@ -101,11 +118,31 @@
 	</Target>
 
 	<!-- ============================================== -->
+	<!-- TARGET: Build New App (wwwroot-next)           -->
+	<!-- ============================================== -->
+	<Target Name="BuildFrontendNext" BeforeTargets="Build" Condition="'$(BuildFrontendNext)' == 'true'" Inputs="$(FrontendNextDir)/package.json;$(FrontendNextDir)/vite.config.ts;@(FrontendSourceNext)" Outputs="$(FrontendDir)/dist-app/index.html">
+		<Message Importance="high" Text="Building new app (wwwroot-next -> wwwroot/dist-app)..." />
+		<Exec Command="npm ci" WorkingDirectory="$(FrontendNextDir)"
+			  Condition="!Exists('$(FrontendNextDir)/node_modules')" />
+		<Exec Command="npm run build" WorkingDirectory="$(FrontendNextDir)" IgnoreExitCode="false" />
+		<Error Condition="!Exists('$(FrontendDir)/dist-app/index.html')" Text="❌ New app build failed: dist-app/index.html not found." />
+		<Message Importance="high" Text="✓ New app built successfully: wwwroot/dist-app/" />
+	</Target>
+
+	<!-- ============================================== -->
+	<!-- TARGET: Clean New App Build Output             -->
+	<!-- ============================================== -->
+	<Target Name="CleanFrontendNext" AfterTargets="Clean">
+		<RemoveDir Directories="$(FrontendDir)/dist-app" Condition="Exists('$(FrontendDir)/dist-app')" />
+	</Target>
+
+	<!-- ============================================== -->
 	<!-- TARGET: Content Exclude Rules                  -->
 	<!-- ============================================== -->
 	<ItemGroup>
 		<Compile Remove="CloudInit\**" />
 		<Compile Remove="wwwroot\**" />
+		<Compile Remove="wwwroot-next\**" />
 		<Content Remove="$(FrontendDir)/node_modules/**" />
 		<Content Remove="$(FrontendDir)/src/**" />
 		<!--<Content Remove="$(FrontendDir)/public/**" />-->
@@ -114,6 +151,9 @@
 		<Content Remove="$(FrontendDir)/vite.config.js" />
 		<Content Remove="$(FrontendDir)/*.md" />
 		<Content Remove="$(FrontendDir)/*.zip" />
+		<!-- New app: ship only its built output (wwwroot/dist-app, auto-included as
+		     web content); keep all of wwwroot-next's source out of the publish. -->
+		<Content Remove="$(FrontendNextDir)/**" />
 	</ItemGroup>
 	<ItemGroup>
 	  <ProjectReference Include="..\..\..\Decloud.Shared\DeCloud.Shared.csproj" />

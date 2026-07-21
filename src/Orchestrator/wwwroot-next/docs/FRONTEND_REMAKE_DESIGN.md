@@ -1,6 +1,10 @@
 # DeCloud Frontend Remake — Design & Requirements
 
-**Version:** 0.8 — *restructured to lead with purpose; terminal/file-browser folded into in-app routes*
+**Version:** 0.9 — *purpose-led; terminal/file-browser in-app; visual direction "Meridian" chosen*
+
+> **v0.9 change:** visual identity chosen — **Meridian** (cool architectural light, iris accent, Space Grotesk, centerless-mesh signature). Token seeds recorded in §6.4; dark mode to be derived from the same roles. Anchored on real hero + dashboard mockups.
+
+**Version (history):** 0.8 — *restructured to lead with purpose; terminal/file-browser folded into in-app routes*
 
 > **v0.8 change:** grounding the serving layer found six standalone HTML entries, not four. Resolved: **terminal & file browser become in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) with pop-out preserved (chromeless variant) — §2, §3, §4.1, §7, §10. `sign.html`, `report.html`, `tos.html` stay standalone. No technical blocker (plain xterm/WS; no COOP/COEP). A `/design-tokens.css` already exists to build the token layer on.
 **Status:** Purpose layer settled (critical path, spine, dual-lifecycle, failure taxonomy, state model, parity, success criteria). Construction layer locked and grounded in the real code. Backend contract normalized; balance-emit deferred with a plan.
@@ -159,6 +163,14 @@ Generate from OpenAPI; `api()` unwraps a single `ApiResponse<T>`; enums are stri
 
 ### 6.4 Theme = a design-token layer (R7)
 Role-based tokens (color/spacing/type/radii/shadow/motion/z-index); components consume only tokens; **swappable** (brand/white-label = config), **contrast-validated per theme**. Shared by landing and app.
+
+**Chosen visual direction: "Meridian"** (ratified). Cool architectural light; drama from typography + restraint; one accent; signature = the *centerless hairline mesh* (a node graph with no center, literalizing the network). These are the **token seeds** to encode into `design-tokens.css` (reconciling/replacing the one that already exists), not final values:
+- **Color (light):** canvas `#EDEFEE`, panel `#F6F7F6`, ink `#14181A`, muted `#5C666B`, faint `#8A9298`, hairline `#D6DBD9` / `#E6E9E8`. Accent (iris) `#332ED6` (soft `#ECEBFB`) — used sparingly (primary action, live accents, links). Status: running/live pine `#1C7A56`, provisioning/warn `#B26B12`. (Iris is deliberately *not* the terracotta/acid-green AI-design tells.)
+- **Type:** display **Space Grotesk** (tight, ~-0.03em), body **Inter**, mono **JetBrains Mono** (tabular figures for money, wallet addresses, metrics). All OFL/open — self-host to avoid a CDN-font dependency (matches the earlier move off CDNs).
+- **Radii:** 8px controls, 12–14px cards. **Signature:** centerless mesh + off-axis hero; disciplined whitespace + hairlines carry the rest.
+- **Dark mode (must derive, R7):** Meridian is light-*first*, not light-*only*. Derive a dark counterpart from the same roles — dark canvas/elevated panels, iris lifted for contrast, same Space Grotesk/JetBrains Mono, same mesh — and contrast-validate both modes. This is derivation, not a re-pick.
+- **Fonts:** self-hosted (no CDN), latin + latin-ext now; Cyrillic/CJK subsets added in the i18n phase (R8), lazy-loaded per locale. `fonts.css` (`@font-face`) or Fontsource npm packages; import fonts before tokens.
+- **Reconciliation with the existing `wwwroot/design-tokens.css` (decided):** the old file is a *different system* — dark-only, teal `#00d4aa`, Outfit, glow/gradient utilities, and different token *names* (`--bg-deep`, `--accent-primary`), with same-named tokens (`--text-primary`) holding opposite values. It is **not** replaced in place (that would break `index.html`, `sign.html`, `terminal.html`, `file-browser.html`). Instead: Meridian tokens are **net-new for the new app** (`dist-app`); the old file **stays for legacy** during migration; the two **never share a document** (serving split — old at `/`, new at `/app`), so no collision. Each page adopts Meridian **when it migrates** (a restyle, not a variable alias — e.g. `terminal`/`file-browser` fold into `/app/vms/:id` and target Meridian **dark**, which suits a terminal). The old `design-tokens.css` is **retired at cutover** (Phase 6) once the monolith and the last standalone page are on Meridian.
 
 ### 6.5 Light/dark (R7)
 Token-set swap via CSS custom properties → no re-render, no flicker. Inline pre-paint script; honor `prefers-color-scheme`; persist override; contrast in both modes. CSS Modules over tokens; no theme-via-CSS-in-JS.

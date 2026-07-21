@@ -166,7 +166,7 @@ builder.Services.AddHttpClient<NodeCommandService>()
         client.Timeout = TimeSpan.FromSeconds(5);  // Fast timeout for push attempts
     });
 // UserService needs IWebHostEnvironment for dev mode signature validation
-builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IEventService, EventService>();
 builder.Services.AddHttpClient<ITerminalService, TerminalService>();
 builder.Services.AddSingleton<IWalletSshKeyService, WalletSshKeyService>();

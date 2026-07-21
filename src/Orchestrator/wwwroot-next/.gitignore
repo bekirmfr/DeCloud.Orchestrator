@@ -1,0 +1,6 @@
+node_modules
+# build output lives in ../wwwroot/dist-app (served by ASP.NET); don't commit it
+../wwwroot/dist-app
+dist
+*.local
+.DS_Store

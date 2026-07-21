@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeCloud — Meridian tokens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* --- tokens (mirror of design-tokens.css; that file is the source of truth) --- */
+:root{
+  --font-display:"Space Grotesk",sans-serif;--font-body:"Inter",sans-serif;--font-mono:"JetBrains Mono",monospace;
+  --radius-sm:6px;--radius:8px;--radius-card:12px;--radius-pill:999px;--dur:180ms;--ease:cubic-bezier(.2,.6,.2,1);
+  --canvas:#EDEFEE;--surface-1:#F6F7F6;--surface-2:#FFFFFF;
+  --text-primary:#14181A;--text-secondary:#5C666B;--text-tertiary:#6A7276;--text-disabled:#A2A9AD;
+  --border:#D6DBD9;--border-subtle:#E6E9E8;--border-strong:#C2C8C6;
+  --accent:#332ED6;--accent-hover:#2A26BF;--accent-soft:#ECEBFB;--on-accent:#FFFFFF;--text-accent:#332ED6;
+  --focus-ring:0 0 0 3px var(--accent-soft),0 0 0 1px var(--accent);
+  --success:#1C7A56;--success-solid:#1C7A56;--success-soft:#E4F1EB;
+  --warning:#8A5310;--warning-solid:#B26B12;--warning-soft:#F6EDDD;
+  --danger:#B3261E;--danger-soft:#F7E4E2;--on-status:#FFFFFF;
+  --mesh-line:#C7CDCB;--mesh-node:#B7BEBB;--mesh-node-accent:#332ED6;
+}
+[data-theme="dark"]{
+  --canvas:#0E1113;--surface-1:#15191C;--surface-2:#1B2024;
+  --text-primary:#EBEEED;--text-secondary:#9AA4A8;--text-tertiary:#79838A;--text-disabled:#545D62;
+  --border:#2A3236;--border-subtle:#1E2528;--border-strong:#3A4247;
+  --accent:#4B45E0;--accent-hover:#5C57EA;--accent-soft:#1E1E3A;--on-accent:#FFFFFF;--text-accent:#9490F7;
+  --focus-ring:0 0 0 3px var(--accent-soft),0 0 0 1px var(--accent);
+  --success:#3ECF8E;--success-solid:#3ECF8E;--success-soft:#14261F;
+  --warning:#E0B94A;--warning-solid:#E0B94A;--warning-soft:#2A2312;
+  --danger:#F0817A;--danger-soft:#2A1614;--on-status:#0E1113;
+  --mesh-line:#2A3236;--mesh-node:#3A4247;--mesh-node-accent:#6B67F0;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--canvas);color:var(--text-primary);font-family:var(--font-body);line-height:1.6;transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+::selection{background:var(--accent);color:var(--on-accent)}
+a{color:var(--text-accent);text-decoration:none}
+.wrap{max-width:1100px;margin:0 auto;padding:0 28px}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+
+/* toggle */
+.toolbar{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:14px 28px;background:var(--surface-2);border-bottom:1px solid var(--border-subtle)}
+.mark{font-family:var(--font-display);font-weight:600;font-size:17px;letter-spacing:-.02em;display:flex;align-items:center;gap:9px}
+.mark .dot{width:9px;height:9px;background:var(--accent);border-radius:50%;box-shadow:0 0 0 4px var(--accent-soft)}
+.tgl{font-family:var(--font-mono);font-size:13px;padding:8px 14px;border-radius:var(--radius);border:1px solid var(--border-strong);background:transparent;color:var(--text-primary);cursor:pointer;display:flex;align-items:center;gap:8px}
+.tgl:hover{border-color:var(--text-secondary)}
+
+section{padding:34px 0;border-bottom:1px solid var(--border-subtle)}
+.lbl{font-family:var(--font-mono);font-size:11px;letter-spacing:var(--track-eyebrow,.14em);text-transform:uppercase;color:var(--text-tertiary);margin-bottom:18px}
+
+/* type specimen */
+.d1{font-family:var(--font-display);font-weight:600;font-size:clamp(38px,6vw,64px);line-height:1.02;letter-spacing:-.035em}
+.d1 em{font-style:normal;color:var(--accent)}
+.h2{font-family:var(--font-display);font-weight:500;font-size:22px;letter-spacing:-.02em;margin-top:4px}
+.body{font-size:16px;color:var(--text-secondary);max-width:540px;margin-top:8px}
+.meta{font-size:13px;color:var(--text-tertiary);margin-top:4px}
+
+/* swatches */
+.sw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.sw{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.sw .chip{height:52px}
+.sw .cap{padding:8px 10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);background:var(--surface-2)}
+.sw .cap b{display:block;color:var(--text-primary);font-weight:500;font-size:12px}
+
+/* components */
+.comp{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.btn{font-family:var(--font-display);font-weight:500;font-size:14px;padding:9px 16px;border-radius:var(--radius);cursor:pointer;border:1px solid var(--border-strong);background:transparent;color:var(--text-primary);transition:var(--dur) var(--ease);display:inline-flex;gap:7px;align-items:center}
+.btn:hover{border-color:var(--text-secondary)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.pri:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.ink{background:var(--text-primary);border-color:var(--text-primary);color:var(--canvas)}
+input.f{font-family:var(--font-body);font-size:14px;padding:9px 12px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface-2);color:var(--text-primary);min-width:220px}
+input.f::placeholder{color:var(--text-tertiary)}
+.badge{font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:var(--radius-sm)}
+.badge.a{background:var(--accent-soft);color:var(--text-accent)}
+.badge.s{background:var(--success-soft);color:var(--success)}
+.badge.w{background:var(--warning-soft);color:var(--warning)}
+.badge.d{background:var(--danger-soft);color:var(--danger)}
+.dotrow{display:flex;gap:22px;align-items:center;font-size:13px;color:var(--text-secondary)}
+.sdot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:middle}
+.sdot.run{background:var(--success-solid);box-shadow:0 0 0 3px var(--success-soft)}
+.sdot.prov{background:var(--warning-solid);box-shadow:0 0 0 3px var(--warning-soft)}
+.sdot.err{background:var(--danger);box-shadow:0 0 0 3px var(--danger-soft)}
+
+/* card + workload rows + runway (dashboard primitives) */
+.card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-card)}
+.card-h{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--border-subtle)}
+.card-h .t{font-family:var(--font-display);font-weight:500;font-size:14.5px}
+.card-h .c{font-family:var(--font-mono);font-size:12px;color:var(--text-tertiary)}
+.row{display:grid;grid-template-columns:1.4fr 1fr auto;gap:12px;align-items:center;padding:15px 18px;border-bottom:1px solid var(--border-subtle)}
+.row:last-child{border-bottom:0}
+.rn .nm{font-family:var(--font-mono);font-size:14px;font-weight:500}
+.rn .rg{font-size:12px;color:var(--text-tertiary);margin-top:1px}
+.spec{font-family:var(--font-mono);font-size:12.5px;color:var(--text-secondary)}
+.price{font-family:var(--font-mono);font-size:13px;text-align:right}
+.price .u{font-size:11px;color:var(--text-tertiary)}
+.track{height:6px;background:var(--border-subtle);border-radius:var(--radius-pill);overflow:hidden}
+.fill{height:100%;width:57%;background:var(--accent);border-radius:var(--radius-pill)}
+
+/* hero */
+.hero{position:relative;overflow:hidden}
+.mesh{position:absolute;inset:0;width:100%;height:100%;opacity:.55;pointer-events:none}
+.hero-in{position:relative;padding:80px 0 64px;max-width:720px}
+.eyebrow{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-accent);margin-bottom:20px;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:26px;height:1px;background:var(--accent)}
+.hero .sub{font-size:18px;color:var(--text-secondary);max-width:498px;margin:24px 0 30px}
+.cta{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.stats{display:flex;gap:40px;margin-top:52px;padding-top:24px;border-top:1px solid var(--border)}
+.stat .n{font-family:var(--font-display);font-weight:600;font-size:26px;letter-spacing:-.02em}
+.stat .l{font-size:12.5px;color:var(--text-tertiary);margin-top:2px}
+.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--success-solid);margin-right:7px;animation:p 2s infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* dashboard bar */
+.cbar{display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:13px 18px;margin-bottom:20px}
+.cbar-l{display:flex;align-items:center;gap:22px}
+.seg{font-size:13.5px;color:var(--text-secondary)}.seg.on{color:var(--text-primary);font-weight:500}
+.cbar-r{display:flex;align-items:center;gap:16px}
+.bal{text-align:right}.bal .v{font-family:var(--font-mono);font-weight:500;font-size:15px}.bal .r{font-size:11.5px;color:var(--success)}
+.waddr{font-family:var(--font-mono);font-size:12.5px;color:var(--text-secondary);background:var(--canvas);border:1px solid var(--border);padding:6px 10px;border-radius:var(--radius)}
+.grid{display:grid;grid-template-columns:1.62fr 1fr;gap:20px}
+@media(max-width:820px){.grid{grid-template-columns:1fr}.comp{gap:10px}}
+.fund{padding:18px}.fund .big{font-family:var(--font-mono);font-weight:500;font-size:32px;letter-spacing:-.02em}
+.fund .cur{font-size:14px;color:var(--text-secondary)}
+.runway .rl{display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin:14px 0 7px}
+.mini{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+.mtile{background:var(--surface-1);border:1px solid var(--border-subtle);border-radius:10px;padding:12px}
+.mtile .l{font-size:11.5px;color:var(--text-tertiary)}.mtile .v{font-family:var(--font-mono);font-weight:500;font-size:17px;margin-top:3px}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="mark"><span class="dot"></span>DeCloud · Meridian</div>
+  <button class="tgl" id="tgl" aria-label="Toggle theme"><span id="tgl-ic">◐</span> <span id="tgl-tx">Dark</span></button>
+</div>
+
+<div class="wrap">
+
+  <section>
+    <div class="lbl">Typography · Space Grotesk / Inter / JetBrains Mono</div>
+    <div class="d1">Compute that answers to <em>no one.</em></div>
+    <div class="h2">Your workloads, on a network with no center</div>
+    <p class="body">Body copy in Inter — deploy across a decentralized network, pay by the hour in USDC, no accounts or gatekeepers.</p>
+    <p class="meta mono">metadata · 0x7a3f…4c21 · fra1 · 0.021 USDC/hr</p>
+  </section>
+
+  <section>
+    <div class="lbl">Color roles · all pairs WCAG-AA validated</div>
+    <div class="sw-grid">
+      <div class="sw"><div class="chip" style="background:var(--canvas)"></div><div class="cap"><b>canvas</b>page</div></div>
+      <div class="sw"><div class="chip" style="background:var(--surface-1)"></div><div class="cap"><b>surface-1</b>panel</div></div>
+      <div class="sw"><div class="chip" style="background:var(--surface-2)"></div><div class="cap"><b>surface-2</b>card</div></div>
+      <div class="sw"><div class="chip" style="background:var(--accent)"></div><div class="cap"><b>accent</b>iris</div></div>
+      <div class="sw"><div class="chip" style="background:var(--success-solid)"></div><div class="cap"><b>success</b>running</div></div>
+      <div class="sw"><div class="chip" style="background:var(--warning-solid)"></div><div class="cap"><b>warning</b>provisioning</div></div>
+      <div class="sw"><div class="chip" style="background:var(--danger)"></div><div class="cap"><b>danger</b>error</div></div>
+      <div class="sw"><div class="chip" style="background:var(--text-primary)"></div><div class="cap"><b>ink</b>text</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="lbl">Components</div>
+    <div class="comp" style="margin-bottom:16px">
+      <button class="btn pri">Deploy workload →</button>
+      <button class="btn">Run a node</button>
+      <button class="btn ink">Launch app</button>
+      <input class="f" placeholder="my-workload-name">
+    </div>
+    <div class="comp" style="margin-bottom:16px">
+      <span class="badge a">standard</span><span class="badge a">GPU</span>
+      <span class="badge s">running</span><span class="badge w">provisioning</span><span class="badge d">suspended</span>
+    </div>
+    <div class="dotrow">
+      <span><span class="sdot run"></span>running</span>
+      <span><span class="sdot prov"></span>provisioning</span>
+      <span><span class="sdot err"></span>error</span>
+    </div>
+  </section>
+
+  <section class="hero">
+    <svg class="mesh" viewBox="0 0 1100 460" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g stroke="var(--mesh-line)" stroke-width="1" fill="none">
+        <path d="M60 90 L300 200 L180 360 M300 200 L560 130 L820 250 M560 130 L640 350 L820 250 L1040 180 M640 350 L900 430 M180 360 L420 440 L640 350 M820 250 L1000 400"/>
+      </g>
+      <g fill="var(--mesh-node)">
+        <circle cx="60" cy="90" r="3"/><circle cx="300" cy="200" r="3"/><circle cx="180" cy="360" r="3"/><circle cx="560" cy="130" r="3"/><circle cx="820" cy="250" r="3"/><circle cx="640" cy="350" r="3"/><circle cx="1040" cy="180" r="3"/><circle cx="900" cy="430" r="3"/><circle cx="420" cy="440" r="3"/><circle cx="1000" cy="400" r="3"/>
+      </g>
+      <g fill="var(--mesh-node-accent)"><circle cx="560" cy="130" r="5"/><circle cx="640" cy="350" r="5"/></g>
+    </svg>
+    <div class="hero-in">
+      <div class="eyebrow">Landing · public surface</div>
+      <div class="d1">Compute that answers to <em>no one.</em></div>
+      <p class="sub">Deploy across a network with no center. Pay by the hour in USDC. No accounts, no gatekeepers.</p>
+      <div class="cta">
+        <button class="btn pri">Launch app →</button>
+        <button class="btn">Run a node</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="n"><span class="pulse"></span>1,428</div><div class="l">nodes online</div></div>
+        <div class="stat"><div class="n">37</div><div class="l">regions</div></div>
+        <div class="stat"><div class="n">92 THz</div><div class="l">available now</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="border-bottom:0">
+    <div class="lbl">Dashboard · authenticated app surface</div>
+    <div class="cbar">
+      <div class="cbar-l">
+        <div class="mark" style="font-size:15px"><span class="dot"></span>DeCloud</div>
+        <span class="seg on">Overview</span><span class="seg">Workloads</span><span class="seg">Nodes</span><span class="seg">Settings</span>
+      </div>
+      <div class="cbar-r">
+        <div class="bal"><div class="v">248.50 USDC</div><div class="r">~34 days runway</div></div>
+        <span class="waddr">0x7a3f…4c21</span>
+        <button class="btn pri">Deploy workload</button>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="card-h"><span class="t">Running</span><span class="c">3 active · 4.72 USDC today</span></div>
+        <div class="row"><div class="rn"><span class="sdot run"></span><span class="nm">postgres-prod</span><div class="rg">Frankfurt · fra1</div></div><div class="spec">4 vCPU · 8 GB <span class="badge a">standard</span></div><div class="price">0.021<div class="u">USDC/hr</div></div></div>
+        <div class="row"><div class="rn"><span class="sdot run"></span><span class="nm">ml-trainer</span><div class="rg">New York · nyc2</div></div><div class="spec">8 vCPU · 32 GB <span class="badge a">GPU</span></div><div class="price">0.180<div class="u">USDC/hr</div></div></div>
+        <div class="row"><div class="rn"><span class="sdot prov"></span><span class="nm">web-gateway</span><div class="rg">San Francisco · sfo1</div></div><div class="spec">2 vCPU · 4 GB <span class="badge a">burstable</span></div><div class="price">0.008<div class="u">USDC/hr</div></div></div>
+      </div>
+      <div class="card fund">
+        <div class="card-h" style="padding:0 0 14px;margin-bottom:4px"><span class="t">Balance</span><span class="c">Polygon · escrow</span></div>
+        <div><span class="big">248.50</span> <span class="cur">USDC</span></div>
+        <div class="runway"><div class="rl"><span>Runway at current usage</span><span>~34 days</span></div><div class="track"><div class="fill"></div></div></div>
+        <button class="btn" style="width:100%;justify-content:center;margin-top:10px">Add funds</button>
+        <div class="mini"><div class="mtile"><div class="l">Spend today</div><div class="v">4.72</div></div><div class="mtile"><div class="l">This month</div><div class="v">128.40</div></div></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  const el=document.documentElement, t=document.getElementById('tgl'), tx=document.getElementById('tgl-tx'), ic=document.getElementById('tgl-ic');
+  t.addEventListener('click',()=>{
+    const dark=el.getAttribute('data-theme')==='dark';
+    el.setAttribute('data-theme',dark?'light':'dark');
+    tx.textContent=dark?'Dark':'Light'; ic.textContent=dark?'◐':'◑';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!-- ==========================================================================
+     ADD THESE TO src/Orchestrator/Orchestrator.csproj
+
+     They mirror the existing BuildFrontend/CleanFrontend targets (which build
+     the legacy app in wwwroot/ -> wwwroot/dist), but for the NEW app in
+     wwwroot-next/ -> wwwroot/dist-app. The two builds are independent; the
+     existing one is unchanged.
+
+     Output lands in wwwroot/dist-app, which is under wwwroot, so `dotnet publish`
+     picks it up as web content automatically and Program.cs serves it at /app.
+     The new app's SOURCE (node_modules, src, configs) must NOT be published —
+     the Remove items below keep it out.
+     ========================================================================== -->
+
+<PropertyGroup>
+  <!-- Build the new app in Release (matches BuildFrontend's Debug/Release split). -->
+  <FrontendNextDir>wwwroot-next</FrontendNextDir>
+  <BuildFrontendNext Condition="'$(Configuration)' == 'Release'">true</BuildFrontendNext>
+  <BuildFrontendNext Condition="'$(Configuration)' != 'Release'">false</BuildFrontendNext>
+</PropertyGroup>
+
+<!-- Rebuild trigger set: any change here re-runs the build (via Inputs/Outputs). -->
+<ItemGroup>
+  <FrontendSourceNext Include="$(FrontendNextDir)\src\**\*" />
+  <FrontendSourceNext Include="$(FrontendNextDir)\public\**\*" />
+  <FrontendSourceNext Include="$(FrontendNextDir)\index.html" />
+  <FrontendSourceNext Include="$(FrontendNextDir)\package.json" />
+  <FrontendSourceNext Include="$(FrontendNextDir)\vite.config.ts" />
+  <FrontendSourceNext Include="$(FrontendNextDir)\tsconfig*.json" />
+</ItemGroup>
+
+<!-- Keep the new app's source out of compile/publish (only its dist-app output
+     ships). node_modules especially must never be swept in. -->
+<ItemGroup>
+  <Content Remove="$(FrontendNextDir)\**" />
+  <None Remove="$(FrontendNextDir)\node_modules\**" />
+  <Compile Remove="$(FrontendNextDir)\**" />
+</ItemGroup>
+
+<Target Name="BuildFrontendNext"
+        BeforeTargets="Build"
+        Condition="'$(BuildFrontendNext)' == 'true'"
+        Inputs="$(FrontendNextDir)\package.json;$(FrontendNextDir)\vite.config.ts;@(FrontendSourceNext)"
+        Outputs="wwwroot\dist-app\index.html">
+  <Message Importance="high" Text="Building new frontend (wwwroot-next -> wwwroot/dist-app)..." />
+  <Exec Command="npm ci" WorkingDirectory="$(FrontendNextDir)" />
+  <Exec Command="npm run build" WorkingDirectory="$(FrontendNextDir)" />
+  <Error Condition="!Exists('wwwroot\dist-app\index.html')"
+         Text="New frontend build did not produce wwwroot/dist-app/index.html." />
+</Target>
+
+<Target Name="CleanFrontendNext" AfterTargets="Clean">
+  <RemoveDir Directories="wwwroot\dist-app" />
+</Target>

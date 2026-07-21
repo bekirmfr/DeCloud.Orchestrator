@@ -8,6 +8,8 @@ obj/
 publish/
 dist/
 node_modules/
+dist-app
+dist
 
 # IDE
 .vs/
