@@ -140,7 +140,7 @@ builder.Services.AddSingleton<IAbuseReportService>(sp =>
     var db = sp.GetService<IMongoDatabase>();
     var logger = sp.GetRequiredService<ILogger<AbuseReportService>>();
     return new AbuseReportService(db, logger);
-}); 
+});
 builder.Services.AddSingleton<ISchedulingConfigService, SchedulingConfigService>();
 builder.Services.AddScoped<NodePerformanceEvaluator>();
 builder.Services.AddSingleton<NodeCapacityCalculator>();
@@ -722,6 +722,9 @@ else
     // Serve Vite production build from wwwroot/dist/
 
     var distPath = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "dist");
+    // New React app (frontend migration, Option A) — Vite build in wwwroot/dist-app,
+    // built with base '/app/'. Served alongside the legacy app under /app.
+    var distAppPath = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "dist-app");
 
     Log.Information("╔══════════════════════════════════════════════════════════╗");
     Log.Information("║  🚀 PRODUCTION MODE                                      ║");
@@ -788,6 +791,54 @@ else
         Log.Warning("  → Frontend will not be available until built");
     }
 
+    // ── New React app (/app) — served alongside the legacy app (Option A) ──
+    // Vite build in wwwroot/dist-app (base '/app/'). Static assets resolve here;
+    // non-file /app/* client routes fall through to the SPA fallback below, which
+    // returns dist-app/index.html. Independent of dist/: either app may exist on
+    // its own. In Development this block does not run — the new app's Vite dev
+    // server serves /app (no .NET change needed for dev).
+    if (Directory.Exists(distAppPath))
+    {
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(distAppPath),
+            RequestPath = "/app",
+            OnPrepareResponse = ctx =>
+            {
+                // Same cache policy as the legacy build: hashed assets + fonts
+                // immutable for a year; everything else (index.html) no-cache.
+                var file = ctx.File.Name;
+                if (file.Contains("-") && (file.EndsWith(".js") || file.EndsWith(".css")))
+                {
+                    ctx.Context.Response.Headers.Append(
+                        "Cache-Control",
+                        "public,max-age=31536000,immutable"
+                    );
+                }
+                else if (file.EndsWith(".woff") || file.EndsWith(".woff2"))
+                {
+                    ctx.Context.Response.Headers.Append(
+                        "Cache-Control",
+                        "public,max-age=31536000,immutable"
+                    );
+                }
+                else
+                {
+                    ctx.Context.Response.Headers.Append(
+                        "Cache-Control",
+                        "no-cache,no-store,must-revalidate"
+                    );
+                }
+            }
+        });
+
+        Log.Information("  ✓ New app configured: Serving /app from wwwroot/dist-app/");
+    }
+    else
+    {
+        Log.Information("  ⓘ New app (/app) not built yet (wwwroot/dist-app/ absent) — expected until the migration build runs.");
+    }
+
     Log.Information("  Application:   {Url}", app.Urls.FirstOrDefault() ?? "http://localhost:5050");
     Log.Information("  Swagger UI:    {Url}/swagger", app.Urls.FirstOrDefault() ?? "http://localhost:5050");
     Log.Information("");
@@ -846,13 +897,18 @@ if (!app.Environment.IsDevelopment())
             return;
         }
 
-        // Serve index.html for all other routes (SPA routing)
-        var distPath = Path.Combine(
+        // Frontend migration (Option A): /app/* client routes belong to the new
+        // React app (wwwroot/dist-app); every other non-API route is the legacy
+        // app (wwwroot/dist). Static assets for both are served above; this only
+        // handles non-file client routes. MapFallback is terminal, so this single
+        // delegate must cover both — do not add a second fallback.
+        var appDistDir = context.Request.Path.StartsWithSegments("/app") ? "dist-app" : "dist";
+        var indexPath = Path.Combine(
             app.Environment.ContentRootPath,
             "wwwroot",
-            "dist"
+            appDistDir,
+            "index.html"
         );
-        var indexPath = Path.Combine(distPath, "index.html");
 
         if (File.Exists(indexPath))
         {

@@ -1,6 +1,8 @@
 # DeCloud Frontend Remake — Design & Requirements
 
-**Version:** 0.7 — *restructured to lead with purpose*
+**Version:** 0.8 — *restructured to lead with purpose; terminal/file-browser folded into in-app routes*
+
+> **v0.8 change:** grounding the serving layer found six standalone HTML entries, not four. Resolved: **terminal & file browser become in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) with pop-out preserved (chromeless variant) — §2, §3, §4.1, §7, §10. `sign.html`, `report.html`, `tos.html` stay standalone. No technical blocker (plain xterm/WS; no COOP/COEP). A `/design-tokens.css` already exists to build the token layer on.
 **Status:** Purpose layer settled (critical path, spine, dual-lifecycle, failure taxonomy, state model, parity, success criteria). Construction layer locked and grounded in the real code. Backend contract normalized; balance-emit deferred with a plan.
 **Scope:** The user-facing web frontend in `src/Orchestrator/wwwroot`. NodeAgent operator dashboard is a *different product for a different user* — out of scope, deferred (§13).
 
@@ -32,7 +34,8 @@ Grounded in the real deploy logic (`template-detail.js`, `deploy-submit.js`, `co
 - **Fund guard** *(beside the spine)* — a **hard gate**: an empty balance intercepts *before* the deploy form, not after a full configuration. Plus a **soft runway indicator** inside deploy: cost shown as "this workload runs ~N days on your balance," with a top-up link when it won't cover a sensible minimum. Deploy is otherwise silent about money.
 - **Deploy** — the hot path is **one click: "Deploy with recommended settings"** (the template already carries `RecommendedSpec`, so the default exists in the data). Spec/tiers/GPU/constraints/variables collapse into an opt-in **Customize** area. Complexity is available, not mandatory. Preserved verbatim: name validation, min-spec validation, platform-variable hiding, locked/editable/user constraint rows, ToS-gate retry, cost estimate (now also runway). Deploy is a **route** (`/app/marketplace/:slug/deploy`) — linkable, resumable, and form state survives a mid-flow re-auth (§4).
 - **Handoff** — the one-time **password reveal** is a plain overlay that must *not* survive reload (a clean instance of the modal-vs-route rule, §7). Then **land on the new VM's detail page** (`/app/vms/:id`) — you just made it; operate begins; watch it boot.
-- **Operate** — the VM detail page is the **cockpit**: live status/health (**where SignalR genuinely earns its subscription** — subscribe per-VM on mount, clean up on unmount), the access panel (SSH keys, direct-access ports, custom domains, browser terminal — tabs/modal-routes), metrics, lifecycle actions (stop/restart/destroy), and a **runway indicator** tying draining balance back to the fund guard.
+- **Operate** — the VM detail page is the **cockpit**: live status/health (**where SignalR genuinely earns its subscription** — subscribe per-VM on mount, clean up on unmount), the access panel (SSH keys, direct-access ports, custom domains), the **browser terminal and file/SFTP browser** (in-app routes, see below), metrics, lifecycle actions (stop/restart/destroy), and a **runway indicator** tying draining balance back to the fund guard.
+  - *Terminal & file browser (grounded decision):* today these are standalone `terminal.html`/`file-browser.html` pages opened via `window.open('_blank')` — the deliberate reason being **pop-out / multi-window** (keep a terminal open while navigating, several at once, second monitor). They become **in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) — tokened by the session, styled by the design system, xterm bundled + lazy-loaded (off the initial bundle) rather than CDN — **while preserving pop-out**: because a route is a URL, it opens in a new tab via a **chromeless layout variant** (no sidebar). No blocker exists (plain xterm over WS; no SharedArrayBuffer/COOP-COEP). The WS auth mechanism is preserved as-is (see §10).
 
 **What the spine does to the information architecture.** A sidebar of ten equal items is wrong for a spine-shaped product. The **Dashboard becomes the operate + fund home** — running workloads and their runway — with **"Deploy" promoted to a primary, always-available action** instead of buried three levels deep (marketplace → template → modal). Marketplace, My Templates, and Nodes recede to "sources you deploy from." Admin, template authoring, and NodeAgent stay off-spine and plain.
 
@@ -67,7 +70,8 @@ AUTHENTICATED (client-rendered SPA)
 ├─ /app/my-templates      My Templates → /:id/edit (modal-route)
 ├─ /app/vms               Virtual Machines (list)
 │  └─ /app/vms/:id        VM detail — operate cockpit; per-VM SignalR
-│     ├─ /app/vms/:id/terminal      Browser terminal (route; raw WS)
+│     ├─ /app/vms/:id/terminal      Browser terminal (route; WS; pop-out-able, chromeless variant)
+│     ├─ /app/vms/:id/files         File browser / SFTP (route; WS; pop-out-able, chromeless variant)
 │     ├─ /app/vms/:id/domains       Custom domains (modal-route)
 │     └─ /app/vms/:id/access        Direct access / ports (modal-route)
 ├─ /app/nodes             Nodes (browse + filter)   ← browse-only; no detail page
@@ -184,12 +188,12 @@ Release → MSBuild `npm run build`, ASP.NET serves `wwwroot/dist/` + SPA fallba
 
 ## 7. Surfaces & parity
 
-**Four surfaces:** public landing (SSG), authenticated SPA (`/app/*`, incl. its logged-out connect gate), `sign.html` (node signer), `report.html` (public abuse report; also in-app at `/app/report`).
+**Surfaces (grounded against `vite.config.js` + `.sln`).** The authenticated SPA (`/app/*`, incl. its logged-out connect gate) now **absorbs the terminal and file browser** as in-app routes (was standalone `terminal.html`/`file-browser.html`). Remaining **standalone entries**, kept standalone because each is reached cold/anonymously or needs a stable public URL: `sign.html` (node signer), `report.html` (public abuse report; also in-app at `/app/report`), `tos.html` (Terms — behind the deploy ToS gate and linkable publicly). Plus the SSG landing at `/`. *(A `/design-tokens.css` already exists in the frontend — the token layer builds on it, not from scratch.)*
 
 **Parity inventory (the cutover checklist — verify per migrated page before deleting the old module):**
 - **Auth/session:** SIWE nonce→sign→verify; httpOnly refresh cookie untouched by JS; tri-state refresh; `signOutOnDisconnect`; account-switch re-auth; wallet-mismatch warning; admin-visibility (capital-A).
 - **Deploy:** shared name validation; min-spec validation; platform-variable hiding; locked/editable/user constraints; ToS-gate retry; one-time password reveal; recommended default + Customize; runway indicator; hard fund gate; land-on-new-VM-detail.
-- **Operate:** per-VM SignalR status/metrics; terminal over raw WS (reconnect); direct-access ports (quick-add + custom); custom domains (add/verify/remove, DNS/CNAME instructions, status labels); stop/restart/destroy; suspended-for-nonpayment shown as itself.
+- **Operate:** per-VM SignalR status/metrics; **terminal** (xterm; resize→WS message protocol; token-via-`token`-query on `/api/terminal-proxy`; password-to-connect; reconnect; pop-out) and **file/SFTP browser** (`/api/sftp-proxy`; drag-and-drop upload; context menu; keyboard shortcuts; pop-out); direct-access ports (quick-add + custom); custom domains (add/verify/remove, DNS/CNAME instructions, status labels); stop/restart/destroy; suspended-for-nonpayment shown as itself.
 - **Wallet-crypto:** AES-GCM encrypt/decrypt with the wallet-derived key (verbatim).
 - **Marketplace/templates:** category/search/GPU/sort filters (URL-driven); template detail; My Templates; repo-deploy → the one deploy path.
 - **Admin:** compliance (suspend/block/bulk/VM-hold + tables); abuse (dismiss/warn/takedown + CSAM hash-check; NotScanned never shown as clean); template review (approve/reject).
@@ -214,7 +218,7 @@ No running server (SSR/Node) — landing is build-time SSG (§6.12) · No hand-r
 
 ## 10. Security requirements
 
-Fail closed (the tri-state `null`→UNCERTAIN is the one deliberate exception — keep, don't generalize into laxness). Frontend is never a security boundary (server enforces `[Authorize(Roles="Admin")]`, capital-A; route guards are UX). Refresh token stays httpOnly; preserve `wallet-crypto.js` verbatim. **Account switch fails closed** — B never operates A's workloads (§4). **Never blind-sign** — a clear "what you're signing" screen before every escrow signature; carry `sign.js`'s mismatch + `ACTION_REJECTED`/4001 handling. Automatic escaping default; markdown via DOMPurify; keep `sanitizeUrl`. Balance push (when added) is contentless — client refetches the authoritative figure (§6.9). Landing is public/fail-closed. CSP + supply-chain hygiene. No secrets in the bundle (only the public WalletConnect project ID + public config).
+Fail closed (the tri-state `null`→UNCERTAIN is the one deliberate exception — keep, don't generalize into laxness). Frontend is never a security boundary (server enforces `[Authorize(Roles="Admin")]`, capital-A; route guards are UX). Refresh token stays httpOnly; preserve `wallet-crypto.js` verbatim. **Account switch fails closed** — B never operates A's workloads (§4). **Never blind-sign** — a clear "what you're signing" screen before every escrow signature; carry `sign.js`'s mismatch + `ACTION_REJECTED`/4001 handling. Automatic escaping default; markdown via DOMPurify; keep `sanitizeUrl`. Balance push (when added) is contentless — client refetches the authoritative figure (§6.9). Landing is public/fail-closed. CSP + supply-chain hygiene. No secrets in the bundle (only the public WalletConnect project ID + public config). **Terminal/SFTP WS auth:** the access token (and VM password) ride in the WS URL query (`?token=…`) because browser WebSockets can't set an `Authorization` header — `Program.cs` `OnMessageReceived` reads `token` for `/api/terminal-proxy` and `/api/sftp-proxy`. This is preserved as-is; keep the existing discipline of **never logging the token/password**, and treat the code's `// TODO: short-lived ticket` as a future hardening that needs backend support (out of scope now).
 
 ---
 
