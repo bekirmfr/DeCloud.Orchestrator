@@ -1,4 +1,6 @@
 using DeCloud.Shared.Enums;
+using Microsoft.AspNetCore.SignalR;
+using Orchestrator.Hubs;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -121,6 +123,7 @@ public class VmLifecycleManager : IVmLifecycleManager
     private readonly ICentralIngressService _ingressService;
     private readonly ITemplateService _templateService;
     private readonly IEventService _eventService;
+    private readonly IHubContext<OrchestratorHub> _hub;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<VmLifecycleManager> _logger;
 
@@ -148,6 +151,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         ICentralIngressService ingressService,
         ITemplateService templateService,
         IEventService eventService,
+        IHubContext<OrchestratorHub> hub,
         IServiceProvider serviceProvider,
         ILogger<VmLifecycleManager> logger)
     {
@@ -155,6 +159,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         _ingressService = ingressService;
         _templateService = templateService;
         _eventService = eventService;
+        _hub = hub;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -254,6 +259,24 @@ public class VmLifecycleManager : IVmLifecycleManager
         }
 
         await _dataStore.SaveVmAsync(vm);
+
+        // Step 1.5: Broadcast the status change to any SignalR clients watching this VM.
+        // Mirrors the node-path ReportVmStatus broadcast so owner/heartbeat/timeout
+        // transitions reach the cockpit too. Best-effort — never break a transition on it.
+        try
+        {
+            await _hub.Clients.Group($"vm:{vm.Id}").SendAsync("VmStatusChanged", new
+            {
+                VmId = vm.Id,
+                Status = newStatus.ToString(),   // send the NAME (client also tolerates numeric)
+                Message = context.StatusMessage,
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SignalR VmStatusChanged broadcast failed for {VmId}", vm.Id);
+        }
 
         // ════════════════════════════════════════════════════════════════
         // Step 2: Execute side effects (best-effort, individually guarded)
