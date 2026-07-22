@@ -38,6 +38,71 @@ export interface PagedResult<T> {
 
 export const VMS_PAGE_SIZE = 20;
 
+// ── Detail shapes (GET /api/vms/{id} → ApiResponse<VmDetailResponse>) ──
+// VmDetailResponse returns the FULL VirtualMachine + host Node. We type only the
+// owner-facing subset the cockpit renders (not reconciler/migration internals).
+export interface VmAccessInfo {
+  sshHost?: string | null;
+  sshPort?: number;
+  vncHost?: string | null;
+  vncPort?: number;
+  consoleWebSocketUrl?: string | null;
+}
+
+export interface VmNetworkConfig {
+  privateIp?: string | null;
+  publicIp?: string | null;
+  hostname?: string | null;
+  sshJumpHost?: string | null;
+  sshJumpPort?: number | null;
+}
+
+export interface VmServiceModel {
+  name: string;
+  port?: number | null;
+  protocol?: string | null;
+  status: string | number; // ServiceStatus (may serialize numeric — normalize on render)
+  statusMessage?: string | null;
+}
+
+export interface VmDetail {
+  id: string;
+  name: string;
+  status: VmStatus | number;
+  powerState: VmPowerState | number;
+  statusMessage?: string | null;
+  complianceHold: boolean;
+  nodeId?: string | null;
+  spec: VmSpec;
+  networkConfig?: VmNetworkConfig | null;
+  accessInfo?: VmAccessInfo | null;
+  services?: VmServiceModel[] | null;
+  subdomainTier?: string | number;
+  createdAt: string;
+  updatedAt?: string;
+  startedAt?: string | null;
+  stoppedAt?: string | null;
+}
+
+export interface Node {
+  id: string;
+  publicIp?: string | null;
+  hostname?: string | null;
+}
+
+export interface VmDetailResponse {
+  vm: VmDetail;
+  hostNode?: Node | null;
+}
+
+export function useVm(api: Api, id: string) {
+  return useQuery({
+    queryKey: ["vm", id],
+    queryFn: () => api<VmDetailResponse>(`/api/vms/${id}`),
+    enabled: !!id,
+  });
+}
+
 export function useVms(api: Api, page: number) {
   return useQuery({
     queryKey: ["vms", page],

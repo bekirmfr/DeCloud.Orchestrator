@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { canAccessAdmin } from "./guards";
 import { SshKeysPage } from "../features/ssh-keys/SshKeysPage";
 import { VmsPage } from "../features/vms/VmsPage";
+import { VmDetailPage } from "../features/vms/VmDetailPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -34,7 +35,7 @@ export const router = createBrowserRouter(
         // { index: true, element: <Dashboard /> },              // Phase 3
         // { path: "marketplace", element: <Marketplace /> },     // Phase 5
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
-        // { path: "vms/:id", element: <VmDetail /> },            // Phase 3 · detail (next)
+        { path: "vms/:id", element: <VmDetailPage /> },           // Phase 3 · detail
         {
           path: "settings/ssh-keys", // ← FIRST migrated page (Phase 2)
           element: <SshKeysPage />,
