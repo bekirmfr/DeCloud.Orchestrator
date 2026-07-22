@@ -123,7 +123,7 @@ public class VmLifecycleManager : IVmLifecycleManager
     private readonly ICentralIngressService _ingressService;
     private readonly ITemplateService _templateService;
     private readonly IEventService _eventService;
-    private readonly IHubContext<OrchestratorHub> _hub;
+    private readonly IVmNotificationService _notifications;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<VmLifecycleManager> _logger;
 
@@ -151,7 +151,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         ICentralIngressService ingressService,
         ITemplateService templateService,
         IEventService eventService,
-        IHubContext<OrchestratorHub> hub,
+        IVmNotificationService notifications,
         IServiceProvider serviceProvider,
         ILogger<VmLifecycleManager> logger)
     {
@@ -159,7 +159,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         _ingressService = ingressService;
         _templateService = templateService;
         _eventService = eventService;
-        _hub = hub;
+        _notifications = notifications;
         _serviceProvider = serviceProvider;
         _logger = logger;
     }
@@ -259,24 +259,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         }
 
         await _dataStore.SaveVmAsync(vm);
-
-        // Step 1.5: Broadcast the status change to any SignalR clients watching this VM.
-        // Mirrors the node-path ReportVmStatus broadcast so owner/heartbeat/timeout
-        // transitions reach the cockpit too. Best-effort — never break a transition on it.
-        try
-        {
-            await _hub.Clients.Group($"vm:{vm.Id}").SendAsync("VmStatusChanged", new
-            {
-                VmId = vm.Id,
-                Status = newStatus.ToString(),   // send the NAME (client also tolerates numeric)
-                Message = context.StatusMessage,
-                Timestamp = DateTime.UtcNow
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "SignalR VmStatusChanged broadcast failed for {VmId}", vm.Id);
-        }
+        await _notifications.BroadcastStatusAsync(vm.Id, newStatus, context.StatusMessage);  // ← confirmed transition
 
         // ════════════════════════════════════════════════════════════════
         // Step 2: Execute side effects (best-effort, individually guarded)

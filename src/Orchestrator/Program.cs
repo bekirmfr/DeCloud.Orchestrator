@@ -158,6 +158,7 @@ builder.Services.AddHostedService<TenantVmReconciler>();
 builder.Services.AddSingleton<IVmLifecycleManager, VmLifecycleManager>();
 // Command delivery service (hybrid push-pull)
 builder.Services.AddSingleton<INodeCommandService, NodeCommandService>();
+builder.Services.AddSingleton<IVmNotificationService, VmNotificationService>();
 
 // HttpClient for push commands
 builder.Services.AddHttpClient<NodeCommandService>()

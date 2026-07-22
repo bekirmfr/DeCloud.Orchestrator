@@ -24,6 +24,7 @@ public class VmService : IVmService
     private readonly ISchedulingConfigService _configService;
     private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly IEventService _eventService;
+    private readonly IVmNotificationService _notifications;
     private readonly ICentralIngressService _ingressService;
     private readonly ITemplateService _templateService;
     private readonly IVmNameService _nameService;
@@ -42,6 +43,7 @@ public class VmService : IVmService
     ISchedulingConfigService configService,
     IConstraintEvaluator constraintEvaluator,
     IEventService eventService,
+    IVmNotificationService notificationService,
     ICentralIngressService ingressService,
     ITemplateService templateService,
     IVmNameService nameService,
@@ -59,6 +61,7 @@ public class VmService : IVmService
         _configService = configService;
         _constraintEvaluator = constraintEvaluator;
         _eventService = eventService;
+        _notifications = notificationService;
         _ingressService = ingressService;
         _templateService = templateService;
         _nameService = nameService;
@@ -621,6 +624,7 @@ public class VmService : IVmService
         vm.PushMessage($"{action} command sent to node.", VmMessageLevel.Info, "user");
 
         await _dataStore.SaveVmAsync(vm);
+        await _notifications.BroadcastStatusAsync(vmId, vm.Status, $"{action} command sent to node.");  // ← optimistic in-flight
 
         _logger.LogInformation(
             "VM action {Action} queued for {VmId} (command: {CommandId})",
