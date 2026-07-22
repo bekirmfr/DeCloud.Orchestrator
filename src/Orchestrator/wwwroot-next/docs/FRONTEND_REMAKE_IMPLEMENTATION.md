@@ -15,7 +15,7 @@
 | **Pre** | Backend serving split confirmed (§3) | ◑ Change 1 `Program.cs` delivered for sign-off; csproj target + new Vite project still needed (Phase 0) | Owner | 2026-07-21 | — |
 | **0** | Scaffold new app beside old | ☑ Done — dev (`/app` via Vite) + Release/Production serving (`/app` from `dist-app`, `/` legacy) both proven | Owner | 2026-07-21 | 2026-07-21 |
 | **0.5** | Visual direction → tokenize (Meridian) | ☑ Done — tokens (light+dark, AA-validated), fonts.css, reconciliation decided | — | 2026-07-21 | 2026-07-21 |
-| **1** | Frozen core (session/identity + `api()`) | ☐ Not started | — | — | — |
+| **1** | Frozen core (session/identity + `api()`) | ◑ Pure core implemented + tested (34 pass); port verbatim modules + wire AppKit remain | — | 2026-07-21 | — |
 | **2** | Shell + pipeline-proof page (SSH Keys) | ☐ Not started | — | — | — |
 | **3** | The spine (dashboard → deploy → VM detail) | ☐ Not started | — | — | — |
 | **4** | Landing (SSG) built & proven | ☐ Not started | — | — | — |
@@ -168,6 +168,8 @@ From DESIGN §8, restated as the finish line: a feature or shared-component chan
 
 > Entry template:
 > **`YYYY-MM-DD` · Phase N · <author>** — what changed / decided / learned; any status-dashboard update; any new blocker.
+
+**`2026-07-21` · Phase 1 · —** — **Auth-core skeleton drafted and its pure tests pass in-repo (34 passed | 5 todo).** Delivered `wwwroot-next/src/auth` + `src/api`: the pure, fully-tested core is implemented — `deriveStatus` (the §4 truth table, 16 cases), `sessionMachine` reducer + tri-state `performRefresh` (10), `api()` envelope-unwrap + 401 refresh-retry-once + the three failure kinds (8) — plus typed stubs for the pieces needing live AppKit/ethers/backend (`siwe`, `walletCrypto`, `walletState`, `AuthProvider`), each citing the legacy file it ports. `vitest run` green on Windows (Vitest 4.1). One judgment call flagged in code + test: `WRONG_NETWORK` precedes `UNCERTAIN` when both hold. `walletCrypto` + `buildSiweMessage` marked port-verbatim (byte-compat boundaries). `api()` assumes an `ApiResponse<T>` shape — reconcile against generated `schema.d.ts`. Build order + deps in `src/auth/PHASE1_AUTH_CORE.md`. Phase 1 is now scaffolded test-first; remaining Phase 1 work (port the two verbatim modules, wire AppKit + AuthProvider) is in-repo. **Note:** `npm install` reported 4 audit vulns (build-time devDeps likely) — review with `npm audit`, don't reflexively `--force`.
 
 **`2026-07-21` · Pre-req · Owner** — **Serving Change 1 implemented in `Program.cs`** (owner is the `Program.cs` owner). Two surgical, production-only edits, aligned to existing patterns: (1) a `/app` static provider serving `wwwroot/dist-app` at `RequestPath="/app"` with the same cache policy, guarded by its own `Directory.Exists(distAppPath)` (independent of the legacy `dist/`); (2) the existing catch-all `MapFallback` amended with a one-line branch — `/app/*` → `dist-app/index.html`, else `dist/index.html` — keeping the `/api|/hub|/swagger|/health` 404 guard first. **No Development-mode change** (dev serves `/app` from the new app's Vite server). Braces balance; regions verified. **Not yet compiled in-repo** — owner to build. **Still required to finish Phase 0 (not `Program.cs`):** the new Vite project (base `/app/`, output `wwwroot/dist-app`) and the parallel csproj `BuildFrontendNext` target. Change 2 (old-app `?page=`) and Change 3 (`/`-flip) remain for Phase 3 and 4/6.
 
