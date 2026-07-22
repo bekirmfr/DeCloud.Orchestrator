@@ -8,10 +8,28 @@
 // carry, and GET /api/vms was OBSERVED sending status as a NUMBER (e.g. 3 = Running).
 // So we tolerate BOTH here, normalizing to the canonical string. Trust the wire
 // over the doc. Ordinals are the enum's declaration order (confirmed in VmStatus.cs).
+// VmStatus — 12 states. NOTE ON THE WIRE: the design intends a global
+// JsonStringEnumConverter (strings), and auth/ssh-keys arrive that way — but
+// VmStatus.cs lacks the per-enum [JsonConverter] attribute that VmRole/VmCategory
+// carry, and GET /api/vms was OBSERVED sending status as a NUMBER (e.g. 3 = Running).
+// So we tolerate BOTH here, normalizing to the canonical string. Trust the wire
+// over the doc. Ordinals are the enum's declaration order (confirmed in VmStatus.cs).
 export type VmStatus =
   | "Pending" | "Scheduling" | "Provisioning" | "Running" | "Paused"
   | "Suspended" | "Stopping" | "Stopped" | "Deleting" | "Deleted"
   | "Migrating" | "Error";
+
+const STATUS_BY_ORDINAL: readonly VmStatus[] = [
+  "Pending", "Scheduling", "Provisioning", "Running", "Paused", "Suspended",
+  "Stopping", "Stopped", "Deleting", "Deleted", "Migrating", "Error",
+];
+
+/** Accept the numeric ordinal, a numeric string, or the name → canonical name. */
+export function normalizeStatus(raw: VmStatus | number | string): VmStatus {
+  if (typeof raw === "number") return STATUS_BY_ORDINAL[raw] ?? (String(raw) as VmStatus);
+  if (/^\d+$/.test(raw)) return STATUS_BY_ORDINAL[Number(raw)] ?? (raw as VmStatus);
+  return raw as VmStatus;
+}
 
 const STATUS_BY_ORDINAL: readonly VmStatus[] = [
   "Pending", "Scheduling", "Provisioning", "Running", "Paused", "Suspended",
@@ -45,6 +63,9 @@ export type BadgeTone = "active" | "transitional" | "inert" | "error";
 /** Map a status (name OR numeric ordinal) to a display label + tone. */
 export function vmStatusBadge(status: VmStatus | number): { label: string; tone: BadgeTone } {
   switch (normalizeStatus(status)) {
+/** Map a status (name OR numeric ordinal) to a display label + tone. */
+export function vmStatusBadge(status: VmStatus | number): { label: string; tone: BadgeTone } {
+  switch (normalizeStatus(status)) {
     case "Running":
       return { label: "Running", tone: "active" };
     case "Pending":
@@ -54,14 +75,17 @@ export function vmStatusBadge(status: VmStatus | number): { label: string; tone:
     case "Deleting":
     case "Migrating":
       return { label: normalizeStatus(status), tone: "transitional" };
+      return { label: normalizeStatus(status), tone: "transitional" };
     case "Paused":
     case "Suspended":
     case "Stopped":
     case "Deleted":
       return { label: normalizeStatus(status), tone: "inert" };
+      return { label: normalizeStatus(status), tone: "inert" };
     case "Error":
       return { label: "Error", tone: "error" };
     default:
+      return { label: String(normalizeStatus(status)), tone: "inert" };
       return { label: String(normalizeStatus(status)), tone: "inert" };
   }
 }
@@ -75,6 +99,9 @@ export function vmStatusBadge(status: VmStatus | number): { label: string; tone:
  *
  * `status` tolerates the numeric wire form; `powerState` is passed as its name —
  * the detail page normalizes it at the boundary (its wire form is grounded there).
+ *
+ * `status` tolerates the numeric wire form; `powerState` is passed as its name —
+ * the detail page normalizes it at the boundary (its wire form is grounded there).
  */
 export function allowedActions(
   status: VmStatus | number,
@@ -85,7 +112,10 @@ export function allowedActions(
 
   const s = normalizeStatus(status);
   if (s === "Stopped") return ["Start"];
+  const s = normalizeStatus(status);
+  if (s === "Stopped") return ["Start"];
 
+  if (s === "Running") {
   if (s === "Running") {
     const actions: VmAction[] = ["Stop", "Restart", "ForceStop"];
     actions.push(normalizePowerState(powerState) === "Paused" ? "Resume" : "Pause");
