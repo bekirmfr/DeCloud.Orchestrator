@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { canAccessAdmin } from "../guards";
 import type { AuthUser } from "../../auth/types";
 
-const admin: AuthUser = { id: "a", walletAddress: "0xA", isAdmin: true };
-const normal: AuthUser = { id: "u", walletAddress: "0xB", isAdmin: false };
+const admin: AuthUser = { id: "a", walletAddress: "0xA", roles: ["User", "Admin"] };
+const normal: AuthUser = { id: "u", walletAddress: "0xB", roles: ["User"] };
 
 describe("canAccessAdmin (UX guard; server still enforces)", () => {
   it("true only for admins", () => {

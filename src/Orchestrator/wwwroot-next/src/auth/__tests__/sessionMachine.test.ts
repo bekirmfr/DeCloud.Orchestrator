@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { sessionReducer, performRefresh } from "../sessionMachine";
 import type { AuthUser, SessionState } from "../types";
 
-const user: AuthUser = { id: "u1", walletAddress: "0xA", isAdmin: false };
+const user: AuthUser = { id: "u1", walletAddress: "0xA", roles: ["User"] };
 const authed: SessionState = { kind: "authenticated", token: "t1", address: "0xA", user };
 
 describe("sessionReducer — pure transitions", () => {

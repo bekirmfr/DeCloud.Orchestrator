@@ -1,26 +1,71 @@
-// AES-GCM encryption with a wallet-derived key. PORT wallet-crypto.js VERBATIM —
-// the exact key-derivation and IV/format must stay byte-compatible, because data
-// encrypted by the legacy app must still decrypt here (and vice versa) during the
-// migration. Do NOT "improve" the scheme; match it exactly, then test round-trip.
-//
-// Security (DESIGN §10): the derived key is cached in memory for the session only.
-// The wallet signature that seeds derivation is never persisted.
+// src/auth/walletCrypto.ts
+// VERBATIM port of legacy wallet-crypto.js. Algorithm, derivation message, nonce
+// size, and envelope layout are IDENTICAL so data encrypted by the legacy app
+// still decrypts here (and vice versa). The ONLY change: the signer is injected
+// (init) instead of read from window.ethersSigner.
+import { gcm } from "@noble/ciphers/aes.js";
+import { randomBytes } from "@noble/ciphers/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+
+// MUST stay byte-identical to the legacy string, or existing ciphertexts break.
+const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
 
 export interface WalletCrypto {
-  /** Derive (and cache) the AES-GCM key from a wallet signature over a fixed message. */
-  init(signMessage: (message: string) => Promise<string>, address: string): Promise<void>;
-  encrypt(plaintext: string): Promise<string>; // returns the legacy-compatible envelope (iv+ciphertext)
+  init(signMessage: (message: string) => Promise<string>): Promise<void>;
+  encrypt(plaintext: string): Promise<string>;
   decrypt(envelope: string): Promise<string>;
   isReady(): boolean;
   clear(): void;
 }
 
-// TODO: implement by porting wallet-crypto.js exactly:
-//   - fixed derivation message (must equal the legacy string)
-//   - signMessage(derivationMessage) → signature
-//   - SHA-256(signature) → raw key bytes → crypto.subtle.importKey('raw', ..., 'AES-GCM')
-//   - encrypt: random 12-byte IV; crypto.subtle.encrypt; concat+base64 in the legacy layout
-//   - decrypt: reverse; authentication failure must throw (never return garbage)
 export function createWalletCrypto(): WalletCrypto {
-  throw new Error("TODO: createWalletCrypto — port wallet-crypto.js verbatim");
+  let key: Uint8Array | null = null;
+
+  async function ensureKey(): Promise<Uint8Array> {
+    if (!key) throw new Error("Wallet crypto not initialized (call init first)");
+    return key;
+  }
+
+  return {
+    async init(signMessage) {
+      if (key) return; // cached for the session, like the legacy cachedEncryptionKey
+      const signature = await signMessage(ENCRYPTION_MESSAGE);
+      key = sha256(new TextEncoder().encode(signature));
+    },
+
+    async encrypt(plaintext) {
+      const k = await ensureKey();
+      const nonce = randomBytes(12);
+      const ciphertext = gcm(k, nonce).encrypt(new TextEncoder().encode(plaintext));
+      const combined = new Uint8Array(nonce.length + ciphertext.length);
+      combined.set(nonce, 0);
+      combined.set(ciphertext, nonce.length);
+      return btoa(String.fromCharCode(...combined));
+    },
+
+    async decrypt(envelope) {
+      const k = await ensureKey();
+      const combined = Uint8Array.from(atob(envelope), (c) => c.charCodeAt(0));
+      const nonce = combined.slice(0, 12);
+      const ciphertext = combined.slice(12);
+      try {
+        return new TextDecoder().decode(gcm(k, nonce).decrypt(ciphertext));
+      } catch (err) {
+        if ((err as Error).message?.includes("Invalid")) {
+          throw new Error(
+            "Decryption failed: invalid key or corrupted data. Make sure you're using the same wallet."
+          );
+        }
+        throw err;
+      }
+    },
+
+    isReady() {
+      return key !== null;
+    },
+
+    clear() {
+      key = null;
+    },
+  };
 }

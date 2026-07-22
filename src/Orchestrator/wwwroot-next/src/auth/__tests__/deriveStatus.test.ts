@@ -5,7 +5,7 @@ import type { AuthUser, SessionState, WalletState } from "../types";
 const CHAIN = 137;
 const A = "0xAAAAaaaaAAAAaaaaAAAAaaaaAAAAaaaaAAAAaaaa";
 const B = "0xBBBBbbbbBBBBbbbbBBBBbbbbBBBBbbbbBBBBbbbb";
-const user = (addr: string): AuthUser => ({ id: "u_" + addr, walletAddress: addr, isAdmin: false });
+const user = (addr: string): AuthUser => ({ id: "u_" + addr, walletAddress: addr, roles: ["User"] });
 
 const wDisconnected: WalletState = { kind: "disconnected" };
 const wConnecting: WalletState = { kind: "connecting" };

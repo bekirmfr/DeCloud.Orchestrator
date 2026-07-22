@@ -1,11 +1,15 @@
 // Auth core types — the contract for DESIGN §4 (wallet ↔ session dual lifecycle).
 // These types are the source of truth the rest of the auth module is built on.
 
-/** Minimal user shape. Replace/extend with the generated type from src/api/schema.d.ts. */
+/** Mirrors the server User (the fields the client needs). Admin is a ROLE, 
+ * not a bool — matches [Authorize(Roles="Admin")] and the JWT. */
 export interface AuthUser {
-  id: string;
+  id: string;              // == walletAddress (checksum)
   walletAddress: string;
-  isAdmin: boolean;
+  roles: string[];         // e.g. ["User"] or ["User","Admin"]
+  email?: string | null;
+  username?: string | null;
+  displayName?: string | null;
 }
 
 /**
@@ -28,6 +32,8 @@ export type WalletState =
  * be verified (RPC/transport blip), so we KEEP the last-known token/user and mark
  * it stale rather than destroying state. See DESIGN §4/§5 (the "uncertain" kind).
  */
+// Session states now carry the token AND its expiry (SessionResponse.ExpiresAt),
+// enabling proactive refresh.
 export type SessionState =
   | { kind: "anonymous" }
   | { kind: "authenticating" }
