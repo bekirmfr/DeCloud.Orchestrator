@@ -143,7 +143,8 @@
                 </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Configuration</div>
-                <a class="nav-item" data-page="ssh-keys" onclick="showPage('ssh-keys')">
+                <!-- SSH Keys migrated to the new app (/app). Link hands off. -->
+                <a class="nav-item" href="/app/settings/ssh-keys">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
                     </svg>
@@ -515,48 +516,6 @@
                 </div>
             </div>
 
-            <!-- SSH Keys Page -->
-            <div id="page-ssh-keys" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">SSH Keys</h1>
-                        <p class="page-subtitle">Secure access credentials for your instances</p>
-                    </div>
-                    <div class="header-actions">
-                        <button class="btn btn-primary" onclick="openAddSSHKeyModal()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                 stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            Add SSH Key
-                        </button>
-                    </div>
-                </header>
-
-                <div class="card">
-                    <div class="card-body">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Fingerprint</th>
-                                    <th>Added</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="ssh-keys-table-body">
-                                <tr>
-                                    <td colspan="4" class="text-muted" style="text-align: center; padding: 40px;">
-                                        Loading SSH keys...
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
             <!-- Settings Page -->
             <div id="page-settings" class="page">
                 <header class="page-header">
@@ -817,42 +776,6 @@
             <button class="btn btn-primary" onclick="createVM()">Create VM</button>
         </div>
     </div>
-    </div>
-
-    <!-- Add SSH Key Modal -->
-    <div class="modal-overlay" id="add-ssh-key-modal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 class="modal-title">Add SSH Key</h2>
-                <button class="modal-close" onclick="closeModal('add-ssh-key-modal')">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label class="form-label">Key Name</label>
-                    <input type="text" class="form-input" id="ssh-key-name" placeholder="my-laptop">
-                    <p class="form-help">
-                        A friendly name to identify this key
-                    </p>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Public Key</label>
-                    <textarea class="form-input" id="ssh-key-public" rows="5"
-                              placeholder="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ..."></textarea>
-                    <p class="form-help">
-                        Paste your SSH public key (usually from ~/.ssh/id_rsa.pub)
-                    </p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('add-ssh-key-modal')">Cancel</button>
-                <button class="btn btn-primary" onclick="addSSHKey()">Add Key</button>
-            </div>
-        </div>
     </div>
 
     <!-- Node Detail Modal -->

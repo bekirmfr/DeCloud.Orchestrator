@@ -847,8 +847,6 @@ function showPage(pageName) {
         initMarketplaceTemplates();
     } else if (pageName === 'my-templates') {
         initMyTemplates();
-    } else if (pageName === 'ssh-keys') {
-        loadSSHKeys();
     } else if (pageName === 'admin-compliance') {
         if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
         initAdminCompliance(api);
@@ -942,11 +940,11 @@ async function handleBalanceCardClick() {
     }
 
     if (!isPaymentInitialized()) {
-    // The signer may have been acquired just now by getReadySigner(),
-    // bypassing the subscribeAccount init. Same trigger, applied at the
-    // on-demand seam. No token check: the user is already inside the
-    // dashboard, and initializePayment does not need one.
-    // Fail closed if init genuinely fails.
+        // The signer may have been acquired just now by getReadySigner(),
+        // bypassing the subscribeAccount init. Same trigger, applied at the
+        // on-demand seam. No token check: the user is already inside the
+        // dashboard, and initializePayment does not need one.
+        // Fail closed if init genuinely fails.
         try {
             await initializePayment(signer);
         } catch (e) {
@@ -1130,13 +1128,13 @@ function renderVMsTable(vms) {
                     </button>
 
                     ${vm.status === 3
-                        ? `<button class="btn btn-sm btn-warning" data-vm-action="stop" title="Stop">
+                ? `<button class="btn btn-sm btn-warning" data-vm-action="stop" title="Stop">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                            </button>`
-                        : `<button class="btn btn-sm btn-success" data-vm-action="start" title="Start">
+                : `<button class="btn btn-sm btn-success" data-vm-action="start" title="Start">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                            </button>`
-                    }
+            }
                     <button class="btn btn-sm btn-secondary" data-vm-action="logs" title="View boot log">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -1289,74 +1287,6 @@ async function loadNodes() {
     await loadNodesFromMarketplace();
 }
 
-async function loadSSHKeys() {
-    try {
-        const response = await api('/api/ssh-keys');
-        const data = await response.json();
-
-        if (data.success) {
-            renderSSHKeysTable(data.data);
-        }
-    } catch (error) {
-        console.error('[SSH Keys] Failed to load:', error);
-        showToast('Failed to load SSH keys', 'error');
-    }
-}
-
-function renderSSHKeysTable(keys) {
-    const tbody = document.getElementById('ssh-keys-table-body');
-    if (!tbody) return;
-
-    if (!keys || keys.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 40px; color: #6b7280;">No SSH keys added. Add a key to connect to your VMs.</td></tr>';
-        return;
-    }
-
-    sshKeyCache = {};
-    for (const k of keys) sshKeyCache[k.id] = k;
-
-    tbody.innerHTML = keys.map(key => {
-        const added = new Date(key.createdAt).toLocaleDateString();
-        const fingerprint = key.fingerprint || 'N/A';
-
-        return `
-        <tr data-key-id="${escapeHtml(key.id)}">
-            <td>${escapeHtml(key.name)}</td>
-            <td><code style="font-size: 12px; color: #9ca3af;">${escapeHtml(fingerprint)}</code></td>
-            <td>${escapeHtml(added)}</td>
-            <td>
-                <div class="table-actions">
-                    <button class="btn-icon btn-icon-danger" data-key-action="delete" title="Delete">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                    </button>
-                </div>
-            </td>
-        </tr>
-    `}).join('');
-
-    attachSshKeysTableDelegation(tbody);
-}
-
-let sshKeysTableDelegated = false;
-let sshKeyCache = {};
-function attachSshKeysTableDelegation(tbody) {
-    if (sshKeysTableDelegated) return;
-    sshKeysTableDelegated = true;
-    tbody.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-key-action]');
-        if (!btn) return;
-        const row = btn.closest('tr[data-key-id]');
-        if (!row) return;
-        const keyId = row.dataset.keyId;
-        const key = sshKeyCache[keyId];
-        if (!key) return;
-        if (btn.dataset.keyAction === 'delete') {
-            window.deleteSSHKey(keyId, key.name);
-        }
-    });
-}
 
 // ============================================
 // VM OPERATIONS
@@ -1949,72 +1879,6 @@ async function deleteVM(vmId, vmName) {
 
 
 // ============================================
-// SSH KEYS
-// ============================================
-
-function openAddSSHKeyModal() {
-    openStaticModal(document.getElementById('add-ssh-key-modal'));
-}
-
-async function addSSHKey() {
-    const name = document.getElementById('ssh-key-name').value.trim();
-    const publicKey = document.getElementById('ssh-key-public').value.trim();
-
-    if (!name || !publicKey) {
-        showToast('Please fill in all fields', 'error');
-        return;
-    }
-
-    try {
-        const response = await api('/api/ssh-keys', {
-            method: 'POST',
-            body: JSON.stringify({ name, publicKey })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showToast('SSH key added successfully', 'success');
-            closeModal('add-ssh-key-modal');
-            loadSSHKeys();
-
-            document.getElementById('ssh-key-name').value = '';
-            document.getElementById('ssh-key-public').value = '';
-        } else {
-            showToast(data.message || 'Failed to add SSH key', 'error');
-        }
-    } catch (error) {
-        console.error('[SSH] Add key error:', error);
-        showToast('Failed to add SSH key', 'error');
-    }
-}
-
-async function deleteSSHKey(keyId, keyName) {
-    if (!confirm(`Delete SSH key "${keyName}"?`)) {
-        return;
-    }
-
-    try {
-        const response = await api(`/api/ssh-keys/${keyId}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showToast('SSH key deleted', 'success');
-            loadSSHKeys();
-        } else {
-            showToast(data.message || 'Failed to delete SSH key', 'error');
-        }
-    } catch (error) {
-        console.error('[SSH] Delete key error:', error);
-        showToast('Failed to delete SSH key', 'error');
-    }
-}
-
-
-// ============================================
 // SETTINGS
 // ============================================
 
@@ -2106,9 +1970,6 @@ window.deleteVM = deleteVM;
 window.copyToClipboard = copyToClipboard;
 window.showPasswordModal = showPasswordModal;
 window.revealPassword = revealPassword;
-window.openAddSSHKeyModal = openAddSSHKeyModal;
-window.addSSHKey = addSSHKey;
-window.deleteSSHKey = deleteSSHKey;
 window.showSshInstructions = showSshInstructions;
 window.openTerminal = openTerminal;
 window.openFileBrowser = openFileBrowser;
