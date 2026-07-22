@@ -177,6 +177,19 @@ parse_args() {
                 ENABLE_LOGGING=false
                 shift
                 ;;
+            --env-file)
+                # Load secrets/config from a root-only file so they never appear
+                # on the command line (shell history, ps, chat logs). The file sets
+                # the same variables the flags below would. Explicit flags still
+                # override, because parse_args processes them after this sources.
+                if [[ ! -f "$2" ]]; then
+                    log_error "--env-file: file not found: $2"
+                    exit 1
+                fi
+                # shellcheck disable=SC1090
+                set -a; source "$2"; set +a
+                shift 2
+                ;;
             --port)
                 API_PORT="$2"
                 shift 2
