@@ -103,6 +103,38 @@ export function useVm(api: Api, id: string) {
   });
 }
 
+// Live metrics. GROUNDED: VmMetrics (SignalR-pushed AND persisted as vm.LatestMetrics,
+// exposed at GET /api/vms/{id}/metrics → ApiResponse<VmMetrics>, 404 NO_METRICS if none).
+// Strategy: REST seeds the last-known snapshot on load (no blank panel); the SignalR
+// VmMetricsUpdated handler patches THIS SAME cache key live (see useVmRealtime).
+export interface VmMetrics {
+  timestamp: string;
+  cpuUsagePercent: number;
+  memoryUsagePercent: number;
+  diskReadBytes: number;
+  diskWriteBytes: number;
+  networkRxBytes: number;
+  networkTxBytes: number;
+}
+
+export function useVmMetrics(api: Api, id: string) {
+  return useQuery({
+    queryKey: ["vm-metrics", id],
+    // 404 NO_METRICS is not an error state for the panel — treat "no metrics yet"
+    // as null rather than throwing (the node may simply not be reporting yet).
+    queryFn: async () => {
+      try {
+        return await api<VmMetrics>(`/api/vms/${id}/metrics`);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!id,
+    // Live updates arrive via SignalR; a slow poll is just a safety net.
+    refetchInterval: 60_000,
+  });
+}
+
 export function useVms(api: Api, page: number) {
   return useQuery({
     queryKey: ["vms", page],

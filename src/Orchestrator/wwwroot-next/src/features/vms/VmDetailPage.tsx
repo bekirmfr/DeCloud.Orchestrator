@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
-import { useVm, useVmAction, useDeleteVm, type VmDetail } from "./useVms";
-import { vmStatusBadge, allowedActions, type BadgeTone, type VmAction } from "./vmStatus";
+import { useVm, useVmAction, useDeleteVm, useVmMetrics, type VmDetail, type VmMetrics } from "./useVms";
+import { vmStatusBadge, allowedActions, normalizeStatus, type BadgeTone, type VmAction } from "./vmStatus";
 import type { AppError } from "../../api/errors";
 import { useVmRealtime } from "../../realtime/useVmRealtime";
 
@@ -45,12 +45,63 @@ const Row = ({ k, v }: { k: string; v: React.ReactNode }) => (
   </div>
 );
 
+const fmtBytes = (n: number) => {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(1)} ${units[i]}`;
+};
+
+function Bar({ pct }: { pct: number }) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const tone = clamped >= 90 ? "var(--danger)" : clamped >= 70 ? "var(--warning)" : "var(--success)";
+  return (
+    <div style={{ height: 6, background: "var(--surface-2)", borderRadius: "var(--radius-pill)", overflow: "hidden", marginTop: 4 }}>
+      <div style={{ width: `${clamped}%`, height: "100%", background: tone, transition: "width var(--dur) var(--ease)" }} />
+    </div>
+  );
+}
+
+function MetricsPanel({ metrics }: { metrics: VmMetrics | null | undefined }) {
+  if (!metrics) {
+    return (
+      <Card title="Live metrics">
+        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+          Waiting for metrics from the node…
+        </p>
+      </Card>
+    );
+  }
+  return (
+    <Card title="Live metrics">
+      <div style={{ padding: "6px 0", borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)" }}>
+          <span style={{ color: "var(--text-secondary)" }}>CPU</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{metrics.cpuUsagePercent.toFixed(1)}%</span>
+        </div>
+        <Bar pct={metrics.cpuUsagePercent} />
+      </div>
+      <div style={{ padding: "6px 0", borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)" }}>
+          <span style={{ color: "var(--text-secondary)" }}>Memory</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{metrics.memoryUsagePercent.toFixed(1)}%</span>
+        </div>
+        <Bar pct={metrics.memoryUsagePercent} />
+      </div>
+      <Row k="Disk R / W" v={`${fmtBytes(metrics.diskReadBytes)} / ${fmtBytes(metrics.diskWriteBytes)}`} />
+      <Row k="Net RX / TX" v={`${fmtBytes(metrics.networkRxBytes)} / ${fmtBytes(metrics.networkTxBytes)}`} />
+    </Card>
+  );
+}
+
 export function VmDetailPage() {
   const { id = "" } = useParams();
   const { api } = useAuth();
   const navigate = useNavigate();
   const { data, isLoading, error } = useVm(api, id);
   useVmRealtime(id); // live status/access-info via SignalR (subscribe on mount)
+  const { data: metrics } = useVmMetrics(api, id); // REST seed + live-patched by useVmRealtime
   const action = useVmAction(api);
   const del = useDeleteVm(api);
 
@@ -117,6 +168,8 @@ export function VmDetailPage() {
           {vm.startedAt && <Row k="Started" v={new Date(vm.startedAt).toLocaleString()} />}
           {vm.stoppedAt && <Row k="Stopped" v={new Date(vm.stoppedAt).toLocaleString()} />}
         </Card>
+
+        {normalizeStatus(vm.status) === "Running" && <MetricsPanel metrics={metrics} />}
       </div>
 
       {vm.services && vm.services.length > 0 && (

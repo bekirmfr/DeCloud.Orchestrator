@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHub } from "./HubProvider";
-import type { VmDetailResponse } from "../features/vms/useVms";
+import type { VmDetailResponse, VmMetrics } from "../features/vms/useVms";
 import { normalizeStatus } from "../features/vms/vmStatus";
 
 // Live updates for ONE VM's detail cockpit (DESIGN §6.9 scope: VM detail).
@@ -15,7 +15,7 @@ import { normalizeStatus } from "../features/vms/vmStatus";
 //   VmAccessInfoUpdated { VmId, AccessInfo }
 
 interface VmStatusChanged { vmId: string; status: string | number; message?: string; timestamp?: string }
-interface VmMetricsUpdated { vmId: string; metrics: unknown }
+interface VmMetricsUpdated { vmId: string; metrics: VmMetrics }
 interface VmAccessInfoUpdated { vmId: string; accessInfo: VmDetailResponse["vm"]["accessInfo"] }
 
 export function useVmRealtime(vmId: string) {
@@ -39,10 +39,9 @@ export function useVmRealtime(vmId: string) {
     };
     const onMetrics = (e: VmMetricsUpdated) => {
       if (e.vmId !== vmId) return;
-      // Metrics aren't part of the REST detail shape; expose via a side cache key
-      // the cockpit can read when we add the live-metrics panel (kept off the
-      // detail object to avoid inventing a field the server never returns).
-      qc.setQueryData(["vm-metrics", vmId], e.metrics);
+      // Patch the SAME key useVmMetrics seeds from REST, so the panel shows the
+      // last-known snapshot on load and then updates live from here.
+      qc.setQueryData<VmMetrics>(["vm-metrics", vmId], e.metrics);
     };
     const onAccess = (e: VmAccessInfoUpdated) => {
       if (e.vmId !== vmId) return;
