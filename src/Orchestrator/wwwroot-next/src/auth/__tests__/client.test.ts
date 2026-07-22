@@ -8,7 +8,7 @@ import type { AppError } from "../../api/errors";
 
 function mockFetch(sequence: Array<{ status: number; body?: unknown; throw?: boolean }>) {
   const calls = sequence.slice();
-  return vi.fn(async () => {
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
     const next = calls.shift();
     if (!next) throw new Error("fetch called more times than expected");
     if (next.throw) throw new TypeError("Failed to fetch");

@@ -3,9 +3,9 @@
 // size, and envelope layout are IDENTICAL so data encrypted by the legacy app
 // still decrypts here (and vice versa). The ONLY change: the signer is injected
 // (init) instead of read from window.ethersSigner.
-import { gcm } from "@noble/ciphers/aes.js";
-import { randomBytes } from "@noble/ciphers/utils.js";
+import { randomBytes } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { gcm } from "@noble/ciphers/aes.js";
 
 // MUST stay byte-identical to the legacy string, or existing ciphertexts break.
 const ENCRYPTION_MESSAGE = "DeCloud VM Password Encryption Key v1";
