@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHub } from "./HubProvider";
 import type { VmDetailResponse } from "../features/vms/useVms";
+import { normalizeStatus } from "../features/vms/vmStatus";
 
 // Live updates for ONE VM's detail cockpit (DESIGN §6.9 scope: VM detail).
 // On mount → SubscribeToVm(vmId) + register handlers that WRITE INTO the Query
@@ -34,7 +35,7 @@ export function useVmRealtime(vmId: string) {
 
     const onStatus = (e: VmStatusChanged) => {
       if (e.vmId !== vmId) return;
-      patchVm((vm) => ({ ...vm, status: e.status, statusMessage: e.message ?? vm.statusMessage }));
+      patchVm((vm) => ({ ...vm, status: normalizeStatus(e.status), statusMessage: e.message ?? vm.statusMessage }));
     };
     const onMetrics = (e: VmMetricsUpdated) => {
       if (e.vmId !== vmId) return;
