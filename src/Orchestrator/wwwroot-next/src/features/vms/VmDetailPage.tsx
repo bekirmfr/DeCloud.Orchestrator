@@ -63,16 +63,7 @@ function Bar({ pct }: { pct: number }) {
   );
 }
 
-function MetricsPanel({ metrics }: { metrics: VmMetrics | null | undefined }) {
-  if (!metrics) {
-    return (
-      <Card title="Live metrics">
-        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-          Waiting for metrics from the node…
-        </p>
-      </Card>
-    );
-  }
+function MetricsPanel({ metrics }: { metrics: VmMetrics }) {
   return (
     <Card title="Live metrics">
       <div style={{ padding: "6px 0", borderTop: "1px solid var(--border-subtle)" }}>
@@ -169,7 +160,7 @@ export function VmDetailPage() {
           {vm.stoppedAt && <Row k="Stopped" v={new Date(vm.stoppedAt).toLocaleString()} />}
         </Card>
 
-        {normalizeStatus(vm.status) === "Running" && <MetricsPanel metrics={metrics} />}
+        {normalizeStatus(vm.status) === "Running" && metrics && <MetricsPanel metrics={metrics} />}
       </div>
 
       {vm.services && vm.services.length > 0 && (
