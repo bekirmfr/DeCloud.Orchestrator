@@ -3,6 +3,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { useVm, useVmAction, useDeleteVm, type VmDetail } from "./useVms";
 import { vmStatusBadge, allowedActions, type BadgeTone, type VmAction } from "./vmStatus";
 import type { AppError } from "../../api/errors";
+import { useVmRealtime } from "../../realtime/useVmRealtime";
 
 // Phase 3 · step 1b — the VM detail cockpit (STATIC). Renders the owner-facing
 // subset of VirtualMachine: status, spec, access ("how do I connect"), services,
@@ -49,6 +50,7 @@ export function VmDetailPage() {
   const { api } = useAuth();
   const navigate = useNavigate();
   const { data, isLoading, error } = useVm(api, id);
+  useVmRealtime(id); // live status/access-info via SignalR (subscribe on mount)
   const action = useVmAction(api);
   const del = useDeleteVm(api);
 
