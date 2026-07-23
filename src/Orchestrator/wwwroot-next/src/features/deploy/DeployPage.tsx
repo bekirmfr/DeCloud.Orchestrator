@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
-import { useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors } from "./useDeploy";
+import {
+  useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
+  allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
+  usePriceEstimate, useDebounced,
+} from "./useDeploy";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
 import type { AppError } from "../../api/errors";
 
@@ -68,15 +72,16 @@ export function DeployPage() {
   const [cpu, setCpu] = useState<number | null>(null);
   const [memGb, setMemGb] = useState<number | null>(null);
   const [diskGb, setDiskGb] = useState<number | null>(null);
+  const [tier, setTier] = useState<number | null>(null);
+  const [bwTier, setBwTier] = useState<number | null>(null);
+  const [gpuMode, setGpuMode] = useState<number | null>(null);
+  const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
   if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
   if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
   if (!template) return null;
 
-  const costPerHour = template.estimatedCostPerHour;
-  const days = runwayDays(balance?.balance, costPerHour);
-  const blocked = fundGateBlocks(balance?.balance, costPerHour);
   const rec = template.recommendedSpec;
   const gbOf = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
 
@@ -85,6 +90,15 @@ export function DeployPage() {
   const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
   const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
 
+  const qualityOptions = allowedQualityTiers(template.minimumSpec?.qualityTier);
+  const bandwidthOptions = allowedBandwidthTiers(template.defaultBandwidthTier);
+  const effTier = tier ?? rec?.qualityTier ?? qualityOptions[qualityOptions.length - 1] ?? 1;
+  const effBwTier = bwTier ?? rec?.bandwidthTier ?? bandwidthOptions[0] ?? 3;
+  const effGpuMode = gpuMode ?? rec?.gpuMode ?? template.defaultGpuMode ?? 0;
+  const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
+  // Legacy rule: the GPU section appears only when the template needs one.
+  const showGpu = !!template.requiresGpu || (template.defaultGpuMode ?? 0) !== 0;
+
   const customSpec: TemplateSpec = {
     virtualCpuCores: effCpu,
     memoryBytes: effMemGb * 1024 ** 3,
@@ -92,12 +106,27 @@ export function DeployPage() {
     // Carry the rest of RecommendedSpec forward, then re-apply the template
     // defaults the server would have applied itself had we sent no customSpec.
     ...(rec?.imageId ? { imageId: rec.imageId } : {}),
-    ...(rec?.qualityTier != null ? { qualityTier: rec.qualityTier } : {}),
-    gpuMode: rec?.gpuMode ?? template.defaultGpuMode,
-    bandwidthTier: rec?.bandwidthTier ?? template.defaultBandwidthTier,
+    qualityTier: effTier,
+    bandwidthTier: effBwTier,
+    gpuMode: effGpuMode,
+    ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
   };
 
   const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
+
+  // Price the spec that would actually be deployed — the recommended one when
+  // not customising. Debounced so typing in a number field doesn't fire per
+  // keystroke; the JSON doubles as the query key and the request body.
+  const specJson = JSON.stringify(customSpec);
+  const { data: price } = usePriceEstimate(api, useDebounced(specJson, 400));
+
+  // Runway and the fund gate run off the SERVER-COMPUTED cost. The template's
+  // own estimatedCostPerHour is frequently unset (platform-general has none),
+  // which is why the page used to say "no hourly cost estimate" for a VM that
+  // does in fact cost money.
+  const costPerHour = price?.hourlyTotal ?? template.estimatedCostPerHour;
+  const days = runwayDays(balance?.balance, costPerHour);
+  const blocked = fundGateBlocks(balance?.balance, costPerHour);
 
   async function onDeploy() {
     const name = vmName.trim();
@@ -158,10 +187,29 @@ export function DeployPage() {
                 {rec.virtualCpuCores} vCPU · {gib(rec.memoryBytes)} GB RAM · {gib(rec.diskBytes)} GB disk
               </p>
             )}
+            {price && (
+              <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--border-subtle)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Estimated cost</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--fw-medium)" }}>
+                    {price.hourlyTotal.toFixed(4)} {price.currency}/hr
+                  </span>
+                </div>
+                <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 4, fontFamily: "var(--font-mono)" }}>
+                  ≈ {price.dailyTotal.toFixed(2)}/day · {price.monthlyTotal.toFixed(2)}/month
+                </p>
+                {/* The estimator prices at PLATFORM DEFAULT rates (nodePricing: null).
+                    A node whose operator set higher rates bills more — never below floor. */}
+                <p style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 4 }}>
+                  At platform default rates. The node you land on may charge more.
+                </p>
+              </div>
+            )}
+
             <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 8 }}>
               {days != null
                 ? `Runs about ${days < 1 ? "less than a day" : `${Math.floor(days)} days`} on your current balance.`
-                : "This template has no hourly cost estimate."}
+                : "Estimating cost…"}
             </p>
           </Card>
 
@@ -214,11 +262,65 @@ export function DeployPage() {
                     onChange={(e) => setDiskGb(Number(e.target.value))} />
                 </label>
 
+                <label className="field">
+                  <span>Performance tier</span>
+                  <select value={effTier} onChange={(e) => setTier(Number(e.target.value))}>
+                    {qualityOptions.map((t) => (
+                      <option key={t} value={t}>{QUALITY_TIERS[t]}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>Bandwidth</span>
+                  <select value={effBwTier} onChange={(e) => setBwTier(Number(e.target.value))}>
+                    {bandwidthOptions.map((t) => (
+                      <option key={t} value={t}>{BANDWIDTH_TIERS[t]}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {showGpu && (
+                  <>
+                    <label className="field">
+                      <span>GPU</span>
+                      <select value={effGpuMode} onChange={(e) => setGpuMode(Number(e.target.value))}>
+                        {[0, 1, 2].map((m) => (
+                          <option key={m} value={m}>{GPU_MODES[m]}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {effGpuMode !== 0 && (
+                      <label className="field">
+                        {/* Passthrough dedicates the whole GPU, so VRAM is only a
+                            scheduling/billing estimate; Proxied enforces it as a quota. */}
+                        <span>
+                          {effGpuMode === 1 ? "Min. VRAM (GB) — estimate only" : "VRAM (GB)"}
+                        </span>
+                        <input type="number" min={1} max={80} value={effGpuVramGb}
+                          onChange={(e) => setGpuVramGb(Number(e.target.value))} />
+                      </label>
+                    )}
+                  </>
+                )}
+
                 {template.minimumSpec && (
                   <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
                     Minimum for this template: {template.minimumSpec.virtualCpuCores ?? 1} vCPU ·{" "}
                     {gbOf(template.minimumSpec.memoryBytes)} GB · {gbOf(template.minimumSpec.diskBytes)} GB
                   </p>
+                )}
+
+                {price && (
+                  <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)" }}>
+                    <Row k="CPU" v={`${price.cpuCost.toFixed(4)} ${price.currency}/hr`} />
+                    <Row k="Memory" v={`${price.memoryCost.toFixed(4)} ${price.currency}/hr`} />
+                    <Row k="Storage" v={`${price.storageCost.toFixed(4)} ${price.currency}/hr`} />
+                    <Row k="Bandwidth" v={`${price.bandwidthCost.toFixed(4)} ${price.currency}/hr`} />
+                    {price.gpuCost > 0 && <Row k="GPU" v={`${price.gpuCost.toFixed(4)} ${price.currency}/hr`} />}
+                    {price.replicationCost > 0 && <Row k="Replication" v={`${price.replicationCost.toFixed(4)} ${price.currency}/hr`} />}
+                    <Row k="Total" v={`${price.hourlyTotal.toFixed(4)} ${price.currency}/hr`} />
+                  </div>
                 )}
 
                 {floorErrors.map((err) => (
