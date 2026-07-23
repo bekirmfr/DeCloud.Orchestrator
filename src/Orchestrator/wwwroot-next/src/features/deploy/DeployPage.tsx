@@ -15,7 +15,6 @@ import type { AppError } from "../../api/errors";
 // template.RecommendedSpec (BuildVmRequestFromTemplateAsync). Customize is a
 // later sub-step. Fund gate + runway are UX pre-checks; the server enforces.
 
-const gib = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
 
 function Card({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
