@@ -40,6 +40,25 @@ export function normalizePowerState(raw: VmPowerState | number | string): VmPowe
 
 export type VmAction = "Start" | "Stop" | "Restart" | "Pause" | "Resume" | "ForceStop";
 
+// VmAction.cs ALSO lacks [JsonConverter(typeof(JsonStringEnumConverter))] — the
+// third enum in this API to do so — so POST /api/vms/{id}/action expects the
+// ORDINAL, not the name. Sending {"action":"Stop"} is rejected with a 400:
+//   "The JSON value could not be converted to ... VmActionRequest. Path: $.action"
+// Order is the declaration order in VmAction.cs.
+const ACTION_ORDINAL: Record<VmAction, number> = {
+  Start: 0,
+  Stop: 1,
+  Restart: 2,
+  Pause: 3,
+  Resume: 4,
+  ForceStop: 5,
+};
+
+/** Wire value for a lifecycle action. Names stay in the UI; the number goes out. */
+export function vmActionOrdinal(action: VmAction): number {
+  return ACTION_ORDINAL[action];
+}
+
 export type BadgeTone = "active" | "transitional" | "inert" | "error";
 
 /** Map a status (name OR numeric ordinal) to a display label + tone. */

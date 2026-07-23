@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { vmStatusBadge, allowedActions, normalizeStatus, type VmStatus } from "../vmStatus";
+import { vmStatusBadge, allowedActions, normalizeStatus, vmActionOrdinal, type VmStatus } from "../vmStatus";
 
 describe("normalizeStatus — accepts name, ordinal, or numeric string", () => {
   it("passes through a valid name", () => {
@@ -75,5 +75,26 @@ describe("allowedActions — UX button gating (server is the authority)", () => 
     expect(allowedActions("Provisioning", "Off", false)).toEqual([]);
     expect(allowedActions("Error", "Off", false)).toEqual([]);
     expect(allowedActions("Deleted", "Off", false)).toEqual([]);
+  });
+});
+
+describe("vmActionOrdinal — VmAction is NUMERIC on the wire", () => {
+  // VmAction.cs has no [JsonConverter(typeof(JsonStringEnumConverter))], so
+  // POST /api/vms/{id}/action rejects {"action":"Stop"} with a 400. These
+  // ordinals are the declaration order in VmAction.cs.
+  it.each([
+    ["Start", 0], ["Stop", 1], ["Restart", 2],
+    ["Pause", 3], ["Resume", 4], ["ForceStop", 5],
+  ] as const)("%s → %i", (action, ordinal) => {
+    expect(vmActionOrdinal(action)).toBe(ordinal);
+  });
+
+  it("every action allowedActions can offer has an ordinal", () => {
+    const offered = new Set([
+      ...allowedActions("Running", "Running", false),
+      ...allowedActions("Running", "Paused", false),
+      ...allowedActions("Stopped", "Off", false),
+    ]);
+    for (const a of offered) expect(typeof vmActionOrdinal(a)).toBe("number");
   });
 });

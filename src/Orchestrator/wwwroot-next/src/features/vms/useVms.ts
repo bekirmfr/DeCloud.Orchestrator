@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Api } from "../../api/client";
+import { vmActionOrdinal } from "./vmStatus";
 import type { VmStatus, VmPowerState, VmAction } from "./vmStatus";
 
 // Server data = TanStack Query. Endpoints GROUNDED against the ORCHESTRATOR
@@ -149,7 +150,11 @@ export function useVmAction(api: Api) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, action }: { id: string; action: VmAction }) =>
-      api<boolean>(`/api/vms/${id}/action`, { method: "POST", body: JSON.stringify({ action }) }),
+      // Ordinal, not name — VmAction has no string converter server-side.
+      api<boolean>(`/api/vms/${id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: vmActionOrdinal(action) }),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vms"] }),
   });
 }
