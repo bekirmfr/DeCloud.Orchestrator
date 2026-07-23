@@ -204,6 +204,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const sessionRestored = await restoreSession();
     if (!sessionRestored) {
         showLogin();
+    } else {
+        // ── Deep-link entry (frontend migration, Pre-req #2) ──────────────
+        // The new /app shell links MIGRATED pages to /app/* routes and
+        // UN-MIGRATED ones back here as /?page=x. Without this, the old app
+        // always opens on whatever index.html marked `.page active`, so every
+        // such link would silently land on the wrong page.
+        //
+        // Runs only with a live session: every page below loads data through
+        // api(), and the admin pages gate on tokenHasAdminRole. An
+        // unauthenticated deep link falls through to showLogin() and the
+        // default page after sign-in — acceptable while the old app is still
+        // the primary entry point.
+        //
+        // The element guard matters for RETIREMENT: once a migrated page's div
+        // is deleted from index.html, a stale /?page=x link would otherwise
+        // hide every .page and leave a blank shell. Unknown name → do nothing,
+        // so the HTML default stays active and behaviour is unchanged.
+        const requestedPage = new URLSearchParams(location.search).get('page');
+        if (requestedPage && document.getElementById(`page-${requestedPage}`)) {
+            showPage(requestedPage);
+        }
     }
 
     updateTierInfo();
