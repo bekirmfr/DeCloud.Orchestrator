@@ -192,6 +192,33 @@ public sealed partial class TenantVmTemplateSeeder
             Visibility = TemplateVisibility.Public,
             PricingModel = TemplatePricingModel.Free,
             CloudInitTemplate = composed,
+            // MinimumSpec declares FLOORS — only fields with a natural ordering
+            // belong here. ImageId is deliberately absent: there is no "at least
+            // ubuntu-22.04", and a general-purpose VM lets the user choose the OS
+            // (VmService.CreateVmAsync applies the platform default when unset).
+            // Burstable is the most permissive quality floor (the enum is INVERSE:
+            // Guaranteed=0 best … Burstable=3 worst), and Basic the lowest
+            // bandwidth — this template constrains neither.
+            MinimumSpec = new VmSpec
+            {
+                VirtualCpuCores = 1,
+                MemoryBytes = 1L * 1024 * 1024 * 1024,   // 1 GB
+                DiskBytes = 3L * 1024 * 1024 * 1024,  // 3 GB
+                QualityTier = QualityTier.Burstable,
+                BandwidthTier = BandwidthTier.Basic,
+            },
+
+            // RecommendedSpec is what one-click deploys. Values match what the
+            // VmSpec field defaults were already producing, so behaviour is
+            // unchanged — they are simply stated rather than inherited.
+            RecommendedSpec = new VmSpec
+            {
+                VirtualCpuCores = 4,
+                MemoryBytes = 2L * 1024 * 1024 * 1024,   // 2 GB
+                DiskBytes = 20L * 1024 * 1024 * 1024,  // 10 GB
+                QualityTier = QualityTier.Standard,
+                BandwidthTier = BandwidthTier.Standard,
+            },
 
             Variables = BuildVariables(),
             Artifacts = BuildArtifacts(),

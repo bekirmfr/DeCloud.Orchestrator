@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks, specFloorErrors } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers } from "../useDeploy";
 
 describe("shouldRevealPassword — verbatim legacy sniff (memorable format only)", () => {
   it("reveals the memorable format (has '-', no '_')", () => {
@@ -67,5 +67,41 @@ describe("specFloorErrors — customise pre-check (server enforces floors too)",
   });
   it("ignores floors the template leaves unset", () => {
     expect(specFloorErrors({ virtualCpuCores: 1, memoryBytes: GB, diskBytes: GB }, { virtualCpuCores: 1 })).toEqual([]);
+  });
+});
+
+describe("allowedQualityTiers — INVERSE ordering (0=Guaranteed best, 3=Burstable worst)", () => {
+  it("floor Burstable(3) allows every tier", () => {
+    expect(allowedQualityTiers(3)).toEqual([0, 1, 2, 3]);
+  });
+  it("floor Standard(1) allows only Guaranteed and Standard", () => {
+    expect(allowedQualityTiers(1)).toEqual([0, 1]);
+  });
+  it("floor Guaranteed(0) allows only Guaranteed — the strictest floor", () => {
+    expect(allowedQualityTiers(0)).toEqual([0]);
+  });
+  it("undefined floor defaults to Standard(1), as the legacy modal does", () => {
+    expect(allowedQualityTiers(undefined)).toEqual([0, 1]);
+    expect(allowedQualityTiers(null)).toEqual([0, 1]);
+  });
+  it("never offers a tier the server would reject with TIER_TOO_LOW", () => {
+    // MeetsFloor(tier, floor) => tier <= floor. Every offered tier must satisfy it.
+    for (const floor of [0, 1, 2, 3])
+      for (const t of allowedQualityTiers(floor)) expect(t <= floor).toBe(true);
+  });
+});
+
+describe("allowedBandwidthTiers — NOT inverted (0=Basic lowest, 3=Unmetered)", () => {
+  it("floor Basic(0) allows every tier", () => {
+    expect(allowedBandwidthTiers(0)).toEqual([0, 1, 2, 3]);
+  });
+  it("floor Performance(2) allows Performance and Unmetered", () => {
+    expect(allowedBandwidthTiers(2)).toEqual([2, 3]);
+  });
+  it("undefined = no declared requirement → every tier offered", () => {
+    // Regression: previously defaulted to 3, so a template with no declared
+    // bandwidth minimum offered only Unmetered.
+    expect(allowedBandwidthTiers(undefined)).toEqual([0, 1, 2, 3]);
+    expect(allowedBandwidthTiers(null)).toEqual([0, 1, 2, 3]);
   });
 });

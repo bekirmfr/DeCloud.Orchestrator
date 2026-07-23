@@ -102,9 +102,9 @@ export function DeployPage() {
   const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
 
   const qualityOptions = allowedQualityTiers(template.minimumSpec?.qualityTier);
-  const bandwidthOptions = allowedBandwidthTiers(template.defaultBandwidthTier);
+  const bandwidthOptions = allowedBandwidthTiers(template.minimumSpec?.bandwidthTier);
   const effTier = tier ?? rec?.qualityTier ?? qualityOptions[qualityOptions.length - 1] ?? 1;
-  const effBwTier = bwTier ?? rec?.bandwidthTier ?? bandwidthOptions[0] ?? 3;
+  const effBwTier = bwTier ?? rec?.bandwidthTier ?? template.defaultBandwidthTier ?? bandwidthOptions[0] ?? 0;
   const effGpuMode = gpuMode ?? rec?.gpuMode ?? template.defaultGpuMode ?? 0;
   const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
   // Legacy rule: the GPU section appears only when the template needs one.

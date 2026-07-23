@@ -124,12 +124,18 @@ export function allowedQualityTiers(minimumTier?: number | null): number[] {
 }
 
 /**
- * Bandwidth tiers at or above the template's default, which the deploy form
- * treats as the MINIMUM ("this template needs at least this much"). Not inverted,
- * so it is a plain `>=`. Undefined defaults to Unmetered(3), as legacy does.
+ * Bandwidth tiers at or above the template's declared MINIMUM. Not inverted, so
+ * a plain `>=`. Undefined means the template declares no bandwidth requirement,
+ * so every tier is offered.
+ *
+ * NOTE: pass minimumSpec.bandwidthTier, NOT defaultBandwidthTier. The legacy
+ * modal conflates the two (`template.defaultBandwidthTier ?? 3`), which makes a
+ * template that DEFAULTS to Unmetered impossible to downgrade — the default
+ * becomes an accidental floor and the dropdown collapses to one option. A
+ * default seeds the initial selection; a minimum constrains the choices.
  */
 export function allowedBandwidthTiers(minimumTier?: number | null): number[] {
-  const floor = minimumTier ?? 3;
+  const floor = minimumTier ?? 0;
   return [0, 1, 2, 3].filter((t) => t >= floor);
 }
 
