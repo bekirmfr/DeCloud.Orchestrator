@@ -26,6 +26,17 @@ function Card({ title, children }: { title?: string; children: React.ReactNode }
   );
 }
 
+/** Label/value line used by the cost breakdown. Local to this page — the VM
+ *  cockpit has its own; sharing one would couple two unrelated layouts. */
+function Row({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "4px 0" }}>
+      <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{k}</span>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{v}</span>
+    </div>
+  );
+}
+
 /**
  * One-time password reveal. Held in COMPONENT STATE ONLY — never persisted, so a
  * reload loses it (design: "must not survive reload"). The server stores only a
