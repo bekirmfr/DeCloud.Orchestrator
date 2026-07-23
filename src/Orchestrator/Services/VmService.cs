@@ -656,7 +656,7 @@ public class VmService : IVmService
         vm.PushMessage($"{action} command sent to node.", VmMessageLevel.Info, "user");
 
         await _dataStore.SaveVmAsync(vm);
-        await _notifications.BroadcastStatusAsync(vmId, vm.Status, $"{action} command sent to node.");  // ← optimistic in-flight
+        await _notifications.BroadcastStatusAsync(vmId, vm.OwnerId, vm.Status, $"{action} command sent to node.");  // ← optimistic in-flight
 
         _logger.LogInformation(
             "VM action {Action} queued for {VmId} (command: {CommandId})",

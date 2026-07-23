@@ -7,7 +7,7 @@ namespace Orchestrator.Services;
 
 public interface IVmNotificationService
 {
-    Task BroadcastStatusAsync(string vmId, VmStatus status, string? message = null);
+    Task BroadcastStatusAsync(string vmId, string? ownerId, VmStatus status, string? message = null);
     Task BroadcastServicesAsync(string vmId, IReadOnlyList<VmServiceModel> services);
 }
 
@@ -26,24 +26,35 @@ public class VmNotificationService : IVmNotificationService
         _logger = logger;
     }
 
-    public async Task BroadcastStatusAsync(string vmId, VmStatus status, string? message = null)
+    public async Task BroadcastStatusAsync(string vmId, string? ownerId, VmStatus status, string? message = null)
     {
         try
         {
-            await _hub.Clients.Group($"vm:{vmId}").SendAsync("VmStatusChanged", new
+            var payload = new
             {
                 VmId = vmId,
-                Status = status.ToString(),   // NAME (client tolerates numeric too)
+                Status = status.ToString(),
                 Message = message,
                 Timestamp = DateTime.UtcNow
-            });
+            };
+
+            // Two audiences, one send: the cockpit watching THIS VM, and the
+            // owner's dashboard watching ALL of theirs. OrchestratorHub has
+            // exposed SubscribeToUser since it was written, but nothing ever
+            // published to user:{id} — a subscription with no publisher.
+            if (!string.IsNullOrEmpty(ownerId))
+                await _hub.Clients.Groups($"vm:{vmId}", $"user:{ownerId}")
+                    .SendAsync("VmStatusChanged", payload);
+            else
+                await _hub.Clients.Group($"vm:{vmId}")
+                    .SendAsync("VmStatusChanged", payload);
         }
         catch (Exception ex)
         {
-            // Never let a notification failure affect a state change. Best-effort.
             _logger.LogWarning(ex, "VmStatusChanged broadcast failed for {VmId}", vmId);
         }
     }
+
     public async Task BroadcastServicesAsync(string vmId, IReadOnlyList<VmServiceModel> services)
     {
         try

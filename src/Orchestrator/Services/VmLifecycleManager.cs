@@ -1,6 +1,4 @@
 using DeCloud.Shared.Enums;
-using Microsoft.AspNetCore.SignalR;
-using Orchestrator.Hubs;
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
@@ -259,7 +257,7 @@ public class VmLifecycleManager : IVmLifecycleManager
         }
 
         await _dataStore.SaveVmAsync(vm);
-        await _notifications.BroadcastStatusAsync(vm.Id, newStatus, context.StatusMessage);  // ← confirmed transition
+        await _notifications.BroadcastStatusAsync(vm.Id, vm.OwnerId, newStatus, context.StatusMessage);  // ← confirmed transition
 
         // ════════════════════════════════════════════════════════════════
         // Step 2: Execute side effects (best-effort, individually guarded)

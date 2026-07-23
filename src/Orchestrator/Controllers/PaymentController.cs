@@ -1,3 +1,4 @@
+using DeCloud.Shared.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Models;
@@ -91,9 +92,18 @@ public class PaymentController : ControllerBase
                 })
                 .ToList();
 
+            // Current hourly burn — only VMs actually accruing cost. A VM paused
+            // for insufficient balance or a stale heartbeat isn't being billed,
+            // so counting it would overstate burn and understate runway.
+            var userVms = await _dataStore.GetVmsByUserAsync(userId);
+            var hourlyBurnRate = userVms
+                .Where(v => v.Status == VmStatus.Running && v.BillingInfo?.IsPaused != true)
+                .Sum(v => v.BillingInfo?.HourlyRateCrypto ?? 0m);
+
             var response = new BalanceResponse
             {
                 Balance = balanceInfo.AvailableBalance,
+                HourlyBurnRate = hourlyBurnRate,
                 ConfirmedBalance = balanceInfo.ConfirmedBalance,
                 PendingDeposits = balanceInfo.PendingDeposits,
                 UnpaidUsage = balanceInfo.UnpaidUsage,
@@ -115,7 +125,7 @@ public class PaymentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get balance for user {UserId}", GetUserId());
-            return StatusCode(500, ApiResponse<BalanceResponse>.Fail("BALANCE_FETCH_ERROR","Failed to fetch balance"));
+            return StatusCode(500, ApiResponse<BalanceResponse>.Fail("BALANCE_FETCH_ERROR", "Failed to fetch balance"));
         }
     }
 
@@ -192,6 +202,17 @@ public record BalanceResponse
     /// Available balance for VM usage (confirmed - unpaid usage)
     /// </summary>
     public decimal Balance { get; init; }
+
+    /// <summary>
+    /// Current hourly burn: the sum of HourlyRateCrypto across this user's
+    /// Running, non-paused VMs. Runway = Balance / HourlyBurnRate.
+    ///
+    /// Computed server-side because VmSummaryDto carries no billing info — a
+    /// client could only re-derive it from specs, which would produce a
+    /// DIFFERENT number than billing actually charges (platform-default rates
+    /// instead of the host node's, and no knowledge of paused billing).
+    /// </summary>
+    public decimal HourlyBurnRate { get; init; }
 
     /// <summary>
     /// Confirmed balance from blockchain
