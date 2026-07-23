@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
+import { useUserRealtime } from "../../realtime/useUserRealtime";
 import { useVms, VMS_PAGE_SIZE, type VmSummary } from "./useVms";
 import { vmStatusBadge, type BadgeTone } from "./vmStatus";
 import type { AppError } from "../../api/errors";
@@ -36,7 +37,13 @@ function StatusBadge({ status }: { status: VmSummary["status"] }) {
 const gib = (bytes: number) => Math.round(bytes / 1024 ** 3);
 
 export function VmsPage() {
-  const { api } = useAuth();
+  const { api, wallet } = useAuth();
+
+  // Live status, same as the dashboard. useUserRealtime patches every cached
+  // ["vms", *] page, and this page reads that cache — so subscribing here makes
+  // the list update on its own instead of only when the dashboard happens to be
+  // mounted alongside it.
+  useUserRealtime(wallet.kind === "connected" ? wallet.address : "");
   const [page, setPage] = useState(1);
   const { data, isLoading, error, isPlaceholderData } = useVms(api, page);
 
