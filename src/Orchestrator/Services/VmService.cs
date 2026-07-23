@@ -175,6 +175,38 @@ public class VmService : IVmService
         request.Spec.ReplicationFactor = replicationFactor;
 
         // ════════════════════════════════════════════════════════════════════════
+        // Default base image for tenant VMs
+        // ════════════════════════════════════════════════════════════════════════
+        // The OS is a user CHOICE WITH A DEFAULT. OS-agnostic templates leave
+        // RecommendedSpec.ImageId empty on purpose; templates whose cloud-init is
+        // OS-specific pin it themselves. Until now that default lived only inside
+        // the legacy create-VM form (and template-detail.js hardcoded
+        // "ubuntu-22.04"), so a deploy from any other client — API, CLI, the new
+        // app — sent an empty ImageId. BaseImageUrlResolver then had nothing to
+        // resolve, and the node correctly rejected the payload as
+        // "missing BaseImageUrl on a fresh deploy".
+        //
+        // ubuntu-22.04 is the default because it is the only registry image with a
+        // PINNED SHA256 — so the path most VMs take is the content-verified one.
+        // Before moving the default to ubuntu-24.04 (longer support runway), pin
+        // its hash in the image registry first, or the default silently drops to
+        // permissive download-and-record mode.
+        //
+        // Scoped to tenant VMs deliberately: system VMs (Relay/DHT/BlockStore) are
+        // debian-12 based and set their own image. Silently handing one an Ubuntu
+        // base would be worse than the loud empty-value failure it replaces — the
+        // node's guard stays the backstop there.
+        if (!isSystemVm && string.IsNullOrWhiteSpace(request.Spec.ImageId))
+        {
+            request.Spec.ImageId =
+                _configuration["PlatformDefaults:DefaultImageId"] ?? "ubuntu-22.04";
+
+            _logger.LogDebug(
+                "VM {Name}: no ImageId specified — applying platform default {ImageId}",
+                canonicalName, request.Spec.ImageId);
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
         // P2.2 — Default TemplateId to platform-general for tenant General VMs
         // ════════════════════════════════════════════════════════════════════════
         // Per UNIFIED_CLOUDINIT_PIPELINE.md §5 Phase 2.2: every General tenant VM

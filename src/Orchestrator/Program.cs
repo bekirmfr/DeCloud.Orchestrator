@@ -84,6 +84,8 @@ else
     Log.Warning("⚠ MongoDB not configured - using in-memory storage (data will not persist!)");
 }
 
+builder.Services.Configure<PlatformDefaults>(builder.Configuration.GetSection("PlatformDefaults"));
+
 // =====================================================
 // Core Services
 // =====================================================
