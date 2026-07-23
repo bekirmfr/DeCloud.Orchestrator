@@ -1,12 +1,14 @@
-﻿using Microsoft.AspNetCore.SignalR;
+﻿using DeCloud.Shared.Enums;
+using DeCloud.Shared.Models;
+using Microsoft.AspNetCore.SignalR;
 using Orchestrator.Hubs;
-using DeCloud.Shared.Enums;
 
 namespace Orchestrator.Services;
 
 public interface IVmNotificationService
 {
     Task BroadcastStatusAsync(string vmId, VmStatus status, string? message = null);
+    Task BroadcastServicesAsync(string vmId, IReadOnlyList<VmServiceModel> services);
 }
 
 /// The ONE place a VM status change is pushed to SignalR clients. Both the
@@ -40,6 +42,33 @@ public class VmNotificationService : IVmNotificationService
         {
             // Never let a notification failure affect a state change. Best-effort.
             _logger.LogWarning(ex, "VmStatusChanged broadcast failed for {VmId}", vmId);
+        }
+    }
+    public async Task BroadcastServicesAsync(string vmId, IReadOnlyList<VmServiceModel> services)
+    {
+        try
+        {
+            // Owner-facing projection only. VmServiceModel also carries internals
+            // (ExecCommand, LastSuccessBody, ConsecutiveFailures) that the cockpit
+            // has no use for and shouldn't receive.
+            await _hub.Clients.Group($"vm:{vmId}").SendAsync("VmServicesUpdated", new
+            {
+                VmId = vmId,
+                Services = services.Select(s => new
+                {
+                    s.Name,
+                    s.Port,
+                    s.Protocol,
+                    Status = s.Status.ToString(),   // NAME, as with VmStatusChanged
+                    s.StatusMessage,
+                    s.ReadyAt
+                }).ToList(),
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "VmServicesUpdated broadcast failed for {VmId}", vmId);
         }
     }
 }

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHub } from "./HubProvider";
-import type { VmDetailResponse, VmMetrics } from "../features/vms/useVms";
+import type { VmDetailResponse, VmMetrics, VmServiceModel } from "../features/vms/useVms";
 import { normalizeStatus } from "../features/vms/vmStatus";
 
 // Live updates for ONE VM's detail cockpit (DESIGN §6.9 scope: VM detail).
@@ -13,10 +13,13 @@ import { normalizeStatus } from "../features/vms/vmStatus";
 //   VmStatusChanged     { VmId, Status, Message, Timestamp }
 //   VmMetricsUpdated    { VmId, Metrics }
 //   VmAccessInfoUpdated { VmId, AccessInfo }
+//   VmServicesUpdated   { VmId, Services }   — readiness, pushed from the heartbeat
+//                                              path only when something changed
 
 interface VmStatusChanged { vmId: string; status: string | number; message?: string; timestamp?: string }
 interface VmMetricsUpdated { vmId: string; metrics: VmMetrics }
 interface VmAccessInfoUpdated { vmId: string; accessInfo: VmDetailResponse["vm"]["accessInfo"] }
+interface VmServicesUpdated { vmId: string; services: VmServiceModel[] }
 
 export function useVmRealtime(vmId: string) {
   const { connection, ready } = useHub();
@@ -47,10 +50,15 @@ export function useVmRealtime(vmId: string) {
       if (e.vmId !== vmId) return;
       patchVm((vm) => ({ ...vm, accessInfo: e.accessInfo ?? vm.accessInfo }));
     };
+    const onServices = (e: VmServicesUpdated) => {
+      if (e.vmId !== vmId) return;
+      patchVm((vm) => ({ ...vm, services: e.services ?? vm.services }));
+    };
 
     connection.on("VmStatusChanged", onStatus);
     connection.on("VmMetricsUpdated", onMetrics);
     connection.on("VmAccessInfoUpdated", onAccess);
+    connection.on("VmServicesUpdated", onServices);
     connection.invoke("SubscribeToVm", vmId).catch((err) =>
       console.warn("[hub] SubscribeToVm failed:", err)
     );
@@ -59,6 +67,7 @@ export function useVmRealtime(vmId: string) {
       connection.off("VmStatusChanged", onStatus);
       connection.off("VmMetricsUpdated", onMetrics);
       connection.off("VmAccessInfoUpdated", onAccess);
+      connection.off("VmServicesUpdated", onServices);
       // Best-effort unsubscribe; connection may already be gone on teardown.
       connection.invoke("UnsubscribeFromVm", vmId).catch(() => { /* connection closing */ });
     };

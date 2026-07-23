@@ -29,6 +29,7 @@ public class NodeService : INodeService
     private readonly IConstraintEvaluator _constraintEvaluator;
     private readonly ILocalityService _locality;
     private readonly IEventService _eventService;
+    private readonly IVmNotificationService _notifications;
     private readonly ICentralIngressService _ingressService;
     private readonly ILogger<NodeService> _logger;
     private readonly HttpClient _httpClient;
@@ -56,6 +57,7 @@ public class NodeService : INodeService
         ICloudInitRenderer cloudInitRenderer,
         IConfiguration configuration,
         IOptions<PricingConfig> pricingConfig,
+        IVmNotificationService notifications,
         ObligationStateGenerator stateGenerator)
     {
         _dataStore = dataStore;
@@ -71,6 +73,7 @@ public class NodeService : INodeService
         _cloudInitRenderer = cloudInitRenderer;
         _configuration = configuration;
         _pricingConfig = pricingConfig.Value;
+        _notifications = notifications;
         _stateGenerator = stateGenerator;
     }
 
@@ -2759,8 +2762,14 @@ public class NodeService : INodeService
                 // Update per-service readiness from node agent
                 if (reported.Services?.Count > 0 && vm.Services.Count > 0)
                 {
-                    UpdateServiceReadiness(vm, reported.Services);
+                    var servicesChanged = UpdateServiceReadiness(vm, reported.Services);
                     await _dataStore.SaveVmAsync(vm);
+
+                    // Push to any cockpit watching this VM. Gated on an actual
+                    // change: heartbeats arrive continuously and re-broadcasting
+                    // an unchanged list every tick is pure noise.
+                    if (servicesChanged)
+                        await _notifications.BroadcastServicesAsync(vm.Id, vm.Services);
 
                     // Extract DHT peer ID from System service StatusMessage.
                     // DHT VMs report their libp2p peer ID via the cloud-init readiness
@@ -3721,7 +3730,7 @@ public class NodeService : INodeService
     /// Update VM's service readiness from heartbeat data reported by node agent.
     /// Matches reported services by name and updates status/timestamps.
     /// </summary>
-    private void UpdateServiceReadiness(VirtualMachine vm, List<HeartbeatServiceInfo> reportedServices)
+    private bool UpdateServiceReadiness(VirtualMachine vm, List<HeartbeatServiceInfo> reportedServices)
     {
         var changed = false;
 
@@ -3789,6 +3798,8 @@ public class NodeService : INodeService
                 "VM {VmId} all services ready ({Count} services)",
                 vm.Id, vm.Services.Count);
         }
+
+        return changed;
     }
 
     /// <summary>
