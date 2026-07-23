@@ -775,6 +775,23 @@ function showLogin() {
 }
 
 function showDashboard() {
+    // ── Nav-of-record handoff (frontend migration) ────────────────────────
+    // /app is the home now. This is the ONE authenticated entry point — it runs
+    // both on session restore and after a fresh sign-in — so redirecting here
+    // covers every way a signed-in user arrives.
+    //
+    // The ?page= guard is load-bearing: restoreSession() runs on every legacy
+    // page load, including the /?page=nodes deep links in the new shell's
+    // sidebar. Without it, every one of those links would bounce straight back
+    // to /app and the un-migrated pages would be unreachable.
+    //
+    // replace() not assign(): the bare "/" shouldn't sit in history, or Back
+    // from /app lands on a URL that immediately redirects forward again.
+    if (!new URLSearchParams(location.search).get('page')) {
+        location.replace('/app');
+        return;
+    }
+
     document.getElementById('login-overlay').classList.remove('active');
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('app-container').style.display = 'flex';
