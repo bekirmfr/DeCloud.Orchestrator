@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors } from "../useDeploy";
 
 describe("shouldRevealPassword — verbatim legacy sniff (memorable format only)", () => {
   it("reveals the memorable format (has '-', no '_')", () => {
@@ -43,5 +43,29 @@ describe("fundGateBlocks — UX pre-check (server is authority)", () => {
   });
   it("does not false-block on unknown balance", () => {
     expect(fundGateBlocks(undefined, 1)).toBe(false);
+  });
+});
+
+describe("specFloorErrors — customise pre-check (server enforces floors too)", () => {
+  const GB = 1024 ** 3;
+  const min = { virtualCpuCores: 2, memoryBytes: 4 * GB, diskBytes: 20 * GB };
+
+  it("passes when the spec meets every floor", () => {
+    expect(specFloorErrors({ virtualCpuCores: 2, memoryBytes: 4 * GB, diskBytes: 20 * GB }, min)).toEqual([]);
+  });
+  it("flags CPU below the floor", () => {
+    const e = specFloorErrors({ virtualCpuCores: 1, memoryBytes: 4 * GB, diskBytes: 20 * GB }, min);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toContain("2 vCPU");
+  });
+  it("flags every violated floor at once", () => {
+    expect(specFloorErrors({ virtualCpuCores: 1, memoryBytes: 1 * GB, diskBytes: 5 * GB }, min)).toHaveLength(3);
+  });
+  it("no minimum declared → nothing to enforce", () => {
+    expect(specFloorErrors({ virtualCpuCores: 1, memoryBytes: GB, diskBytes: GB }, null)).toEqual([]);
+    expect(specFloorErrors({ virtualCpuCores: 1, memoryBytes: GB, diskBytes: GB }, undefined)).toEqual([]);
+  });
+  it("ignores floors the template leaves unset", () => {
+    expect(specFloorErrors({ virtualCpuCores: 1, memoryBytes: GB, diskBytes: GB }, { virtualCpuCores: 1 })).toEqual([]);
   });
 });

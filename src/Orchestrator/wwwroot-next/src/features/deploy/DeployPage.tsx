@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
-import { useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks } from "./useDeploy";
-import { shouldRevealPassword, type DeployResult } from "./deploySubmit";
+import { useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors } from "./useDeploy";
+import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
 import type { AppError } from "../../api/errors";
 
 // Phase 3 · deploy sub-step 2 — the ONE-CLICK deploy page.
@@ -63,6 +63,11 @@ export function DeployPage() {
   const deploy = useDeploy(api);
 
   const [vmName, setVmName] = useState("");
+  const [customize, setCustomize] = useState(false);
+  // Spec inputs live in human units (cores / GB); converted on submit.
+  const [cpu, setCpu] = useState<number | null>(null);
+  const [memGb, setMemGb] = useState<number | null>(null);
+  const [diskGb, setDiskGb] = useState<number | null>(null);
   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
   if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
@@ -73,6 +78,26 @@ export function DeployPage() {
   const days = runwayDays(balance?.balance, costPerHour);
   const blocked = fundGateBlocks(balance?.balance, costPerHour);
   const rec = template.recommendedSpec;
+  const gbOf = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
+
+  // Seeded from RecommendedSpec until the user edits a field.
+  const effCpu = cpu ?? rec?.virtualCpuCores ?? 1;
+  const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
+  const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
+
+  const customSpec: TemplateSpec = {
+    virtualCpuCores: effCpu,
+    memoryBytes: effMemGb * 1024 ** 3,
+    diskBytes: effDiskGb * 1024 ** 3,
+    // Carry the rest of RecommendedSpec forward, then re-apply the template
+    // defaults the server would have applied itself had we sent no customSpec.
+    ...(rec?.imageId ? { imageId: rec.imageId } : {}),
+    ...(rec?.qualityTier != null ? { qualityTier: rec.qualityTier } : {}),
+    gpuMode: rec?.gpuMode ?? template.defaultGpuMode,
+    bandwidthTier: rec?.bandwidthTier ?? template.defaultBandwidthTier,
+  };
+
+  const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
 
   async function onDeploy() {
     const name = vmName.trim();
@@ -81,7 +106,10 @@ export function DeployPage() {
       // One-click: NO customSpec — the server applies template.RecommendedSpec.
       const result: DeployResult = await deploy.mutateAsync({
         templateId: template!.id,
-        payload: { vmName: name },
+        // One-click sends NO customSpec so the server applies RecommendedSpec
+        // *and* its own template defaults. Customise sends a full spec — which
+        // is why customSpec above re-applies bandwidth/GPU explicitly.
+        payload: { vmName: name, customSpec: customize ? customSpec : null },
       });
       // Reveal only the human-readable generated password (legacy sniff).
       if (shouldRevealPassword(result.password)) {
@@ -157,17 +185,63 @@ export function DeployPage() {
               </p>
             )}
 
+            <div style={{ marginTop: "var(--space-4)" }}>
+              <button
+                className="btn-ghost"
+                onClick={() => setCustomize((c) => !c)}
+                aria-expanded={customize}
+                style={{ fontSize: "var(--text-sm)" }}
+              >
+                {customize ? "Use recommended settings" : "Customize resources"}
+              </button>
+            </div>
+
+            {customize && (
+              <div style={{ marginTop: "var(--space-4)", display: "grid", gap: "var(--space-3)" }}>
+                <label className="field">
+                  <span>vCPU</span>
+                  <input type="number" min={1} max={32} value={effCpu}
+                    onChange={(e) => setCpu(Number(e.target.value))} />
+                </label>
+                <label className="field">
+                  <span>Memory (GB)</span>
+                  <input type="number" min={1} max={128} value={effMemGb}
+                    onChange={(e) => setMemGb(Number(e.target.value))} />
+                </label>
+                <label className="field">
+                  <span>Disk (GB)</span>
+                  <input type="number" min={10} max={2000} value={effDiskGb}
+                    onChange={(e) => setDiskGb(Number(e.target.value))} />
+                </label>
+
+                {template.minimumSpec && (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                    Minimum for this template: {template.minimumSpec.virtualCpuCores ?? 1} vCPU ·{" "}
+                    {gbOf(template.minimumSpec.memoryBytes)} GB · {gbOf(template.minimumSpec.diskBytes)} GB
+                  </p>
+                )}
+
+                {floorErrors.map((err) => (
+                  <p key={err} role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)" }}>{err}</p>
+                ))}
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 8, marginTop: "var(--space-4)" }}>
               <button
                 className="btn-primary"
                 onClick={onDeploy}
-                disabled={!vmName.trim() || deploy.isPending}
+                disabled={!vmName.trim() || deploy.isPending || floorErrors.length > 0}
               >
-                {deploy.isPending ? "Deploying…" : "Deploy with recommended settings"}
+                {deploy.isPending
+                  ? "Deploying…"
+                  : customize
+                    ? "Deploy with these settings"
+                    : "Deploy with recommended settings"}
               </button>
             </div>
-            {/* TODO (sub-step 3): opt-in "Customize" — spec fields seeded from
-                RecommendedSpec, floored at MinimumSpec, + template Variables. */}
+            {/* TODO (later): template Variables (user-facing env vars). Needs the
+                platform-vs-user variable discriminator grounded first. */}
           </Card>
         </>
       )}

@@ -34,6 +34,10 @@ export interface VmTemplate {
   estimatedCostPerHour?: number;
   requiresGpu?: boolean;
   defaultGpuMode?: number;
+  // Forwarded explicitly when a customSpec is sent: the server applies these
+  // template defaults ONLY when customSpec is null (BuildVmRequestFromTemplateAsync),
+  // so customising without them silently downgrades bandwidth/GPU.
+  defaultBandwidthTier?: number;
   variables?: TemplateVariable[];
 }
 

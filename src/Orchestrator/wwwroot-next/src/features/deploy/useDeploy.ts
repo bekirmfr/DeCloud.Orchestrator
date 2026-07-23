@@ -59,4 +59,25 @@ export function fundGateBlocks(balance: number | undefined, costPerHour: number 
   return balance <= 0;                            // has a cost but no funds → gate
 }
 
+/**
+ * Validate a customised spec against the template's MinimumSpec. UX pre-check —
+ * the server merges MinimumSpec floors and rejects a too-low QualityTier with
+ * TIER_TOO_LOW regardless. Returns human-readable messages, empty when valid.
+ */
+export function specFloorErrors(
+  spec: { virtualCpuCores: number; memoryBytes: number; diskBytes: number },
+  minimum?: { virtualCpuCores?: number; memoryBytes?: number; diskBytes?: number } | null
+): string[] {
+  if (!minimum) return [];
+  const gb = (b: number) => Math.round(b / 1024 ** 3);
+  const errors: string[] = [];
+  if (minimum.virtualCpuCores && spec.virtualCpuCores < minimum.virtualCpuCores)
+    errors.push(`This template needs at least ${minimum.virtualCpuCores} vCPU.`);
+  if (minimum.memoryBytes && spec.memoryBytes < minimum.memoryBytes)
+    errors.push(`This template needs at least ${gb(minimum.memoryBytes)} GB of memory.`);
+  if (minimum.diskBytes && spec.diskBytes < minimum.diskBytes)
+    errors.push(`This template needs at least ${gb(minimum.diskBytes)} GB of disk.`);
+  return errors;
+}
+
 export type { VmTemplate };
