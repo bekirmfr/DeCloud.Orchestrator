@@ -135,6 +135,23 @@ export function DeployPage() {
   const debouncedSpecJson = useDebounced(specJson, 400);
   const { data: price } = usePriceEstimate(api, debouncedSpecJson);
 
+  /** Drop every spec edit so the eff* values fall back to RecommendedSpec. */
+  function resetSpec() {
+    setCpu(null); setMemGb(null); setDiskGb(null);
+    setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
+  }
+
+  /**
+   * Leaving Customize must RESET, not just hide. One-click sends no customSpec,
+   * so the server deploys RecommendedSpec — but the price estimate is built from
+   * the eff* values. Keeping stale edits behind a collapsed panel would show a
+   * cost the deploy wouldn't actually incur.
+   */
+  function toggleCustomize() {
+    if (customize) resetSpec();
+    setCustomize(!customize);
+  }
+
   // ── Hooks done. Guards and plain derivations from here. ─────────────────
   if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
   if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
@@ -204,11 +221,16 @@ export function DeployPage() {
       ) : (
         <>
           <Card title="What you’ll get">
-            {rec && (
-              <p style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>
-                {rec.virtualCpuCores} vCPU · {gib(rec.memoryBytes)} GB RAM · {gib(rec.diskBytes)} GB disk
-              </p>
-            )}
+            {/* The EFFECTIVE spec — what will actually be deployed — so editing a
+                Customize field updates this summary and the price together. */}
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>
+              {effCpu} vCPU · {effMemGb} GB RAM · {effDiskGb} GB disk
+            </p>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 4 }}>
+              {QUALITY_TIERS[effTier]?.split(" — ")[0] ?? "Standard"} ·{" "}
+              {BANDWIDTH_TIERS[effBwTier]?.split(" — ")[0] ?? "Unmetered"} bandwidth
+              {showGpu && effGpuMode !== 0 ? ` · ${GPU_MODES[effGpuMode]?.split(" — ")[0]} GPU` : ""}
+            </p>
             {price && (
               <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--border-subtle)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -258,7 +280,7 @@ export function DeployPage() {
             <div style={{ marginTop: "var(--space-4)" }}>
               <button
                 className="btn-ghost"
-                onClick={() => setCustomize((c) => !c)}
+                onClick={toggleCustomize}
                 aria-expanded={customize}
                 style={{ fontSize: "var(--text-sm)" }}
               >

@@ -17,7 +17,7 @@
 | **0.5** | Visual direction → tokenize (Meridian) | ☑ Done — tokens (light+dark, AA-validated), fonts.css, reconciliation decided | — | 2026-07-21 | 2026-07-21 |
 | **1** | Frozen core (session/identity + `api()`) | ☑ Done — full auth flow live (connect→SIWE→authenticated→shell), reload-persists; walletCrypto cross-compat verified; 54 tests | Owner | 2026-07-21 | 2026-07-22 |
 | **2** | Shell + pipeline-proof page (SSH Keys) | ☑ Done — shell live; SSH Keys migrated + **legacy page retired in production** (first strangler retirement) | Owner | 2026-07-22 | 2026-07-22 |
-| **3** | The spine (dashboard → deploy → VM detail) | ◐ In progress — VM **list** (step 1a) shipped (paged, 12-state badges, action-gating logic; 72 tests). Next: VM detail cockpit (1b) → retire legacy VM list; then deploy, SignalR, dashboard | Owner | 2026-07-22 | — |
+| **3** | The spine (dashboard → deploy → VM detail) | ◐ In progress — VM **list** + **detail cockpit** live (live status/services via SignalR; metrics panel gated until the node reports). **Deploy live**: one-click + Customize (cpu/mem/disk, tier, bandwidth, GPU) with server-computed price estimate. 103 tests. Remaining: replication factor, OS image, template Variables, scheduling constraints; then **dashboard** → nav-of-record handoff + legacy VM-list retirement | Owner | 2026-07-22 | — |
 | **4** | Landing (SSG) built & proven | ☐ Not started | — | — | — |
 | **5** | Supporting paths (marketplace, my-templates, nodes, settings, admin) | ☐ Not started | — | — | — |
 | **6** | Cutover: `/`-flip, delete monolith + `window.*` bridge | ☐ Not started | — | — | — |
@@ -148,13 +148,142 @@ Each phase lists **goal · tasks · exit criteria · what's retired · risk**. T
 
 ---
 
-## 6. Definition of done (project-level)
+## 6. Working agreements & hard-won gotchas
+
+Rules earned by debugging, not by theory. Each one cost real time; the examples are
+named so they can be verified rather than taken on faith.
+
+### 6.1 Ground before acting
+
+Pull the real file before writing anything that depends on its shape. Endpoint paths,
+DTO field names, enum members, constructor signatures, dependency import paths — all
+have been guessed wrong at least once here, and grounding fixed each.
+
+- `/api/ssh-keys` (guessed) 404s; `/api/user/me/ssh-keys` (grounded) is real.
+- Deploy is **not** `POST /api/vms` — it is `POST /api/marketplace/templates/{id}/deploy`.
+- There are **two** `VmsController`s (Orchestrator + NodeAgent). The frontend talks to
+  the Orchestrator one only.
+- `@noble` v2 import paths were guessed wrong three times; installing and probing settled it.
+
+Corollary: on a module-resolution error, `npm ls <pkg>` is the *first* diagnostic, not the last.
+
+### 6.2 The dominant bug family: the mechanism exists, nothing calls it
+
+Four separate incidents, one shape — capability present, connection missing:
+
+| Symptom | Real cause |
+|---|---|
+| Cockpit never showed owner-initiated status changes | `TransitionAsync` changed status but only the node's `ReportVmStatus` broadcast |
+| Intermediate `Stopping`/`Provisioning` still missing after that fix | `VmService.PerformVmActionAsync` writes the optimistic status **directly**, bypassing `TransitionAsync` |
+| Services stuck at `Pending` forever | Heartbeat updated `vm.Services` and notified nobody |
+| One-click deploy failed: "missing BaseImageUrl" | The OS default lived only inside the legacy form; every other client sent an empty `ImageId` |
+
+**Diagnostic:** when a feature works in the legacy UI but not the new one, the capability
+exists — find the path the working client walks that the new one doesn't. Do not reimplement.
+
+**Fix shape:** when two code paths must both notify, extract *one* seam both call
+(`IVmNotificationService`) rather than duplicating the emit. The next path that changes
+status then gets live updates for free.
+
+### 6.3 Trust the wire over the doc
+
+An observed response beats a design doc, a memory, or a plausible inference.
+
+- The design said a global `JsonStringEnumConverter` makes enums serialize as strings.
+  `VmStatus` arrives as `3` — `VmStatus.cs` lacks the per-enum attribute `VmRole`/`VmCategory` carry.
+- **A 404 and a 401 are different diagnoses.** Wrong path vs. wrong auth. The 401 on
+  `/api/user/me/ssh-keys` *confirmed* the route existed.
+- Normalize at the boundary, once. `normalizeStatus` was written for a list badge and
+  later absorbed the SignalR path for free — a type error became a correctness fix.
+
+### 6.4 Client pre-checks, server authority
+
+The client avoids offering obviously-wrong options; the server decides. Held throughout
+and never regretted: SSH-key validation, `allowedActions`, `specFloorErrors`, tier floors,
+the fund gate.
+
+Deliberately **not** done: mirroring the server's `ValidTransitions` graph; reimplementing
+the pricing formula. The legacy UI does the latter client-side, which is exactly how a
+client copy drifts from what billing actually charges.
+
+**Ask what the foundation already provides before building.** Repeatedly the answer was
+"it does": `POST /api/system/pricing/calculate` (same `HourlyRateCalculator` that bills),
+`GET /api/system/images`, `GET /api/marketplace/platform-variables`, and an existing
+`changed` flag in `UpdateServiceReadiness` carrying a subtle Ready-never-regresses guard.
+
+### 6.5 Defaults are not declarations
+
+`VmTemplate.MinimumSpec = new()` means a template that declares nothing still ships a full
+spec of C# field defaults. On the wire, *"I require Standard"* and *"I said nothing"* are
+byte-identical — so `?? no-constraint` fallbacks are unreachable.
+
+Consequences seen: the tier dropdown offered two options because `VmSpec.QualityTier`
+initialises to `Standard`; the bandwidth dropdown collapsed to one because the legacy modal
+reads `defaultBandwidthTier` as a floor.
+
+- A **default** seeds a selection. A **minimum** constrains choices. Never conflate them.
+- Only fields with a natural ordering belong in a minimum. `ImageId` has none — there is no
+  "at least ubuntu-22.04" — so an image in `MinimumSpec` is a category error that silently
+  becomes an OS mandate.
+- Known open: `MinimumSpec` cannot express "unconstrained" (would need to be nullable).
+
+### 6.6 What each tool actually catches
+
+| Tool | Catches | Misses |
+|---|---|---|
+| `vitest` | pure logic | anything rendered |
+| `tsc --noEmit` | undefined symbols, wrong props, bad imports | hook ordering, runtime behaviour |
+| `eslint-plugin-react-hooks` | conditional/misplaced hooks | — (**not yet installed; should be**) |
+| Browser, **cold cache** | first-render crashes, wire-shape mismatches | — |
+
+Real escapes, in order of increasing subtlety: shipped components referencing CSS classes
+that didn't exist (invisible Radix modal); `normalizeStatus` and `Row` used without import
+(caught by `tsc`); **hooks placed after early returns** → React #310, which passed both
+`vitest` and `tsc` and only crashed on a cold load.
+
+**Rule:** hook placement is the whole question when adding a hook to a component with early
+returns. Every hook goes above them; a `null` argument plus `enabled:` is how a query waits
+for data. Adding it "next to the code that uses it" is wrong if that code is past a `return`.
+
+### 6.7 Delivery conventions
+
+- **Replacement files: select-all → delete → paste.** Pasting at cursor has produced a
+  doubled file and a cascade of redeclaration errors.
+- **Ship a component's CSS with it.** New components use inline token styles rather than
+  class names that may not exist yet.
+- **Run `tsc --noEmit` on anything touching a component**, then load it cold in a browser.
+- **Own mistakes in the commit message** when a later commit corrects an earlier claim.
+
+### 6.8 Config is a failure surface, and it fails silently
+
+- The `--env-file` migration dropped `--ingress-domain`'s side effects
+  (`INSTALL_CADDY`, `ENABLE_INGRESS`) → central ingress silently off, only a Debug-level log.
+- Setting those internals *in* the env file instead produced an unstartable systemd unit
+  (`Requires=caddy.service`).
+- `appsettings.Production.json` overrides the base file — check both.
+- A line-wrapped Mongo SRV URI crashed startup with a message naming nothing recognisable.
+- `install.sh` reported success while the service was down.
+
+**Rules:** env file holds *secrets only*; flags with installation side effects stay on the
+command line. `install.sh` now rejects side-effect variables in an env file rather than
+merely documenting the rule — see `install.env.example`.
+
+### 6.9 The second client is a truth serum
+
+Nearly every backend gap found during Phase 3 had existed for a long time. One client that
+happened to walk the right paths was hiding all of them. Expect the migration to keep
+surfacing latent bugs, and budget for fixing them — that is the migration doing useful work,
+not scope creep.
+
+---
+
+## 7. Definition of done (project-level)
 
 From DESIGN §8, restated as the finish line: a feature or shared-component change touches **one** place; recommended-settings deploy is **one click** past the template; XSS is framework-owned (no hand-escaping in feature code); the §4 auth machine + `api()` are unit-tested and the three money/lockout flows are E2E-gated in CI; the §7 parity checklist passed at each retirement, so cutover carries **zero known-behavior regressions**.
 
 ---
 
-## 7. Open items feeding the plan (from DESIGN §14)
+## 8. Open items feeding the plan (from DESIGN §14)
 - **Surface undercount — RESOLVED (2026-07-21).** Six standalone entries found, not four. Decision: **`terminal.html` + `file-browser.html` → in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) with **pop-out preserved** (chromeless variant), tokened by session, xterm bundled+lazy (not CDN). No blocker (plain xterm/WS; no COOP/COEP). `sign.html`, `report.html`, `tos.html` stay standalone. Folded into DESIGN v0.8 (§2/§3/§4.1/§7/§10). Consequence: **two fewer standalone entries to serve** — the `/`-flip (serving Change 3) list shortens to sign/report/tos. WS auth (token-in-query on `/api/terminal-proxy` + `/api/sftp-proxy`) preserved; "never log token/password" is a parity item.
 - Regenerate + spot-check OpenAPI-derived types (do in Phase 0).
 - Balance-change emit — deferred; balance polls until then (does not block the spine).
@@ -164,10 +293,22 @@ From DESIGN §8, restated as the finish line: a feature or shared-component chan
 
 ---
 
-## 8. Journal (living — newest first)
+## 9. Journal (living — newest first)
 
 > Entry template:
 > **`YYYY-MM-DD` · Phase N · <author>** — what changed / decided / learned; any status-dashboard update; any new blocker.
+
+**`2026-07-23` · Phase 3 · Owner** — **Spine largely live: cockpit + real-time + deploy. Four backend gaps found and fixed; lessons folded into §6.** Suite 72→103.
+
+**Shipped.** VM detail cockpit (`VmDetailPage`, owner-facing subset of `VirtualMachine` — status/spec/access/services/timestamps + state-aware lifecycle buttons via `allowedActions`). SignalR real-time (`src/realtime/`: one `HubProvider` connection authed by `accessTokenFactory` → `access_token` query param, since browsers can't set WS `Authorization`; `useVmRealtime` maps `VmStatusChanged`/`VmMetricsUpdated`/`VmAccessInfoUpdated`/`VmServicesUpdated` into the TanStack Query cache — events patch the cache, no parallel state). Metrics panel (REST-seeded from `GET /api/vms/{id}/metrics`, SignalR-updated, **gated on data presence** since the node doesn't push metrics yet). Deploy (`src/features/deploy/`): one-click (no `customSpec` → server applies `RecommendedSpec` *and* its own defaults) + opt-in Customize (cpu/mem/disk, quality tier, bandwidth, GPU+VRAM) + **live price estimate** from `POST /api/system/pricing/calculate` — the same `HourlyRateCalculator` that bills, so the formula is never copied client-side. Runway + fund gate now use the computed cost.
+
+**Backend gaps found (all pre-existing, all latent until a second client walked the paths).** (1) `TransitionAsync` never broadcast status → added `IVmNotificationService` as the one notification seam. (2) The optimistic `Stopping`/`Provisioning` write in `PerformVmActionAsync` bypasses `TransitionAsync` → same seam called from both, gated on real change. (3) Heartbeat updated `vm.Services` without notifying → `BroadcastServicesAsync` (owner-facing projection only; `LastSuccessBody` is guest-controlled text and stays server-side). (4) `platform-general` declared no `ImageId` → empty `BaseImageUrl` → node correctly refused. Fixed at the one creation funnel (`CreateVmAsync`, `PlatformDefaults:DefaultImageId`, `ubuntu-22.04` — the only registry image with a pinned SHA256), **tenant-scoped** so a system VM never silently gets the wrong base OS.
+
+**Also:** `platform-general` given explicit `Min`/`RecommendedSpec` (floors were being read from C# field defaults — see §6.5); bandwidth options decoupled from `defaultBandwidthTier`; `--env-file` documented + guarded (`install.env.example`, and the installer now *rejects* side-effect vars rather than only documenting the rule) after it silently disabled ingress and then produced an unstartable unit.
+
+**Corrections made in the open:** claimed legacy's tier multipliers were stale — they match `HourlyRateCalculator` exactly; the real disagreement is *inside* the backend (`SchedulingConfig` carries a different set). Walked back pinning `ImageId` in the seeder once the OS proved to be a user choice with a default. Walked back a three-file options class when `IConfiguration` was already injected.
+
+**Open follow-ups:** backend tier-multiplier disagreement (`HourlyRateCalculator` 2.5/1.0/0.6/0.4 vs `SchedulingConfig` 0.5/0.7/1.0/1.8 — users can be shown one number and billed by another); Neko template recommends a tier its own `MinimumSpec` forbids; `MinimumSpec` can't express "unconstrained"; node-agent metrics push; `AccessInfo` broadcast unverified (SSH host blank on a Running VM); `eslint-plugin-react-hooks` not installed (would have caught the #310 crash); error boundary + not-found page still open.
 
 **`2026-07-22` · Phase 3 · Owner** — **Step 1a: VM list shipped (paged, 12-state badges), rendering live against real VMs.** First page of the operate spine. `src/features/vms/`: `vmStatus.ts` (pure — `vmStatusBadge` maps all 12 `VmStatus` → 4 tones; `allowedActions(status,powerState,hold)` UX button-gating, server stays the transition authority), `useVms.ts` (TanStack Query — paged `GET /api/vms`, `useVmAction`, `useDeleteVm`), `VmsPage.tsx` (paged table, name→`/vms/:id`, inline-token status badges, loading/error/empty), wired into `routes.tsx` (`/vms`) + `AppShell` nav. 18→ new pure tests; suite 54→72. **Grounding wins:** pulled the ORCHESTRATOR `VmsController` (not NodeAgent's — two exist), `PagedResult<VmSummaryDto>`, the full `VirtualMachine` model, `VmStatus`(12)/`VmPowerState`/`VmAction`, and the controller's `(action,status)` transition rules — did NOT mirror the server's `ValidTransitions` graph client-side (pre-check only). **Live-render finding + fix:** `GET /api/vms` serializes `VmStatus` as a NUMBER (observed `status:3`=Running) — `VmStatus.cs` lacks the `[JsonConverter(JsonStringEnumConverter)]` that `VmRole`/`VmCategory` carry, so it falls through to ordinal. Fixed client-side: `normalizeStatus` tolerates ordinal|numeric-string|name (+ tests). **KNOWN FOLLOW-UP (deferred, has blast radius):** the *correct* fix is adding the attribute to `VmStatus`/`VmPowerState` on the backend to make the enum contract uniform — BUT the legacy NodeAgent `dashboard.js` `vmStateName()` reads integer ordinals, so a backend flip must update that map in the same commit or it breaks. Left as client-tolerance for now. Live: list renders real VM (`llmfit-9530`, Running, 4vCPU/6GB/20GB). Next: 1b VM detail cockpit (reuses `allowedActions`+`useVmAction`/`useDeleteVm`), then retire legacy VM list.
 
