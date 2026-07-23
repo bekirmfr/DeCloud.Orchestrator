@@ -222,8 +222,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         // hide every .page and leave a blank shell. Unknown name → do nothing,
         // so the HTML default stays active and behaviour is unchanged.
         const requestedPage = new URLSearchParams(location.search).get('page');
-        if (requestedPage && document.getElementById(`page-${requestedPage}`)) {
-            showPage(requestedPage);
+        if (requestedPage) {
+            if (document.getElementById(`page-${requestedPage}`)) {
+                showPage(requestedPage);
+            } else {
+                // Unknown or RETIRED page. There is no longer a default
+                // `.page active` to fall back to — page-dashboard carried it and
+                // has been migrated to /app — so doing nothing would leave a
+                // blank shell. Stale links (e.g. /?page=virtual-machines) go home.
+                location.replace('/app');
+            }
         }
     }
 
@@ -836,7 +844,7 @@ function applyAdminVisibility() {
     if (!isAdmin) {
         const onAdminPage = ['page-admin-compliance', 'page-admin-templates', 'page-admin-abuse']
             .some(pid => document.getElementById(pid)?.classList.contains('active'));
-        if (onAdminPage) showPage('dashboard');
+        if (onAdminPage) location.replace('/app'); // page-dashboard is retired
     }
 }
 
@@ -877,22 +885,20 @@ function showPage(pageName) {
         selectedNav.classList.add('active');
     }
 
-    if (pageName === 'dashboard' || pageName === 'virtual-machines') {
-        refreshData();
-    } else if (pageName === 'nodes') {
+    if (pageName === 'nodes') {
         loadNodes();
     } else if (pageName === 'marketplace-templates') {
         initMarketplaceTemplates();
     } else if (pageName === 'my-templates') {
         initMyTemplates();
     } else if (pageName === 'admin-compliance') {
-        if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
+        if (!tokenHasAdminRole(authToken)) { location.replace('/app'); return; }
         initAdminCompliance(api);
     } else if (pageName === 'admin-templates') {
-        if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
+        if (!tokenHasAdminRole(authToken)) { location.replace('/app'); return; }
         initAdminTemplates(api);
     } else if (pageName === 'admin-abuse') {
-        if (!tokenHasAdminRole(authToken)) { showPage('dashboard'); return; }
+        if (!tokenHasAdminRole(authToken)) { location.replace('/app'); return; }
         initAdminAbuse(api);
     }
 }
@@ -901,12 +907,12 @@ function showPage(pageName) {
 // DATA LOADING FUNCTIONS
 // ============================================
 
+// The dashboard and VM-list pages this used to refresh are retired (migrated to
+// /app). Only the balance remains. Deliberately keeps the name and the
+// window.refreshData export: seven call sites plus other legacy modules invoke
+// it after VM actions, and renaming would break them for no gain.
 async function refreshData() {
-    await Promise.all([
-        loadDashboardStats(),
-        loadVirtualMachines(),
-        loadUserBalance()
-    ]);
+    await loadUserBalance();
 }
 
 // ============================================
@@ -993,332 +999,6 @@ async function handleBalanceCardClick() {
     }
 
     showBalanceModal();
-}
-
-async function loadDashboardStats() {
-    try {
-        const response = await api('/api/system/stats');
-        const data = await response.json();
-
-        if (data.success) {
-            const stats = data.data;
-
-            // VM and Node counts
-            document.getElementById('stat-vms').textContent = stats.totalVms || 0;
-            document.getElementById('stat-nodes').textContent = stats.onlineNodes || 0;
-
-            // ========================================
-            // DISPLAY COMPUTE POINTS (not raw cores)
-            // ========================================
-            const totalPoints = stats.totalComputePoints || 0;
-            const usedPoints = stats.usedComputePoints || 0;
-            const availablePoints = stats.availableComputePoints || 0;
-            const utilizationPercent = stats.computePointUtilizationPercent || 0;
-
-            // Show "X / Y points (Z% used)"
-            document.getElementById('stat-cpu').textContent =
-                `${availablePoints} / ${totalPoints} points`;
-
-            // Optional: Add a tooltip or secondary display showing percentage
-            const cpuElement = document.getElementById('stat-cpu');
-            cpuElement.title = `${utilizationPercent.toFixed(1)}% utilized (${usedPoints} points used)`;
-
-            // Memory display
-            document.getElementById('stat-memory').textContent =
-                `${((stats.availableMemoryGb || 0)).toFixed(1)} GB`;
-            // Storage display
-            document.getElementById('stat-storage').textContent =
-                `${((stats.availableStorageGb || 0)).toFixed(1)} GB`;
-        }
-    } catch (error) {
-        console.error('[Dashboard] Failed to load stats:', error);
-    }
-}
-
-async function loadVirtualMachines() {
-    try {
-        const response = await api('/api/vms');
-        const data = await response.json();
-
-        if (data.success) {
-            const vms = data.data.items;
-            renderVMsTable(vms);
-            renderDashboardVMs(vms);
-        }
-    } catch (error) {
-        console.error('[VMs] Failed to load:', error);
-        showToast('Failed to load virtual machines', 'error');
-    }
-}
-
-function renderVMsTable(vms) {
-    const tbody = document.getElementById('vms-table-body');
-    if (!tbody) return;
-
-    if (vms.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty-state" style="text-align: center; padding: 40px;">No VMs found. Create your first VM to get started.</td></tr>';
-        return;
-    }
-
-    // Cache the most recent VM list so delegated handlers can resolve full objects by id.
-    vmCache = {};
-    for (const vm of vms) vmCache[vm.id] = vm;
-
-    tbody.innerHTML = vms.map(vm => {
-        const networkConfig = vm.networkConfig || {};
-        const vmIp = networkConfig.isIpAssigned ? networkConfig.privateIp : 'pending';
-        const sshJumpHost = networkConfig.sshJumpHost || 'pending';
-        const sshJumpPort = networkConfig.sshJumpPort || 2222;
-        const nodeAgentHost = networkConfig.nodeAgentHost || 'pending';
-        const nodeAgentPort = networkConfig.nodeAgentPort || 5100;
-
-        const nodeName = vm.nodeId ? (nodesCache[vm.nodeId] || vm.nodeId.substring(0, 8)) : 'None';
-
-        const tierBadges = {
-            0: '<span class="tier-badge tier-guaranteed">Guaranteed</span>',
-            1: '<span class="tier-badge tier-standard">Standard</span>',
-            2: '<span class="tier-badge tier-balanced">Balanced</span>',
-            3: '<span class="tier-badge tier-burstable">Burstable</span>',
-        };
-        const tierBadge = tierBadges[vm.spec.qualityTier] || '';
-
-        const constraintCount = vm.spec?.constraints?.length ?? 0;
-        const constraintChip = constraintCount > 0
-            ? `<span class="cb-chip" title="${escapeHtml(constraintCount + ' scheduling constraint(s)')}">⚙ ${constraintCount}</span>`
-            : '';
-
-        const messagesCount = vm.messages?.length ?? 0;
-        const memoryMb = Math.round((vm.spec?.memoryBytes || 0) / (1024 * 1024));
-        const diskGb = ((vm.spec?.diskBytes || 0) / (1024 * 1024 * 1024)).toFixed(2);
-
-        return `
-        <tr data-status="${escapeHtml(getStatusClass(vm.status))}" data-vm-id="${escapeHtml(vm.id)}">
-            <td>
-                <div class="vm-name">
-                    <div class="vm-status ${escapeHtml(getStatusClass(vm.status))}"></div>
-                    ${escapeHtml(vm.name)}
-                    ${tierBadge}
-                </div>
-                ${constraintChip ? `<div style="margin-top:3px">${constraintChip}</div>` : ''}
-            </td>
-            <td>${escapeHtml(nodeName)}</td>
-            <td>${vm.spec?.virtualCpuCores || 0} cores</td>
-            <td>${memoryMb} MB</td>
-            <td>${diskGb} GB</td>
-            <td>
-                <div class="vm-status-cell">
-                    <span class="status-badge status-${vm.complianceHold ? 'suspended' : escapeHtml(getStatusClass(vm.status))}">
-                        ${vm.complianceHold ? 'Suspended' : escapeHtml(getStatusText(vm.status))}
-                    </span>
-                    ${renderServiceBadge(vm.services, vm.status)}
-                </div>
-                ${renderServiceReadiness(vm.services, vm.status)}
-            </td>
-            <td>
-                <div class="table-actions">
-                    <button class="btn btn-sm btn-primary" data-vm-action="connect-info"
-                            data-ssh-host="${escapeHtml(sshJumpHost)}" data-ssh-port="${sshJumpPort}"
-                            data-vm-ip="${escapeHtml(vmIp)}" data-node-host="${escapeHtml(nodeAgentHost)}"
-                            data-node-port="${nodeAgentPort}" title="Connection Info">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn btn-sm btn-secondary" data-vm-action="direct-access" title="Direct Access (TCP/UDP Ports)">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="3"/>
-                            <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn btn-sm btn-secondary" data-vm-action="custom-domains" title="Custom Domains">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"/>
-                            <line x1="2" y1="12" x2="22" y2="12"/>
-                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn btn-sm" data-vm-action="terminal"
-                            data-node-host="${escapeHtml(nodeAgentHost)}" data-node-port="${nodeAgentPort}"
-                            data-vm-ip="${escapeHtml(vmIp)}" title="Open Terminal">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="4 17 10 11 4 5"/>
-                            <line x1="12" y1="19" x2="20" y2="19"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn btn-sm" data-vm-action="file-browser"
-                            data-node-host="${escapeHtml(nodeAgentHost)}" data-node-port="${nodeAgentPort}"
-                            data-vm-ip="${escapeHtml(vmIp)}" title="File Browser">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn-icon" data-vm-action="reveal-password" title="Show Password">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                            <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                    </button>
-
-                    ${vm.status === 3
-                ? `<button class="btn btn-sm btn-warning" data-vm-action="stop" title="Stop">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                           </button>`
-                : `<button class="btn btn-sm btn-success" data-vm-action="start" title="Start">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                           </button>`
-            }
-                    <button class="btn btn-sm btn-secondary" data-vm-action="logs" title="View boot log">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10 9 9 9 8 9"/>
-                        </svg>
-                    </button>
-
-                    <button class="btn btn-sm btn-secondary" data-vm-action="messages" title="View events"
-                        style="${messagesCount === 0 ? 'opacity:0.45' : ''}">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                        </svg>
-                        ${messagesCount > 0 ? `<span style="font-size:10px;font-weight:700;">${messagesCount}</span>` : ''}
-                    </button>
-
-                    <button class="btn btn-sm btn-danger" data-vm-action="delete" title="Delete">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                    </button>
-
-                    ${vm.status === 8 ? `
-                    <button class="btn btn-sm btn-secondary" data-vm-action="update-constraints" title="Update Scheduling Constraints">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
-                        </svg>
-                    </button>` : ''}
-                </div>
-            </td>
-        </tr>
-    `}).join('');
-
-    attachVmsTableDelegation(tbody);
-}
-
-let vmsTableDelegated = false;
-let vmCache = {};
-function attachVmsTableDelegation(tbody) {
-    if (vmsTableDelegated) return;
-    vmsTableDelegated = true;
-    tbody.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-vm-action]');
-        if (!btn) return;
-        const row = btn.closest('tr[data-vm-id]');
-        if (!row) return;
-        const vmId = row.dataset.vmId;
-        const vm = vmCache[vmId];
-        if (!vm) return;
-        const action = btn.dataset.vmAction;
-        const vmName = vm.name;
-        switch (action) {
-            case 'connect-info':
-                window.showConnectInfo(
-                    btn.dataset.sshHost, parseInt(btn.dataset.sshPort, 10),
-                    btn.dataset.vmIp, vmId, vmName,
-                    btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10)
-                );
-                break;
-            case 'direct-access':
-                window.openDirectAccessModal(vmId, vmName);
-                break;
-            case 'custom-domains':
-                window.openCustomDomainsModal(vmId, vmName);
-                break;
-            case 'terminal':
-                window.openTerminal(vmId, vmName, btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10), btn.dataset.vmIp);
-                break;
-            case 'file-browser':
-                window.openFileBrowser(vmId, vmName, btn.dataset.nodeHost, parseInt(btn.dataset.nodePort, 10), btn.dataset.vmIp);
-                break;
-            case 'reveal-password':
-                window.revealPassword(vmId);
-                break;
-            case 'start':
-                window.startVM(vmId);
-                break;
-            case 'stop':
-                window.stopVM(vmId);
-                break;
-            case 'logs':
-                window.showVmLogs(vmId, vmName);
-                break;
-            case 'messages':
-                window.showVmMessages(vmId, vmName);
-                break;
-            case 'delete':
-                window.deleteVM(vmId, vmName);
-                break;
-            case 'update-constraints':
-                window.openUpdateConstraintsModal(vmId, JSON.stringify(vm.spec?.constraints ?? []));
-                break;
-        }
-    });
-}
-
-function renderDashboardVMs(vms) {
-    const container = document.getElementById('recent-vms');
-    if (!container) return;
-
-    const recentVMs = vms.slice(0, 5);
-
-    if (recentVMs.length === 0) {
-        container.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">No virtual machines yet</p>';
-        return;
-    }
-
-    container.innerHTML = recentVMs.map(vm => {
-        // Calculate memory in MB
-        const memoryMB = (vm.spec?.memoryBytes / (1024 * 1024)) || 0;
-
-        // Calculate disk in GB - FIXED: diskBytes is already in bytes
-        const diskGB = (vm.spec?.diskBytes / (1024 * 1024 * 1024)) || 0;
-
-        return `
-            <div class="vm-card">
-                <div class="vm-card-header">
-                    <div class="vm-name">
-                        <div class="vm-status ${vm.status}"></div>
-                        ${escapeHtml(vm.name)}
-                    </div>
-                    <span class="status-badge status-${vm.complianceHold ? 'suspended' : getStatusClass(vm.status)}">
-                        ${vm.complianceHold ? 'Suspended' : getStatusText(vm.status)}
-                    </span>
-                </div>
-                <div class="vm-card-specs">
-                    <div class="spec-item">
-                        <span class="spec-label">CPU</span>
-                        <span class="spec-value">${vm.spec?.virtualCpuCores || 0} cores</span>
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">Memory</span>
-                        <span class="spec-value">${memoryMB.toFixed(0)} MB</span>
-                    </div>
-                    <div class="spec-item">
-                        <span class="spec-label">Disk</span>
-                        <span class="spec-value">${diskGB.toFixed(2)} GB</span>
-                    </div>
-                </div>
-                ${renderServiceReadiness(vm.services, vm.status)}
-            </div>
-        `;
-    }).join('');
 }
 
 async function loadNodes() {
