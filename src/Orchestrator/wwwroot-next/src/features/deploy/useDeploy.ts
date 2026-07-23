@@ -1,28 +1,13 @@
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { Api } from "../../api/client";
+// Balance and runway are shared money concepts — the dashboard is their other
+// consumer, so they live in features/billing rather than being owned by deploy.
+export { useBalance, runwayDays } from "../billing/useBalance";
 import {
   resolveTemplate, submitTemplateDeploy,
   type VmTemplate, type DeployPayload, type DeployResult,
 } from "./deploySubmit";
-
-// Balance (GET /api/payment/balance → ApiResponse<BalanceResponse>). `balance` is
-// AVAILABLE (confirmed − unpaid) — the number the fund gate checks and runway divides.
-export interface BalanceResponse {
-  balance: number;
-  confirmedBalance: number;
-  pendingDeposits: number;
-  unpaidUsage: number;
-  tokenSymbol: string;   // "USDC"
-}
-
-export function useBalance(api: Api) {
-  return useQuery({
-    queryKey: ["balance"],
-    queryFn: () => api<BalanceResponse>("/api/payment/balance"),
-    staleTime: 30_000,
-  });
-}
 
 export function useTemplate(api: Api, slugOrId: string) {
   return useQuery({
@@ -36,15 +21,6 @@ export function useDeploy(api: Api) {
   return useMutation<DeployResult, Error, { templateId: string; payload: DeployPayload }>({
     mutationFn: ({ templateId, payload }) => submitTemplateDeploy(api, templateId, payload),
   });
-}
-
-/**
- * Runway in days: available balance / (est. cost per hour × 24). Null when cost
- * is unknown/zero (can't compute) or balance missing. Pure — safe to unit-test.
- */
-export function runwayDays(balance: number | undefined, costPerHour: number | undefined): number | null {
-  if (balance == null || !costPerHour || costPerHour <= 0) return null;
-  return balance / (costPerHour * 24);
 }
 
 /**

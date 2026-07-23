@@ -4,6 +4,7 @@ import { StatusGate } from "./StatusGate";
 import { useAuth } from "../auth/AuthProvider";
 import { canAccessAdmin } from "./guards";
 import { SshKeysPage } from "../features/ssh-keys/SshKeysPage";
+import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { VmsPage } from "../features/vms/VmsPage";
 import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DeployPage } from "../features/deploy/DeployPage";
@@ -33,7 +34,7 @@ export const router = createBrowserRouter(
       path: "/",
       element: <ShellRoot />,
       children: [
-        // { index: true, element: <Dashboard /> },              // Phase 3
+        { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
         // { path: "marketplace", element: <Marketplace /> },     // Phase 5
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
         { path: "vms/:id", element: <VmDetailPage /> },           // Phase 3 · detail

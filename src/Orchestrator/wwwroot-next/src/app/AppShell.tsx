@@ -38,7 +38,7 @@ function Sidebar() {
 
       {/* migrated → client routes */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {/* <NavLink to="/" end className="nav-link">Overview</NavLink> */}
+        <NavLink to="/" end className="nav-link">Overview</NavLink>
         <NavLink to="/vms" className="nav-link">Virtual Machines</NavLink>
         <NavLink to="/settings/ssh-keys" className="nav-link">SSH Keys</NavLink>
         {/* un-migrated → legacy deep-links, e.g. <a href="/?page=nodes">Nodes</a> */}
