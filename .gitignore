@@ -1,6 +1,9 @@
 # User secrets - NEVER commit these
 secrets.json
 *.secrets.json
+install.env
+*.env
+!*.env.example
 
 # Build outputs
 bin/
