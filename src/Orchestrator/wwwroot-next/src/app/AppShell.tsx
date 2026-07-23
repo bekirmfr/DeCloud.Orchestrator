@@ -1,4 +1,4 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
 // The authenticated layout, rendered INSIDE StatusGate (so it only mounts when
@@ -30,7 +30,11 @@ function Sidebar() {
         DeCloud
       </div>
 
-      <a className="btn-primary" href="/app">{/* TODO: real Deploy action */}Deploy</a>
+      {/* Primary action. Fixed-target entry into the platform's general-purpose
+          template — mirrors the legacy "Create VM" button (→ platform-general),
+          which is also what VmService defaults a General tenant VM to.
+          A marketplace browse surface (Phase 5) can replace this later. */}
+      <Link className="btn-primary" to="/marketplace/platform-general/deploy">Deploy</Link>
 
       {/* migrated → client routes */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
