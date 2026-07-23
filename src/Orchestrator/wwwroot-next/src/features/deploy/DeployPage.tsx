@@ -89,11 +89,15 @@ export function DeployPage() {
   const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
-  if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
-  if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
-  if (!template) return null;
-
-  const rec = template.recommendedSpec;
+  // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
+  // Rules of Hooks: the hook count has to be identical on every render. The
+  // early returns below run only while the template loads, so any hook placed
+  // after them is skipped on the loading render and called on the loaded one —
+  // React then throws #310 ("rendered more hooks than during the previous
+  // render"). It presents as intermittent because a cached template skips the
+  // loading render entirely. Hence `template` is optional here and narrowed
+  // only after the guards.
+  const rec = template?.recommendedSpec;
   const gbOf = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
 
   // Seeded from RecommendedSpec until the user edits a field.
@@ -101,14 +105,14 @@ export function DeployPage() {
   const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
   const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
 
-  const qualityOptions = allowedQualityTiers(template.minimumSpec?.qualityTier);
-  const bandwidthOptions = allowedBandwidthTiers(template.minimumSpec?.bandwidthTier);
+  const qualityOptions = allowedQualityTiers(template?.minimumSpec?.qualityTier);
+  const bandwidthOptions = allowedBandwidthTiers(template?.minimumSpec?.bandwidthTier);
   const effTier = tier ?? rec?.qualityTier ?? qualityOptions[qualityOptions.length - 1] ?? 1;
-  const effBwTier = bwTier ?? rec?.bandwidthTier ?? template.defaultBandwidthTier ?? bandwidthOptions[0] ?? 0;
-  const effGpuMode = gpuMode ?? rec?.gpuMode ?? template.defaultGpuMode ?? 0;
+  const effBwTier = bwTier ?? rec?.bandwidthTier ?? template?.defaultBandwidthTier ?? bandwidthOptions[0] ?? 0;
+  const effGpuMode = gpuMode ?? rec?.gpuMode ?? template?.defaultGpuMode ?? 0;
   const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
   // Legacy rule: the GPU section appears only when the template needs one.
-  const showGpu = !!template.requiresGpu || (template.defaultGpuMode ?? 0) !== 0;
+  const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
 
   const customSpec: TemplateSpec = {
     virtualCpuCores: effCpu,
@@ -123,13 +127,20 @@ export function DeployPage() {
     ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
   };
 
-  const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
-
   // Price the spec that would actually be deployed — the recommended one when
   // not customising. Debounced so typing in a number field doesn't fire per
-  // keystroke; the JSON doubles as the query key and the request body.
-  const specJson = JSON.stringify(customSpec);
-  const { data: price } = usePriceEstimate(api, useDebounced(specJson, 400));
+  // keystroke; the JSON doubles as the query key and the request body. Null
+  // until the template arrives, which the query treats as disabled.
+  const specJson = template ? JSON.stringify(customSpec) : null;
+  const debouncedSpecJson = useDebounced(specJson, 400);
+  const { data: price } = usePriceEstimate(api, debouncedSpecJson);
+
+  // ── Hooks done. Guards and plain derivations from here. ─────────────────
+  if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
+  if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
+  if (!template) return null;
+
+  const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
 
   // Runway and the fund gate run off the SERVER-COMPUTED cost. The template's
   // own estimatedCostPerHour is frequently unset (platform-general has none),
