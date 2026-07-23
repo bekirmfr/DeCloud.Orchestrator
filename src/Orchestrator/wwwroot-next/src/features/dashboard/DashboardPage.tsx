@@ -69,6 +69,18 @@ export function DashboardPage() {
     return s !== "Deleted" && s !== "Stopped" && s !== "Suspended";
   });
 
+  // Zero burn is ambiguous, so resolve it here rather than in formatRunway:
+  // nothing deployed is a normal empty state; workloads running with no burn
+  // means they aren't being billed (rate never stamped, or billing paused) —
+  // a genuinely different thing, and worth saying out loud.
+  const runwayLabel = !balance
+    ? "—"
+    : days != null
+      ? formatRunway(days)
+      : active.length > 0
+        ? "Not currently billed"
+        : "No active workloads";
+
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -105,7 +117,7 @@ export function DashboardPage() {
               fontFamily: "var(--font-mono)", fontSize: "var(--text-xl)", marginTop: 2,
               color: lowRunway ? "var(--danger)" : "var(--text-primary)",
             }}>
-              {balance ? formatRunway(days) : "—"}
+              {runwayLabel}
             </div>
           </div>
         </div>

@@ -220,6 +220,10 @@ public class BillingService : BackgroundService
         // Replaces the prior attestation-based pause/verified-runtime logic.
 
         const string PauseReasonStaleHeartbeat = "Node heartbeat stale";
+        const string PauseReasonInsufficientBalance = "Insufficient balance";
+        // Smallest amount worth billing. Doubles as the probe for "does this
+        // owner have any funds at all" when clearing a balance hold.
+        const decimal MinimumBillableCost = 0.0001m;
         var stalenessThreshold = TimeSpan.FromSeconds(90); // 3 missed cycles at 30s cadence
         var node = await _dataStore.GetNodeAsync(vm.NodeId);
         var heartbeatAge = DateTime.UtcNow - (node?.LastHeartbeat ?? DateTime.MinValue);
@@ -259,9 +263,26 @@ public class BillingService : BackgroundService
 
         if (vm.BillingInfo.IsPaused)
         {
+            // A balance hold clears itself once funds are back, rather than
+            // waiting for a BalanceAdded event that may never arrive: deposits
+            // confirm asynchronously on-chain, and the only other way out of
+            // this branch is the VmStop fall-through — which bills but leaves
+            // IsPaused set. A VM could therefore sit "paused" indefinitely while
+            // its owner had a positive balance, and any consumer of the flag
+            // (e.g. the dashboard's burn rate) would silently under-report.
+            //
+            // Same principle as the reconciler elsewhere: check the condition,
+            // don't trust the event. Probed against the minimum billable amount
+            // — the exact cost is computed further down, and this only asks
+            // "is there any money at all".
+            var balanceHoldCleared =
+                vm.BillingInfo.PauseReason == PauseReasonInsufficientBalance &&
+                await _balanceService.HasSufficientBalanceAsync(vm.OwnerId, MinimumBillableCost);
+
             var shouldResume =
                 evt.Trigger == BillingTrigger.BalanceAdded ||
                 evt.Trigger == BillingTrigger.HeartbeatResumed ||
+                balanceHoldCleared ||
                 vm.BillingInfo.PauseReason == PauseReasonStaleHeartbeat; // safe: heartbeat
                                                                          // is fresh — staleness
                                                                          // check returned early
@@ -338,7 +359,7 @@ public class BillingService : BackgroundService
 
         var cost = hourlyRate * (decimal)billingPeriod.TotalHours;
 
-        if (cost < 0.0001m) // Minimum 0.0001 USDC (supports low-rate VMs at 5-min cadence)
+        if (cost < MinimumBillableCost) // supports low-rate VMs at 5-min cadence
         {
             _logger.LogDebug(
                 "VM {VmId}: cost {Cost:F6} USDC below 0.0001 minimum — skipping.",
@@ -360,7 +381,7 @@ public class BillingService : BackgroundService
 
             vm.BillingInfo.IsPaused = true;
             vm.BillingInfo.PausedAt = now;
-            vm.BillingInfo.PauseReason = "Insufficient balance";
+            vm.BillingInfo.PauseReason = PauseReasonInsufficientBalance;
 
             await _dataStore.SaveVmAsync(vm);
             return;

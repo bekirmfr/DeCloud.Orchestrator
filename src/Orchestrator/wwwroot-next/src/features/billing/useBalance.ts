@@ -54,9 +54,13 @@ export function runwayDays(balance: number | undefined, hourlyRate: number | und
   return balance / (hourlyRate * 24);
 }
 
-/** Human runway. Null days means "nothing running", not "no time left". */
-export function formatRunway(days: number | null): string {
-  if (days == null) return "No active workloads";
+/**
+ * Human runway for a KNOWN number of days. The null case is deliberately NOT
+ * handled here: zero burn means something different depending on whether any
+ * workloads are running (nothing deployed vs. deployed but not being billed),
+ * and only the caller knows which. See DashboardPage.
+ */
+export function formatRunway(days: number): string {
   if (days < 1) return "Less than a day";
   if (days < 2) return "About a day";
   if (days > 365) return "Over a year";
