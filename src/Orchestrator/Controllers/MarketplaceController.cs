@@ -58,7 +58,7 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetTemplates(
+    public async Task<ActionResult<ApiResponse<List<VmTemplateSummary>>>> GetTemplates(
         [FromQuery] string? category = null,
         [FromQuery] bool? requiresGpu = null,
         [FromQuery] string? tags = null,
@@ -81,12 +81,12 @@ public class MarketplaceController : ControllerBase
             };
 
             var templates = await _templateService.GetTemplatesAsync(query);
-            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
+            return Ok(ApiResponse<List<VmTemplateSummary>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get templates");
-            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to retrieve templates"));
+            return StatusCode(500, ApiResponse<List<VmTemplateSummary>>.Fail("INTERNAL_ERROR", "Failed to retrieve templates"));
         }
     }
 
@@ -95,18 +95,18 @@ public class MarketplaceController : ControllerBase
     /// </summary>
     [HttpGet("templates/featured")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<List<VmTemplate>>>> GetFeaturedTemplates(
+    public async Task<ActionResult<ApiResponse<List<VmTemplateSummary>>>> GetFeaturedTemplates(
         [FromQuery] int limit = 10)
     {
         try
         {
             var templates = await _templateService.GetFeaturedTemplatesAsync(limit);
-            return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
+            return Ok(ApiResponse<List<VmTemplateSummary>>.Ok(templates));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get featured templates");
-            return StatusCode(500, ApiResponse<List<VmTemplate>>.Fail("INTERNAL_ERROR", "Failed to retrieve featured templates"));
+            return StatusCode(500, ApiResponse<List<VmTemplateSummary>>.Fail("INTERNAL_ERROR", "Failed to retrieve featured templates"));
         }
     }
 

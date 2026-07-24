@@ -14,8 +14,8 @@ public interface ITemplateService
 
     Task<VmTemplate?> GetTemplateByIdAsync(string templateId);
     Task<VmTemplate?> GetTemplateBySlugAsync(string slug);
-    Task<List<VmTemplate>> GetTemplatesAsync(TemplateQuery query);
-    Task<List<VmTemplate>> GetFeaturedTemplatesAsync(int limit = 10);
+    Task<List<VmTemplateSummary>> GetTemplatesAsync(TemplateQuery query);
+    Task<List<VmTemplateSummary>> GetFeaturedTemplatesAsync(int limit = 10);
     Task<List<TemplateCategory>> GetCategoriesAsync();
 
     /// <summary>

@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using Orchestrator.Models;
 using Orchestrator.Services;
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace Orchestrator.Persistence;
 
@@ -120,7 +121,7 @@ public class DataStore
                 Builders<Node>.IndexKeys.Ascending(n => n.Locality.Region).Ascending(n => n.Locality.Zone),
                 new CreateIndexOptions { Name = "idx_region_zone" })
             };
-            
+
             TryCreateIndexesAsync(NodesCollection!, "nodes", nodeIndexes).Wait();
 
             // VMs indexes
@@ -282,7 +283,7 @@ public class DataStore
                 Builders<TemplateCategory>.IndexKeys.Ascending(c => c.DisplayOrder),
                 new CreateIndexOptions { Name = "idx_display_order" })
             };
-            
+
             TryCreateIndexesAsync(CategoriesCollection!, "templateCategories", categoryIndexes).Wait();
 
             // MarketplaceReview indexes
@@ -306,7 +307,7 @@ public class DataStore
                     .Ascending(r => r.ReviewerId),
                 new CreateIndexOptions { Name = "idx_unique_review", Unique = true })
             };
-            
+
             TryCreateIndexesAsync(ReviewsCollection!, "marketplaceReviews", reviewIndexes).Wait();
 
             var blockstoreManifestIndexes = new[]{
@@ -368,7 +369,7 @@ public class DataStore
 
             var recentUsageCutoff = DateTime.UtcNow - RecentUsageThreshold;
             var usageRecords = await UsageRecordsCollection!
-                .Find(u => !u.SettledOnChain && 
+                .Find(u => !u.SettledOnChain &&
                             u.CreatedAt > recentUsageCutoff)
                 .ToListAsync();
 
@@ -1543,7 +1544,7 @@ public class DataStore
     public async Task<VmTemplate?> GetTemplateByIdAsync(string templateId)
     {
         if (!_useMongoDB) return null;
-        
+
         try
         {
             return await TemplatesCollection!
@@ -1592,14 +1593,23 @@ public class DataStore
         }
     }
 
-    public async Task<List<VmTemplate>> GetTemplatesAsync(
+    /// <summary>
+    /// Template LISTINGS. Returns <see cref="VmTemplateSummary"/>, not the domain
+    /// object: VmTemplate carries CloudInitTemplate (multi-KB YAML per template),
+    /// which no listing renders and which pushed this response to ~1 MB — enough
+    /// that the driver's socket read timed out mid-stream against a remote cluster.
+    /// Callers needing the full template fetch one via GetTemplateByIdAsync.
+    /// </summary>
+    public async Task<List<VmTemplateSummary>> GetTemplatesAsync(
         string? category = null,
         bool? requiresGpu = null,
         List<string>? tags = null,
         bool featuredOnly = false,
-        string sortBy = "popular")
+        string sortBy = "popular",
+        string? searchTerm = null,
+        int? limit = null)
     {
-        if (!_useMongoDB) return new List<VmTemplate>();
+        if (!_useMongoDB) return new List<VmTemplateSummary>();
 
         try
         {
@@ -1616,12 +1626,27 @@ public class DataStore
 
             if (requiresGpu.HasValue)
                 filters.Add(filterBuilder.Eq(t => t.RequiresGpu, requiresGpu.Value));
-            
+
             if (featuredOnly)
                 filters.Add(filterBuilder.Eq(t => t.IsFeatured, true));
-            
+
             if (tags != null && tags.Count > 0)
                 filters.Add(filterBuilder.AnyIn(t => t.Tags, tags));
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                // Case-insensitive contains across the fields the grid searches.
+                // Regex.Escape is not optional: the term arrives straight off the
+                // query string, so unescaped input like ".*" would match the whole
+                // collection and a pathological pattern such as "(a+)+b" could pin
+                // a CPU on the database (ReDoS through a public endpoint).
+                var pattern = new BsonRegularExpression(Regex.Escape(searchTerm), "i");
+                filters.Add(filterBuilder.Or(
+                    filterBuilder.Regex(t => t.Name, pattern),
+                    filterBuilder.Regex(t => t.Description, pattern),
+                    // On an array field this matches when ANY tag matches.
+                    filterBuilder.Regex(t => t.Tags, pattern)));
+            }
 
             var filter = filterBuilder.And(filters);
 
@@ -1634,15 +1659,58 @@ public class DataStore
                 _ => Builders<VmTemplate>.Sort.Descending(t => t.DeploymentCount)
             };
 
-            return await TemplatesCollection!
-                .Find(filter)
-                .Sort(sort)
+            // The projection IS the DTO shape — the driver fetches only the
+            // referenced fields, so CloudInitTemplate never leaves the database.
+            // Sort before Project: sorting happens server-side on the stored
+            // document, which may order by fields the summary doesn't carry.
+            var find = TemplatesCollection!.Find(filter).Sort(sort);
+
+            // Server-side, so the database stops reading once it has enough.
+            // Applied in memory previously, which meant ?limit=10 still
+            // transferred every published template before discarding the rest.
+            if (limit is > 0) find = find.Limit(limit.Value);
+
+            return await find
+                .Project(t => new VmTemplateSummary
+                {
+                    Id = t.Id,
+                    Slug = t.Slug,
+                    Name = t.Name,
+                    Description = t.Description,
+                    Category = t.Category,
+                    Tags = t.Tags,
+                    IconUrl = t.IconUrl,
+
+                    AuthorName = t.AuthorName,
+                    IsCommunity = t.IsCommunity,
+                    IsVerified = t.IsVerified,
+                    IsFeatured = t.IsFeatured,
+
+                    RequiresGpu = t.RequiresGpu,
+                    RecommendedCpuCores = t.RecommendedSpec.VirtualCpuCores,
+                    RecommendedMemoryBytes = t.RecommendedSpec.MemoryBytes,
+                    RecommendedDiskBytes = t.RecommendedSpec.DiskBytes,
+
+                    EstimatedCostPerHour = t.EstimatedCostPerHour,
+                    PricingModel = t.PricingModel,
+                    TemplatePrice = t.TemplatePrice,
+
+                    DeploymentCount = t.DeploymentCount,
+                    AverageRating = t.AverageRating,
+                    TotalReviews = t.TotalReviews,
+                })
                 .ToListAsync();
         }
         catch (Exception ex)
         {
+            // Deliberately NOT swallowed into an empty list. Returning [] made a
+            // driver timeout indistinguishable from a genuinely empty marketplace:
+            // the endpoint answered 200 {"success":true,"data":[]} and every client
+            // rendered "no templates" for a server fault. MarketplaceController
+            // already turns a throw into a 500 INTERNAL_ERROR — it simply never
+            // saw one.
             _logger.LogError(ex, "Failed to get templates");
-            return new List<VmTemplate>();
+            throw;
         }
     }
 
@@ -1653,19 +1721,19 @@ public class DataStore
             _logger.LogWarning("Cannot save template - MongoDB not configured");
             return template;
         }
-        
+
         try
         {
             template.UpdatedAt = DateTime.UtcNow;
-            
+
             await TemplatesCollection!.ReplaceOneAsync(
                 t => t.Id == template.Id,
                 template,
                 new ReplaceOptions { IsUpsert = true });
-            
-            _logger.LogInformation("Saved template: {TemplateName} ({TemplateId})", 
+
+            _logger.LogInformation("Saved template: {TemplateName} ({TemplateId})",
                 template.Name, template.Id);
-            
+
             return template;
         }
         catch (Exception ex)
@@ -1678,7 +1746,7 @@ public class DataStore
     public async Task<bool> IncrementTemplateDeploymentCountAsync(string templateId)
     {
         if (!_useMongoDB) return false;
-        
+
         try
         {
             var update = Builders<VmTemplate>.Update
@@ -1694,7 +1762,7 @@ public class DataStore
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to increment deployment count for template: {TemplateId}", 
+            _logger.LogError(ex, "Failed to increment deployment count for template: {TemplateId}",
                 templateId);
             return false;
         }
@@ -1707,7 +1775,7 @@ public class DataStore
     public async Task<List<TemplateCategory>> GetCategoriesAsync()
     {
         if (!_useMongoDB) return new List<TemplateCategory>();
-        
+
         try
         {
             return await CategoriesCollection!
@@ -1729,19 +1797,19 @@ public class DataStore
             _logger.LogWarning("Cannot save category - MongoDB not configured");
             return category;
         }
-        
+
         try
         {
             category.UpdatedAt = DateTime.UtcNow;
-            
+
             await CategoriesCollection!.ReplaceOneAsync(
                 c => c.Id == category.Id,
                 category,
                 new ReplaceOptions { IsUpsert = true });
-            
-            _logger.LogInformation("Saved category: {CategoryName} ({CategoryId})", 
+
+            _logger.LogInformation("Saved category: {CategoryName} ({CategoryId})",
                 category.Name, category.Id);
-            
+
             return category;
         }
         catch (Exception ex)

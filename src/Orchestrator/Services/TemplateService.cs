@@ -73,7 +73,7 @@ public class TemplateService : ITemplateService
         }
     }
 
-    public async Task<List<VmTemplate>> GetTemplatesAsync(TemplateQuery query)
+    public async Task<List<VmTemplateSummary>> GetTemplatesAsync(TemplateQuery query)
     {
         try
         {
@@ -82,35 +82,30 @@ public class TemplateService : ITemplateService
                 requiresGpu: query.RequiresGpu,
                 tags: query.Tags,
                 featuredOnly: query.FeaturedOnly,
-                sortBy: query.SortBy);
-
-            // Apply search term filter if provided
-            if (!string.IsNullOrEmpty(query.SearchTerm))
-            {
-                var searchLower = query.SearchTerm.ToLower();
-                templates = templates.Where(t =>
-                    t.Name.ToLower().Contains(searchLower) ||
-                    t.Description.ToLower().Contains(searchLower) ||
-                    t.Tags.Any(tag => tag.ToLower().Contains(searchLower))
-                ).ToList();
-            }
-
-            // Apply limit if specified
-            if (query.Limit.HasValue && query.Limit.Value > 0)
-            {
-                templates = templates.Take(query.Limit.Value).ToList();
-            }
+                sortBy: query.SortBy,
+                // Search and limit are applied BY THE DATABASE. They used to run
+                // here, in memory, after every published template had already been
+                // fetched — so ?limit=10 still transferred the whole collection.
+                searchTerm: query.SearchTerm,
+                limit: query.Limit);
 
             return templates;
         }
         catch (Exception ex)
         {
+            // Deliberately NOT swallowed. Returning [] here made a Mongo driver
+            // timeout indistinguishable from an empty marketplace — the endpoint
+            // answered 200 {"success":true,"data":[]} and every client rendered
+            // "no templates" for a server fault. This was the SECOND swallow on
+            // this path (DataStore had one too), so fixing only the lower one
+            // would have changed nothing. MarketplaceController already turns a
+            // throw into 500 INTERNAL_ERROR.
             _logger.LogError(ex, "Failed to get templates with query");
-            return new List<VmTemplate>();
+            throw;
         }
     }
 
-    public async Task<List<VmTemplate>> GetFeaturedTemplatesAsync(int limit = 10)
+    public async Task<List<VmTemplateSummary>> GetFeaturedTemplatesAsync(int limit = 10)
     {
         try
         {
@@ -123,8 +118,9 @@ public class TemplateService : ITemplateService
         }
         catch (Exception ex)
         {
+            // Same reasoning as GetTemplatesAsync — surface the fault.
             _logger.LogError(ex, "Failed to get featured templates");
-            return new List<VmTemplate>();
+            throw;
         }
     }
 

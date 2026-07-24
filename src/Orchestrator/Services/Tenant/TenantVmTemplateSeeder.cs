@@ -354,13 +354,18 @@ public sealed partial class TenantVmTemplateSeeder
 
     private async Task SeedTemplatesAsync(bool force)
     {
-        var existingTemplates = await _templateService.GetTemplatesAsync(new TemplateQuery());
-
         var templates = GetSeedTemplates();
 
         foreach (var template in templates)
         {
-            var existing = existingTemplates.FirstOrDefault(t => t.Slug == template.Slug);
+            // Look the slug up directly rather than scanning the marketplace
+            // listing. GetTemplatesAsync is the PUBLIC catalogue — it filters to
+            // Status == Published && Visibility == Public — so a Draft or Private
+            // template was invisible here and the seeder would try to create a
+            // duplicate slug. It also returns VmTemplateSummary, which carries no
+            // Version to compare. This asks the question actually being asked:
+            // "does a template with this slug exist, and what version is it?"
+            var existing = await _templateService.GetTemplateBySlugAsync(template.Slug);
 
             if (existing == null)
             {
