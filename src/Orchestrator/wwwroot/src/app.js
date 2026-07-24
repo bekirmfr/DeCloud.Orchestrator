@@ -40,12 +40,6 @@ import {
     makeModalAccessible
 } from './utils.js';
 import {
-    getStatusClass,
-    getStatusText,
-    renderServiceReadiness,
-    renderServiceBadge
-} from './status-helpers.js';
-import {
     encryptPassword,
     decryptPassword,
     clearEncryptionKey

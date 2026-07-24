@@ -82,7 +82,6 @@
 	     Deliberately does NOT include dist/** (circular) or node_modules/**. -->
 	<ItemGroup>
 		<FrontendSource Include="$(FrontendDir)/src/**/*.js" />
-		<FrontendSource Include="$(FrontendDir)/src/**/*.js" />
 		<FrontendSource Include="$(FrontendDir)/public/**" />
 		<FrontendSource Include="$(FrontendDir)/index.html" />
 		<FrontendSource Include="$(FrontendDir)/styles.css" />
