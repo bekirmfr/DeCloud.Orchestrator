@@ -5,6 +5,7 @@ using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
 using Orchestrator.Services.Payment;
+using Orchestrator.Services.VmScheduling;
 
 namespace Orchestrator.Controllers;
 
@@ -14,15 +15,18 @@ public class SystemController : ControllerBase
 {
     private readonly DataStore _dataStore;
     private readonly PricingConfig _pricingConfig;
+    private readonly ISchedulingConfigService _schedulingConfigService;
     private readonly ILogger<SystemController> _logger;
 
     public SystemController(
         DataStore dataStore,
         IOptions<PricingConfig> pricingConfig,
+        ISchedulingConfigService schedulingConfigService,
         ILogger<SystemController> logger)
     {
         _dataStore = dataStore;
         _pricingConfig = pricingConfig.Value;
+        _schedulingConfigService = schedulingConfigService;
         _logger = logger;
     }
 
@@ -116,10 +120,17 @@ public class SystemController : ControllerBase
     /// </summary>
     [HttpPost("pricing/calculate")]
     [AllowAnonymous]
-    public ActionResult<ApiResponse<PriceCalculation>> CalculatePrice([FromBody] VmSpec spec)
+    public async Task<ActionResult<ApiResponse<PriceCalculation>>> CalculatePrice([FromBody] VmSpec spec)
     {
+        // The SAME scheduling config that billing uses at scheduling time, so a
+        // quote and a bill cannot disagree: editing tier pricing moves both.
+        // GetConfigAsync caches for 5 minutes, so this is not a round trip per
+        // estimate — and the deploy page calls this on every spec change.
+        var schedulingConfig = await _schedulingConfigService.GetConfigAsync();
+
         var breakdown = HourlyRateCalculator.Calculate(
-            spec, nodePricing: null, cfg: _pricingConfig);
+            spec, nodePricing: null, cfg: _pricingConfig,
+            schedulingConfig: schedulingConfig);
 
         var calculation = new PriceCalculation(
             CpuCost: breakdown.CpuCost,

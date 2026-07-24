@@ -92,63 +92,6 @@ const CONFIG = {
 // QUALITY TIER CONFIGURATION
 // ============================================
 
-const QUALITY_TIERS = {
-    0: { // Guaranteed
-        name: 'Guaranteed',
-        pointsPerVCpu: 8,
-        priceMultiplier: 2.5,
-        description: 'Dedicated resources, guaranteed 1:1 CPU performance'
-    },
-    1: { // Standard
-        name: 'Standard',
-        pointsPerVCpu: 4,
-        priceMultiplier: 1.0,
-        description: 'Balanced performance and cost, 2:1 CPU overcommit'
-    },
-    2: { // Balanced
-        name: 'Balanced',
-        pointsPerVCpu: 2,
-        priceMultiplier: 0.6,
-        description: 'Cost-optimized for consistent workloads'
-    },
-    3: { // Burstable
-        name: 'Burstable',
-        pointsPerVCpu: 1,
-        priceMultiplier: 0.4,
-        description: 'Aggressive overcommit, lowest cost, variable performance'
-    }
-};
-
-const BANDWIDTH_TIERS = {
-    0: { name: 'Basic', speed: '10 Mbps', burst: '20 Mbps', hourlyRate: 0.002, description: 'Light browsing and text-based workloads' },
-    1: { name: 'Standard', speed: '50 Mbps', burst: '100 Mbps', hourlyRate: 0.008, description: 'General browsing, video calls, moderate streaming' },
-    2: { name: 'Performance', speed: '200 Mbps', burst: '400 Mbps', hourlyRate: 0.020, description: 'HD video streaming, large downloads, data-intensive tasks' },
-    3: { name: 'Unmetered', speed: 'No cap', burst: 'No cap', hourlyRate: 0.040, description: 'No artificial bandwidth cap. Limited only by host NIC.' }
-};
-
-const REPLICATION_TIERS = {
-    0: {
-        label: 'Ephemeral',
-        description: 'No replication. Data is lost permanently if the node fails. Use for stateless workloads, batch jobs, CI runners.',
-        badge: 'No protection'
-    },
-    1: {
-        label: 'Single replica (1×)',
-        description: 'One replica. Survives if at least 1 block store provider holds the blocks.',
-        badge: 'Basic protection'
-    },
-    3: {
-        label: 'Standard (3×)',
-        description: 'Three replicas. Survives loss of 2 provider nodes simultaneously. Recommended for all production workloads.',
-        badge: 'Standard protection'
-    },
-    5: {
-        label: 'High Availability (5×)',
-        description: 'Five replicas. Survives loss of 4 provider nodes. Use for databases, ML checkpoints, critical stateful services.',
-        badge: 'Maximum protection'
-    }
-};
-
 const VmAction = {
     Start: 0,
     Stop: 1,
@@ -235,20 +178,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    updateTierInfo();
-    updateBandwidthInfo();
-    updateReplicationInfo();
-    updateEstimatedCost();
 });
 
-// ============================================
-// Event listeners to CPU/Memory/Disk fields to update cost in real-time:
-// ============================================
-document.getElementById('vm-cpu').addEventListener('change', updateEstimatedCost);
-document.getElementById('vm-memory').addEventListener('change', updateEstimatedCost);
-document.getElementById('vm-disk').addEventListener('change', updateEstimatedCost);
-document.getElementById('bandwidth-tier').addEventListener('change', updateBandwidthInfo);
-document.getElementById('replication-factor')?.addEventListener('change', updateReplicationInfo);
 
 // ============================================
 // APPKIT INITIALIZATION
@@ -1010,20 +941,6 @@ async function loadNodes() {
 // VM OPERATIONS
 // ============================================
 
-async function openCreateVMModal() {
-    openStaticModal(document.getElementById('create-vm-modal'));
-    const container = document.getElementById('constraint-builder-container');
-    if (container) {
-        // Destroy the previous instance (modal may be opened multiple times).
-        _cbCreateHandle?.destroy();
-        const { mount } = await import('./constraint-builder.js');
-        _cbCreateHandle = await mount(container, {
-            apiFetch: api,
-            qualityTier: document.getElementById('quality-tier')?.value ?? 'Standard',
-        });
-    }
-}
-
 // Tracks accessibility-cleanup functions per static modal so we can run them
 // when the modal is closed (regardless of how it was closed).
 const _modalA11yCleanups = new Map();
@@ -1107,115 +1024,6 @@ function previewVmName(inputEl, previewElId) {
     } else {
         previewEl.textContent = `Your VM will be named: ${sanitized}-xxxx`;
         previewEl.style.color = 'var(--color-text-secondary, #a0aec0)';
-    }
-}
-
-async function createVM() {
-    const name = document.getElementById('vm-name').value.trim();
-    const cpuCores = parseInt(document.getElementById('vm-cpu').value);
-    const memoryMb = parseInt(document.getElementById('vm-memory').value);
-    const diskGb = parseInt(document.getElementById('vm-disk').value);
-    const imageId = document.getElementById('vm-image').value;
-    const qualityTier = parseInt(document.getElementById('quality-tier').value);
-    const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
-    const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
-
-    // GPU — read from the GPU Access section
-    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
-    const gpuVramGb = parseFloat(document.getElementById('vm-gpu-vram')?.value ?? '0');
-    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
-        ? Math.round(gpuVramGb * 1024 ** 3)
-        : null;
-
-    // Get target node ID if user selected a specific node from marketplace
-    const targetNodeId = document.getElementById('vm-target-node-id')?.value || null;
-
-    // Client-side name validation (server is the authority, this is for UX)
-    const sanitized = sanitizeVmName(name);
-    const nameError = validateVmName(sanitized);
-    if (nameError) {
-        showToast(nameError, 'error');
-        return;
-    }
-
-    // Read constraints — returns null if any row is incomplete
-    // Collect constraints from the module builder.
-    // Incomplete rows (no target or no operator) are silently skipped —
-    // the backend validates and rejects malformed entries before scheduling.
-    const constraints = _cbCreateHandle ? _cbCreateHandle.getConstraints() : [];
-
-    try {
-        const requestBody = {
-            name,
-            spec: {
-                virtualCpuCores: cpuCores,
-                memoryBytes: memoryMb * (1024 * 1024),
-                diskBytes: diskGb * (1024 * 1024 * 1024),
-                imageId: imageId,
-                gpuMode: gpuMode,
-                gpuVramBytes: gpuVramBytes,
-                qualityTier: qualityTier,
-                bandwidthTier: bandwidthTier,
-                replicationFactor: replicationFactor,
-                constraints: constraints.length > 0 ? constraints : undefined
-            }
-        };
-
-        // Add nodeId if user selected a specific node
-        if (targetNodeId) {
-            requestBody.nodeId = targetNodeId;
-            console.log('[CreateVM] Deploying to selected node:', targetNodeId);
-        }
-
-        const response = await api('/api/vms', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            const vmId = data.data.vmId;
-            const password = data.data.password
-
-            // Only show password modal if we got a valid password (not an error code)
-            if (password && !password.includes('_') && password.includes('-')) {
-                await showPasswordModal(vmId, name, password);
-            }
-
-            showToast(`VM "${name}" created successfully!`, 'success');
-            closeModal('create-vm-modal');
-
-            document.getElementById('vm-name').value = '';
-            document.getElementById('quality-tier').value = '1';
-            document.getElementById('bandwidth-tier').value = '3';
-            document.getElementById('replication-factor').value = '3';
-            const gpuModeEl = document.getElementById('vm-gpu-mode');
-            if (gpuModeEl) gpuModeEl.value = '0';
-
-            const gpuVramRow = document.getElementById('vm-gpu-vram-row');
-            if (gpuVramRow) gpuVramRow.style.display = 'none';
-            updateTierInfo();
-            updateBandwidthInfo();
-            updateReplicationInfo();
-            // Reset constraint builder — destroy and remount empty.
-            const cbContainer = document.getElementById('constraint-builder-container');
-            if (cbContainer && _cbCreateHandle) {
-                _cbCreateHandle.setConstraints([]);
-            }
-
-            await refreshData();
-        } else {
-            // ToS may be the blocker (admins skip the entry gate; a tenant's acceptance
-            // can lapse on a version bump). If so, surface the gate and retry once —
-            // after acceptance the status check returns false, so this can't loop.
-            if (await handleDeployTosGate()) { await createVM(); return; }
-            showToast(data?.error?.message ?? data?.message ?? `Failed to create VM (HTTP ${response.status})`, 'error');
-        }
-    } catch (error) {
-        console.error('[Create VM] Error:', error);
-        showToast(error.message || 'Failed to create VM', 'error');
     }
 }
 
@@ -1332,144 +1140,6 @@ async function forceStopVM(vmId) {
     } catch (error) {
         console.error('[Force-stop VM] Error:', error);
         showToast('Failed to force-stop VM', 'error');
-    }
-}
-
-function updateTierInfo() {
-    const tierSelect = document.getElementById('quality-tier');
-    const tierId = parseInt(tierSelect.value);
-    const tier = QUALITY_TIERS[tierId];
-
-    document.getElementById('tier-help-text').textContent = tier.name;
-
-    const tierInfo = document.getElementById('tier-info');
-    tierInfo.innerHTML = `
-        <div class="tier-description">${tier.description}</div>
-        <div class="tier-pricing">
-            <span class="tier-points">${tier.pointsPerVCpu} points per vCPU</span>
-            <span class="tier-multiplier">Price: ${tier.priceMultiplier}x</span>
-        </div>
-        `;
-
-    updateEstimatedCost();
-}
-
-function updateBandwidthInfo() {
-    const bwSelect = document.getElementById('bandwidth-tier');
-    const bwId = parseInt(bwSelect.value);
-    const bw = BANDWIDTH_TIERS[bwId];
-
-    document.getElementById('bandwidth-help-text').textContent = bw.name;
-
-    const bandwidthInfo = document.getElementById('bandwidth-info');
-    bandwidthInfo.innerHTML = `
-        <div class="tier-description">${bw.description}</div>
-        <div class="tier-pricing">
-            <span class="tier-points">${bw.speed} avg / ${bw.burst} burst</span>
-            <span class="tier-multiplier">+$${bw.hourlyRate.toFixed(3)}/hr</span>
-        </div>
-    `;
-
-    updateEstimatedCost();
-}
-
-function updateReplicationInfo() {
-    const select = document.getElementById('replication-factor');
-    if (!select) return;
-    const factor = parseInt(select.value);
-    const tier = REPLICATION_TIERS[factor] || REPLICATION_TIERS[3];
-
-    const helpText = document.getElementById('replication-help-text');
-    if (helpText) helpText.textContent = tier.label;
-
-    const infoDiv = document.getElementById('replication-info');
-    if (infoDiv) {
-        infoDiv.innerHTML = `
-            <div class="tier-description">${tier.description}</div>
-            <div class="tier-pricing">
-                <span class="tier-points">${tier.badge}</span>
-                ${factor === 0
-                ? '<span class="tier-multiplier">No storage cost</span>'
-                : `<span class="tier-multiplier">+storage replication cost (${factor}×)</span>`}
-            </div>
-        `;
-    }
-
-    updateEstimatedCost();
-}
-
-/**
- * Show/hide VRAM input when GPU mode changes, then refresh cost estimate.
- */
-function onGpuModeChange() {
-    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
-    const gpuVramRow = document.getElementById('vm-gpu-vram-row');
-    const gpuVramLabel = document.getElementById('vm-gpu-vram-label');
-    if (gpuVramRow) gpuVramRow.style.display = gpuMode !== 0 ? 'flex' : 'none';
-    // For Passthrough the label clarifies this is a minimum scheduling requirement,
-    // not an exact allocation. Actual billing uses the assigned GPU's full VRAM.
-    if (gpuVramLabel) {
-        gpuVramLabel.textContent = gpuMode === 1
-            ? 'Min. VRAM (GB)  ·  estimate only'
-            : 'VRAM (GB)';
-    }
-    updateEstimatedCost();
-}
-
-async function updateEstimatedCost() {
-    const cpuCores = parseInt(document.getElementById('vm-cpu').value);
-    const memoryMb = parseInt(document.getElementById('vm-memory').value);
-    const diskGb = parseInt(document.getElementById('vm-disk').value);
-    const qualityTier = parseInt(document.getElementById('quality-tier').value);
-    const bandwidthTier = parseInt(document.getElementById('bandwidth-tier').value);
-    const replicationFactor = parseInt(document.getElementById('replication-factor')?.value ?? '3');
-    const gpuMode = parseInt(document.getElementById('vm-gpu-mode')?.value ?? '0');
-    const gpuVramGb = parseFloat(document.getElementById('vm-gpu-vram')?.value ?? '0');
-    const gpuVramBytes = gpuMode === 2 && gpuVramGb > 0
-        ? Math.round(gpuVramGb * 1024 ** 3) : null;
-
-    // Compute points display — local, no network needed.
-    const tier = QUALITY_TIERS[qualityTier];
-    document.getElementById('compute-points').textContent =
-        `${cpuCores * (tier?.pointsPerVCpu ?? 1)} points`;
-
-    const costEl = document.getElementById('estimated-cost');
-    costEl.textContent = 'Calculating…';
-
-    try {
-        const res = await api('/api/system/pricing/calculate', {
-            method: 'POST',
-            body: JSON.stringify({
-                virtualCpuCores: cpuCores,
-                memoryBytes: memoryMb * 1024 * 1024,
-                diskBytes: diskGb * 1024 * 1024 * 1024,
-                qualityTier,
-                bandwidthTier,
-                replicationFactor,
-                gpuMode,
-                gpuVramBytes,
-            }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const d = await res.json();
-        const calc = d.data ?? d;
-        const daily = Number(calc.dailyTotal);
-        const weekly = daily * 7;
-        const monthly = Number(calc.monthlyTotal);
-        const isPassthrough = gpuMode === 1;
-        const passthroughNote = isPassthrough
-            ? `<br><span style="font-size:0.75em;opacity:0.5">` +
-            `GPU estimate based on minimum VRAM — actual cost reflects assigned GPU</span>`
-            : '';
-        costEl.innerHTML =
-            `~$${Number(calc.hourlyTotal).toFixed(4)}/hr (default rates)` +
-            `<br><span style="font-size:0.8em;opacity:0.6">` +
-            `~$${daily.toFixed(2)}/day&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${weekly.toFixed(2)}/wk&nbsp;&nbsp;·&nbsp;&nbsp;` +
-            `~$${monthly.toFixed(2)}/mo` +
-            `</span>` + passthroughNote;
-    } catch (_e) {
-        costEl.textContent = 'Pricing unavailable';
     }
 }
 
@@ -1672,14 +1342,7 @@ window.escapeHtml = escapeHtml;
 window.connectWallet = connectWallet;
 window.disconnect = disconnect;
 window.showPage = showPage;
-window.openCreateVMModal = openCreateVMModal;
 window.closeModal = closeModal;
-window.createVM = createVM;
-window.updateTierInfo = updateTierInfo;
-window.updateEstimatedCost = updateEstimatedCost;
-window.onGpuModeChange = onGpuModeChange;
-window.updateBandwidthInfo = updateBandwidthInfo;
-window.updateReplicationInfo = updateReplicationInfo;
 window.startVM = startVM;
 window.restartVM = restartVM;
 window.stopVM = stopVM;

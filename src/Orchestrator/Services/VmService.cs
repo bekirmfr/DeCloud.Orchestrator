@@ -1003,8 +1003,11 @@ public class VmService : IVmService
         // source of truth for the VM cost formula. Pass block count + size
         // when known (populated by LazysyncManager each cycle); falls back
         // to a 5%-of-disk estimate before the first lazysync cycle.
+        // `config` (fetched above for compute-point sizing) also carries the tier
+        // PriceMultiplier — the same value TierCapability advertises. Billing used
+        // to hardcode its own copy, which is how the two drifted apart.
         vm.BillingInfo.HourlyRateCrypto = HourlyRateCalculator.Calculate(
-            vm.Spec, selectedNode.Pricing, _pricingConfig,
+            vm.Spec, selectedNode.Pricing, _pricingConfig, config,
             vm.CurrentManifestBlockCount, vm.CurrentManifestBlockSizeKb).Total;
 
         // Track VM hosting in node reputation

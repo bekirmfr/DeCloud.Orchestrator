@@ -63,6 +63,7 @@ public static class HourlyRateCalculator
         VmSpec spec,
         NodePricing? nodePricing,
         PricingConfig cfg,
+        SchedulingConfig schedulingConfig,
         int? manifestBlockCount = null,
         int manifestBlockSizeKb = BlockSizeConstants.VmOverlayKb)
     {
@@ -75,14 +76,27 @@ public static class HourlyRateCalculator
         // Quality tier multiplier scales compute resources only. Bandwidth,
         // GPU, and replication are not tier-multiplied — they reflect
         // physical costs that don't change with reliability tier.
-        var tierMultiplier = spec.QualityTier switch
+        // Read from SchedulingConfig — the stored, versioned, admin-editable
+        // document that ALSO feeds TierCapability.PriceMultiplier, i.e. what the
+        // platform advertises through the node capability model.
+        //
+        // This used to be a hardcoded switch here, which meant two sources of
+        // truth for one quantity: billing charged 2.5/1.0/0.6/0.4 while the
+        // stored config advertised 1.8/1.0/0.7/0.5. Aligning the values fixed
+        // today's disagreement; reading them from one place is what stops it
+        // recurring. Same reasoning as PricingResolver above.
+        //
+        // A missing tier throws rather than defaulting to 1.0m: silently billing
+        // a Guaranteed VM at Standard rates is worse than failing loudly, and
+        // ValidateConfig already guarantees the tiers exist.
+        if (!schedulingConfig.Tiers.TryGetValue(spec.QualityTier, out var tierConfig))
         {
-            QualityTier.Guaranteed => 2.5m,
-            QualityTier.Standard => 1.0m,
-            QualityTier.Balanced => 0.6m,
-            QualityTier.Burstable => 0.4m,
-            _ => 1.0m
-        };
+            throw new InvalidOperationException(
+                $"Scheduling config v{schedulingConfig.Version} has no entry for quality tier " +
+                $"{spec.QualityTier}; cannot price this VM.");
+        }
+
+        var tierMultiplier = tierConfig.PriceMultiplier;
 
         // Bandwidth tier surcharge (platform-set, flat per hour).
         var bandwidthCost = spec.BandwidthTier switch

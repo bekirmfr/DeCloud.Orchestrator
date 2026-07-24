@@ -49,6 +49,30 @@ public class SchedulingConfigService : ISchedulingConfigService
     private DateTime _lastLoaded = DateTime.MinValue;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// Schema version of the stored scheduling config. Bump when a change must be
+    /// applied to EXISTING documents, and add the corresponding step to
+    /// <see cref="MigrateConfigAsync"/>. Editing CreateDefaultConfig alone only
+    /// affects installs that have never persisted a config.
+    ///
+    /// v2 — tier PriceMultipliers aligned to what HourlyRateCalculator actually
+    ///      bills. See MigrateConfigAsync for the reasoning.
+    /// </summary>
+    private const int CurrentConfigVersion = 2;
+
+    /// <summary>
+    /// The multipliers HourlyRateCalculator hardcoded before it read them from
+    /// here. Kept as the canonical set so v1 documents converge on the values
+    /// users have actually been charged.
+    /// </summary>
+    private static readonly Dictionary<QualityTier, decimal> BilledPriceMultipliers = new()
+    {
+        [QualityTier.Guaranteed] = 2.5m,
+        [QualityTier.Standard] = 1.0m,
+        [QualityTier.Balanced] = 0.6m,
+        [QualityTier.Burstable] = 0.4m,
+    };
+
     public SchedulingConfigService(
         IMongoDatabase? database,
         ILogger<SchedulingConfigService> logger)
@@ -126,6 +150,10 @@ public class SchedulingConfigService : ISchedulingConfigService
                     config = CreateDefaultConfig();
                     await _configs.InsertOneAsync(config, cancellationToken: ct);
                     _logger.LogInformation("Created default scheduling configuration v{Version}", config.Version);
+                }
+                else if (config.Version < CurrentConfigVersion)
+                {
+                    config = await MigrateConfigAsync(config, ct);
                 }
             }
             else
@@ -355,7 +383,7 @@ public class SchedulingConfigService : ISchedulingConfigService
         return new SchedulingConfig
         {
             Id = "default",
-            Version = 1,
+            Version = CurrentConfigVersion,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
             UpdatedBy = "system",
@@ -368,7 +396,7 @@ public class SchedulingConfigService : ISchedulingConfigService
                     MinimumBenchmark = 1000,
                     CpuOvercommitRatio = 4.0,
                     StorageOvercommitRatio = 2.5,
-                    PriceMultiplier = 0.5m,
+                    PriceMultiplier = 0.4m,
                     Description = "Best-effort performance, entry-level hardware, 4:1 CPU overcommit",
                     TargetUseCase = "Development, testing, light workloads"
                 },
@@ -377,7 +405,7 @@ public class SchedulingConfigService : ISchedulingConfigService
                     MinimumBenchmark = 1500,
                     CpuOvercommitRatio = 2.7,
                     StorageOvercommitRatio = 2.0,
-                    PriceMultiplier = 0.7m,
+                    PriceMultiplier = 0.6m,
                     Description = "Balanced performance for production workloads, 2.7:1 CPU overcommit",
                     TargetUseCase = "Web servers, databases, AI inference"
                 },
@@ -395,7 +423,7 @@ public class SchedulingConfigService : ISchedulingConfigService
                     MinimumBenchmark = 4000,
                     CpuOvercommitRatio = 1.0,
                     StorageOvercommitRatio = 1.0,
-                    PriceMultiplier = 1.8m,
+                    PriceMultiplier = 2.5m,
                     Description = "Dedicated high-performance resources, guaranteed 1:1 CPU performance",
                     TargetUseCase = "Mission-critical apps, large models, financial trading"
                 }
@@ -415,6 +443,51 @@ public class SchedulingConfigService : ISchedulingConfigService
                 Locality = 0.15
             }
         };
+    }
+
+    /// <summary>
+    /// Bring a stored config up to <see cref="CurrentConfigVersion"/>, persisting
+    /// the result. Runs on load, so a running deployment converges without an
+    /// admin action.
+    /// </summary>
+    private async Task<SchedulingConfig> MigrateConfigAsync(SchedulingConfig config, CancellationToken ct)
+    {
+        var from = config.Version;
+
+        // ── v1 → v2 ──────────────────────────────────────────────────────────
+        // Tier PriceMultipliers here (1.8 / 1.0 / 0.7 / 0.5) disagreed with the
+        // multipliers HourlyRateCalculator actually billed (2.5 / 1.0 / 0.6 / 0.4).
+        // Two sources of truth for the same quantity: this document fed
+        // TierCapability.PriceMultiplier — what the platform ADVERTISES through the
+        // node capability model — while billing used its own hardcoded switch.
+        //
+        // Aligned to the BILLED values, deliberately: those are what users have
+        // been charged and what the deploy UI displays, so no bill changes. The
+        // advertisement corrects itself instead. Adopting the stored values would
+        // have repriced the Guaranteed tier by -28% retroactively — a product
+        // decision, not a bug fix.
+        if (config.Version < 2)
+        {
+            foreach (var (tier, multiplier) in BilledPriceMultipliers)
+            {
+                if (config.Tiers.TryGetValue(tier, out var tierConfig))
+                    tierConfig.PriceMultiplier = multiplier;
+            }
+        }
+
+        config.Version = CurrentConfigVersion;
+        config.UpdatedAt = DateTime.UtcNow;
+        config.UpdatedBy = "migration";
+
+        if (_useMongoDB && _configs != null)
+        {
+            await _configs.ReplaceOneAsync(c => c.Id == config.Id, config, cancellationToken: ct);
+        }
+
+        _logger.LogInformation(
+            "Migrated scheduling configuration v{From} → v{To}", from, config.Version);
+
+        return config;
     }
 
     private SchedulingConfig CloneForHistory(SchedulingConfig config)
