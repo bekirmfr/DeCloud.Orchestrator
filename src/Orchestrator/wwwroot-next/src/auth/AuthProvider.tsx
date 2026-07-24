@@ -47,9 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [session, dispatch] = useReducer(sessionReducer, { kind: "anonymous" } as SessionState);
     const [wallet, setWallet] = useState<WalletState>({ kind: "disconnected" });
     const adapterRef = useRef<WalletAdapter | null>(null);
-    // Restore-on-mount, so SIWE's getSession can await it instead of reporting
-    // "no session" during the window before the refresh lands.
-    const restoreRef = useRef<Promise<unknown> | null>(null);
+    // Resolves WITH the restored address, not just void: dispatch schedules a
+    // render, so sessionRef is still "anonymous" when this promise settles.
+    const restoreRef = useRef<Promise<{ address: string } | null> | null>(null);
     // Mirror of `session` for callbacks built once and never rebuilt — the SIWE
     // config closes over its first render's values, so reading `session` directly
     // there would pin it to "anonymous" forever.
@@ -123,18 +123,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // AppKit asks whether a session exists; answer from ours rather than
                 // letting it query the server independently and race the restore.
                 getCurrentSession: async () => {
-                    console.log("[siwe] getSession called, restore pending:", !!restoreRef.current);
-                    await restoreRef.current;
+                    // Prefer whatever the restore resolved with; fall back to the ref
+                    // for later calls, once a render has landed.
+                    const restored = await restoreRef.current;
                     const s = sessionRef.current;
-                    console.log("[siwe] getSession answering with session kind:", s.kind);
-                    if (s.kind !== "authenticated" && s.kind !== "uncertain") return null;
+                    const address =
+                        s.kind === "authenticated" || s.kind === "uncertain"
+                            ? s.address
+                            : restored?.address;
+                    if (!address) return null;
                     const w = adapterRef.current?.getState();
-                    const result = {
-                        address: s.address,
+                    return {
+                        address,
                         chainId: w && w.kind === "connected" ? w.chainId : EXPECTED_CHAIN_ID,
                     };
-                    console.log("[siwe] getSession →", result);
-                    return result;
                 },
                 onSignOut: () => {
                     tokenStore.clear();
@@ -148,12 +150,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // (AUTH_SUCCESS with the user) — NOT performRefresh, which no-ops from `anonymous`.
             if (tokenStore.get()) {
                 restoreRef.current = callRefresh().then((r) => {
-                    if (r) {
-                        tokenStore.set(r.token);
-                        dispatch({ type: "AUTH_SUCCESS", token: r.token, address: r.user.walletAddress, user: r.user });
-                    } else {
+                    if (!r) {
                         tokenStore.clear(); // stale hint; stay anonymous
+                        return null;
                     }
+                    tokenStore.set(r.token);
+                    dispatch({ type: "AUTH_SUCCESS", token: r.token, address: r.user.walletAddress, user: r.user });
+                    // Resolve WITH the address. dispatch only SCHEDULES a render, so
+                    // sessionRef is still "anonymous" when this promise settles —
+                    // awaiting it was not enough on its own.
+                    return { address: r.user.walletAddress };
                 });
             }
 
