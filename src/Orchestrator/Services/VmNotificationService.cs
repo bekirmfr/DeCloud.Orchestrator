@@ -2,6 +2,7 @@
 using DeCloud.Shared.Models;
 using Microsoft.AspNetCore.SignalR;
 using Orchestrator.Hubs;
+using Orchestrator.Models;
 
 namespace Orchestrator.Services;
 
@@ -9,6 +10,7 @@ public interface IVmNotificationService
 {
     Task BroadcastStatusAsync(string vmId, string? ownerId, VmStatus status, string? message = null);
     Task BroadcastServicesAsync(string vmId, IReadOnlyList<VmServiceModel> services);
+    Task BroadcastAccessInfoAsync(string vmId, VmAccessInfo accessInfo);
 }
 
 /// The ONE place a VM status change is pushed to SignalR clients. Both the
@@ -80,6 +82,32 @@ public class VmNotificationService : IVmNotificationService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "VmServicesUpdated broadcast failed for {VmId}", vmId);
+        }
+    }
+
+    public async Task BroadcastAccessInfoAsync(string vmId, VmAccessInfo accessInfo)
+    {
+        try
+        {
+            // VM-scoped only — the dashboard shows status, not SSH endpoints.
+            // Owner-facing fields only: VncPassword stays server-side.
+            await _hub.Clients.Group($"vm:{vmId}").SendAsync("VmAccessInfoUpdated", new
+            {
+                VmId = vmId,
+                AccessInfo = new
+                {
+                    accessInfo.SshHost,
+                    accessInfo.SshPort,
+                    accessInfo.VncHost,
+                    accessInfo.VncPort,
+                    accessInfo.ConsoleWebSocketUrl
+                },
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "VmAccessInfoUpdated broadcast failed for {VmId}", vmId);
         }
     }
 }

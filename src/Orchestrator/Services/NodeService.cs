@@ -2656,22 +2656,18 @@ public class NodeService : INodeService
                     // The lifecycle manager's OnVmBecameRunning polls for PrivateIp,
                     // so the IP must be persisted before the transition fires.
                     // ════════════════════════════════════════════════════════════
-                    if (reported.IsIpAssigned)
+                    if (ApplyReportedAccess(vm, reported.IsIpAssigned, reported.IpAddress,
+                                           reported.VncPort, node?.PublicIp))
                     {
-                        vm.NetworkConfig.PrivateIp = reported.IpAddress;
-                        vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
-
-                        vm.AccessInfo ??= new VmAccessInfo();
-                        vm.AccessInfo.SshHost = reported.IpAddress;
-                        vm.AccessInfo.SshPort = 22;
-
-                        if (reported.VncPort != null)
-                        {
-                            vm.AccessInfo.VncHost = node?.PublicIp;
-                            vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
-                        }
-
                         await _dataStore.SaveVmAsync(vm);
+
+                        // Push to any cockpit watching this VM. Nothing ever emitted
+                        // VmAccessInfoUpdated before: the hub declares it and the
+                        // client has always handled it, but its only sender was
+                        // OrchestratorHub.ReportVmAccessInfo, which no node calls.
+                        // The Access card therefore showed whatever was true at page
+                        // load and never moved — SSH details appeared only on reload.
+                        await _notifications.BroadcastAccessInfoAsync(vm.Id, vm.AccessInfo!);
                     }
 
                     // Route state transition through lifecycle manager
@@ -2740,23 +2736,15 @@ public class NodeService : INodeService
                 {
                     vm.LastHeartbeatAt = DateTime.UtcNow;
 
-                    if (reported.IsIpAssigned)
-                    {
-                        vm.NetworkConfig.PrivateIp = reported.IpAddress;
-                        vm.NetworkConfig.IsIpAssigned = reported.IsIpAssigned;
+                    var accessChanged = ApplyReportedAccess(
+                        vm, reported.IsIpAssigned, reported.IpAddress,
+                        reported.VncPort, node?.PublicIp);
 
-                        vm.AccessInfo ??= new VmAccessInfo();
-                        vm.AccessInfo.SshHost = reported.IpAddress;
-                        vm.AccessInfo.SshPort = 22;
-
-                        if (reported.VncPort != null)
-                        {
-                            vm.AccessInfo.VncHost = node?.PublicIp;
-                            vm.AccessInfo.VncPort = reported.VncPort ?? 5900;
-                        }
-                    }
-
+                    // Save unconditionally — this also persists LastHeartbeatAt.
                     await _dataStore.SaveVmAsync(vm);
+
+                    if (accessChanged)
+                        await _notifications.BroadcastAccessInfoAsync(vm.Id, vm.AccessInfo!);
                 }
 
                 // Update per-service readiness from node agent
@@ -3730,6 +3718,72 @@ public class NodeService : INodeService
     /// Update VM's service readiness from heartbeat data reported by node agent.
     /// Matches reported services by name and updates status/timestamps.
     /// </summary>
+    /// <summary>
+    /// Apply the node's reported network/access details to a VM, returning true
+    /// when anything actually CHANGED.
+    ///
+    /// The change flag matters: heartbeats arrive continuously and these fields
+    /// are re-applied on every one, so an unconditional broadcast would be a
+    /// firehose rather than a notification. Same gating as UpdateServiceReadiness.
+    ///
+    /// Extracted because this block existed VERBATIM at two call sites (the
+    /// status-transition path and the Running-heartbeat path) and had to stay in
+    /// step. Takes scalars rather than the heartbeat DTO so it stays trivially
+    /// testable.
+    /// </summary>
+    private static bool ApplyReportedAccess(
+        VirtualMachine vm,
+        bool isIpAssigned,
+        string? ipAddress,
+        int? vncPort,
+        string? nodePublicIp)
+    {
+        if (!isIpAssigned) return false;
+
+        var changed = false;
+
+        if (vm.NetworkConfig.PrivateIp != ipAddress)
+        {
+            vm.NetworkConfig.PrivateIp = ipAddress;
+            changed = true;
+        }
+        if (!vm.NetworkConfig.IsIpAssigned)
+        {
+            vm.NetworkConfig.IsIpAssigned = true;
+            changed = true;
+        }
+
+        vm.AccessInfo ??= new VmAccessInfo();
+
+        if (vm.AccessInfo.SshHost != ipAddress)
+        {
+            vm.AccessInfo.SshHost = ipAddress;
+            changed = true;
+        }
+        if (vm.AccessInfo.SshPort != 22)
+        {
+            vm.AccessInfo.SshPort = 22;
+            changed = true;
+        }
+
+        if (vncPort != null)
+        {
+            var port = vncPort ?? 5900;
+            if (vm.AccessInfo.VncHost != nodePublicIp)
+            {
+                vm.AccessInfo.VncHost = nodePublicIp;
+                changed = true;
+            }
+            if (vm.AccessInfo.VncPort != port)
+            {
+                vm.AccessInfo.VncPort = port;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
     private bool UpdateServiceReadiness(VirtualMachine vm, List<HeartbeatServiceInfo> reportedServices)
     {
         var changed = false;

@@ -334,7 +334,9 @@ public class OrchestratorHub : Hub
         if (vm != null)
         {
             vm.AccessInfo = accessInfo;
-            
+
+            await _dataStore.SaveVmAsync(vm);
+
             await Clients.Group($"vm:{vmId}").SendAsync("VmAccessInfoUpdated", new
             {
                 VmId = vmId,
