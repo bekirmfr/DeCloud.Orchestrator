@@ -123,14 +123,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // AppKit asks whether a session exists; answer from ours rather than
                 // letting it query the server independently and race the restore.
                 getCurrentSession: async () => {
+                    console.log("[siwe] getSession called, restore pending:", !!restoreRef.current);
                     await restoreRef.current;
                     const s = sessionRef.current;
+                    console.log("[siwe] getSession answering with session kind:", s.kind);
                     if (s.kind !== "authenticated" && s.kind !== "uncertain") return null;
                     const w = adapterRef.current?.getState();
-                    return {
+                    const result = {
                         address: s.address,
                         chainId: w && w.kind === "connected" ? w.chainId : EXPECTED_CHAIN_ID,
                     };
+                    console.log("[siwe] getSession →", result);
+                    return result;
                 },
                 onSignOut: () => {
                     tokenStore.clear();
