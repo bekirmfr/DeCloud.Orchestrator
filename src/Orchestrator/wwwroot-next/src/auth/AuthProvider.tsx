@@ -138,8 +138,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 },
             });
 
-            adapterRef.current = createWalletAdapter(siweConfig);
-
             // Restore-on-mount, ONCE: getSession restores the ADDRESS but never fires
             // onAuthenticated and returns no token. If a mirrored-token hint says this
             // user was signed in, ESTABLISH the session from the refresh cookie
@@ -154,6 +152,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     }
                 });
             }
+
+            adapterRef.current = createWalletAdapter(siweConfig);
         }
 
         // (Re)subscribe every run — StrictMode-safe.
