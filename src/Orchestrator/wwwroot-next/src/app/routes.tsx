@@ -3,6 +3,7 @@ import { AppShell } from "./AppShell";
 import { StatusGate } from "./StatusGate";
 import { useAuth } from "../auth/AuthProvider";
 import { canAccessAdmin } from "./guards";
+import { RouteError } from "./RouteError";
 import { SshKeysPage } from "../features/ssh-keys/SshKeysPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { VmsPage } from "../features/vms/VmsPage";
@@ -33,6 +34,12 @@ export const router = createBrowserRouter(
     {
       path: "/",
       element: <ShellRoot />,
+      // Covers the whole /app tree: React Router bubbles a child's throw to the
+      // nearest errorElement, and an unmatched URL arrives here as a 404 route
+      // response. Without it the router renders its own developer fallback —
+      // a minified stack trace — which is what production showed for the
+      // DeployPage hooks crash.
+      errorElement: <RouteError />,
       children: [
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
         // { path: "marketplace", element: <Marketplace /> },     // Phase 5

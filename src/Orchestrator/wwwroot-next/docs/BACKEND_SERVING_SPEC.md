@@ -1,7 +1,7 @@
-# Backend Serving Spec — Option A coexistence (v2, grounded against the code)
+# Backend Serving Spec — Option A coexistence (v3, Change 2 shipped + nav-of-record live)
 
 **For:** whoever owns `src/Orchestrator/Program.cs` and the frontend build wiring.
-**Status:** every item in the confirmation checklist (§5) has now been **grounded against the actual code** — `Program.cs`, `Orchestrator.csproj`, `vite.config.js`, `Orchestrator.sln`. v2 corrects v1 where the code disagreed. Two material corrections up front:
+**Status:** Change 1 (Phase 0) and **Change 2 (Phase 3) are both implemented and live in production.** Change 3 (the `/`-flip to the SSG landing) remains not started — no landing exists yet (Phase 4 not started). v3 adds: Change 2's shipped shape, and a **new client-side behavior not in the original three-change plan** — a signed-in visitor to `/` is now redirected to `/app` (§2.1). Two material corrections from v1→v2 still stand:
 - **An SPA fallback already exists** — a catch-all `app.MapFallback` delegate (production-only). Change 1 must **amend** it, not add a second one. (v1 wrongly said there was none.)
 - **There are more standalone HTML entries than v1 listed** — also `terminal.html`, `file-browser.html`, `tos.html`. This affects the design doc's surface inventory (see §6).
 
@@ -52,13 +52,57 @@
 
 ---
 
-## 2. Change 2 — old app opens to a page on load (needed for **Phase 3**)
+## 2. Change 2 — old app opens to a page on load — **SHIPPED, live in production**
 
 **Requirement:** after the dashboard migrates, the new shell deep-links into un-migrated pages still in the old monolith.
 
-**Grounded mechanism:** ~5 lines in the old `wwwroot/src/app.js` init — read `?page=<name>` (or `#<name>`) and call `showPage(name)` after auth/init. `app.js` is a `FrontendSource` file, so the edit triggers the Release rebuild; no server change. New shell then links to e.g. `/?page=nodes`.
+**Shipped mechanism** (`wwwroot/src/app.js`, inside `DOMContentLoaded`, **after** `restoreSession()` succeeds — not ~5 lines at init as originally estimated; it has to run after session restore because most pages call `api()` immediately and the admin pages gate on `tokenHasAdminRole`):
 
-**Acceptance:** `GET /?page=nodes` opens the old app on Nodes; unknown/absent → default (dashboard), no error.
+```js
+const requestedPage = new URLSearchParams(location.search).get('page');
+if (requestedPage) {
+    if (document.getElementById(`page-${requestedPage}`)) {
+        showPage(requestedPage);
+    } else {
+        // Unknown or RETIRED page name. There is no default `.page active` to
+        // fall back to any more (page-dashboard carried it and has since been
+        // deleted — see §2.2), so silently doing nothing would leave every
+        // `.page` hidden and nothing shown. Stale links go home.
+        location.replace('/app');
+    }
+}
+```
+
+The `getElementById` guard matters for retirement: as pages get deleted from `index.html`, a stale bookmark to a since-retired `?page=x` degrades to `/app` instead of a blank shell.
+
+No server change — `app.js` is a `FrontendSource` file, so the edit triggers the existing Release rebuild.
+
+**Acceptance (confirmed live):** `GET /?page=nodes` (signed in) opens the old app on Nodes; `?page=<retired-or-unknown>` and no param at all both redirect to `/app` (see §2.1 — the redirect logic and this one now share responsibility for "what does a bare or bad `/` request do").
+
+### 2.1 New: signed-in `/` now redirects to `/app` (not in the original 3-change plan)
+
+Once the dashboard and VM-list pages migrated (Phase 3), the old app's dashboard stopped being *anything* useful for a signed-in user to land on — so **`showDashboard()`** (the single function both `restoreSession()` and a fresh SIWE sign-in call — covers every way a session becomes active) now does:
+
+```js
+if (!new URLSearchParams(location.search).get('page')) {
+    location.replace('/app');
+    return;
+}
+document.getElementById('login-overlay').classList.remove('active');
+// ...
+```
+
+`location.replace`, not `location.assign` — the bare `/` shouldn't sit in browser history, or Back from `/app` lands on a URL that immediately redirects forward again.
+
+**This is a client-side (JS) redirect, not a `Program.cs` routing change** — `/` still *serves* the old app's `index.html` and its full bundle to every visitor, signed in or not; the redirect happens after the page has loaded and the session has restored. So:
+
+- **Anonymous visitor to `/`** → the legacy connect/login page, unchanged. This remains the sole public entry point until Change 3 (the landing) ships.
+- **Signed-in visitor to `/`** (session restores from the `dc_rt` cookie) → briefly renders the old shell, then redirects to `/app`.
+- **Signed-in visitor to `/?page=x`** → stays on the old app's page `x` (the guard above).
+
+**Known cost — two independent SIWE/connect flows exist until Change 3 ships.** The old app's login overlay (AppKit + legacy `siwe-config.js`) and the new app's connect gate (AppKit + `src/auth/siwe.ts`) are two separate `createSIWEConfig` instances against the same backend. This is not itself a bug — but debugging a live incident here (a spurious sign-in-again modal on `/app` after visiting a legacy page) initially looked like it must involve *this* duality (refresh-token rotation between the two flows was the leading hypothesis) and turned out to be unrelated: three independent bugs entirely inside the new app's own SIWE wiring (see `FRONTEND_REMAKE_IMPLEMENTATION.md` §6, "SIWE/session bugs" and `AGENT_HANDOUT.md`). **The duality remains real and worth remembering when debugging anything auth-adjacent that reproduces after a legacy round-trip** — it's just not guilty by default.
+
+**Resolves at Change 3** (the `/`-flip): once `/` serves the landing and the old app is deleted, there is only one connect flow.
 
 ---
 
@@ -90,7 +134,7 @@
 2. **Folder/output layout:** recommendation stands (`wwwroot-next/` → `wwwroot/dist-app/`, served at `/app`), now with a concrete csproj target mirroring `BuildFrontend`. **Owner sign-off wanted only on the folder names** (cosmetic) and where the SSG landing output lands.
 3. **Scoped `/app` fallback + no `/app` backend routes: GROUNDED.** No controller/hub/proxy uses an `/app` prefix (controllers are `api/[controller]`; hub `/hub/orchestrator`; health `/health`; swagger `/swagger`; `UseSubdomainProxy` is host-based; `UseWebSocketProxy` is path-specific terminal/sftp). Mechanism corrected to **amend the existing fallback**; fits the middleware order (static + endpoints before fallback).
 4. **Two-port dev: GROUNDED, and simpler than v1 stated** — Debug serves no frontend, so **no `Program.cs` change is needed for dev**; just a second Vite server. Acceptable unless the owner prefers a unified-dev setup.
-5. **Change 2 / Change 3 timing:** unchanged — **only Change 1 gates Phase 0**; Changes 2 and 3 land at Phases 3 and 4/6. Owner to agree.
+5. **Change 2 / Change 3 timing:** Change 2 **shipped** at Phase 3 as planned (§2). Change 3 remains gated on Phase 4/6 (landing not started).
 
 **Net:** Change 1 is a small, well-scoped set of edits — one new Vite project, one parallel csproj target, one added static provider, and a **three-line branch inside an existing fallback**. No dev-mode backend change. The two remaining owner decisions are cosmetic (folder names) and timing.
 

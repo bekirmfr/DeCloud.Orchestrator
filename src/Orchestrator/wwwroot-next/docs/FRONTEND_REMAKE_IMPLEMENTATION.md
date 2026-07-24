@@ -17,12 +17,14 @@
 | **0.5** | Visual direction → tokenize (Meridian) | ☑ Done — tokens (light+dark, AA-validated), fonts.css, reconciliation decided | — | 2026-07-21 | 2026-07-21 |
 | **1** | Frozen core (session/identity + `api()`) | ☑ Done — full auth flow live (connect→SIWE→authenticated→shell), reload-persists; walletCrypto cross-compat verified; 54 tests | Owner | 2026-07-21 | 2026-07-22 |
 | **2** | Shell + pipeline-proof page (SSH Keys) | ☑ Done — shell live; SSH Keys migrated + **legacy page retired in production** (first strangler retirement) | Owner | 2026-07-22 | 2026-07-22 |
-| **3** | The spine (dashboard → deploy → VM detail) | ◐ In progress — VM **list** + **detail cockpit** live (live status/services via SignalR; metrics panel gated until the node reports). **Deploy live**: one-click + Customize (cpu/mem/disk, tier, bandwidth, GPU) with server-computed price estimate. 103 tests. Remaining: replication factor, OS image, template Variables, scheduling constraints; then **dashboard** → nav-of-record handoff + legacy VM-list retirement | Owner | 2026-07-22 | — |
+| **3** | The spine (dashboard → deploy → VM detail) | ◐ In progress, spine functionally complete — VM **list** + **detail cockpit** live (status/services/access-info all live via SignalR, all four required a backend broadcast fix; metrics panel wired but gated on the node agent, which doesn't push yet). **Deploy live**: one-click + Customize (cpu/mem/disk, tier, bandwidth, GPU) with server-computed live price estimate. **Dashboard live**: balance/burn-rate/runway, live workload list, promoted Deploy. **Nav-of-record handoff EXECUTED** (signed-in `/` → `/app`) — ahead of Phase 5/6 on the plan, see §5. **Legacy dashboard + VM-list pages retired** (~490 lines) and **legacy create-VM modal retired** (~523 lines, including a third stale copy of the pricing tables). 110 tests. Remaining in-scope for calling Phase 3 done: replication factor, OS image, template Variables, description cards, scheduling constraints in Deploy Customize; node-agent metrics push; the VM-modal cross-module audit (terminal/direct-access/custom-domains — orphaned by the create-VM retirement but not yet verified safe to delete, see §6.2) | Owner | 2026-07-22 | — |
 | **4** | Landing (SSG) built & proven | ☐ Not started | — | — | — |
-| **5** | Supporting paths (marketplace, my-templates, nodes, settings, admin) | ☐ Not started | — | — | — |
-| **6** | Cutover: `/`-flip, delete monolith + `window.*` bridge | ☐ Not started | — | — | — |
+| **5** | Supporting paths (marketplace, my-templates, nodes, settings, admin) | ☐ Not started — **Marketplace recommended first**: it retires the last live copy of the stale pricing tables (`template-detail.js`) and lets the shell's Deploy button stop hard-coding `platform-general` | — | — | — |
+| **6** | Cutover: `/`-flip, delete monolith + `window.*` bridge | ☐ Not started — **one piece landed early**: signed-in `/` already redirects to `/app` (a client-side JS behavior, not the server-side `/`-flip; see `BACKEND_SERVING_SPEC.md` §2.1) | — | — | — |
 
 Legend: ☐ Not started · ◐ In progress · ☑ Done · ⚠ Blocked
+
+**Test count history:** 34 (Phase 1 skeleton) → 54 (Phase 1 done) → 72 (VM list) → 80 (detail cockpit) → 90 (deploy sub-step 1) → 95 (deploy sub-step 2 Customize) → 103 (Customize tier/bandwidth/GPU + live pricing) → **110** (current — the `VmAction` numeric-ordinal fix added coverage). All green, `tsc --noEmit` clean, as of 2026-07-24.
 
 ---
 
@@ -169,21 +171,43 @@ Corollary: on a module-resolution error, `npm ls <pkg>` is the *first* diagnosti
 
 ### 6.2 The dominant bug family: the mechanism exists, nothing calls it
 
-Four separate incidents, one shape — capability present, connection missing:
+By far the most common bug shape in this project — **seven** confirmed instances, one shape: capability present on both ends, connection missing between them.
 
-| Symptom | Real cause |
-|---|---|
-| Cockpit never showed owner-initiated status changes | `TransitionAsync` changed status but only the node's `ReportVmStatus` broadcast |
-| Intermediate `Stopping`/`Provisioning` still missing after that fix | `VmService.PerformVmActionAsync` writes the optimistic status **directly**, bypassing `TransitionAsync` |
-| Services stuck at `Pending` forever | Heartbeat updated `vm.Services` and notified nobody |
-| One-click deploy failed: "missing BaseImageUrl" | The OS default lived only inside the legacy form; every other client sent an empty `ImageId` |
+| Symptom | Real cause | Fix |
+|---|---|---|
+| Cockpit never showed owner-initiated status changes | `TransitionAsync` changed status but only the node's `ReportVmStatus` broadcast | `IVmNotificationService.BroadcastStatusAsync`, called from `TransitionAsync` |
+| Intermediate `Stopping`/`Provisioning` still missing after that fix | `VmService.PerformVmActionAsync` writes the optimistic status **directly**, bypassing `TransitionAsync` | Same seam, called from `PerformVmActionAsync` too |
+| Services stuck at `Pending` forever | Heartbeat updated `vm.Services` and notified nobody | `BroadcastServicesAsync`, gated on the heartbeat handler's existing (previously-unused) `changed` return value |
+| Cockpit's SSH/access panel never updated after the VM got its IP | Heartbeat populated `vm.AccessInfo` and notified nobody; the ONE method that does broadcast on access-info (`OrchestratorHub.ReportVmAccessInfo`) is only ever invoked by a node, which never calls it | New `ApplyReportedAccess` helper (extracted because the same block existed **verbatim** at two heartbeat call sites) returns whether anything changed; `BroadcastAccessInfoAsync` fires only then |
+| Dashboard's live workload list never updated | `SubscribeToUser(userId)` has existed on the hub since it was written; nothing anywhere ever published to a `user:{id}` group — a subscription with no publisher | The status broadcast above now sends to **both** `vm:{id}` and `user:{ownerId}` in one call |
+| One-click deploy failed: "missing BaseImageUrl" | The OS default lived only inside the legacy form; every other client sent an empty `ImageId` | Platform default applied at the one creation funnel (`VmService.CreateVmAsync`), tenant-scoped |
+| A VM stayed billed-but-not-billing (`IsPaused=true`) forever after its owner topped up | The pause-clearing path only fired on an explicit `BalanceAdded` event, which apparently doesn't reliably arrive; the `VmStop` fall-through bills but never clears the flag | Self-heal: probe the actual balance on every billing cycle when the pause reason is specifically insufficient-balance, rather than wait for an event |
 
 **Diagnostic:** when a feature works in the legacy UI but not the new one, the capability
 exists — find the path the working client walks that the new one doesn't. Do not reimplement.
+When nothing walks it either (the access-info and user-group cases), grep for the event
+name across the whole backend before assuming a broadcast fires — `grep -rn "EventName"` is
+faster than reasoning about whether it *should*.
 
-**Fix shape:** when two code paths must both notify, extract *one* seam both call
-(`IVmNotificationService`) rather than duplicating the emit. The next path that changes
-status then gets live updates for free.
+**Fix shape:** when two or more code paths must both notify, extract *one* seam both call
+(`IVmNotificationService`, one method per event type) rather than duplicating the emit. The
+next path that changes that piece of state then gets live updates for free. Where the same
+block of logic (not just the broadcast) is duplicated across call sites — the access-info
+fields were set identically in two places in `NodeService` — extract that too
+(`ApplyReportedAccess`), returning a change flag both the save-guard and the broadcast-guard
+can share, rather than duplicating the diff logic as well as the emit.
+
+**A fix to this family creates a new failure mode, and it bit us: change-gated broadcasts
+lose events across a reconnect.** Every broadcast above is gated on "did the value actually
+change" — necessary, or heartbeats would flood every client every few seconds. But
+`withAutomaticReconnect()` doesn't replay missed events, and from the server's perspective
+there's nothing to resend after a reconnect — nothing changed *since the last broadcast it
+already sent*. A transition that happens entirely inside a disconnect window is gone, not
+delayed. Fix: `HubProvider`'s `onreconnected` handler invalidates the relevant Query cache
+keys, forcing a REST re-sync instead of trusting the socket caught everything. Verified live:
+a reconnect was observed mid-VM-provisioning (a fresh WS `id=` appeared in the Network
+panel — SignalR's own signature for "renegotiated"), and it happened to land the missed
+events by luck of timing; the fix removes the luck requirement.
 
 ### 6.3 Trust the wire over the doc
 
@@ -191,10 +215,29 @@ An observed response beats a design doc, a memory, or a plausible inference.
 
 - The design said a global `JsonStringEnumConverter` makes enums serialize as strings.
   `VmStatus` arrives as `3` — `VmStatus.cs` lacks the per-enum attribute `VmRole`/`VmCategory` carry.
+  Two more enums turned out to have the same gap, found one at a time rather than all at once
+  — `VmPowerState` (found while building the detail cockpit) and `VmAction` (found only when a
+  **user manually curled a VM stop action** and got back a `400` — `"The JSON value could not
+  be converted to VmActionRequest"` — because the cockpit's Stop/Start/Restart buttons had been
+  posting `{"action":"Stop"}` the entire time the cockpit existed, and nothing had ever actually
+  clicked one against production before that curl). **The lesson generalizes past this one API:**
+  a "global converter is registered" fact does not mean every type it could apply to is
+  actually annotated to use it, and the only way to know is to look at a real response, not
+  reason from the registration.
 - **A 404 and a 401 are different diagnoses.** Wrong path vs. wrong auth. The 401 on
   `/api/user/me/ssh-keys` *confirmed* the route existed.
 - Normalize at the boundary, once. `normalizeStatus` was written for a list badge and
-  later absorbed the SignalR path for free — a type error became a correctness fix.
+  later absorbed the SignalR path for free — a type error became a correctness fix. The same
+  module (`src/features/vms/vmStatus.ts`) now owns all three ordinal-tolerant normalizers
+  (`normalizeStatus`, `normalizePowerState`, `vmActionOrdinal`) — one file that knows the wire
+  quirk exists, rather than three ad-hoc workarounds scattered near their call sites.
+- **The single most expensive mis-trust of the wire this project produced was believing "the
+  legacy UI's numbers are stale" without checking.** They weren't — the legacy tier-price
+  table matched the backend's actual billing formula exactly; the real disagreement was
+  between two places *inside* the backend (`HourlyRateCalculator` vs `SchedulingConfig`). An
+  earlier, wrong claim to the contrary was corrected in the open (see the 2026-07-23 journal
+  entry) rather than left standing. Checking both sides of a claimed disagreement, not just one,
+  would have caught it faster.
 
 ### 6.4 Client pre-checks, server authority
 
@@ -217,33 +260,77 @@ client copy drifts from what billing actually charges.
 spec of C# field defaults. On the wire, *"I require Standard"* and *"I said nothing"* are
 byte-identical — so `?? no-constraint` fallbacks are unreachable.
 
-Consequences seen: the tier dropdown offered two options because `VmSpec.QualityTier`
-initialises to `Standard`; the bandwidth dropdown collapsed to one because the legacy modal
-reads `defaultBandwidthTier` as a floor.
+Consequences seen and their resolutions:
 
-- A **default** seeds a selection. A **minimum** constrains choices. Never conflate them.
-- Only fields with a natural ordering belong in a minimum. `ImageId` has none — there is no
-  "at least ubuntu-22.04" — so an image in `MinimumSpec` is a category error that silently
-  becomes an OS mandate.
-- Known open: `MinimumSpec` cannot express "unconstrained" (would need to be nullable).
+- **Tier dropdown offered only two options** (Guaranteed/Standard) because the absent
+  `MinimumSpec` fell back to `new VmSpec()`, whose `QualityTier` initialises to `Standard` — a
+  field default acting as an unintended floor. **Resolved** by giving `platform-general` an
+  explicit `MinimumSpec` (`QualityTier.Burstable` — the most permissive value; remember the
+  enum is **inverted**, `Guaranteed=0` best … `Burstable=3` worst, so "most permissive" is the
+  *highest* number) and `RecommendedSpec`, values chosen to match what the field defaults were
+  already silently producing, so one-click deploy behavior didn't change.
+- **Bandwidth dropdown collapsed to a single option** because the client (mirroring a bug the
+  *legacy* modal has always had) read `template.defaultBandwidthTier` as if it were a floor —
+  `?? 3` (Unmetered) meant a template that *defaults* to the best tier became impossible to
+  *downgrade*. **Resolved** by separating the two properly: `allowedQualityTiers`/
+  `allowedBandwidthTiers` (`src/features/deploy/useDeploy.ts`) now read the floor from
+  `minimumSpec`, defaulting to *no constraint* (`0`/Burstable-equivalent) when absent, while
+  `defaultBandwidthTier`/`RecommendedSpec` still seed which option starts selected. **A
+  default seeds a selection. A minimum constrains choices. Never conflate them** — this is now
+  a named, tested rule (`allowedBandwidthTiers` has a regression test asserting the old,
+  wrong behavior no longer happens), not just a comment.
+- **`ImageId` deliberately has no minimum, ever.** Only fields with a natural ordering belong
+  in a minimum, and there is no "at least ubuntu-22.04." The correct fix for the platform's
+  general-purpose template shipping VMs with no OS was a **platform default applied server-side
+  at the one creation funnel** (`VmService.CreateVmAsync`, tenant-scoped so a system VM can
+  never silently inherit the wrong base image) — not an entry in `MinimumSpec`, which would
+  have quietly turned "the OS is a user choice" into "the OS is mandated."
+- **Still open:** `MinimumSpec`/`RecommendedSpec` cannot express "unconstrained" at the type
+  level (would need to be nullable `VmSpec?`). Every workaround above is a client-side or
+  seeder-side compensation for that structural gap, not a fix to it. At least one existing
+  template (a private-browser template, "Neko," found while auditing for this) has a
+  `RecommendedSpec.QualityTier` that fails its own `MinimumSpec` floor check — a live
+  contradiction the type system can't catch because "unset" and "set-to-the-wrong-thing" both
+  type-check fine.
 
 ### 6.6 What each tool actually catches
 
 | Tool | Catches | Misses |
 |---|---|---|
-| `vitest` | pure logic | anything rendered |
-| `tsc --noEmit` | undefined symbols, wrong props, bad imports | hook ordering, runtime behaviour |
-| `eslint-plugin-react-hooks` | conditional/misplaced hooks | — (**not yet installed; should be**) |
+| `vitest` | pure logic | anything rendered, anything over the network |
+| `tsc --noEmit` | undefined symbols, wrong props, bad imports | hook ordering, runtime behaviour, wire-shape mismatches |
+| `eslint-plugin-react-hooks` | conditional/misplaced hooks | — (**config written, scoped to hooks rules only — see below; not yet run against the codebase or wired into `npm run build`**) |
 | Browser, **cold cache** | first-render crashes, wire-shape mismatches | — |
+| Curling the real endpoint by hand | wire-shape mismatches no UI click ever exercised | anything the specific call doesn't cover |
 
 Real escapes, in order of increasing subtlety: shipped components referencing CSS classes
 that didn't exist (invisible Radix modal); `normalizeStatus` and `Row` used without import
 (caught by `tsc`); **hooks placed after early returns** → React #310, which passed both
-`vitest` and `tsc` and only crashed on a cold load.
+`vitest` and `tsc` and only crashed on a cold load; **every VM lifecycle button silently
+broken from the moment the cockpit shipped** — `useVmAction` posted the action as a *string*
+(`{"action":"Stop"}`) against an endpoint whose enum has no string converter (§6.3), and every
+prior "confirmed live" status transition in this project had been triggered from the *legacy*
+UI, not by clicking the new cockpit's own buttons — so nothing had ever actually exercised the
+path. Found only because a user manually curled the endpoint for an unrelated reason and got a
+`400` back.
 
-**Rule:** hook placement is the whole question when adding a hook to a component with early
+**Rule 1:** hook placement is the whole question when adding a hook to a component with early
 returns. Every hook goes above them; a `null` argument plus `enabled:` is how a query waits
 for data. Adding it "next to the code that uses it" is wrong if that code is past a `return`.
+
+**Rule 2, learned from the VmAction miss specifically: a green test suite and a working page
+in the browser are not proof that a *write* action works.** Every read path in this app (list,
+detail, live status) was exercised repeatedly by normal use. Write actions — a button that
+POSTs — only get exercised by someone actually clicking that specific button, in that specific
+state, against the real backend. **Before calling a mutation "done," click the actual button
+once against the real API and read the Network tab response**, don't infer correctness from
+"the surrounding page loads fine."
+
+**`eslint-plugin-react-hooks` config, when installed, is deliberately narrow — hooks rules
+only** (`rules-of-hooks: error`, `exhaustive-deps: warn`), not the full recommended set. A
+mature codebase run through a fresh full lint config produces hundreds of findings —
+including the deliberate `as any`/`as never` casts at the AppKit boundary — and a report
+nobody reads is worse than no report. Broadening scope is a separate, later decision.
 
 ### 6.7 Delivery conventions
 
@@ -253,6 +340,39 @@ for data. Adding it "next to the code that uses it" is wrong if that code is pas
   class names that may not exist yet.
 - **Run `tsc --noEmit` on anything touching a component**, then load it cold in a browser.
 - **Own mistakes in the commit message** when a later commit corrects an earlier claim.
+- **A string-replace that matches must still be checked against *which* occurrence it hit —
+  identical text can mean different things in different methods.** Two real incidents:
+  replacing a `return new List<VmTemplate>()` guard hit the first textually-identical line in
+  the file, which belonged to an unrelated method (`GetTemplatesByStatusAsync`) rather than the
+  one being edited (`GetTemplatesAsync`) — caught by checking the surrounding method name after
+  the fact, not by the replace itself. Separately, changing a controller's return type from
+  `List<VmTemplate>` to `List<VmTemplateSummary>` via a blanket find-and-replace hit 13
+  occurrences when only 2 were correct — the other 11 belonged to two *different* actions
+  (`GetMyTemplates`, `GetPendingTemplates`) that call different service methods and correctly
+  return full templates. **Rule: after any bulk replace, grep the result and read what method
+  each hit landed in — don't trust that "the string matched" means "the edit was right."**
+- **When cutting what looks like one contiguous block, verify nothing needed by a *survivor*
+  lives inside it.** Retiring the legacy create-VM modal required deleting the range from
+  `openCreateVMModal` to `createVM` — except `sanitizeVmName`/`validateVmName`/`previewVmName`
+  sit physically *between* those two functions and are still consumed (via `window.*`) by two
+  other legacy modules that were staying. The first attempt deleted them along with everything
+  else; the fix was two separate cuts with the helpers preserved in between, guarded by an
+  assertion that the cut range does *not* contain those three function definitions. The same
+  root cause bit the dashboard/VM-list retirement (`loadNodes` sits inside what looked like one
+  contiguous "dashboard stats" block, and is still used by the surviving Nodes page) and the
+  bandwidth-tier constants cut. **The general check: before deleting a range, grep the range
+  itself for anything with a caller outside it, not just for the thing you meant to delete.**
+- **Two backend files in this codebase have mixed line endings** (`VmService.cs`,
+  `NodeService.cs` — mostly LF with a handful of stray CRLF, or vice versa depending on which
+  editor last touched which region). A patch built assuming one ending uniformly will fail to
+  match with no useful error beyond "substring not found." Check both before assuming; a
+  `.gitattributes` with `* text=auto eol=lf` would remove this class of friction entirely and
+  is a cheap, not-yet-done fix.
+- **A CSS media/network capture is worth more than a plausible narrative.** Every wrong
+  hypothesis in the SIWE/reconnect/marketplace debugging below (§6.11) was corrected by an
+  actual Network-tab or console capture, never by reasoning further about what the code
+  *should* do. When a fix doesn't work, the next step is always "what does the wire actually
+  show," not "what else could be wrong" reasoned from the armchair.
 
 ### 6.8 Config is a failure surface, and it fails silently
 
@@ -273,7 +393,114 @@ merely documenting the rule — see `install.env.example`.
 Nearly every backend gap found during Phase 3 had existed for a long time. One client that
 happened to walk the right paths was hiding all of them. Expect the migration to keep
 surfacing latent bugs, and budget for fixing them — that is the migration doing useful work,
-not scope creep.
+not scope creep. §6.10 and §6.11 below are two more, larger examples of the same thing found
+later in Phase 3 — a marketplace endpoint timing out about 20% of the time, and a login modal
+appearing on a valid session — both pre-existing, both invisible until the new app's traffic
+pattern (or its author's habit of clicking around and reading the Network tab) exposed them.
+
+### 6.10 A caught exception can make a real failure indistinguishable from empty data
+
+`GET /api/marketplace/templates` intermittently returned `200 {"success":true,"data":[]}` or a
+truncated JSON body. Root cause, once traced: the query returned **full domain objects**
+(`VmTemplate`, including `CloudInitTemplate` — a multi-KB YAML body per template that no
+listing renders), which pushed the response to ~1 MB; large enough that the Mongo driver's
+socket read timed out mid-stream against the remote cluster, non-deterministically (a
+consistent ~20s per attempt, so it failed roughly when the connection was slow that moment).
+
+That alone would have been a clear 500. It presented as a **silent empty list** because **two
+separate layers** — `DataStore.GetTemplatesAsync` and, one level up,
+`TemplateService.GetTemplatesAsync` — each independently caught the exception, logged it, and
+returned `new List<VmTemplate>()`. `MarketplaceController` already had correct behavior (throw
+→ 500 `INTERNAL_ERROR`); it simply never got the chance, because the exception never reached
+it. **Fixing only the lower layer would have produced a build error at the layer above and,
+if "fixed" by matching return types without also removing the catch-and-swallow, no observable
+change at all** — this is exactly what happened on the first pass; the second swallow was found
+only because the compiler refused to build until it was addressed.
+
+**The complete fix had three independent parts, and all three were needed:**
+1. **Stop shipping data nothing renders.** A new `VmTemplateSummary` DTO (14 fields the
+   marketplace grid actually reads, projected directly in the Mongo query so the excluded
+   fields never leave the database) replaced `VmTemplate` on the two public listing endpoints
+   only — mirroring the decision already made for VMs (`GET /api/vms` → `VmSummaryDto`, never
+   the raw domain object). Payload dropped from 986,589 bytes to ~12,400 — a ~79× reduction —
+   which alone made the timeout unreachable.
+2. **Stop swallowing exceptions into a same-shaped success response**, at both layers. `throw;`
+   instead of `return new List<...>()`, matching this codebase's own existing convention
+   elsewhere in `DataStore.cs`.
+3. **Do the filtering where the data lives.** `SearchTerm` and `Limit` were being applied
+   *after* fetching every published template into memory — so `?limit=10` still transferred
+   the whole collection before discarding the rest. Pushed into the Mongo query
+   (`Regex.Escape`d search, server-side `.Limit()`), independent of the DTO change but found
+   and fixed in the same pass.
+
+**A fourth, unrelated bug was found as a side effect of grounding the fix.** The seeder
+(`TenantVmTemplateSeeder`) checked whether a template slug already existed by scanning the
+**public marketplace listing** — which is filtered to `Published`+`Public` — so a `Draft` or
+`Private` template with the same slug was invisible to it, and re-running the seeder would have
+attempted to create a duplicate. Fixed by looking up the slug directly
+(`GetTemplateBySlugAsync`), which two other call sites in the same file already did — the
+seeder's template-creation path was the outlier, not the pattern.
+
+**Generalizable rule: `catch (Exception ex) { log; return <default>; }` is only safe when the
+default is genuinely indistinguishable-in-consequence from "nothing to return" — for a public
+listing endpoint, it almost never is, because the caller cannot tell "confirmed empty" from
+"the query never ran."** Prefer `throw;` (or a typed result the caller must branch on) unless
+there's a specific, stated reason the caller shouldn't see the failure.
+
+### 6.11 Auth/network config is a build-time constant that fails silently and looks like the wrong bug
+
+A user reported: navigating from `/app` to a legacy page and back always re-prompted for a
+wallet signature, and dismissing with **X** left the session intact while **Cancel** signed the
+user out. Three genuinely separate bugs were found in sequence, each ruled out only by an
+actual capture, not by reasoning about the code:
+
+1. **First hypothesis (wrong): refresh-token rotation between the two SIWE flows.** Disproven
+   by capturing the `dc_rt` cookie value before and after visiting the legacy page — identical.
+2. **Second hypothesis (wrong): a call-ordering race in the new session-restore code.**
+   Disproven by adding `console.log` instrumentation to the actual `getSession` hook and
+   observing it was never called with a bare, header-less request at all in the failing case —
+   the earlier fix (see below) had already landed and taken effect.
+3. **The real first bug, found by inspecting the actual outgoing request: `getSession` (the
+   hook AppKit calls to decide whether to prompt for a signature) built its fetch through a
+   local helper that set `Content-Type` and `credentials` but never an `Authorization` header** —
+   against an endpoint that requires a bearer token. It had **always** 401'd, on every full page
+   load, for the entire time this code existed; SPA navigation never reloads the bundle, so it
+   was invisible until something forced a real page load (the legacy round-trip did, reliably).
+   Fixed by having `getSession` answer from the app's own already-restored session state
+   instead of querying the server independently — removing a second, racing source of truth
+   rather than patching the first one to also succeed.
+4. **The second real bug, found only after the first fix still didn't resolve the symptom, by
+   logging the actual answer `getSession` was returning:** it was answering with the correct
+   address but the **wrong chain ID** — `137` (Polygon mainnet) instead of `80002` (Amoy, what
+   the platform actually runs on). `EXPECTED_CHAIN_ID` falls back to `137` when
+   `VITE_EXPECTED_CHAIN_ID` is unset, and that variable lived **only** in a gitignored
+   `.env.local` — so every server build had been silently mainnet-configured, and AppKit
+   correctly treated a session on the "wrong" chain as inapplicable. This almost certainly also
+   means the `WRONG_NETWORK` derived-status check had been comparing against the wrong chain in
+   production since Phase 1, invisibly, because nothing surfaced it until AppKit's own
+   session-applicability check used the same constant. Fixed with a committed `.env.production`.
+5. **The third real bug, found by one more round of console instrumentation after the chain fix
+   still didn't fully resolve it:** the session-answering callback read a `useRef` mirror of the
+   session state, but `dispatch()` only *schedules* a re-render — it doesn't update the ref,
+   which is written during render — so the ref was still `"anonymous"` at the exact moment the
+   callback ran, even though the restore had genuinely already succeeded. Fixed by having the
+   restore promise itself resolve **with** the recovered address, so the callback has a value to
+   fall back to that doesn't depend on a render having happened yet.
+
+**Every one of the three real bugs was invisible to `tsc` and to `vitest`** — they're about
+runtime configuration and timing, not types or pure logic. Every one was found by adding a
+`console.log` and reading the actual browser Network/Console output, not by re-reading the
+source more carefully. **The generalizable habit: when a fix "should" work and doesn't,
+instrument and capture before proposing a second fix** — three wrong-but-plausible hypotheses
+were floated across this incident before the pattern of "capture first" was applied
+consistently, and every capture disproved the previous guess outright rather than confirming it
+with caveats.
+
+**Structural lesson for anything build-time-configured going forward:** a client constant with
+a *plausible-looking wrong default* (`|| 137`) is worse than one that fails loudly, because it
+produces a working-looking app pointed at the wrong target rather than an error at build time.
+The durable fix — not yet done — is fetching the chain ID from the backend (which already
+knows it) rather than duplicating a deployment fact into a client build constant at all.
 
 ---
 
@@ -283,12 +510,31 @@ From DESIGN §8, restated as the finish line: a feature or shared-component chan
 
 ---
 
-## 8. Open items feeding the plan (from DESIGN §14)
-- **Surface undercount — RESOLVED (2026-07-21).** Six standalone entries found, not four. Decision: **`terminal.html` + `file-browser.html` → in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) with **pop-out preserved** (chromeless variant), tokened by session, xterm bundled+lazy (not CDN). No blocker (plain xterm/WS; no COOP/COEP). `sign.html`, `report.html`, `tos.html` stay standalone. Folded into DESIGN v0.8 (§2/§3/§4.1/§7/§10). Consequence: **two fewer standalone entries to serve** — the `/`-flip (serving Change 3) list shortens to sign/report/tos. WS auth (token-in-query on `/api/terminal-proxy` + `/api/sftp-proxy`) preserved; "never log token/password" is a parity item.
-- Regenerate + spot-check OpenAPI-derived types (do in Phase 0).
-- Balance-change emit — deferred; balance polls until then (does not block the spine).
-- Landing content/copy — product task, needed for Phase 4.
-- Launch locale set — product call, needed for Phase 4.
+## 8. Open items feeding the plan (from DESIGN §14 — kept in sync; DESIGN is authoritative on *why*, this list is what it means for sequencing)
+
+**Resolved, kept for history:**
+- **Surface undercount — RESOLVED (2026-07-21).** Six standalone entries found, not four. `terminal.html` + `file-browser.html` → in-app routes with pop-out preserved. `sign.html`/`report.html`/`tos.html` stay standalone. Folded into DESIGN v0.8.
+- **Real-time — RESOLVED, live (2026-07-23/24).** All four scoped events (status/metrics/services/access-info) broadcast correctly; user-scoped dashboard list works; reconnect re-syncs. See IMPLEMENTATION §6.2 and DESIGN §6.9.
+- **Tier pricing single-source — RESOLVED (2026-07-24).** `HourlyRateCalculator` reads `SchedulingConfig`; both deploy quote and actual bill share one formula. See DESIGN §12-Q4.
+- **Marketplace listing payload/reliability — RESOLVED (2026-07-24).** See IMPLEMENTATION §6.10.
+- **Auth/chain-ID modal bug — RESOLVED (2026-07-24).** See IMPLEMENTATION §6.11.
+
+**Still open, blocking nothing further but tracked:**
+- **Deploy Customize parity gaps** — replication factor, OS image, template Variables, description cards, scheduling constraints. Needed to call Phase 3 fully done (§0).
+- **Node-agent metrics push doesn't exist** — cockpit panel correctly hidden rather than shown empty; needs work on the NodeAgent side, a different codebase area than anything touched so far.
+- **VM-modal cross-module audit** — the create-VM-modal retirement (2026-07-24) orphaned the terminal/direct-access/custom-domains modal openers in the legacy app (no remaining caller in the markup), but they weren't deleted because their JS modules (`direct-access.js`, `custom-domains.js`) load independently and weren't audited for other callers. Low risk (orphaned code, not broken code) but not yet confirmed safe to delete.
+- **Three enums serialize numeric despite the global string converter** (`VmStatus`/`VmPowerState`/`VmAction`) — client-tolerant now (`vmStatus.ts`); real fix has a blast radius into the legacy NodeAgent dashboard's integer-keyed lookup table, not yet scoped.
+- **`MinimumSpec`/`RecommendedSpec` can't express "unconstrained"** (non-nullable `VmSpec`); at least one existing template ("Neko") recommends a tier below its own floor as a consequence.
+- **Chain ID is a client build constant with a silently-wrong-looking-right fallback** — should be served by the backend instead. See IMPLEMENTATION §6.11.
+- **Two independent SIWE/connect configs run simultaneously** (old app at `/`, new app at `/app`) until the `/`-flip. Not itself broken (all three real bugs found this way turned out to be self-contained), but worth checking first in any future auth-adjacent bug that reproduces after a legacy round-trip.
+- **`eslint-plugin-react-hooks` config exists, not yet run or wired into the build.** Would have caught the React #310 hooks-ordering crash statically.
+- **Error boundary shipped** (`RouteError.tsx` on the `/app` root route) — a `React Router` `errorElement`; catches render-time throws and unmatched routes with a styled page instead of the router's raw developer fallback. **Not yet wired to any error-reporting service** — deliberately, since none exists; a `console.error` is the current ceiling.
+- **`install.sh --env-file` now rejects side-effect variables** rather than only documenting the rule (`install.env.example`) — closed as a mechanism, but worth re-reading if the installer script itself changes shape.
+- **Mixed line endings** in `VmService.cs`/`NodeService.cs` — a `.gitattributes` normalizing to LF would remove a recurring patch-matching annoyance. Not started.
+- Regenerate + spot-check OpenAPI-derived types (do in Phase 0 — **still not done**; do at the start of any renewed Phase 5 push, since the schema has drifted a fair amount since it was last checked).
+- Balance-change emit — deferred; balance/burn/runway all poll correctly (does not block anything).
+- Landing content/copy — product task, needed for Phase 4 (not started).
+- Launch locale set — product call, needed for Phase 4 (not started).
 - App namespace hosting (`/app/*` same-origin vs future `app.` subdomain) — route tree unaffected; decide before Phase 6 if a subdomain is wanted.
 
 ---
@@ -297,6 +543,18 @@ From DESIGN §8, restated as the finish line: a feature or shared-component chan
 
 > Entry template:
 > **`YYYY-MM-DD` · Phase N · <author>** — what changed / decided / learned; any status-dashboard update; any new blocker.
+
+**`2026-07-24` · Phase 3 · Owner** — **Error boundary + ESLint hooks-only config added; this pair of documents + `AGENT_HANDOUT.md` written to bring a fresh agent to full context.** A React Router `errorElement` (`src/app/RouteError.tsx`) now sits on the `/app` root route — catches any child route's thrown error and unmatched-URL 404s with a Meridian-styled page instead of the router's raw developer fallback (the exact page a user saw during the hooks-crash incident, §6.6). Distinguishes "page not found" (stale link) from "something broke" (shows the error message — this is an operator tool, and a message the user can paste into a report is more useful than a generic apology; stack traces stay in the console, no reporting-service hook exists yet). `eslint-plugin-react-hooks` config written (`eslint.config.js`, flat config, ESLint 9) — **scoped deliberately to hooks rules only** (`rules-of-hooks: error`, `exhaustive-deps: warn`), not the full recommended set, because a mature codebase run through a fresh general lint config produces a report nobody reads. **Not yet installed/run against the codebase or wired into `npm run build`** — that's the natural next step, and doing so before the next `DeployPage`-shaped crash is the whole point of having written it.
+
+**`2026-07-24` · Phase 3 · Owner** — **Three separate bugs found and fixed under one user-visible symptom: a spurious wallet-signature modal on every full page load of `/app`.** All three were invisible to `tsc`/`vitest`; all three were found by adding `console.log` instrumentation and reading the actual browser output, after two earlier hypotheses (refresh-token rotation; a call-ordering race) were each disproven by a capture. Full account in §6.11. Summary: (1) `getSession` never actually authenticated — it fetched `/api/auth/session` without an `Authorization` header and always got a 401, for the entire time that code has existed; fixed by having it answer from the app's own restored session state instead of querying the server. (2) The production build's `EXPECTED_CHAIN_ID` silently defaulted to `137` (Polygon **mainnet**) instead of `80002` (Amoy, what the platform runs on) — `VITE_EXPECTED_CHAIN_ID` lived only in a gitignored `.env.local`; fixed with a committed `.env.production`. This almost certainly means `WRONG_NETWORK` derivation has been comparing against the wrong chain in production since Phase 1 — it just never surfaced visibly until AppKit used the same constant to decide session applicability. (3) The session-answering callback read a `useRef` mirror that was still stale at read time because `dispatch()` only schedules a render — fixed by having the restore promise resolve *with* the recovered address rather than depending on a render having landed. **Open follow-up:** the chain ID should be served by the backend, not duplicated into a client build constant with a plausible-wrong fallback.
+
+**`2026-07-24` · Phase 3 · Owner** — **Two legacy retirements executed, ~1,013 lines removed total; nav-of-record handoff (the fiddly moment the plan flagged back in Phase 3's design) has actually happened.** (1) **Legacy dashboard + VM-list pages retired** (~490 lines: `index.html` nav items + page divs; `app.js`'s `loadDashboardStats`/`loadVirtualMachines`/`renderVMsTable`/`attachVmsTableDelegation`/`renderDashboardVMs` and their `window.*` exports — `refreshData` kept but hollowed to `loadUserBalance()` only, since 7+ other call sites and a `window.refreshData` export still need it; `loadNodes()` deliberately preserved, since it sits inside what looked like one contiguous block but is still used by the surviving Nodes page — see §6.7). (2) **Legacy create-VM modal retired** (~523 lines: the modal markup, `openCreateVMModal`/`createVM`/`updateTierInfo`/`updateBandwidthInfo`/`updateReplicationInfo`/`onGpuModeChange`/`updateEstimatedCost`, and — the actual point of doing this now — the **third stale copy** of the tier/bandwidth pricing tables, `QUALITY_TIERS`/`BANDWIDTH_TIERS`/`REPLICATION_TIERS`, which had numbers that didn't even match reality: `pointsPerVCpu: 8/4/2/1` against the backend's actual `16/6.25/2.22/1`. First attempt at this cut deleted `sanitizeVmName`/`validateVmName`/`previewVmName` along with everything else, because they sit physically between the two functions being deleted and are still consumed by other legacy modules — caught and fixed with two separate cuts and an assertion guard, see §6.7. **Hazard flagged for whoever does the next retirement:** five module-scope `document.getElementById('vm-cpu').addEventListener(...)`-style lines (no optional chaining) had to be deleted in the *same* commit as the modal markup, or the whole legacy bundle throws at load and every remaining page — Nodes, Marketplace, Settings, Admin — dies together, not just the retired one.) **Nav-of-record handoff:** `showDashboard()` (the one function both session-restore and fresh sign-in call) now redirects a signed-in `/` visitor to `/app` via `location.replace` (not `assign`, so Back doesn't loop), guarded on the absence of `?page=` so the sidebar's legacy deep-links still work. The new shell's sidebar gained the un-migrated pages (Nodes/Marketplace/My Templates/Settings) as plain `<a href="/?page=x">` — deliberately plain anchors, not `NavLink`, since they leave the SPA — plus an admin section gated on the already-existing, already-tested `canAccessAdmin` guard. Full mechanism and its "two connect flows exist until the `/`-flip" cost documented in `BACKEND_SERVING_SPEC.md` §2.1 (new). `VmsPage` also wired to `useUserRealtime` so the VM list page gets live updates on its own, not only when the dashboard happens to be mounted alongside it — this was the direct fix for a confusing moment where "prove SubscribeToUser" looked like it had failed because the test was run from the wrong page.
+
+**`2026-07-24` · Phase 3 · Owner** — **Marketplace listing payload/reliability fixed — a pre-existing bug unrelated to anything in this migration, found while verifying the retirements above didn't break Marketplace/My Templates/Settings.** `GET /api/marketplace/templates` intermittently returned `200 {"success":true,"data":[]}` or a truncated body. Full root-cause chain and the fix in §6.10 (four independent parts: a new `VmTemplateSummary` DTO — the listing endpoints were shipping the full `CloudInitTemplate` YAML body, ~1 MB total, pushing the driver past a socket timeout; **two separate layers swallowing the resulting exception into an empty success response** rather than letting it become the 500 the controller already knew how to produce; search/limit moved from in-memory to the Mongo query; and a latent seeder bug found as a side effect — it checked for an existing template slug via the *public* catalogue query, which is filtered to `Published`+`Public`, so a `Draft`/`Private` template with the same slug was invisible to it).
+
+**`2026-07-24` · Phase 3 · Owner** — **Tier price multiplier single-sourced; a stuck billing flag self-heals.** Two backend correctness bugs, both with real money consequences, both found by deliberately going looking ("let's handle the bugs first") rather than by a user report. **(1)** `HourlyRateCalculator` (what actually bills) and `SchedulingConfig` (what the node capability model advertises) had disagreed on quality-tier multipliers — `2.5/1.0/0.6/0.4` vs `1.8/1.0/0.7/0.5` — since at least the stored config's creation. An earlier claim in this project that "the legacy UI's tier numbers are stale" was **wrong and corrected in the open**: the legacy UI matches billing exactly; the real disagreement was entirely inside the backend. Fixed by making `HourlyRateCalculator.Calculate` take `SchedulingConfig` as a **required** parameter (not optional-with-a-fallback, which would have silently recreated the same class of bug) and read the multiplier from there; `SchedulingConfigService` gained a version-gated migration (config v1→v2) so the live, already-persisted document converges on load without a manual DB edit. Aligned to the **billed** values deliberately — no bill changes, the advertisement corrects itself; adopting the other set would have repriced the top tier by −28% retroactively. `VmService` and the public `SystemController.CalculatePrice` estimator (what the deploy page's live pricing calls) both now thread the same config through. **(2)** A VM's billing could get stuck `IsPaused=true` (set on insufficient balance) and never resume even after the owner topped up — the resume path only fired on an explicit `BalanceAdded` event that apparently doesn't reliably arrive, and the `VmStop` fall-through bills final usage but leaves the flag set. Fixed with a self-heal: on every billing cycle, if the pause reason is specifically insufficient-balance, probe whether the owner now has funds and clear the flag if so, rather than waiting on an event. **Neither bug had a symptom before the dashboard existed** — `IsPaused` had no reader anywhere in the app until the dashboard's burn-rate calculation excluded paused VMs from the sum, at which point a stale flag started silently understating runway by ~5×.
+
+**`2026-07-24` · Phase 3 · Owner** — **Dashboard shipped (balance/burn-rate/runway, live workload list, promoted Deploy) — and building it found the single biggest latent bug in the project: every VM lifecycle button on the cockpit had been broken since it shipped.** `features/billing/useBalance.ts` (moved out of `features/deploy` once both the fund gate and the dashboard needed it — belongs to neither page specifically), `realtime/useUserRealtime.ts` (first-ever caller of `SubscribeToUser`, which the hub has exposed since it was written with zero publishers until the backend work below), `features/dashboard/DashboardPage.tsx`. Backend: `BalanceResponse.HourlyBurnRate` (sum of `HourlyRateCrypto` across the user's Running, non-paused VMs — computed server-side because `VmSummaryDto` carries no billing info, and a client-side re-derivation would produce a *different* number than what's actually billed); `VmNotificationService.BroadcastStatusAsync` now publishes to **both** `vm:{id}` and `user:{ownerId}` in one call, giving `SubscribeToUser` its first publisher. **While proving the dashboard's live list actually worked, a manual `curl` of the stop-action endpoint (done specifically to trigger a status change without touching the UI) came back `400: "The JSON value could not be converted to VmActionRequest"`.** `VmAction` — the third enum in this API found to lack the per-enum string converter (§6.3) — serializes as a numeric ordinal, and `useVmAction` had been posting `{"action":"Stop"}` as a string since the cockpit was built. **No lifecycle button on the cockpit had ever actually worked**, because every prior "confirmed live" transition in this project had been triggered from the legacy UI, never by clicking the new cockpit's own Stop/Start/Restart/Pause/Resume/ForceStop buttons. Fixed with `vmActionOrdinal` alongside the other two normalizers in `vmStatus.ts`; suite gained 7 tests (110 total) including one asserting every action `allowedActions` can offer has an ordinal mapping. **Separately, the fourth instance of "the mechanism exists, nothing calls it" was found and fixed the same session**, this time for `VmAccessInfoUpdated`: the cockpit's Access card (SSH host, the ready-to-copy `ssh` command) never updated after a VM got its IP, because the only code that ever broadcasts that event is a hub method a *node* would call, and no node ever calls it — the heartbeat path that actually populates `AccessInfo` updated the database and told nobody. Fixed with a new `ApplyReportedAccess` helper (extracted because the same field-setting logic existed verbatim at two heartbeat call sites) returning a change flag, and `BroadcastAccessInfoAsync` (VM-scoped, sends an owner-facing projection — `VmAccessInfo` also carries `VncPassword`, deliberately never sent to the browser). **Testing that fix surfaced one more real gap**: a SignalR reconnection was observed mid-test (a fresh WS connection ID appeared in the Network panel), and because every broadcast in this system is change-gated, a transition that happens entirely inside a disconnect window is lost, not delayed — nothing on the server has anything left to resend. Fixed in `HubProvider`'s `onreconnected` handler, which now invalidates the relevant Query cache keys to force a REST re-sync rather than trusting the socket caught everything. Full account of the four-broadcast pattern in §6.2.
 
 **`2026-07-23` · Phase 3 · Owner** — **Spine largely live: cockpit + real-time + deploy. Four backend gaps found and fixed; lessons folded into §6.** Suite 72→103.
 
