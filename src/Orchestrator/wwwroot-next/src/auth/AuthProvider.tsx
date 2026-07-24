@@ -47,6 +47,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [session, dispatch] = useReducer(sessionReducer, { kind: "anonymous" } as SessionState);
     const [wallet, setWallet] = useState<WalletState>({ kind: "disconnected" });
     const adapterRef = useRef<WalletAdapter | null>(null);
+    // Restore-on-mount, so SIWE's getSession can await it instead of reporting
+    // "no session" during the window before the refresh lands.
+    const restoreRef = useRef<Promise<unknown> | null>(null);
+    // Mirror of `session` for callbacks built once and never rebuilt — the SIWE
+    // config closes over its first render's values, so reading `session` directly
+    // there would pin it to "anonymous" forever.
+    const sessionRef = useRef<SessionState>(session);
+    sessionRef.current = session;
 
     // Hits the refresh endpoint (httpOnly `dc_rt` cookie rides via credentials).
     // Returns full session material on success (restore needs the user), false when
@@ -112,6 +120,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     tokenStore.set(accessToken);
                     dispatch({ type: "AUTH_SUCCESS", token: accessToken, address: u.walletAddress, user: u });
                 },
+                // AppKit asks whether a session exists; answer from ours rather than
+                // letting it query the server independently and race the restore.
+                getCurrentSession: async () => {
+                    await restoreRef.current;
+                    const s = sessionRef.current;
+                    if (s.kind !== "authenticated" && s.kind !== "uncertain") return null;
+                    const w = adapterRef.current?.getState();
+                    return {
+                        address: s.address,
+                        chainId: w && w.kind === "connected" ? w.chainId : EXPECTED_CHAIN_ID,
+                    };
+                },
                 onSignOut: () => {
                     tokenStore.clear();
                     dispatch({ type: "SIGN_OUT" });
@@ -125,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // user was signed in, ESTABLISH the session from the refresh cookie
             // (AUTH_SUCCESS with the user) — NOT performRefresh, which no-ops from `anonymous`.
             if (tokenStore.get()) {
-                callRefresh().then((r) => {
+                restoreRef.current = callRefresh().then((r) => {
                     if (r) {
                         tokenStore.set(r.token);
                         dispatch({ type: "AUTH_SUCCESS", token: r.token, address: r.user.walletAddress, user: r.user });
