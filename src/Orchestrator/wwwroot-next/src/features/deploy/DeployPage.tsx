@@ -4,10 +4,11 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
   useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
-  CUSTOMIZE_HINTS, resolveImageId,
+  CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary,
   usePriceEstimate, useDebounced,
 } from "./useDeploy";
-import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
+import { ConstraintBuilder } from "./ConstraintBuilder";
+import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
 import type { AppError } from "../../api/errors";
 
 // Phase 3 · deploy sub-step 2 — the ONE-CLICK deploy page.
@@ -88,6 +89,7 @@ export function DeployPage() {
   const { data: balance } = useBalance(api);
   const deploy = useDeploy(api);
   const images = useImages(api);
+  const vocab = useConstraintVocabulary(api);
 
   const [vmName, setVmName] = useState("");
   const [customize, setCustomize] = useState(false);
@@ -100,6 +102,7 @@ export function DeployPage() {
   const [gpuMode, setGpuMode] = useState<number | null>(null);
   const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
   const [osImage, setOsImage] = useState<string>("");   // "" = platform default (server fills)
+  const [userConstraints, setUserConstraints] = useState<Constraint[]>([]);
   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
   // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
@@ -128,6 +131,11 @@ export function DeployPage() {
   const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
   // Pinned template image wins over the user's pick; "" → omit (server default).
   const effImageId = resolveImageId(rec?.imageId, osImage);
+  // Template-imposed constraints (read-only) travel with RecommendedSpec; the
+  // user's own are appended. Both must be forwarded in customSpec (customising
+  // otherwise drops the template's, same rule as bandwidth/GPU/image).
+  const lockedConstraints = rec?.constraints ?? [];
+  const allConstraints = [...lockedConstraints, ...userConstraints];
 
   const customSpec: TemplateSpec = {
     virtualCpuCores: effCpu,
@@ -140,6 +148,7 @@ export function DeployPage() {
     bandwidthTier: effBwTier,
     gpuMode: effGpuMode,
     ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
+    ...(allConstraints.length ? { constraints: allConstraints } : {}),
   };
 
   // Price the spec that would actually be deployed — the recommended one when
@@ -155,6 +164,7 @@ export function DeployPage() {
     setCpu(null); setMemGb(null); setDiskGb(null);
     setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
     setOsImage("");
+    setUserConstraints([]);
   }
 
   /**
@@ -395,6 +405,13 @@ export function DeployPage() {
                     )}
                   </>
                 )}
+
+                <ConstraintBuilder
+                  vocab={vocab.data}
+                  locked={lockedConstraints}
+                  value={userConstraints}
+                  onChange={setUserConstraints}
+                />
 
                 {template.minimumSpec && (
                   <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>

@@ -1,0 +1,58 @@
+--- a/src/Orchestrator/Interfaces/VmScheduling/IConstraintEvaluator.cs
++++ b/src/Orchestrator/Interfaces/VmScheduling/IConstraintEvaluator.cs
+@@ -64,4 +64,12 @@
+     /// makes it automatically available here — no frontend deploy required.
+     /// </summary>
+     IReadOnlyDictionary<string, string> TargetTypes { get; }
++
++    /// <summary>
++    /// Mapping from operator name to the value-type strings it accepts
++    /// ("String", "Numeric", "Boolean", "StringList"). Lets the constraint
++    /// builder offer only operators compatible with the selected target's type,
++    /// matching server-side validation — no client-side mirror of the rules.
++    /// </summary>
++    IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes { get; }
+ }
+--- a/src/Orchestrator/Services/VmScheduling/ConstraintEvaluator.cs
++++ b/src/Orchestrator/Services/VmScheduling/ConstraintEvaluator.cs
+@@ -38,6 +38,18 @@
+             kv => kv.Value.ValueType.ToString(),
+             StringComparer.Ordinal);
+ 
++    // Operator → the value types it accepts, derived from each operator's own
++    // AcceptsTargetType predicate (the same one Validate uses), so the exposed
++    // compatibility can never drift from what the server actually enforces.
++    public IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes =>
++        _operators.ToDictionary(
++            kv => kv.Key,
++            kv => (IReadOnlyList<string>)Enum.GetValues<ConstraintValueType>()
++                .Where(vt => kv.Value.AcceptsTargetType(vt))
++                .Select(vt => vt.ToString())
++                .ToList(),
++            StringComparer.Ordinal);
++
+     // ─── Evaluation hot path ──────────────────────────────────────────
+ 
+     public ConstraintEvaluation Evaluate(Constraint constraint, Node node)
+--- a/src/Orchestrator/Controllers/VmsController.cs
++++ b/src/Orchestrator/Controllers/VmsController.cs
+@@ -405,7 +405,8 @@
+         var vocabulary = new ConstraintVocabulary(
+             _constraintEvaluator.KnownTargets.Order().ToList(),
+             _constraintEvaluator.TargetTypes,
+-            _constraintEvaluator.KnownOperators.Order().ToList());
++            _constraintEvaluator.KnownOperators.Order().ToList(),
++            _constraintEvaluator.OperatorTargetTypes);
+         return Ok(ApiResponse<ConstraintVocabulary>.Ok(vocabulary));
+     }
+ 
+@@ -413,7 +414,8 @@
+     public sealed record ConstraintVocabulary(
+         IReadOnlyList<string> Targets,
+         IReadOnlyDictionary<string, string> TargetTypes,
+-        IReadOnlyList<string> Operators);
++        IReadOnlyList<string> Operators,
++        IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes);
+ 
+     /// <summary>
+     /// Get VM metrics

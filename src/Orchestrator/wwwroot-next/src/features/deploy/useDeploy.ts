@@ -5,8 +5,9 @@ import type { Api } from "../../api/client";
 // consumer, so they live in features/billing rather than being owned by deploy.
 export { useBalance, runwayDays } from "../billing/useBalance";
 import {
-  resolveTemplate, submitTemplateDeploy, fetchImages,
+  resolveTemplate, submitTemplateDeploy, fetchImages, fetchConstraintVocabulary,
   type VmTemplate, type DeployPayload, type DeployResult,
+  type Constraint, type ConstraintVocabulary,
 } from "./deploySubmit";
 
 export function useTemplate(api: Api, slugOrId: string) {
@@ -24,6 +25,16 @@ export function useImages(api: Api) {
     queryKey: ["system-images"],
     queryFn: () => fetchImages(api),
     staleTime: 5 * 60_000,
+  });
+}
+
+/** Scheduling-constraint vocabulary (targets, types, operators, and per-operator
+ *  accepted types). Static within a session — cache it hard. */
+export function useConstraintVocabulary(api: Api) {
+  return useQuery({
+    queryKey: ["constraint-vocabulary"],
+    queryFn: () => fetchConstraintVocabulary(api),
+    staleTime: 30 * 60_000,
   });
 }
 
@@ -127,6 +138,39 @@ export type CustomizeField = keyof typeof CUSTOMIZE_HINTS;
  */
 export function resolveImageId(pinned?: string, chosen?: string): string | undefined {
   return pinned || chosen || undefined;
+}
+
+// ── Constraint-builder helpers (data-driven from the vocabulary) ────────────
+
+/** Operators valid for a target — filtered by the target's value type using the
+ *  server-provided operatorTargetTypes, so the offered set matches validation
+ *  exactly and never mirrors the compatibility rules client-side. */
+export function operatorsForTarget(vocab: ConstraintVocabulary | undefined, target: string): string[] {
+  if (!vocab || !target) return [];
+  const type = vocab.targetTypes[target];
+  if (!type) return [];
+  return vocab.operators.filter((op) => (vocab.operatorTargetTypes[op] ?? []).includes(type));
+}
+
+// The one operator semantic the vocabulary does NOT carry: value arity. These
+// operators take a LIST value; the rest take a scalar. Stable, standard set —
+// and only chooses the input widget; the server validates the actual value, so
+// a wrong guess surfaces as a validation error, never silent corruption.
+const LIST_OPERATORS = new Set(["in", "not_in", "contains_all", "contains_any", "contains_none"]);
+export function valueIsList(operator: string): boolean {
+  return LIST_OPERATORS.has(operator);
+}
+
+/** Scalar input kind for a target's value type. */
+export function scalarKindForType(targetType?: string): "number" | "boolean" | "text" {
+  if (targetType === "Numeric") return "number";
+  if (targetType === "Boolean") return "boolean";
+  return "text";
+}
+
+/** Category segment for grouping targets in the picker: node.<group>.… */
+export function constraintTargetGroup(target: string): string {
+  return target.split(".")[1] ?? "other";
 }
 
 /**

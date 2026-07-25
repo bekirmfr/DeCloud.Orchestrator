@@ -17,6 +17,25 @@ export interface TemplateSpec {
   qualityTier?: number;
   bandwidthTier?: number;
   replicationFactor?: number;
+  constraints?: Constraint[];
+}
+
+/** A scheduling constraint: hard AND-filter over candidate nodes. Value type
+ *  depends on (target type, operator) — scalar or list; the server validates. */
+export interface Constraint {
+  target: string;
+  operator: string;
+  value: unknown;
+}
+
+/** GET /api/vms/constraint-vocabulary — drives the builder so targets/operators
+ *  are never hardcoded client-side. operatorTargetTypes maps each operator to
+ *  the value-type names it accepts, matching server validation exactly. */
+export interface ConstraintVocabulary {
+  targets: string[];
+  targetTypes: Record<string, string>;              // target → "String" | "Numeric" | "Boolean" | "StringList"
+  operators: string[];
+  operatorTargetTypes: Record<string, string[]>;    // operator → accepted type names
 }
 
 export interface VmTemplate {
@@ -86,6 +105,11 @@ export async function resolveTemplate(api: Api, slugOrId: string): Promise<VmTem
  *  ordered by OsFamily then Name and filtered to IsPublic on the server. */
 export async function fetchImages(api: Api): Promise<VmImage[]> {
   return api<VmImage[]>("/api/system/images");
+}
+
+/** Scheduling-constraint vocabulary. GET /api/vms/constraint-vocabulary. */
+export async function fetchConstraintVocabulary(api: Api): Promise<ConstraintVocabulary> {
+  return api<ConstraintVocabulary>("/api/vms/constraint-vocabulary");
 }
 
 /**

@@ -405,7 +405,8 @@ public class VmsController : ControllerBase
         var vocabulary = new ConstraintVocabulary(
             _constraintEvaluator.KnownTargets.Order().ToList(),
             _constraintEvaluator.TargetTypes,
-            _constraintEvaluator.KnownOperators.Order().ToList());
+            _constraintEvaluator.KnownOperators.Order().ToList(),
+            _constraintEvaluator.OperatorTargetTypes);
         return Ok(ApiResponse<ConstraintVocabulary>.Ok(vocabulary));
     }
 
@@ -413,7 +414,8 @@ public class VmsController : ControllerBase
     public sealed record ConstraintVocabulary(
         IReadOnlyList<string> Targets,
         IReadOnlyDictionary<string, string> TargetTypes,
-        IReadOnlyList<string> Operators);
+        IReadOnlyList<string> Operators,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes);
 
     /// <summary>
     /// Get VM metrics

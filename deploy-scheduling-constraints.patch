@@ -1,0 +1,419 @@
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/deploySubmit.ts
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/deploySubmit.ts
+@@ -17,6 +17,25 @@
+   qualityTier?: number;
+   bandwidthTier?: number;
+   replicationFactor?: number;
++  constraints?: Constraint[];
++}
++
++/** A scheduling constraint: hard AND-filter over candidate nodes. Value type
++ *  depends on (target type, operator) — scalar or list; the server validates. */
++export interface Constraint {
++  target: string;
++  operator: string;
++  value: unknown;
++}
++
++/** GET /api/vms/constraint-vocabulary — drives the builder so targets/operators
++ *  are never hardcoded client-side. operatorTargetTypes maps each operator to
++ *  the value-type names it accepts, matching server validation exactly. */
++export interface ConstraintVocabulary {
++  targets: string[];
++  targetTypes: Record<string, string>;              // target → "String" | "Numeric" | "Boolean" | "StringList"
++  operators: string[];
++  operatorTargetTypes: Record<string, string[]>;    // operator → accepted type names
+ }
+ 
+ export interface VmTemplate {
+@@ -88,6 +107,11 @@
+   return api<VmImage[]>("/api/system/images");
+ }
+ 
++/** Scheduling-constraint vocabulary. GET /api/vms/constraint-vocabulary. */
++export async function fetchConstraintVocabulary(api: Api): Promise<ConstraintVocabulary> {
++  return api<ConstraintVocabulary>("/api/vms/constraint-vocabulary");
++}
++
+ /**
+  * Submit a template deploy. POST /api/marketplace/templates/{id}/deploy.
+  * ToS-retry-once: if the deploy is blocked and the (bridged) ToS gate resolves
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/useDeploy.ts
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/useDeploy.ts
+@@ -5,8 +5,9 @@
+ // consumer, so they live in features/billing rather than being owned by deploy.
+ export { useBalance, runwayDays } from "../billing/useBalance";
+ import {
+-  resolveTemplate, submitTemplateDeploy, fetchImages,
++  resolveTemplate, submitTemplateDeploy, fetchImages, fetchConstraintVocabulary,
+   type VmTemplate, type DeployPayload, type DeployResult,
++  type Constraint, type ConstraintVocabulary,
+ } from "./deploySubmit";
+ 
+ export function useTemplate(api: Api, slugOrId: string) {
+@@ -27,6 +28,16 @@
+   });
+ }
+ 
++/** Scheduling-constraint vocabulary (targets, types, operators, and per-operator
++ *  accepted types). Static within a session — cache it hard. */
++export function useConstraintVocabulary(api: Api) {
++  return useQuery({
++    queryKey: ["constraint-vocabulary"],
++    queryFn: () => fetchConstraintVocabulary(api),
++    staleTime: 30 * 60_000,
++  });
++}
++
+ export function useDeploy(api: Api) {
+   return useMutation<DeployResult, Error, { templateId: string; payload: DeployPayload }>({
+     mutationFn: ({ templateId, payload }) => submitTemplateDeploy(api, templateId, payload),
+@@ -129,6 +140,39 @@
+   return pinned || chosen || undefined;
+ }
+ 
++// ── Constraint-builder helpers (data-driven from the vocabulary) ────────────
++
++/** Operators valid for a target — filtered by the target's value type using the
++ *  server-provided operatorTargetTypes, so the offered set matches validation
++ *  exactly and never mirrors the compatibility rules client-side. */
++export function operatorsForTarget(vocab: ConstraintVocabulary | undefined, target: string): string[] {
++  if (!vocab || !target) return [];
++  const type = vocab.targetTypes[target];
++  if (!type) return [];
++  return vocab.operators.filter((op) => (vocab.operatorTargetTypes[op] ?? []).includes(type));
++}
++
++// The one operator semantic the vocabulary does NOT carry: value arity. These
++// operators take a LIST value; the rest take a scalar. Stable, standard set —
++// and only chooses the input widget; the server validates the actual value, so
++// a wrong guess surfaces as a validation error, never silent corruption.
++const LIST_OPERATORS = new Set(["in", "not_in", "contains_all", "contains_any", "contains_none"]);
++export function valueIsList(operator: string): boolean {
++  return LIST_OPERATORS.has(operator);
++}
++
++/** Scalar input kind for a target's value type. */
++export function scalarKindForType(targetType?: string): "number" | "boolean" | "text" {
++  if (targetType === "Numeric") return "number";
++  if (targetType === "Boolean") return "boolean";
++  return "text";
++}
++
++/** Category segment for grouping targets in the picker: node.<group>.… */
++export function constraintTargetGroup(target: string): string {
++  return target.split(".")[1] ?? "other";
++}
++
+ /**
+  * Quality tiers at least as good as the template's floor. Because higher quality
+  * is a LOWER value, that is `tier <= floor` — mirroring MeetsFloor in C#.
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx
+@@ -4,10 +4,11 @@
+ import {
+   useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
+   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
+-  CUSTOMIZE_HINTS, resolveImageId,
++  CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary,
+   usePriceEstimate, useDebounced,
+ } from "./useDeploy";
+-import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
++import { ConstraintBuilder } from "./ConstraintBuilder";
++import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
+ import type { AppError } from "../../api/errors";
+ 
+ // Phase 3 · deploy sub-step 2 — the ONE-CLICK deploy page.
+@@ -88,6 +89,7 @@
+   const { data: balance } = useBalance(api);
+   const deploy = useDeploy(api);
+   const images = useImages(api);
++  const vocab = useConstraintVocabulary(api);
+ 
+   const [vmName, setVmName] = useState("");
+   const [customize, setCustomize] = useState(false);
+@@ -100,6 +102,7 @@
+   const [gpuMode, setGpuMode] = useState<number | null>(null);
+   const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
+   const [osImage, setOsImage] = useState<string>("");   // "" = platform default (server fills)
++  const [userConstraints, setUserConstraints] = useState<Constraint[]>([]);
+   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
+ 
+   // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
+@@ -128,6 +131,11 @@
+   const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
+   // Pinned template image wins over the user's pick; "" → omit (server default).
+   const effImageId = resolveImageId(rec?.imageId, osImage);
++  // Template-imposed constraints (read-only) travel with RecommendedSpec; the
++  // user's own are appended. Both must be forwarded in customSpec (customising
++  // otherwise drops the template's, same rule as bandwidth/GPU/image).
++  const lockedConstraints = rec?.constraints ?? [];
++  const allConstraints = [...lockedConstraints, ...userConstraints];
+ 
+   const customSpec: TemplateSpec = {
+     virtualCpuCores: effCpu,
+@@ -140,6 +148,7 @@
+     bandwidthTier: effBwTier,
+     gpuMode: effGpuMode,
+     ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
++    ...(allConstraints.length ? { constraints: allConstraints } : {}),
+   };
+ 
+   // Price the spec that would actually be deployed — the recommended one when
+@@ -155,6 +164,7 @@
+     setCpu(null); setMemGb(null); setDiskGb(null);
+     setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
+     setOsImage("");
++    setUserConstraints([]);
+   }
+ 
+   /**
+@@ -396,6 +406,13 @@
+                   </>
+                 )}
+ 
++                <ConstraintBuilder
++                  vocab={vocab.data}
++                  locked={lockedConstraints}
++                  value={userConstraints}
++                  onChange={setUserConstraints}
++                />
++
+                 {template.minimumSpec && (
+                   <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                     Minimum for this template: {template.minimumSpec.virtualCpuCores ?? 1} vCPU ·{" "}
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/__tests__/deploy.test.ts
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/__tests__/deploy.test.ts
+@@ -1,6 +1,70 @@
+ import { describe, it, expect } from "vitest";
+ import { shouldRevealPassword } from "../deploySubmit";
+-import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId } from "../useDeploy";
++import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId, operatorsForTarget, valueIsList, scalarKindForType, constraintTargetGroup } from "../useDeploy";
++import { valueToText, textToValue, defaultValueFor } from "../ConstraintBuilder";
++import type { ConstraintVocabulary } from "../deploySubmit";
++
++const VOCAB: ConstraintVocabulary = {
++  targets: ["node.locality.country", "node.cpu.cores", "node.gpu.present", "node.tags"],
++  targetTypes: {
++    "node.locality.country": "String",
++    "node.cpu.cores": "Numeric",
++    "node.gpu.present": "Boolean",
++    "node.tags": "StringList",
++  },
++  operators: ["eq", "neq", "in", "not_in", "contains", "contains_all"],
++  operatorTargetTypes: {
++    eq: ["String", "Numeric", "Boolean"],
++    neq: ["String", "Numeric", "Boolean"],
++    in: ["String", "Numeric"],
++    not_in: ["String", "Numeric"],
++    contains: ["StringList"],
++    contains_all: ["StringList"],
++  },
++};
++
++describe("constraint builder helpers — data-driven from the vocabulary", () => {
++  it("operatorsForTarget filters operators by the target's value type", () => {
++    expect(operatorsForTarget(VOCAB, "node.locality.country")).toEqual(["eq", "neq", "in", "not_in"]);
++    expect(operatorsForTarget(VOCAB, "node.gpu.present")).toEqual(["eq", "neq"]);
++    expect(operatorsForTarget(VOCAB, "node.tags")).toEqual(["contains", "contains_all"]);
++    expect(operatorsForTarget(undefined, "node.cpu.cores")).toEqual([]);
++    expect(operatorsForTarget(VOCAB, "")).toEqual([]);
++  });
++  it("valueIsList marks membership/collection operators", () => {
++    expect(valueIsList("in")).toBe(true);
++    expect(valueIsList("contains_all")).toBe(true);
++    expect(valueIsList("eq")).toBe(false);
++    expect(valueIsList("contains")).toBe(false);
++  });
++  it("scalarKindForType maps value types to input kinds", () => {
++    expect(scalarKindForType("Numeric")).toBe("number");
++    expect(scalarKindForType("Boolean")).toBe("boolean");
++    expect(scalarKindForType("String")).toBe("text");
++    expect(scalarKindForType(undefined)).toBe("text");
++  });
++  it("constraintTargetGroup groups by the node.<group> segment", () => {
++    expect(constraintTargetGroup("node.locality.country")).toBe("locality");
++    expect(constraintTargetGroup("node.cpu.cores")).toBe("cpu");
++  });
++  it("textToValue parses lists and scalars per operator/kind", () => {
++    expect(textToValue("US, DE ,FR", true, "text")).toEqual(["US", "DE", "FR"]);
++    expect(textToValue("8", false, "number")).toBe(8);
++    expect(textToValue("true", false, "boolean")).toBe(true);
++    expect(textToValue("x86_64", false, "text")).toBe("x86_64");
++  });
++  it("valueToText renders stored values for display", () => {
++    expect(valueToText(["US", "DE"])).toBe("US, DE");
++    expect(valueToText(true)).toBe("true");
++    expect(valueToText(8)).toBe("8");
++    expect(valueToText(null)).toBe("");
++  });
++  it("defaultValueFor yields a typed default when the operator is chosen", () => {
++    expect(defaultValueFor("in", "String")).toEqual([]);
++    expect(defaultValueFor("eq", "Boolean")).toBe(true);
++    expect(defaultValueFor("eq", "String")).toBe("");
++  });
++});
+ 
+ describe("resolveImageId — pinned template OS wins over user choice", () => {
+   it("keeps a template-pinned image even if the user picked another", () => {
+--- /dev/null
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/ConstraintBuilder.tsx
+@@ -0,0 +1,158 @@
++import type { Constraint, ConstraintVocabulary } from "./deploySubmit";
++import {
++  operatorsForTarget, valueIsList, scalarKindForType, constraintTargetGroup,
++} from "./useDeploy";
++
++// Scheduling-constraint builder (Phase 3 Customize parity, replacing the legacy
++// constraint-builder.js). Entirely data-driven from the vocabulary endpoint —
++// targets, their value types, and the operators valid per type all come from the
++// server, so nothing here mirrors the constraint rules. Two tiers: template-
++// imposed constraints are shown read-only (they travel in RecommendedSpec and a
++// user can't relax them); the user adds their own below.
++
++interface Props {
++  vocab?: ConstraintVocabulary;
++  locked: Constraint[];                 // template-imposed, read-only
++  value: Constraint[];                  // user-added, editable
++  onChange: (next: Constraint[]) => void;
++}
++
++function groupTargets(vocab?: ConstraintVocabulary): Record<string, string[]> {
++  const groups: Record<string, string[]> = {};
++  for (const t of vocab?.targets ?? []) {
++    const g = constraintTargetGroup(t);
++    (groups[g] ??= []).push(t);
++  }
++  return groups;
++}
++
++/** Render a stored value as text (locked display + text inputs). */
++export function valueToText(value: unknown): string {
++  if (Array.isArray(value)) return value.join(", ");
++  if (value === true) return "true";
++  if (value === false) return "false";
++  return value == null ? "" : String(value);
++}
++
++/** Parse a text input back into the typed value the API expects. */
++export function textToValue(
++  text: string,
++  isList: boolean,
++  kind: "number" | "boolean" | "text",
++): unknown {
++  if (isList) return text.split(",").map((s) => s.trim()).filter(Boolean);
++  if (kind === "number") { const n = Number(text); return text === "" || !Number.isFinite(n) ? text : n; }
++  if (kind === "boolean") return text === "true";
++  return text;
++}
++
++/** Sensible default value when the operator (and thus arity/type) is chosen. */
++export function defaultValueFor(operator: string, targetType?: string): unknown {
++  if (valueIsList(operator)) return [];
++  if (scalarKindForType(targetType) === "boolean") return true;
++  return "";
++}
++
++export function ConstraintBuilder({ vocab, locked, value, onChange }: Props) {
++  const groups = groupTargets(vocab);
++
++  const updateRow = (i: number, patch: Partial<Constraint>) =>
++    onChange(value.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
++  const removeRow = (i: number) => onChange(value.filter((_, idx) => idx !== i));
++  const addRow = () => onChange([...value, { target: "", operator: "", value: "" }]);
++
++  return (
++    <div className="field">
++      <span>Scheduling constraints</span>
++
++      {locked.length > 0 && (
++        <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
++          {locked.map((c, i) => (
++            <div key={`locked-${i}`} style={{ display: "flex", gap: 8, alignItems: "baseline", opacity: 0.8 }}>
++              <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)" }}>
++                {c.target} {c.operator} {valueToText(c.value)}
++              </span>
++              <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>· set by template</span>
++            </div>
++          ))}
++        </div>
++      )}
++
++      {value.map((c, i) => {
++        const targetType = c.target ? vocab?.targetTypes[c.target] : undefined;
++        const ops = operatorsForTarget(vocab, c.target);
++        const isList = valueIsList(c.operator);
++        const kind = scalarKindForType(targetType);
++        return (
++          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
++            <select
++              value={c.target}
++              onChange={(e) => updateRow(i, { target: e.target.value, operator: "", value: "" })}
++            >
++              <option value="">Target…</option>
++              {Object.entries(groups).map(([g, ts]) => (
++                <optgroup key={g} label={g}>
++                  {ts.map((t) => <option key={t} value={t}>{t}</option>)}
++                </optgroup>
++              ))}
++            </select>
++
++            <select
++              value={c.operator}
++              disabled={!c.target}
++              onChange={(e) => updateRow(i, {
++                operator: e.target.value,
++                value: defaultValueFor(e.target.value, targetType),
++              })}
++            >
++              <option value="">op…</option>
++              {ops.map((op) => <option key={op} value={op}>{op}</option>)}
++            </select>
++
++            {c.operator && (
++              kind === "boolean" && !isList ? (
++                <select
++                  value={c.value === false ? "false" : "true"}
++                  onChange={(e) => updateRow(i, { value: e.target.value === "true" })}
++                >
++                  <option value="true">true</option>
++                  <option value="false">false</option>
++                </select>
++              ) : (
++                <input
++                  type={!isList && kind === "number" ? "number" : "text"}
++                  placeholder={isList ? "comma, separated" : "value"}
++                  value={valueToText(c.value)}
++                  onChange={(e) => updateRow(i, { value: textToValue(e.target.value, isList, kind) })}
++                />
++              )
++            )}
++
++            <button
++              type="button"
++              className="btn-ghost"
++              onClick={() => removeRow(i)}
++              aria-label="Remove constraint"
++              style={{ fontSize: "var(--text-sm)" }}
++            >
++              ✕
++            </button>
++          </div>
++        );
++      })}
++
++      <button
++        type="button"
++        className="btn-ghost"
++        onClick={addRow}
++        style={{ justifySelf: "start", fontSize: "var(--text-sm)" }}
++      >
++        + Add constraint
++      </button>
++
++      <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>
++        Only nodes matching every constraint can host this VM. Fewer, broader constraints schedule faster.
++      </span>
++    </div>
++  );
++}

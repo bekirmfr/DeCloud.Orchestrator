@@ -1,6 +1,70 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId, operatorsForTarget, valueIsList, scalarKindForType, constraintTargetGroup } from "../useDeploy";
+import { valueToText, textToValue, defaultValueFor } from "../ConstraintBuilder";
+import type { ConstraintVocabulary } from "../deploySubmit";
+
+const VOCAB: ConstraintVocabulary = {
+  targets: ["node.locality.country", "node.cpu.cores", "node.gpu.present", "node.tags"],
+  targetTypes: {
+    "node.locality.country": "String",
+    "node.cpu.cores": "Numeric",
+    "node.gpu.present": "Boolean",
+    "node.tags": "StringList",
+  },
+  operators: ["eq", "neq", "in", "not_in", "contains", "contains_all"],
+  operatorTargetTypes: {
+    eq: ["String", "Numeric", "Boolean"],
+    neq: ["String", "Numeric", "Boolean"],
+    in: ["String", "Numeric"],
+    not_in: ["String", "Numeric"],
+    contains: ["StringList"],
+    contains_all: ["StringList"],
+  },
+};
+
+describe("constraint builder helpers — data-driven from the vocabulary", () => {
+  it("operatorsForTarget filters operators by the target's value type", () => {
+    expect(operatorsForTarget(VOCAB, "node.locality.country")).toEqual(["eq", "neq", "in", "not_in"]);
+    expect(operatorsForTarget(VOCAB, "node.gpu.present")).toEqual(["eq", "neq"]);
+    expect(operatorsForTarget(VOCAB, "node.tags")).toEqual(["contains", "contains_all"]);
+    expect(operatorsForTarget(undefined, "node.cpu.cores")).toEqual([]);
+    expect(operatorsForTarget(VOCAB, "")).toEqual([]);
+  });
+  it("valueIsList marks membership/collection operators", () => {
+    expect(valueIsList("in")).toBe(true);
+    expect(valueIsList("contains_all")).toBe(true);
+    expect(valueIsList("eq")).toBe(false);
+    expect(valueIsList("contains")).toBe(false);
+  });
+  it("scalarKindForType maps value types to input kinds", () => {
+    expect(scalarKindForType("Numeric")).toBe("number");
+    expect(scalarKindForType("Boolean")).toBe("boolean");
+    expect(scalarKindForType("String")).toBe("text");
+    expect(scalarKindForType(undefined)).toBe("text");
+  });
+  it("constraintTargetGroup groups by the node.<group> segment", () => {
+    expect(constraintTargetGroup("node.locality.country")).toBe("locality");
+    expect(constraintTargetGroup("node.cpu.cores")).toBe("cpu");
+  });
+  it("textToValue parses lists and scalars per operator/kind", () => {
+    expect(textToValue("US, DE ,FR", true, "text")).toEqual(["US", "DE", "FR"]);
+    expect(textToValue("8", false, "number")).toBe(8);
+    expect(textToValue("true", false, "boolean")).toBe(true);
+    expect(textToValue("x86_64", false, "text")).toBe("x86_64");
+  });
+  it("valueToText renders stored values for display", () => {
+    expect(valueToText(["US", "DE"])).toBe("US, DE");
+    expect(valueToText(true)).toBe("true");
+    expect(valueToText(8)).toBe("8");
+    expect(valueToText(null)).toBe("");
+  });
+  it("defaultValueFor yields a typed default when the operator is chosen", () => {
+    expect(defaultValueFor("in", "String")).toEqual([]);
+    expect(defaultValueFor("eq", "Boolean")).toBe(true);
+    expect(defaultValueFor("eq", "String")).toBe("");
+  });
+});
 
 describe("resolveImageId — pinned template OS wins over user choice", () => {
   it("keeps a template-pinned image even if the user picked another", () => {

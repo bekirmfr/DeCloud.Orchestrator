@@ -38,6 +38,18 @@ public class ConstraintEvaluator : IConstraintEvaluator
             kv => kv.Value.ValueType.ToString(),
             StringComparer.Ordinal);
 
+    // Operator → the value types it accepts, derived from each operator's own
+    // AcceptsTargetType predicate (the same one Validate uses), so the exposed
+    // compatibility can never drift from what the server actually enforces.
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes =>
+        _operators.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<string>)Enum.GetValues<ConstraintValueType>()
+                .Where(vt => kv.Value.AcceptsTargetType(vt))
+                .Select(vt => vt.ToString())
+                .ToList(),
+            StringComparer.Ordinal);
+
     // ─── Evaluation hot path ──────────────────────────────────────────
 
     public ConstraintEvaluation Evaluate(Constraint constraint, Node node)

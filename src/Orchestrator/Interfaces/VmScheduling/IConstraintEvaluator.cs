@@ -64,4 +64,12 @@ public interface IConstraintEvaluator
     /// makes it automatically available here — no frontend deploy required.
     /// </summary>
     IReadOnlyDictionary<string, string> TargetTypes { get; }
+
+    /// <summary>
+    /// Mapping from operator name to the value-type strings it accepts
+    /// ("String", "Numeric", "Boolean", "StringList"). Lets the constraint
+    /// builder offer only operators compatible with the selected target's type,
+    /// matching server-side validation — no client-side mirror of the rules.
+    /// </summary>
+    IReadOnlyDictionary<string, IReadOnlyList<string>> OperatorTargetTypes { get; }
 }
