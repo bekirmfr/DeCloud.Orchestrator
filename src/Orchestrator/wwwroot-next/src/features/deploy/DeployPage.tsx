@@ -4,6 +4,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
   useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
+  CUSTOMIZE_HINTS,
   usePriceEstimate, useDebounced,
 } from "./useDeploy";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
@@ -33,6 +34,17 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
       <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{k}</span>
       <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{v}</span>
     </div>
+  );
+}
+
+// Per-selector help text ("description cards" parity — copy lives in
+// CUSTOMIZE_HINTS). Sits inside the .field flex column, so it stacks under the
+// control with the field's own gap.
+function Hint({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>
+      {children}
+    </span>
   );
 }
 
@@ -293,16 +305,19 @@ export function DeployPage() {
                   <span>vCPU</span>
                   <input type="number" min={1} max={32} value={effCpu}
                     onChange={(e) => setCpu(Number(e.target.value))} />
+                  <Hint>{CUSTOMIZE_HINTS.cpu}</Hint>
                 </label>
                 <label className="field">
                   <span>Memory (GB)</span>
                   <input type="number" min={1} max={128} value={effMemGb}
                     onChange={(e) => setMemGb(Number(e.target.value))} />
+                  <Hint>{CUSTOMIZE_HINTS.memory}</Hint>
                 </label>
                 <label className="field">
                   <span>Disk (GB)</span>
                   <input type="number" min={10} max={2000} value={effDiskGb}
                     onChange={(e) => setDiskGb(Number(e.target.value))} />
+                  <Hint>{CUSTOMIZE_HINTS.disk}</Hint>
                 </label>
 
                 <label className="field">
@@ -312,6 +327,7 @@ export function DeployPage() {
                       <option key={t} value={t}>{QUALITY_TIERS[t]}</option>
                     ))}
                   </select>
+                  <Hint>{CUSTOMIZE_HINTS.tier}</Hint>
                 </label>
 
                 <label className="field">
@@ -321,6 +337,7 @@ export function DeployPage() {
                       <option key={t} value={t}>{BANDWIDTH_TIERS[t]}</option>
                     ))}
                   </select>
+                  <Hint>{CUSTOMIZE_HINTS.bandwidth}</Hint>
                 </label>
 
                 {showGpu && (
@@ -332,6 +349,7 @@ export function DeployPage() {
                           <option key={m} value={m}>{GPU_MODES[m]}</option>
                         ))}
                       </select>
+                      <Hint>{CUSTOMIZE_HINTS.gpu}</Hint>
                     </label>
                     {effGpuMode !== 0 && (
                       <label className="field">

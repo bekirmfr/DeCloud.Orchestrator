@@ -89,6 +89,23 @@ export const GPU_MODES: Record<number, string> = {
   2: "Proxied — shared GPU",
 };
 
+// Per-selector help ("description cards" — DESIGN §281 parity: the info the
+// legacy Customize modal showed under each selector). Copy explains the
+// *tradeoff*, not the label (the select options already carry ratios/speeds).
+// Grounded against the tier semantics above. Keyed by Customize control; the
+// completeness test asserts every control has a hint, so a future field can't
+// ship without one.
+export const CUSTOMIZE_HINTS = {
+  cpu: "Virtual CPU cores — more helps parallel workloads.",
+  memory: "RAM available to the VM.",
+  disk: "Persistent disk size for the root volume.",
+  tier: "How CPU is shared: Guaranteed dedicates a core (most consistent, priciest); higher tiers pack more VMs per core for less. Limited to this template's minimum.",
+  bandwidth: "Network throughput cap — higher tiers cost more; Unmetered removes the cap.",
+  gpu: "Passthrough dedicates a whole GPU; Proxied shares one under a VRAM quota.",
+} as const;
+
+export type CustomizeField = keyof typeof CUSTOMIZE_HINTS;
+
 /**
  * Quality tiers at least as good as the template's floor. Because higher quality
  * is a LOWER value, that is `tier <= floor` — mirroring MeetsFloor in C#.

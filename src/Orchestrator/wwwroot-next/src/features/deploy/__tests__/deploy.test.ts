@@ -1,6 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS } from "../useDeploy";
+
+describe("CUSTOMIZE_HINTS — every Customize control has description-card help", () => {
+  // Parity for the legacy "info cards under each selector" (DESIGN §281). This
+  // is a completeness invariant, not a copy assertion: a future selector added
+  // without a hint should fail here rather than ship help-less.
+  it("has non-empty, non-trivial help for every customizable field", () => {
+    const fields = ["cpu", "memory", "disk", "tier", "bandwidth", "gpu"] as const;
+    for (const f of fields) {
+      expect(CUSTOMIZE_HINTS[f], `missing hint for '${f}'`).toBeTruthy();
+      expect(CUSTOMIZE_HINTS[f].length).toBeGreaterThan(10);
+    }
+  });
+});
 
 describe("shouldRevealPassword — verbatim legacy sniff (memorable format only)", () => {
   it("reveals the memorable format (has '-', no '_')", () => {
