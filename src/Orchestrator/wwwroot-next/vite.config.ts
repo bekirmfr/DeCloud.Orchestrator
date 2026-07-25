@@ -17,7 +17,7 @@ export default defineConfig({
   build: {
     outDir: "../wwwroot/dist-app",
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: falses,
   },
   server: {
     port: 3001,

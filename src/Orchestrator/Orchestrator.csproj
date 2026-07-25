@@ -85,6 +85,7 @@
 		<FrontendSource Include="$(FrontendDir)/public/**" />
 		<FrontendSource Include="$(FrontendDir)/index.html" />
 		<FrontendSource Include="$(FrontendDir)/styles.css" />
+		<FrontendSource Include="$(FrontendDir)/package-lock.json" />
 	</ItemGroup>
 
 	<!-- New app source files tracked for incremental build (TS/TSX/CSS).
@@ -96,14 +97,18 @@
 		<FrontendSourceNext Include="$(FrontendNextDir)/package.json" />
 		<FrontendSourceNext Include="$(FrontendNextDir)/vite.config.ts" />
 		<FrontendSourceNext Include="$(FrontendNextDir)/tsconfig*.json" />
+		<FrontendSourceNext Include="$(FrontendNextDir)/package-lock.json" />
 	</ItemGroup>
 
 	<!-- ============================================== -->
 	<!-- TARGET: Install Frontend Dependencies          -->
 	<!-- ============================================== -->
+	<Target Name="RestoreFrontend" BeforeTargets="BuildFrontend" Condition="'$(BuildFrontend)' == 'true'" Inputs="$(FrontendDir)/package-lock.json" Outputs="$(FrontendDir)/node_modules/.package-lock.json">
+		<Message Importance="high" Text="Installing legacy app dependencies (lockfile changed)..." />
+		<Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
+	</Target>
 	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(BuildFrontend)' == 'true'" Inputs="$(FrontendDir)/package.json;$(FrontendDir)/vite.config.js;@(FrontendSource)" Outputs="$(FrontendDir)/dist/index.html">
 		<Message Importance="high" Text="Building frontend..." />
-		<Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
 		<Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" IgnoreExitCode="false" />
 		<Error Condition="!Exists('$(FrontendDir)/dist/index.html')" Text="❌ Frontend build failed: dist/index.html not found." />
 		<Message Importance="high" Text="✓ Frontend built successfully: wwwroot/dist/" />
@@ -119,10 +124,12 @@
 	<!-- ============================================== -->
 	<!-- TARGET: Build New App (wwwroot-next)           -->
 	<!-- ============================================== -->
+	<Target Name="RestoreFrontendNext" BeforeTargets="BuildFrontendNext" Condition="'$(BuildFrontendNext)' == 'true'" Inputs="$(FrontendNextDir)/package-lock.json" Outputs="$(FrontendNextDir)/node_modules/.package-lock.json">
+		<Message Importance="high" Text="Installing new app dependencies (lockfile changed)..." />
+		<Exec Command="npm ci" WorkingDirectory="$(FrontendNextDir)" />
+	</Target>
 	<Target Name="BuildFrontendNext" BeforeTargets="Build" Condition="'$(BuildFrontendNext)' == 'true'" Inputs="$(FrontendNextDir)/package.json;$(FrontendNextDir)/vite.config.ts;@(FrontendSourceNext)" Outputs="$(FrontendDir)/dist-app/index.html">
 		<Message Importance="high" Text="Building new app (wwwroot-next -> wwwroot/dist-app)..." />
-		<Exec Command="npm ci" WorkingDirectory="$(FrontendNextDir)"
-			  Condition="!Exists('$(FrontendNextDir)/node_modules')" />
 		<Exec Command="npm run build" WorkingDirectory="$(FrontendNextDir)" IgnoreExitCode="false" />
 		<Error Condition="!Exists('$(FrontendDir)/dist-app/index.html')" Text="❌ New app build failed: dist-app/index.html not found." />
 		<Message Importance="high" Text="✓ New app built successfully: wwwroot/dist-app/" />
