@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "eslint . && tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b",
     "lint": "eslint .",
     "gen:api": "openapi-typescript http://localhost:5050/swagger/v1/swagger.json -o src/api/schema.d.ts"
   },

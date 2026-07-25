@@ -33,3 +33,8 @@ docker-compose.override.yml
 .env
 .env.local
 .env.*.local
+
+# Generated on demand by `npm run gen:api` against a running backend.
+# Not consumed by the app (see src/api/client.ts) — hand-written types in
+# src/api/types.ts are authoritative. Regenerate to inspect the live contract.
+src/api/schema.d.ts
