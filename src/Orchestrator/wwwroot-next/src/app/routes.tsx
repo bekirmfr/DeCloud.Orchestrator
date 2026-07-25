@@ -52,7 +52,7 @@ export const router = createBrowserRouter(
           // Modal-routes (DESIGN §3): overlay the cockpit, URL survives reload,
           // Back closes. VmDetailPage renders <Outlet/> where these appear.
           children: [
-            { path: "access", element: <DirectAccessModal /> },   // Smart Port Allocation
+            { path: "ports", element: <DirectAccessModal /> },   // Smart Port Allocation
             { path: "domains", element: <DomainsModal /> },       // custom domains (central ingress)
           ],
         },

@@ -140,10 +140,10 @@ export function VmDetailPage() {
       )}
 
       {/* Connectivity: the entry points to the direct-access and custom-domain
-          modal-routes (Outlet below). These are relative links → /vms/:id/access
+          modal-routes (Outlet below). These are relative links → /vms/:id/ports
           and /vms/:id/domains. */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link to="access" className="btn-ghost">Ports &amp; direct access</Link>
+        <Link to="ports" className="btn-ghost">Ports &amp; direct access</Link>
         <Link to="domains" className="btn-ghost">Custom domains</Link>
       </div>
 
@@ -188,7 +188,7 @@ export function VmDetailPage() {
         </p>
       )}
 
-      {/* Modal-routes render here: /vms/:id/access and /vms/:id/domains. */}
+      {/* Modal-routes render here: /vms/:id/ports and /vms/:id/domains. */}
       <Outlet />
     </section>
   );

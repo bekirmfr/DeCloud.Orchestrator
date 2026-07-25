@@ -13,7 +13,7 @@ import {
   type PortMappingInfo,
 } from "./useDirectAccess";
 
-// Modal-ROUTE at /app/vms/:id/access (DESIGN §3 route tree + §7 Operate parity:
+// Modal-ROUTE at /app/vms/:id/ports (DESIGN §3 route tree + §7 Operate parity:
 // "direct-access ports (quick-add + custom)"). The Dialog is open whenever the
 // route matches; closing navigates back to the detail page (URL survives reload,
 // back button closes — the modal-vs-route rule).
