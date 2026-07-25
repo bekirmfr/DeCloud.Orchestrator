@@ -65,7 +65,11 @@ export interface TemplateVariable {
   description?: string;
   defaultValue?: string;
   required?: boolean;
-  kind?: string;                // platform vars are hidden; user vars shown
+  // VariableKind ("Static" | "Dynamic") — resolution TIMING, not a user/platform
+  // flag. Platform-vs-user is NOT this field: a variable is platform-managed if
+  // its name is a resolver key from GET /api/marketplace/platform-variables, and
+  // user-facing (must be collected at deploy) only if it has no resolver.
+  kind?: string;
 }
 
 export interface VmImage {

@@ -4,6 +4,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
   useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
+  REPLICATION_FACTORS, REPLICATION_VALUES,
   CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary,
   usePriceEstimate, useDebounced,
 } from "./useDeploy";
@@ -97,6 +98,7 @@ export function DeployPage() {
   const [cpu, setCpu] = useState<number | null>(null);
   const [memGb, setMemGb] = useState<number | null>(null);
   const [diskGb, setDiskGb] = useState<number | null>(null);
+  const [replication, setReplication] = useState<number | null>(null);
   const [tier, setTier] = useState<number | null>(null);
   const [bwTier, setBwTier] = useState<number | null>(null);
   const [gpuMode, setGpuMode] = useState<number | null>(null);
@@ -120,6 +122,8 @@ export function DeployPage() {
   const effCpu = cpu ?? rec?.virtualCpuCores ?? 1;
   const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
   const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
+  // Valid set {0,1,3,5}; seed from the template's recommendation, else ephemeral.
+  const effReplication = replication ?? rec?.replicationFactor ?? 0;
 
   const qualityOptions = allowedQualityTiers(template?.minimumSpec?.qualityTier);
   const bandwidthOptions = allowedBandwidthTiers(template?.minimumSpec?.bandwidthTier);
@@ -141,6 +145,7 @@ export function DeployPage() {
     virtualCpuCores: effCpu,
     memoryBytes: effMemGb * 1024 ** 3,
     diskBytes: effDiskGb * 1024 ** 3,
+    replicationFactor: effReplication,
     // Carry the rest of RecommendedSpec forward, then re-apply the template
     // defaults the server would have applied itself had we sent no customSpec.
     ...(effImageId ? { imageId: effImageId } : {}),
@@ -162,6 +167,7 @@ export function DeployPage() {
   /** Drop every spec edit so the eff* values fall back to RecommendedSpec. */
   function resetSpec() {
     setCpu(null); setMemGb(null); setDiskGb(null);
+    setReplication(null);
     setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
     setOsImage("");
     setUserConstraints([]);
@@ -333,6 +339,16 @@ export function DeployPage() {
                   <input type="number" min={10} max={2000} value={effDiskGb}
                     onChange={(e) => setDiskGb(Number(e.target.value))} />
                   <Hint>{CUSTOMIZE_HINTS.disk}</Hint>
+                </label>
+
+                <label className="field">
+                  <span>Durability</span>
+                  <select value={effReplication} onChange={(e) => setReplication(Number(e.target.value))}>
+                    {REPLICATION_VALUES.map((r) => (
+                      <option key={r} value={r}>{REPLICATION_FACTORS[r]}</option>
+                    ))}
+                  </select>
+                  <Hint>{CUSTOMIZE_HINTS.replication}</Hint>
                 </label>
 
                 <label className="field">

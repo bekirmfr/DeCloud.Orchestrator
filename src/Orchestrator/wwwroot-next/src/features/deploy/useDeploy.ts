@@ -110,6 +110,18 @@ export const GPU_MODES: Record<number, string> = {
   2: "Proxied — shared GPU",
 };
 
+// Replication factor — the allowed set is GROUNDED against VmService: tenant VMs
+// accept exactly {0, 1, 3, 5}; any other value clamps to 3. 0 is ephemeral (no
+// disk replication — data is lost if the host node goes offline); ≥1 keeps that
+// many copies across nodes and is billed per copy (storageCost × factor).
+export const REPLICATION_VALUES = [0, 1, 3, 5] as const;
+export const REPLICATION_FACTORS: Record<number, string> = {
+  0: "Ephemeral — no replication",
+  1: "1 copy",
+  3: "3 copies",
+  5: "5 copies",
+};
+
 // Per-selector help ("description cards" — DESIGN §281 parity: the info the
 // legacy Customize modal showed under each selector). Copy explains the
 // *tradeoff*, not the label (the select options already carry ratios/speeds).
@@ -120,6 +132,7 @@ export const CUSTOMIZE_HINTS = {
   cpu: "Virtual CPU cores — more helps parallel workloads.",
   memory: "RAM available to the VM.",
   disk: "Persistent disk size for the root volume.",
+  replication: "Copies of the VM's disk kept across nodes. Ephemeral is cheapest but data is lost if its node goes offline; more copies survive failures and cost more (billed per copy).",
   os: "Base operating system image. Templates that need a specific OS pin it; otherwise leave Recommended default and the platform picks a content-verified image.",
   tier: "How CPU is shared: Guaranteed dedicates a core (most consistent, priciest); higher tiers pack more VMs per core for less. Limited to this template's minimum.",
   bandwidth: "Network throughput cap — higher tiers cost more; Unmetered removes the cap.",

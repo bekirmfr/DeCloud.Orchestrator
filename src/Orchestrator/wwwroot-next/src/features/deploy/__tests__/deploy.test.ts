@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId, operatorsForTarget, valueIsList, scalarKindForType, constraintTargetGroup } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId, operatorsForTarget, valueIsList, scalarKindForType, constraintTargetGroup, REPLICATION_VALUES, REPLICATION_FACTORS } from "../useDeploy";
+
+describe("REPLICATION_VALUES — grounded against VmService's allowed set", () => {
+  it("offers exactly the server-accepted factors {0,1,3,5}, each labeled", () => {
+    expect([...REPLICATION_VALUES]).toEqual([0, 1, 3, 5]);
+    for (const r of REPLICATION_VALUES) expect(REPLICATION_FACTORS[r]).toBeTruthy();
+  });
+});
 import { valueToText, textToValue, defaultValueFor } from "../ConstraintBuilder";
 import type { ConstraintVocabulary } from "../deploySubmit";
 
@@ -86,7 +93,7 @@ describe("CUSTOMIZE_HINTS — every Customize control has description-card help"
   // is a completeness invariant, not a copy assertion: a future selector added
   // without a hint should fail here rather than ship help-less.
   it("has non-empty, non-trivial help for every customizable field", () => {
-    const fields = ["cpu", "memory", "disk", "os", "tier", "bandwidth", "gpu"] as const;
+    const fields = ["cpu", "memory", "disk", "replication", "os", "tier", "bandwidth", "gpu"] as const;
     for (const f of fields) {
       expect(CUSTOMIZE_HINTS[f], `missing hint for '${f}'`).toBeTruthy();
       expect(CUSTOMIZE_HINTS[f].length).toBeGreaterThan(10);
