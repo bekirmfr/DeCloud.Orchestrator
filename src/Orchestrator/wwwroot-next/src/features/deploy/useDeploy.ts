@@ -5,7 +5,7 @@ import type { Api } from "../../api/client";
 // consumer, so they live in features/billing rather than being owned by deploy.
 export { useBalance, runwayDays } from "../billing/useBalance";
 import {
-  resolveTemplate, submitTemplateDeploy,
+  resolveTemplate, submitTemplateDeploy, fetchImages,
   type VmTemplate, type DeployPayload, type DeployResult,
 } from "./deploySubmit";
 
@@ -14,6 +14,16 @@ export function useTemplate(api: Api, slugOrId: string) {
     queryKey: ["template", slugOrId],
     queryFn: () => resolveTemplate(api, slugOrId),
     enabled: !!slugOrId,
+  });
+}
+
+/** Public VM image catalogue (for the OS selector). Rarely changes within a
+ *  session, so cache it. Only needed for OS-agnostic templates. */
+export function useImages(api: Api) {
+  return useQuery({
+    queryKey: ["system-images"],
+    queryFn: () => fetchImages(api),
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -99,12 +109,25 @@ export const CUSTOMIZE_HINTS = {
   cpu: "Virtual CPU cores — more helps parallel workloads.",
   memory: "RAM available to the VM.",
   disk: "Persistent disk size for the root volume.",
+  os: "Base operating system image. Templates that need a specific OS pin it; otherwise leave Recommended default and the platform picks a content-verified image.",
   tier: "How CPU is shared: Guaranteed dedicates a core (most consistent, priciest); higher tiers pack more VMs per core for less. Limited to this template's minimum.",
   bandwidth: "Network throughput cap — higher tiers cost more; Unmetered removes the cap.",
   gpu: "Passthrough dedicates a whole GPU; Proxied shares one under a VRAM quota.",
 } as const;
 
 export type CustomizeField = keyof typeof CUSTOMIZE_HINTS;
+
+/**
+ * OS-image precedence. A template that PINS an image has OS-specific cloud-init;
+ * that pin wins over any user choice — overriding it would break the template's
+ * setup. Otherwise the user's pick. Empty → undefined, so the caller omits
+ * imageId and the server applies PlatformDefaults.DefaultImageId (VmService's
+ * final fallback for tenant VMs), which makes "no choice" safe even in customize
+ * mode where template defaults are otherwise not re-applied.
+ */
+export function resolveImageId(pinned?: string, chosen?: string): string | undefined {
+  return pinned || chosen || undefined;
+}
 
 /**
  * Quality tiers at least as good as the template's floor. Because higher quality

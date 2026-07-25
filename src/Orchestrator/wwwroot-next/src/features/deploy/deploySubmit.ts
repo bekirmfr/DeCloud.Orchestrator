@@ -49,6 +49,15 @@ export interface TemplateVariable {
   kind?: string;                // platform vars are hidden; user vars shown
 }
 
+export interface VmImage {
+  id: string;
+  name: string;
+  description?: string;
+  osFamily?: string;   // "linux" | "windows" — server orders the list by this
+  osName?: string;     // "ubuntu", "debian", …
+  version?: string;
+}
+
 export interface DeployPayload {
   vmName: string;
   environmentVariables?: Record<string, string>;
@@ -71,6 +80,12 @@ export interface DeployResult {
  */
 export async function resolveTemplate(api: Api, slugOrId: string): Promise<VmTemplate> {
   return api<VmTemplate>(`/api/marketplace/templates/${encodeURIComponent(slugOrId)}`);
+}
+
+/** Public VM image catalogue. GET /api/system/images (AllowAnonymous), already
+ *  ordered by OsFamily then Name and filtered to IsPublic on the server. */
+export async function fetchImages(api: Api): Promise<VmImage[]> {
+  return api<VmImage[]>("/api/system/images");
 }
 
 /**

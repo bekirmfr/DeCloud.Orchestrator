@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
-  useTemplate, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
+  useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
-  CUSTOMIZE_HINTS,
+  CUSTOMIZE_HINTS, resolveImageId,
   usePriceEstimate, useDebounced,
 } from "./useDeploy";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec } from "./deploySubmit";
@@ -87,6 +87,7 @@ export function DeployPage() {
   const { data: template, isLoading, error } = useTemplate(api, slug);
   const { data: balance } = useBalance(api);
   const deploy = useDeploy(api);
+  const images = useImages(api);
 
   const [vmName, setVmName] = useState("");
   const [customize, setCustomize] = useState(false);
@@ -98,6 +99,7 @@ export function DeployPage() {
   const [bwTier, setBwTier] = useState<number | null>(null);
   const [gpuMode, setGpuMode] = useState<number | null>(null);
   const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
+  const [osImage, setOsImage] = useState<string>("");   // "" = platform default (server fills)
   const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
   // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
@@ -124,6 +126,8 @@ export function DeployPage() {
   const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
   // Legacy rule: the GPU section appears only when the template needs one.
   const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
+  // Pinned template image wins over the user's pick; "" → omit (server default).
+  const effImageId = resolveImageId(rec?.imageId, osImage);
 
   const customSpec: TemplateSpec = {
     virtualCpuCores: effCpu,
@@ -131,7 +135,7 @@ export function DeployPage() {
     diskBytes: effDiskGb * 1024 ** 3,
     // Carry the rest of RecommendedSpec forward, then re-apply the template
     // defaults the server would have applied itself had we sent no customSpec.
-    ...(rec?.imageId ? { imageId: rec.imageId } : {}),
+    ...(effImageId ? { imageId: effImageId } : {}),
     qualityTier: effTier,
     bandwidthTier: effBwTier,
     gpuMode: effGpuMode,
@@ -150,6 +154,7 @@ export function DeployPage() {
   function resetSpec() {
     setCpu(null); setMemGb(null); setDiskGb(null);
     setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
+    setOsImage("");
   }
 
   /**
@@ -318,6 +323,32 @@ export function DeployPage() {
                   <input type="number" min={10} max={2000} value={effDiskGb}
                     onChange={(e) => setDiskGb(Number(e.target.value))} />
                   <Hint>{CUSTOMIZE_HINTS.disk}</Hint>
+                </label>
+
+                <label className="field">
+                  <span>Operating system</span>
+                  {rec?.imageId ? (
+                    <>
+                      <input
+                        type="text"
+                        readOnly
+                        value={images.data?.find((im) => im.id === rec?.imageId)?.name ?? rec?.imageId ?? ""}
+                      />
+                      <Hint>Set by this template — its setup is specific to this OS.</Hint>
+                    </>
+                  ) : (
+                    <>
+                      <select value={osImage} onChange={(e) => setOsImage(e.target.value)}>
+                        <option value="">Recommended default</option>
+                        {(images.data ?? []).map((im) => (
+                          <option key={im.id} value={im.id}>
+                            {im.name || `${im.osName ?? ""} ${im.version ?? ""}`.trim() || im.id}
+                          </option>
+                        ))}
+                      </select>
+                      <Hint>{CUSTOMIZE_HINTS.os}</Hint>
+                    </>
+                  )}
                 </label>
 
                 <label className="field">

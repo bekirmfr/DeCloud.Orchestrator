@@ -1,13 +1,28 @@
 import { describe, it, expect } from "vitest";
 import { shouldRevealPassword } from "../deploySubmit";
-import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS } from "../useDeploy";
+import { runwayDays, fundGateBlocks, specFloorErrors, allowedQualityTiers, allowedBandwidthTiers, CUSTOMIZE_HINTS, resolveImageId } from "../useDeploy";
+
+describe("resolveImageId — pinned template OS wins over user choice", () => {
+  it("keeps a template-pinned image even if the user picked another", () => {
+    // OS-specific templates pin their image; overriding would break cloud-init.
+    expect(resolveImageId("debian-12", "ubuntu-22.04")).toBe("debian-12");
+  });
+  it("uses the user's pick when the template is OS-agnostic (no pin)", () => {
+    expect(resolveImageId("", "ubuntu-22.04")).toBe("ubuntu-22.04");
+    expect(resolveImageId(undefined, "windows-2022")).toBe("windows-2022");
+  });
+  it("returns undefined when neither is set, so the caller omits imageId (server default)", () => {
+    expect(resolveImageId(undefined, undefined)).toBeUndefined();
+    expect(resolveImageId("", "")).toBeUndefined();
+  });
+});
 
 describe("CUSTOMIZE_HINTS — every Customize control has description-card help", () => {
   // Parity for the legacy "info cards under each selector" (DESIGN §281). This
   // is a completeness invariant, not a copy assertion: a future selector added
   // without a hint should fail here rather than ship help-less.
   it("has non-empty, non-trivial help for every customizable field", () => {
-    const fields = ["cpu", "memory", "disk", "tier", "bandwidth", "gpu"] as const;
+    const fields = ["cpu", "memory", "disk", "os", "tier", "bandwidth", "gpu"] as const;
     for (const f of fields) {
       expect(CUSTOMIZE_HINTS[f], `missing hint for '${f}'`).toBeTruthy();
       expect(CUSTOMIZE_HINTS[f].length).toBeGreaterThan(10);
