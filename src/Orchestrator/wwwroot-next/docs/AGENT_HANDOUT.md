@@ -86,8 +86,10 @@ A decentralized compute platform. Users connect a crypto wallet, fund an escrow 
 - Two full legacy-page retirements executed: the legacy dashboard + VM-list pages (~490 lines), and the legacy create-VM modal (~523 lines, including the deletion of a third stale copy of the tier-pricing tables).
 - An `errorElement` (`RouteError.tsx`) on the `/app` root route — styled 404 / error page instead of React Router's raw developer fallback.
 
-**Written but not yet exercised against the codebase:**
-- `eslint.config.js` — a deliberately narrow, hooks-only ESLint flat config. **Not yet run** (`npm run lint` has never been executed against this codebase) and **not wired into the build**. This is close to the top of the priority list — it would have caught the React #310 hooks-ordering crash (§5.13) statically, before it shipped.
+**Tooling, verified 2026-07-25 (this block previously said ESLint was unrun and unwired — it was wrong on both counts):**
+- `eslint.config.js` — a deliberately narrow, hooks-only ESLint flat config. **Installed, wired, and green.** `"build": "eslint . && tsc -b && vite build"`, and `BuildFrontendNext` runs `npm run build`, so a `rules-of-hooks` violation fails `dotnet build -c Release` and therefore the deploy. `npm run lint` reports **0 errors, 0 warnings across 45 files** (file count checked with `npx eslint . -f json` — a lint matching zero files prints the same clean output as one matching all of them). Caveat: `exhaustive-deps` is `warn` and ESLint exits 0 on warnings, so a green *build* says nothing about that rule; run the lint separately.
+- `npm run typecheck` — **was broken since Phase 1 and had never run.** It was `tsc -b --noEmit`, which fails `TS6310` before reading a line of source. Now `tsc -b`; first real verdict was 0 errors on `tsc -b --force`. It re-checks in full every run (with `noEmit`, build mode never sees its outputs as up to date) — harmless, and it can never falsely skip.
+- `npm run gen:api` — writes `src/api/schema.d.ts`, which **nothing imports**. The hand-written interfaces are the contract; the generated file is an on-demand way to inspect the live backend, is gitignored, and adoption is deliberately deferred to Phase 5. See `FRONTEND_REMAKE_IMPLEMENTATION.md` §8.
 
 **Not started:** Phase 4 (SSG landing page), Phase 5 (migrating Marketplace/My Templates/Nodes/Settings/Admin), Phase 6 (final cutover / delete the legacy app entirely / the real `/`-flip). Terminal and file-browser in-app routes (planned, ratified in the design doc, zero code written).
 
@@ -121,7 +123,7 @@ VmAction (6 values) — THIS ONE MUST BE SENT AS A NUMBER IN REQUEST BODIES, not
 
 Contrast: `VmRole`, `VmCategory`, `SubdomainTier`, `ServiceStatus`, `EnforcementActionType` **do** carry the per-enum attribute and correctly serialize as strings. There is no way to know which category a given enum falls into except checking the actual C# declaration or the actual wire response — do not assume based on what "should" be consistent.
 
-**Backend fix status:** not done. Adding the attribute to the three offending enums is a small change with a real blast radius: the legacy NodeAgent operator dashboard's `vmStateName()` lookup is keyed on the integer ordinals, and would need updating in the same commit or it breaks. Nobody has scoped that work yet.
+**Backend fix status:** not done, but **the blast radius was re-measured on 2026-07-25 and is smaller than this section used to claim.** Two things shrink it. (a) `VmNotificationService` hand-builds its SignalR payloads with `status.ToString()`, so the **push path already sends names** and is unaffected by adding the attribute — only REST changes. (b) A suspected second integer-keyed consumer, `wwwroot/src/status-helpers.js`, turned out to be **dead code** (orphaned by the dashboard/VM-list retirements; zero call sites across all `.js` and `.html`) and has been deleted. So the only consumer needing a same-commit update is the legacy NodeAgent operator dashboard's `vmStateName()` lookup, keyed on the integer ordinals — which is what this section originally said, and is now true by construction rather than by luck. Still nobody's scoped it.
 
 ### 4.2 The inverted-enum trap
 
@@ -431,13 +433,13 @@ src/Orchestrator/wwwroot-next/          ── NEW React app ──
 **Would prevent calling Phase 3 fully done:**
 1. Deploy Customize parity gaps: replication factor field, OS image selection (`GET /api/system/images` exists, unused), template Variables (user-facing env vars — `GET /api/marketplace/platform-variables` grounds the discriminator, form not built), description cards, scheduling constraints (a real sub-effort — a locked/editable/user constraint-row builder, `constraint-builder.js` in the legacy app, not just a missing field).
 2. Node-agent metrics push doesn't exist. The entire client/hub/REST-snapshot chain is built and correctly gated to hide until data exists — the missing piece is on the **NodeAgent** side (a different codebase area), a periodic task that would call `GetVmUsageAsync` per running VM and push it via `ReportVmMetrics`.
-3. VM-modal cross-module audit: `direct-access.js`/`custom-domains.js`'s modal openers are orphaned (no caller in the retired markup) but not confirmed safe to delete — they're independent modules, not part of the create-VM-modal cut.
+3. **~~VM-modal cross-module audit~~ — DONE 2026-07-25, and it found a live regression, not dead code.** The framing was wrong: this item asked *"is it safe to delete?"*, so a grep showing zero callers read as reassuring. It is the opposite. `openDirectAccessModal` and `openCustomDomainsModal` have **no external caller anywhere** — their `onclick` handlers went with the retired VM table — the modal markup still sits in `index.html` wired to close buttons nothing can reach, and **the new app has no replacement** (`wwwroot-next/src/features/` is `billing dashboard deploy ssh-keys vms`; `VmDetailPage.tsx` mentions neither). Same for `terminal.html`/`file-browser.html`, opened only from `vm-modals.js:133,140`. **So Direct Access, Custom Domains, the browser terminal and the file browser have all been unreachable to users since 2026-07-24, with their backends still live.** All four are already designed (`FRONTEND_REMAKE_DESIGN.md` route tree: `/app/vms/:id/{terminal,files,domains,access}`) — they are unbuilt, not unplanned. **Do not delete the legacy modules; they are the only working implementation.** Tracked in `FRONTEND_REMAKE_IMPLEMENTATION.md` §8. **Generalizable lesson: an audit inherits the question its tracking item asks — "safe to delete?" and "can a user still reach this?" are answered by the same grep and mean opposite things. Ask "was this replaced, or just removed?" first.**
 
 **Correctness/robustness, no user-visible symptom currently, but real:**
 4. Three enums serialize numeric despite the global string converter (§4.1) — client-tolerant, backend fix has a blast radius into the legacy NodeAgent dashboard.
 5. `MinimumSpec`/`RecommendedSpec` can't express "unconstrained" (§4.6) — at least one template ("Neko") has a live contradiction as a direct consequence.
 6. Chain ID is a client build constant with a silently-plausible-wrong fallback (§5.10) — should be served by the backend.
-7. `eslint.config.js` written, not run or wired into the build (§3) — would have caught §5.13 statically.
+7. ~~`eslint.config.js` written, not run or wired into the build (§3)~~ — **CLOSED 2026-07-25.** It is wired (`npm run build` runs `eslint .` first), green (0/0 across 45 files), and now gates the Release build. See §3.
 8. Two independent SIWE configs run simultaneously until the `/`-flip (§2) — not itself broken, but the first thing to rule out (via capture, not assumption) in any future auth bug that reproduces after a legacy round-trip.
 9. Mixed line endings in `VmService.cs`/`NodeService.cs` — a `.gitattributes` normalizing to LF removes a recurring patch-matching annoyance.
 10. Error boundary (`RouteError.tsx`) has no reporting-service hook — deliberate (none exists yet), `console.error` only.
@@ -456,7 +458,7 @@ src/Orchestrator/wwwroot-next/          ── NEW React app ──
 # In src/Orchestrator/wwwroot-next/
 npx vitest run           # full suite — expect 110 passed, 0 failed
 npx tsc --noEmit         # type check — expect silent/clean
-npm run build             # tsc -b && vite build — the real production build
+npm run build             # eslint . && tsc -b && vite build — the real production build (lint errors fail it)
 npm run lint               # NOT YET RUN AGAINST THIS CODEBASE — expect findings; see §3
 
 # Deploy (production server, srv020184)
@@ -468,7 +470,7 @@ sudo journalctl -u decloud-orchestrator -f
 curl -s http://localhost:5050/health
 ```
 
-**On every deploy that changed `wwwroot-next/package.json`** (i.e., added a dependency — `@microsoft/signalr` was one such case): confirm `npm ci` actually ran on the server, not just `npm run build`. The csproj's `BuildFrontendNext` target only runs `npm ci` when `node_modules` is *absent* — a stale-but-present `node_modules` from a prior deploy will silently skip installing the new dependency, and the build will fail with a `TS2307: Cannot find module` that has nothing obviously to do with what you just changed.
+**Frontend dependencies are tracked by the build, not by you (since 2026-07-25).** This section previously asked you to manually confirm `npm ci` had run after any dependency change, because `BuildFrontendNext` only ran it when `node_modules` was *absent* — so a stale-but-present tree silently skipped a new dependency and failed later with an unrelated-looking `TS2307`. That gate used "directory exists" as a proxy for "tree matches lockfile". It has been replaced by a `RestoreFrontendNext` target (and a legacy twin) keyed on `Inputs=package-lock.json` / `Outputs=node_modules/.package-lock.json`, so a pull that changes the lockfile reinstalls and one that doesn't, skips. Verified on the production server: touch the lockfile → next build installs (96s) → the one after skips (6s). **No ritual required.** One edge deliberately unguarded: a *partially* deleted `node_modules` still has `.package-lock.json` and reads as current — the symptom is loud (`TS2307`) and the recovery is `rm -rf node_modules`.
 
 ---
 

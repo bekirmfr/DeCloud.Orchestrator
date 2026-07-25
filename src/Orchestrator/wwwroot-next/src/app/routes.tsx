@@ -8,6 +8,8 @@ import { SshKeysPage } from "../features/ssh-keys/SshKeysPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { VmsPage } from "../features/vms/VmsPage";
 import { VmDetailPage } from "../features/vms/VmDetailPage";
+import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
+import { DomainsModal } from "../features/domains/DomainsModal";
 import { DeployPage } from "../features/deploy/DeployPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
@@ -44,7 +46,16 @@ export const router = createBrowserRouter(
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
         // { path: "marketplace", element: <Marketplace /> },     // Phase 5
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
-        { path: "vms/:id", element: <VmDetailPage /> },           // Phase 3 · detail
+        {
+          path: "vms/:id",                                        // Phase 3 · detail cockpit
+          element: <VmDetailPage />,
+          // Modal-routes (DESIGN §3): overlay the cockpit, URL survives reload,
+          // Back closes. VmDetailPage renders <Outlet/> where these appear.
+          children: [
+            { path: "access", element: <DirectAccessModal /> },   // Smart Port Allocation
+            { path: "domains", element: <DomainsModal /> },       // custom domains (central ingress)
+          ],
+        },
         { path: "marketplace/:slug/deploy", element: <DeployPage /> }, // Phase 3 · deploy
         {
           path: "settings/ssh-keys", // ← FIRST migrated page (Phase 2)

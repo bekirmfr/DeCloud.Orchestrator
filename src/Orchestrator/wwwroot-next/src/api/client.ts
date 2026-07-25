@@ -103,6 +103,11 @@ async function doFetch(
 }
 
 async function unwrap<T>(res: Response): Promise<T> {
+  // 204 No Content is a valid success with no body (e.g. DELETE
+  // /api/vms/{id}/direct-access/ports/{port} returns it). Don't try to parse an
+  // empty body as JSON — that would throw "Malformed response" on a real success.
+  if (res.status === 204) return undefined as T;
+
   let body: ApiResponse<T> | null = null;
   try {
     body = (await res.json()) as ApiResponse<T>;

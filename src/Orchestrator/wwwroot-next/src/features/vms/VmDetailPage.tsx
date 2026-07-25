@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, Outlet } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import { useVm, useVmAction, useDeleteVm, useVmMetrics, type VmDetail, type VmMetrics } from "./useVms";
 import { vmStatusBadge, allowedActions, normalizeStatus, type BadgeTone, type VmAction } from "./vmStatus";
@@ -139,6 +139,14 @@ export function VmDetailPage() {
         <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{vm.statusMessage}</p>
       )}
 
+      {/* Connectivity: the entry points to the direct-access and custom-domain
+          modal-routes (Outlet below). These are relative links → /vms/:id/access
+          and /vms/:id/domains. */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Link to="access" className="btn-ghost">Ports &amp; direct access</Link>
+        <Link to="domains" className="btn-ghost">Custom domains</Link>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "var(--space-4)" }}>
         <Card title="Resources">
           <Row k="vCPU" v={vm.spec.virtualCpuCores} />
@@ -146,7 +154,10 @@ export function VmDetailPage() {
           <Row k="Disk" v={`${gib(vm.spec.diskBytes)} GB`} />
         </Card>
 
-        <Card title="Access">
+        {/* SSH/VNC connection details (VmAccessInfo). Named "Connection" — not
+            "Access" — to avoid colliding with Direct Access (port mapping), which
+            is an unrelated feature reached via the toolbar above. */}
+        <Card title="Connection">
           <Row k="SSH host" v={vm.accessInfo?.sshHost} />
           <Row k="SSH command" v={ssh} />
           <Row k="Private IP" v={vm.networkConfig?.privateIp} />
@@ -176,6 +187,9 @@ export function VmDetailPage() {
           {((action.error || del.error) as AppError)?.message ?? "Action failed."}
         </p>
       )}
+
+      {/* Modal-routes render here: /vms/:id/access and /vms/:id/domains. */}
+      <Outlet />
     </section>
   );
 }
