@@ -156,8 +156,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         //
         // The element guard matters for RETIREMENT: once a migrated page's div
         // is deleted from index.html, a stale /?page=x link would otherwise
-        // hide every .page and leave a blank shell. Unknown name → do nothing,
-        // so the HTML default stays active and behaviour is unchanged.
+        // hide every .page and leave a blank shell.
         const requestedPage = new URLSearchParams(location.search).get('page');
         if (requestedPage) {
             if (document.getElementById(`page-${requestedPage}`)) {
