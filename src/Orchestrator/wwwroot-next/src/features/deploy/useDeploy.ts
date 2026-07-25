@@ -7,7 +7,7 @@ export { useBalance, runwayDays } from "../billing/useBalance";
 import {
   resolveTemplate, submitTemplateDeploy, fetchImages, fetchConstraintVocabulary,
   type VmTemplate, type DeployPayload, type DeployResult,
-  type Constraint, type ConstraintVocabulary,
+  type ConstraintVocabulary,
 } from "./deploySubmit";
 
 export function useTemplate(api: Api, slugOrId: string) {
