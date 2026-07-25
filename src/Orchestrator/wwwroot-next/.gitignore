@@ -38,3 +38,4 @@ docker-compose.override.yml
 # Nothing imports it — the hand-written interfaces are authoritative.
 # Regenerate to inspect the live contract; see src/api/client.ts.
 src/api/schema.d.ts
+tsconfig.tsbuildinfo
