@@ -1850,6 +1850,16 @@ public class NodeService : INodeService
                 "Command {CommandId} failed on node {NodeId}: {Error}",
                 commandId, nodeId, ack.ErrorMessage ?? "Unknown error");
 
+            // Surface a definitive AllocatePort rejection to its in-process waiter so it fails
+            // fast with the real reason, instead of polling until its 30s timeout and reporting
+            // a misleading "timed out". (registration is the command's own registry entry,
+            // completed just above; a null registration means we can't classify the command,
+            // so we simply don't record — the waiter falls back to its timeout, as before.)
+            if (registration?.CommandType == NodeCommandType.AllocatePort)
+            {
+                _dataStore.RecordAllocatePortFailure(commandId, ack.ErrorMessage);
+            }
+
             // Route failure transitions through lifecycle manager
             var failLifecycleManager = _serviceProvider.GetRequiredService<IVmLifecycleManager>();
 

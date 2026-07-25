@@ -37,6 +37,23 @@ public class DataStore
     /// independent of the VM's StatusMessage field.
     /// </summary>
     public ConcurrentDictionary<string, CommandRegistration> CommandRegistry { get; } = new();
+
+    /// <summary>
+    /// Short-lived record of AllocatePort commands acknowledged as FAILED, keyed by
+    /// commandId. Lets the in-process waiter (DirectAccessService.WaitForPortAllocationAsync)
+    /// fail fast on a definitive node/relay rejection instead of polling for a success that
+    /// will never arrive.
+    ///
+    /// Why this is needed: CommandRegistry tracks a command's *issuance*, but its entry is
+    /// removed on acknowledgement (TryCompleteCommand) and never held a result — so a failed
+    /// acknowledgement leaves no signal the waiter can observe. This retains only the failure
+    /// outcome, and only for AllocatePort (the sole command type with a waiter), which always
+    /// consumes it. A short TTL prune guards the edge where a failure arrives after its waiter
+    /// has already given up.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (DateTime RecordedAt, string Error)> _allocatePortFailures = new();
+    private static readonly TimeSpan AllocatePortFailureTtl = TimeSpan.FromMinutes(2);
+
     public ConcurrentDictionary<string, ConcurrentQueue<NodeCommand>> PendingCommands { get; } = new();
     public ConcurrentDictionary<string, NodeCommand> PendingCommandAcks { get; } = new();
     public ConcurrentDictionary<string, User> Users { get; } = new();
@@ -1260,6 +1277,50 @@ public class DataStore
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Record that an AllocatePort command was acknowledged as failed, so a waiting caller
+    /// can fail fast with the reason instead of polling until its timeout. Only AllocatePort
+    /// failures are recorded (the only command type with a waiter), and the waiter consumes
+    /// the entry on read, so this does not grow unbounded.
+    /// </summary>
+    public void RecordAllocatePortFailure(string commandId, string? error)
+    {
+        // Opportunistic prune: bound memory in the edge case where a failure outlives its
+        // waiter (e.g. the acknowledgement arrives after the 30s waiter already returned).
+        if (!_allocatePortFailures.IsEmpty)
+        {
+            var cutoff = DateTime.UtcNow - AllocatePortFailureTtl;
+            foreach (var kvp in _allocatePortFailures)
+            {
+                if (kvp.Value.RecordedAt < cutoff)
+                {
+                    _allocatePortFailures.TryRemove(kvp.Key, out _);
+                }
+            }
+        }
+
+        var reason = string.IsNullOrWhiteSpace(error)
+            ? "node reported failure but gave no reason"
+            : error!;
+        _allocatePortFailures[commandId] = (DateTime.UtcNow, reason);
+    }
+
+    /// <summary>
+    /// Consume a recorded AllocatePort failure for the given command, if present.
+    /// Removes it on read. Returns true and the reason when a failure was recorded.
+    /// </summary>
+    public bool TryConsumeAllocatePortFailure(string commandId, out string? error)
+    {
+        if (_allocatePortFailures.TryRemove(commandId, out var entry))
+        {
+            error = entry.Error;
+            return true;
+        }
+
+        error = null;
+        return false;
     }
 
     /// <summary>

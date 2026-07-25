@@ -130,3 +130,21 @@ All grounded against real backend source in the clone, verified with the real to
 - Custom Domains's `EnableVmIngress`/`disable`/port (the platform-subdomain default ingress) is a
   *separate* surface from custom domains and was left out of scope — the regression was
   specifically custom domains + direct-access ports.
+
+---
+
+## Addendum — Relay AllocatePort fail-fast (orchestrator, backend; out of original frontend scope)
+
+**How it surfaced:** the new Direct Access UI was the first client to exercise quick-add against a CGNAT VM. Clicking SSH returned a 400 after ~30s: "Relay port allocation failed or timed out." Frontend proved correct end-to-end (right endpoint, `{"serviceName":"ssh"}` body, error surfaced cleanly). The failure is backend/infra.
+
+**Root cause (relay side, NOT in this repo):** orchestrator log shows the relay node `e9277b2c` acknowledged the `AllocatePort` command in ~1s with `Success=False` and no error message (logged as "Unknown error" because the orchestrator does `ack.ErrorMessage ?? "Unknown error"`). The relay's own port allocation failed; the real reason lives only in the relay NodeAgent's logs (separate codebase). Still needs the relay-side log for that command (`IsRelayForwarding=true`) to name the true cause.
+
+**Second defect (orchestrator side, fixed here):** `DirectAccessService.WaitForPortAllocationAsync` polled only for success (`PortMapping.PublicPort > 0`), 60×500ms = 30s. It had no eyes on the failed acknowledgement the orchestrator already received and logged at second 1 (`CommandRegistration` holds no result; `TryCompleteCommand` removes the entry). So a definitive 1s rejection became a 30s generic "timeout" that also discarded the relay's real status.
+
+**Fix (patch: `fail-fast-port-allocation.patch`, 3 files, +104/-8):**
+- `DataStore`: new `_allocatePortFailures` map + `RecordAllocatePortFailure` / `TryConsumeAllocatePortFailure`. Records the *missing* command-outcome signal, scoped to AllocatePort only (the sole command with a waiter, which consumes on read → bounded; 2-min TTL prune for orphaned late acks).
+- `NodeService.ProcessCommandAcknowledgmentAsync`: on a failed ack for an AllocatePort command, record the failure (right where it already logs it).
+- `DirectAccessService.WaitForPortAllocationAsync`: returns `(int Port, string? FailureReason)` (out-params illegal in async). Poll loop checks success first, then the failure record → fails fast (~1s) with the reason. Relay call site now distinguishes "Relay rejected port allocation: {reason}" from "timed out (no response within 30s)". Non-relay hop kept its existing optimistic contract (destructures, discards reason) — deliberately not touched.
+- Race-free: success path never records a failure, so `TryConsume` can't misfire on success.
+
+**NOT done:** not compiled (no dotnet in the build sandbox) — owner must `dotnet build`. Relay-side root cause still open (needs relay NodeAgent log). The non-relay hop's optimistic "Success: in progress on timeout" is untouched and could later surface the reason too.

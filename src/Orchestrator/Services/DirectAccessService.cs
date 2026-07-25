@@ -173,11 +173,20 @@ public class DirectAccessService
 
                 // Wait for relay node to allocate a public port
                 _logger.LogDebug("Waiting for relay node to allocate public port...");
-                var publicPort = await WaitForPortAllocationAsync(vmId, 0, protocol, relayCommand.CommandId, ct);
+                var (publicPort, relayFailureReason) = await WaitForPortAllocationAsync(vmId, 0, protocol, relayCommand.CommandId, ct);
 
                 if (publicPort <= 0)
                 {
-                    _logger.LogError("Relay node did not allocate a public port within timeout");
+                    if (relayFailureReason != null)
+                    {
+                        _logger.LogError(
+                            "Relay rejected port allocation for VM {VmId}: {Reason}",
+                            vmId, relayFailureReason);
+                    }
+                    else
+                    {
+                        _logger.LogError("Relay node did not allocate a public port within timeout");
+                    }
                     
                     // Clean up placeholder mapping
                     vm = await _dataStore.GetVmAsync(vmId);
@@ -194,7 +203,10 @@ public class DirectAccessService
                     
                     return new AllocatePortResponse(
                         string.Empty, vmPort, 0, protocol, string.Empty,
-                        Success: false, Error: "Relay port allocation failed or timed out");
+                        Success: false,
+                        Error: relayFailureReason != null
+                            ? $"Relay rejected port allocation: {relayFailureReason}"
+                            : "Relay port allocation timed out (no response within 30s)");
                 }
 
                 _logger.LogInformation(
@@ -377,7 +389,10 @@ public class DirectAccessService
                 vmId);
 
             // Wait for acknowledgment to update the public port
-            var actualPort = await WaitForPortAllocationAsync(vmId, vmPort, protocol, command.CommandId, ct);
+            // This (non-relay) hop keeps its existing optimistic behavior below; we only
+            // destructure the new return shape. Fail-fast still shortens the wait on a
+            // definitive rejection without changing the verdict this path reports.
+            var (actualPort, _) = await WaitForPortAllocationAsync(vmId, vmPort, protocol, command.CommandId, ct);
 
             if (actualPort > 0)
             {
@@ -846,7 +861,7 @@ public class DirectAccessService
     /// Wait for port allocation acknowledgment by polling the VM for the updated public port.
     /// The acknowledgment handler (NodeService.ProcessCommandAcknowledgmentAsync) updates the mapping asynchronously.
     /// </summary>
-    private async Task<int> WaitForPortAllocationAsync(
+    private async Task<(int Port, string? FailureReason)> WaitForPortAllocationAsync(
         string vmId,
         int vmPort,
         PortProtocol protocol,
@@ -871,7 +886,7 @@ public class DirectAccessService
                 _logger.LogWarning(
                     "VM {VmId} or DirectAccess configuration disappeared during acknowledgment wait",
                     vmId);
-                return 0;
+                return (0, null);
             }
 
             // Check if the mapping has been updated with a public port
@@ -883,7 +898,17 @@ public class DirectAccessService
                 _logger.LogDebug(
                     "Acknowledgment received for VM {VmId} after {Attempts} attempts ({Ms}ms): port {PublicPort}",
                     vmId, attempt + 1, (attempt + 1) * delayMs, mapping.PublicPort);
-                return mapping.PublicPort;
+                return (mapping.PublicPort, null);
+            }
+
+            // Fail fast on a definitive rejection: if the node acknowledged this command as
+            // failed, stop polling for a success that will never arrive and return the reason.
+            if (_dataStore.TryConsumeAllocatePortFailure(commandId, out var failureReason))
+            {
+                _logger.LogWarning(
+                    "AllocatePort command {CommandId} for VM {VmId} was rejected by the node: {Reason}",
+                    commandId, vmId, failureReason);
+                return (0, failureReason);
             }
 
             _logger.LogDebug(
@@ -895,6 +920,6 @@ public class DirectAccessService
             "Acknowledgment timeout for VM {VmId} after {Seconds}s (command: {CommandId})",
             vmId, (maxAttempts * delayMs) / 1000, commandId);
 
-        return 0;  // Timeout
+        return (0, null);  // Timeout — no acknowledgement recorded
     }
 }
