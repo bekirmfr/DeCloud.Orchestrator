@@ -1,11 +1,27 @@
 import { definitive, uncertain, type AppError } from "./errors";
 
 /**
- * The uniform response envelope the backend now returns everywhere
- * (MarketplaceController was the last raw outlier — normalized). Enums are
- * string literals (global JsonStringEnumConverter). Prefer the GENERATED shape
- * from src/api/schema.d.ts once `npm run gen:api` has run; this is the fallback
- * contract until then. Confirm field names against the real ApiResponse<T>.
+ * The uniform response envelope the backend returns everywhere
+ * (MarketplaceController was the last raw outlier — normalized).
+ *
+ * THIS is the contract the app compiles against — a hand-maintained mirror of
+ * the backend's ApiResponse<T>, so it can drift; that class is authoritative.
+ * `src/api/schema.d.ts` is generated on demand by `npm run gen:api` (against a
+ * RUNNING backend on :5050) and is gitignored — nothing imports it. Use it to
+ * inspect the live contract when drift is suspected. Adopting it as the source
+ * of truth is a deliberate Phase 5 decision, not a pending step.
+ *
+ * ENUM CAVEAT — most enums are string literals (global JsonStringEnumConverter,
+ * and VmRole/VmCategory/SubdomainTier/ServiceStatus carry the per-enum attribute
+ * that makes it apply). THREE DO NOT: VmStatus, VmPowerState and VmAction.
+ *   - READING: status and powerState arrive as raw INTEGERS over REST
+ *     (3 = Running). Never compare to strings.
+ *   - WRITING: POST /api/vms/{id}/action expects the ORDINAL. {"action":"Stop"}
+ *     is rejected with a 400 — this shipped broken and invisible once already.
+ *   - SignalR payloads are hand-built with .ToString() and DO send names, so the
+ *     same field can arrive as 3 over REST and "Running" over the hub.
+ * Route all three through ../features/vms/vmStatus (normalizeStatus,
+ * normalizePowerState, vmActionOrdinal) — never a fresh switch or comparison.
  */
 export interface ApiResponse<T> {
   success: boolean;
