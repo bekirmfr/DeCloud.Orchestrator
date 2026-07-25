@@ -18,7 +18,7 @@ public sealed class RelaySubnetResolver : IVariableResolver
     public string ResolverKey => "RELAY_SUBNET";
     public VariableKind Kind => VariableKind.Static;
 
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonOpts = DeCloud.Shared.Json.JsonOptions.Wire;
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {

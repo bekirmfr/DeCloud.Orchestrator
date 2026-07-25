@@ -19,7 +19,7 @@ public sealed class RelayApiTokenResolver : IVariableResolver
     public string ResolverKey => "RELAY_API_TOKEN";
     public VariableKind Kind => VariableKind.Static;
 
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonOpts = DeCloud.Shared.Json.JsonOptions.Wire;
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {

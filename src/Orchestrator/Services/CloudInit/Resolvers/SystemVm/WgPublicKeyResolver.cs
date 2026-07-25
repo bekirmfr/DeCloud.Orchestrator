@@ -53,10 +53,7 @@ public sealed class WgPublicKeyResolver : IVariableResolver
     /// NodeService.GenerateAndAttachObligationStates so behaviour is consistent
     /// with how StateJson is read elsewhere in the orchestrator.
     /// </summary>
-    private static readonly JsonSerializerOptions DeserializerOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
+    private static readonly JsonSerializerOptions DeserializerOptions = DeCloud.Shared.Json.JsonOptions.Wire;
 
     public Task<string> ResolveAsync(ResolutionContext ctx, CancellationToken ct)
     {

@@ -893,10 +893,7 @@ public class NodeService : INodeService
                     var stateJson = System.Text.Json.JsonSerializer.Serialize(
                         state,
                         state.GetType(),
-                        new System.Text.Json.JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-                        });
+                        DeCloud.Shared.Json.JsonOptions.Wire);
 
                     obligation.StateJson = stateJson;
                     obligation.StateVersion = state.Version; // always 1 on first generation

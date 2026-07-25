@@ -148,10 +148,7 @@ public class SystemVmObligationService : BackgroundService
                     var state = _stateGenerator.GenerateState(role, node);
                     adopted.StateJson = System.Text.Json.JsonSerializer.Serialize(
                         state, state.GetType(),
-                        new System.Text.Json.JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-                        });
+                        DeCloud.Shared.Json.JsonOptions.Wire);
                     adopted.StateVersion = state.Version;
                     adopted.AuthToken = state switch
                     {

@@ -77,7 +77,7 @@ public class RelayController : ControllerBase
             {
                 var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
                     relayObligation.StateJson,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    DeCloud.Shared.Json.JsonOptions.Wire);
                 wireGuardPrivateKey = state?.WireGuardPrivateKey;
             }
             catch (Exception ex)
@@ -141,7 +141,7 @@ public class RelayController : ControllerBase
             {
                 var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
                     relayObligation.StateJson!,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    DeCloud.Shared.Json.JsonOptions.Wire);
 
                 if (!string.IsNullOrEmpty(state?.RelaySubnet))
                 {
@@ -171,7 +171,7 @@ public class RelayController : ControllerBase
             {
                 var state = System.Text.Json.JsonSerializer.Deserialize<DeCloud.Shared.Models.RelayObligationState>(
                     relayObligation.StateJson!,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    DeCloud.Shared.Json.JsonOptions.Wire);
 
                 if (!string.IsNullOrEmpty(state?.TunnelIp))
                 {
