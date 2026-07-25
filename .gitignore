@@ -5,6 +5,11 @@ install.env
 *.env
 !*.env.example
 
+# Machine-specific config: real connection strings, signing keys.
+# Only appsettings.json (placeholders) is tracked.
+appsettings.Production.json
+appsettings.Development.json
+
 # Build outputs
 bin/
 obj/
