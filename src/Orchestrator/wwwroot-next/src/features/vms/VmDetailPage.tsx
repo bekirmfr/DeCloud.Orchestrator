@@ -145,6 +145,7 @@ export function VmDetailPage() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link to="ports" className="btn-ghost">Ports &amp; direct access</Link>
         <Link to="domains" className="btn-ghost">Custom domains</Link>
+        <Link to="terminal" className="btn-ghost">Terminal</Link>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "var(--space-4)" }}>
