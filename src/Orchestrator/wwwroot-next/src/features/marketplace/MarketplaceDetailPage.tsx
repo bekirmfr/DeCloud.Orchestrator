@@ -3,6 +3,7 @@ import { type CSSProperties } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { useTemplate } from "../deploy/useDeploy";
 import { useReviews, shortWallet, type MarketplaceReview } from "./useMarketplace";
+import { Markdown } from "./Markdown";
 
 // Phase 5 · Marketplace template detail. Full template info, the SERVER's price
 // (estimatedCostPerHour — never a client table; that's what retires
@@ -87,7 +88,7 @@ export function MarketplaceDetailPage() {
 
       {/* Description */}
       {(template.longDescription || template.description) && (
-        <p style={{ margin: 0, lineHeight: 1.5 }}>{template.longDescription || template.description}</p>
+        <Markdown>{template.longDescription || template.description || ""}</Markdown>
       )}
 
       {/* Recommended spec + price */}

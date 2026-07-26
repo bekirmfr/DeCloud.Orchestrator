@@ -167,3 +167,25 @@ button {
         .field textarea::placeholder {
             color: var(--text-tertiary);
         }
+
+/* ── Markdown (rendered template descriptions, etc.) ──────────────────────
+   Untrusted third-party content is rendered by react-markdown (React tree, NO
+   innerHTML) with raw HTML DISABLED, so these styles only ever target
+   generated, safe elements. Token-driven for the dark theme. */
+.md { line-height: 1.6; display: flex; flex-direction: column; gap: var(--space-2); }
+.md h1, .md h2, .md h3, .md h4 { margin: var(--space-2) 0 0; line-height: 1.3; }
+.md h1 { font-size: var(--text-lg); }
+.md h2 { font-size: var(--text-md); }
+.md h3, .md h4 { font-size: var(--text-md); color: var(--text-secondary); }
+.md p { margin: 0; }
+.md a { color: var(--accent); }
+.md ul, .md ol { margin: 0; padding-left: var(--space-4); }
+.md li { margin-bottom: 2px; }
+.md code { font-family: var(--font-mono); font-size: 0.9em; background: var(--surface-1); padding: 1px 5px; border-radius: var(--radius-sm); }
+.md pre { margin: 0; overflow-x: auto; background: var(--surface-1); padding: var(--space-3); border-radius: var(--radius-sm); }
+.md pre code { background: transparent; padding: 0; }
+.md blockquote { margin: 0; padding-left: var(--space-3); border-left: 2px solid var(--border); color: var(--text-secondary); }
+.md table { border-collapse: collapse; width: 100%; font-size: var(--text-sm); display: block; overflow-x: auto; }
+.md th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
+.md td { padding: 4px 8px; border-bottom: 1px solid var(--border-subtle); }
+.md img { max-width: 100%; border-radius: var(--radius-sm); }
