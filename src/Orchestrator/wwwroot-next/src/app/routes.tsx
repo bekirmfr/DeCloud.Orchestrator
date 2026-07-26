@@ -12,6 +12,7 @@ import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
 import { DeployPage } from "../features/deploy/DeployPage";
 import { MarketplacePage } from "../features/marketplace/MarketplacePage";
+import { MarketplaceDetailPage } from "../features/marketplace/MarketplaceDetailPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -57,6 +58,7 @@ export const router = createBrowserRouter(
             { path: "domains", element: <DomainsModal /> },       // custom domains (central ingress)
           ],
         },
+        { path: "marketplace/:slug", element: <MarketplaceDetailPage /> },   // Phase 5 · detail
         { path: "marketplace/:slug/deploy", element: <DeployPage /> }, // Phase 3 · deploy
         {
           path: "settings/ssh-keys", // ← FIRST migrated page (Phase 2)

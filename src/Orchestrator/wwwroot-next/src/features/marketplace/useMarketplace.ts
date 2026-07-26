@@ -78,3 +78,31 @@ export function useCategories(api: Api) {
     staleTime: 10 * 60_000,
   });
 }
+
+// ── Reviews (detail page) ───────────────────────────────────────────────────
+// GET /api/marketplace/reviews/{resourceType}/{resourceId} → MarketplaceReview[]
+
+export interface MarketplaceReview {
+  id: string;
+  reviewerId: string;          // wallet
+  reviewerName?: string | null;
+  rating: number;              // 1..5
+  title?: string | null;
+  comment?: string | null;
+  createdAt: string;
+}
+
+export function useReviews(api: Api, resourceId: string | undefined) {
+  return useQuery({
+    queryKey: ["marketplace-reviews", "template", resourceId],
+    queryFn: () => api<MarketplaceReview[]>(`/api/marketplace/reviews/template/${resourceId}`),
+    enabled: !!resourceId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Short wallet for display: 0x1234…cdef. Falls back to the raw string if it's
+ *  not a long hex address. */
+export function shortWallet(addr: string): string {
+  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+}

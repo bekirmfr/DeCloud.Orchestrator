@@ -31,7 +31,7 @@ function Badges({ t }: { t: VmTemplateSummary }) {
 function TemplateCard({ t }: { t: VmTemplateSummary }) {
   return (
     <Link
-      to={`/marketplace/${t.slug}/deploy`}
+      to={`/marketplace/${t.slug}`}
       className="card"
       style={{
         display: "flex", flexDirection: "column", gap: "var(--space-2)",
