@@ -41,11 +41,11 @@ function Sidebar() {
         DeCloud
       </div>
 
-      {/* Primary action. Fixed-target entry into the platform's general-purpose
-          template — mirrors the legacy "Create VM" button (→ platform-general),
-          which is also what VmService defaults a General tenant VM to.
-          A marketplace browse surface (Phase 5) can replace this later. */}
-      <Link className="btn-primary" to="/marketplace/platform-general/deploy">Deploy</Link>
+      {/* Primary action → the marketplace browse, where the user picks a template
+          (Phase 5). Previously hard-coded to platform-general; that fixed target
+          is retired now that browse exists (General Purpose VM is a template there
+          for anyone who just wants a plain VM). */}
+      <Link className="btn-primary" to="/marketplace">Deploy</Link>
 
       {/* migrated → client routes */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -62,7 +62,6 @@ function Sidebar() {
             client-side navigation would be wrong. Swing each one to a /app route
             as its page lands, and delete the legacy page in the same change. */}
         <a className="nav-link" href="/?page=nodes">Nodes</a>
-        <a className="nav-link" href="/?page=marketplace-templates">Marketplace</a>
         <a className="nav-link" href="/?page=my-templates">My Templates</a>
         <a className="nav-link" href="/?page=settings">Settings</a>
 

@@ -86,7 +86,7 @@ export function DashboardPage() {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Overview</h1>
         {/* Deploy promoted: primary and always available (DESIGN §2). */}
-        <Link className="btn-primary" to="/marketplace/platform-general/deploy">Deploy a workload</Link>
+        <Link className="btn-primary" to="/marketplace">Deploy a workload</Link>
       </header>
 
       {/* ── Money ─────────────────────────────────────────────────────── */}
@@ -145,7 +145,7 @@ export function DashboardPage() {
         {!isLoading && !error && active.length === 0 && (
           <div style={{ padding: "28px 18px", textAlign: "center" }}>
             <p style={{ color: "var(--text-secondary)" }}>Nothing running yet.</p>
-            <Link className="btn-primary" to="/marketplace/platform-general/deploy" style={{ marginTop: 12 }}>
+            <Link className="btn-primary" to="/marketplace" style={{ marginTop: 12 }}>
               Deploy your first workload
             </Link>
           </div>
