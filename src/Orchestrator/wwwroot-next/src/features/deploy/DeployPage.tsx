@@ -10,6 +10,7 @@ import {
 } from "./useDeploy";
 import { ConstraintBuilder } from "./ConstraintBuilder";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
+import { saveEncryptedPassword } from "../vms/walletPassword";
 import type { AppError } from "../../api/errors";
 
 // Phase 3 · deploy sub-step 2 — the ONE-CLICK deploy page.
@@ -55,18 +56,42 @@ function Hint({ children }: { children: React.ReactNode }) {
  * reload loses it (design: "must not survive reload"). The server stores only a
  * hash-equivalent; this is the single moment the user can copy it.
  */
-function PasswordReveal({ vmName, password, onDone }: { vmName: string; password: string; onDone: () => void }) {
+function PasswordReveal({ vmId, vmName, password, onDone }: { vmId: string; vmName: string; password: string; onDone: () => void }) {
+  const { api, signMessage } = useAuth();
   const [copied, setCopied] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveErr, setSaveErr] = useState("");
+
+  async function save() {
+    setSaveState("saving"); setSaveErr("");
+    try {
+      await saveEncryptedPassword(api, vmId, password, signMessage);
+      setSaveState("saved");
+    } catch (e) {
+      setSaveState("error");
+      setSaveErr((e as Error)?.message || "Couldn’t save — you can still copy the password now.");
+    }
+  }
+
   return (
     <div className="dialog-overlay" style={{ display: "grid", placeItems: "center" }}>
       <div className="dialog-content" style={{ position: "static", transform: "none" }}>
         <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Save your password</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-          This is the only time <strong>{vmName}</strong>’s root password is shown. Copy it now — it can’t be retrieved later.
+          This is <strong>{vmName}</strong>’s root password. Copy it now, or save it encrypted to your
+          account so you can reveal it later (with a wallet signature) — for example to open a terminal.
         </p>
         <code style={{ display: "block", padding: "var(--space-3)", background: "var(--canvas)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", fontFamily: "var(--font-mono)", fontSize: 14, wordBreak: "break-all" }}>
           {password}
         </code>
+        {saveState === "saved" && (
+          <p style={{ color: "var(--success)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
+            Saved — you can reveal it later from the VM page.
+          </p>
+        )}
+        {saveState === "error" && (
+          <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{saveErr}</p>
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: "var(--space-3)" }}>
           <button
             className="btn-ghost"
@@ -74,7 +99,14 @@ function PasswordReveal({ vmName, password, onDone }: { vmName: string; password
           >
             {copied ? "Copied" : "Copy"}
           </button>
-          <button className="btn-primary" onClick={onDone}>I’ve saved it — continue</button>
+          {saveState !== "saved" && (
+            <button className="btn-ghost" onClick={save} disabled={saveState === "saving"}>
+              {saveState === "saving" ? "Sign in wallet…" : "Save encrypted (sign)"}
+            </button>
+          )}
+          <button className="btn-primary" onClick={onDone}>
+            {saveState === "saved" ? "Continue" : "I’ve saved it — continue"}
+          </button>
         </div>
       </div>
     </div>
@@ -475,6 +507,7 @@ export function DeployPage() {
 
       {revealed && (
         <PasswordReveal
+          vmId={revealed.vmId}
           vmName={vmName.trim()}
           password={revealed.password}
           onDone={() => navigate(`/vms/${revealed.vmId}`)}

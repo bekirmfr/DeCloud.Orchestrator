@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useParams, Link, useNavigate, Outlet } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
+import { revealPassword } from "./walletPassword";
 import { useVm, useVmAction, useDeleteVm, useVmMetrics, type VmDetail, type VmMetrics } from "./useVms";
 import { vmStatusBadge, allowedActions, normalizeStatus, type BadgeTone, type VmAction } from "./vmStatus";
 import type { AppError } from "../../api/errors";
@@ -86,6 +88,44 @@ function MetricsPanel({ metrics }: { metrics: VmMetrics }) {
   );
 }
 
+function RevealPasswordButton({ vmId }: { vmId: string }) {
+  const { api, signMessage } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [pw, setPw] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  async function reveal() {
+    setBusy(true); setErr("");
+    try {
+      setPw(await revealPassword(api, vmId, signMessage));
+    } catch (e) {
+      setErr((e as Error)?.message || "Couldn’t reveal the password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (pw) {
+    return (
+      <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-sm)", padding: "2px 8px", background: "var(--surface-1)", borderRadius: "var(--radius-sm)" }}>{pw}</code>
+        <button className="btn-ghost" style={{ fontSize: "var(--text-xs)" }} onClick={() => { navigator.clipboard?.writeText(pw); setCopied(true); }}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+      <button className="btn-ghost" onClick={reveal} disabled={busy}>
+        {busy ? "Sign in wallet…" : "Reveal password"}
+      </button>
+      {err && <span style={{ color: "var(--danger)", fontSize: "var(--text-xs)", maxWidth: 320 }}>{err}</span>}
+    </span>
+  );
+}
+
 export function VmDetailPage() {
   const { id = "" } = useParams();
   const { api } = useAuth();
@@ -146,6 +186,7 @@ export function VmDetailPage() {
         <Link to="ports" className="btn-ghost">Ports &amp; direct access</Link>
         <Link to="domains" className="btn-ghost">Custom domains</Link>
         <Link to="terminal" className="btn-ghost">Terminal</Link>
+        <RevealPasswordButton vmId={id} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "var(--space-4)" }}>
