@@ -11,6 +11,8 @@ import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
 import { DeployPage } from "../features/deploy/DeployPage";
+import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
+import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
 import { MarketplacePage } from "../features/marketplace/MarketplacePage";
 import { MarketplaceDetailPage } from "../features/marketplace/MarketplaceDetailPage";
 
@@ -46,6 +48,8 @@ export const router = createBrowserRouter(
       errorElement: <RouteError />,
       children: [
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
+        { path: "deploy", element: <DeploySourcePage /> },        // Phase 5 · deployment-source chooser
+        { path: "deploy/repository", element: <RepoDeployPage /> }, // Phase 5 · repo deploy (form WIP)
         { path: "marketplace", element: <MarketplacePage /> },    // Phase 5 · browse
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
         {

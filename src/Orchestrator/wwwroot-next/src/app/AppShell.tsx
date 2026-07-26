@@ -45,7 +45,7 @@ function Sidebar() {
           (Phase 5). Previously hard-coded to platform-general; that fixed target
           is retired now that browse exists (General Purpose VM is a template there
           for anyone who just wants a plain VM). */}
-      <Link className="btn-primary" to="/marketplace">Deploy</Link>
+      <Link className="btn-primary" to="/deploy">Deploy</Link>
 
       {/* migrated → client routes */}
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
