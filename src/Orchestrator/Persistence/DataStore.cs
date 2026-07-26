@@ -1413,11 +1413,11 @@ public class DataStore
                 ByArchitecture = new()
                 {
                     ["amd64"] = new(
-                        "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-amd64.img",
-                        "ec3cdc1bf496078f645ccc8ac823e17609658753477ebc4e5fb730729ac5b434"),
+                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260722/ubuntu-22.04-server-cloudimg-amd64.img",
+                        "757908b2fd6d5b1431bb45070fc1f56cbf017d4025568d292ece37d9cc75e812"),
                     ["arm64"] = new(
-                        "https://cloud-images.ubuntu.com/releases/jammy/release/ubuntu-22.04-server-cloudimg-arm64.img",
-                        ""),
+                        "https://cloud-images.ubuntu.com/releases/jammy/release-20260722/ubuntu-22.04-server-cloudimg-arm64.img",
+                        "8f61e558498ba262da5b5d13f75b2921136b737a1492415150f33b3d0e46a281"),
                 },
             },
             new VmImage
