@@ -3,148 +3,189 @@
 **What this is:** the living context/handoff doc for *this* chat, per the operating discipline
 ("create a context document for each chat"). It is *not* a replacement for `AGENT_HANDOUT.md`
 (the fuller cold-start doc) — it records what *this* session grounded, decided, and did, and
-should be read alongside the handout, not instead of it. Newest facts win; if this disagrees
-with what you observe in the repo, the repo wins.
+should be read alongside the handout. Newest facts win; **if this disagrees with the repo, the
+repo wins.** All patches/files referenced are in `/mnt/user-data/outputs`.
 
 ---
 
 ## 0. Grounding done this session (so it isn't re-paid)
 
-- **The real repo is reachable and was cloned.** `github.com/bekirmfr/DeCloud.Orchestrator`
-  is public; shallow-cloned to `/home/claude/repo`. **HEAD = `06dae96`, 2026-07-25 15:12 +0300.**
-  This is the same tree the four planning docs describe ("as of 2026-07-25"), so the docs are
-  current, not stale, for this checkout. Verify HEAD hasn't moved before trusting that again.
-- **Confirmed against real code (not just the docs):**
-  - `wwwroot-next/src/features/` = `billing dashboard deploy ssh-keys vms` — no `terminal`,
-    no `files`, no `direct-access`, no `domains`. Matches the docs exactly.
-  - Grep of the whole new app (`wwwroot-next/src/`) for
-    `direct-access|directAccess|DirectAccess|central-ingress|customDomain|CustomDomain|portMapping`
-    returns **zero hits**. The "Direct Access / Custom Domains are unbuilt in the new app"
-    claim is true on disk, not just asserted.
-- **The actual repository, not the docs, is the source of truth for code shape.** Before writing
-  any client code against a DTO/endpoint/enum, read the file in `/home/claude/repo`, per the
-  project's #1 rule. The docs' §4 cheat-sheet is a map, not the territory.
+- **Repo cloned:** `github.com/bekirmfr/DeCloud.Orchestrator` (public), shallow clone at
+  `/home/claude/repo`, **HEAD `06dae96`**. `DeCloud.Shared` (e.g. `RelayObligationState`,
+  `TemplateVariable`, `JsonOptions`) and the **NodeAgent** are SEPARATE repos, NOT in this
+  checkout — their types were grounded from usage or from files the owner uploaded.
+- **No build toolchain in the sandbox:** no `dotnet`, no `node_modules`. Nothing here was
+  compiled or test-run. Every patch is "grounded + reviewed, not built." **Owner must
+  `dotnet build` / `npm run build` + `npm test` after applying.** (This bit once — a TS6133
+  unused import slipped and the owner's build caught it; see Workstream C.)
+- **Rule #1 honored throughout:** read the real file before writing against any DTO/endpoint/enum.
 
-## 1. State of play (grounded summary)
+## 1. State of play (grounded)
 
-Incremental strangler migration: legacy vanilla-JS app at `/`, new React+TS app at `/app/*`,
-retiring the old page-by-page. Phase 3 (the "connect → deploy → operate" spine) is functionally
-live in production. Phases 4 (SSG landing), 5 (marketplace/my-templates/nodes/settings/admin),
-6 (cutover) not started.
+Strangler migration: legacy vanilla-JS at `/`, new React+TS at `/app/*`, retiring page-by-page.
+**Phase 3 (connect → deploy → operate) is live in production and now materially more complete
+this session:** Direct Access (Ports) + Custom Domains built and verified; Deploy Customize at
+**4 of 5 parity gaps** done and live-verified. Phases 4 (SSG landing), 5 (marketplace/etc.),
+6 (cutover) not started — **Marketplace is the recommended next move** (see Workstream D).
 
-## 2. Candidate next-work items (from DESIGN §14 / IMPL §8 / HANDOUT §7), grounded
+## 2. What this session did (four workstreams, all verified live unless noted)
 
-Ordered by my read on value+urgency, for discussion — not yet chosen:
+### A. Direct Access (Ports) + Custom Domains — the original "live regression"
+The two features had no UI in either app since the 2026-07-24 legacy retirements. Built as
+**URL-driven modal-routes** off `/app/vms/:id` (first child-route pattern in the app).
+- **Renamed `/access` → `/ports`** (all 5 refs; component `DirectAccessModal` kept). The journal
+  §8 had explicitly warned `/access` collides with the working `VmAccessInfo` "Connection" panel
+  and re-creates the naming ambiguity that hid the regression; `/ports` matches the button label.
+- Grounded wire traps: **`PortProtocol` serializes NUMERIC** (no converter) → `portProtocol.ts`
+  normalizer; **`CustomDomainStatus` serializes STRING** (has converter) → `domainStatus.ts`;
+  **direct-access DELETE = 204 raw**, domains DELETE = `ApiResponse<bool>` → one `api()`
+  `unwrap()` change to treat 204 as success.
+- **Verified live:** `/app/vms/:id/ports` loads on cold nav; add + remove port work; a custom
+  domain (`coolify-app-test.stackfi.tech`) resolved to the VM.
+- Patches: `direct-access-and-domains.patch` (build), `ports-rename-and-docs.patch` (rename +
+  journal §8 → RESOLVED).
 
-1. **🔴 LIVE REGRESSION — Direct Access (Smart Port Allocation) + Custom Domains have no UI in
-   either app since 2026-07-24.** Backends live (`/api/vms/{id}/direct-access`,
-   `/api/central-ingress/vm/{id}/domains`); legacy modals stranded (openers were deleted with
-   the VM table); new app has no replacement. Designed as `/app/vms/:id/access` and
-   `/app/vms/:id/domains` (modal-routes), unbuilt. **Directly serves the Minecraft/game-server
-   vision** — `DirectAccessService.GenerateConnectionString` has explicit cases for `minecraft`,
-   `mysql`, `postgresql`, `mongodb`, `redis`, `rdp`; that whole surface is currently dark
-   (e.g. no way to open port 25565). This is a Phase-3 *build* gap, not housekeeping.
-2. **Deploy Customize parity gaps** — replication factor, OS image selection
-   (`GET /api/system/images`), template Variables / user env vars
-   (`GET /api/marketplace/platform-variables` grounds the platform-vs-user split), description
-   cards, and scheduling constraints (the constraint-row builder — a real sub-effort, was
-   `constraint-builder.js`). Needed to call Phase 3 "done".
-3. **Marketplace migration (Phase 5, recommended first of Phase 5)** — retires the last stale
-   pricing-table copy (`template-detail.js`) and frees the shell's Deploy button from
-   hard-coding `platform-general`.
-4. **Terminal + file browser in-app routes** (`/app/vms/:id/terminal`, `/app/vms/:id/files`) —
-   also stranded/unreachable since 2026-07-24; designed, zero code. Keep legacy pages serving
-   until these ship (serving-spec §6 gate).
+### B. Relay port-allocation failure — four layers, each fixed at its own boundary
+The new Ports UI was the first client to exercise CGNAT quick-add; it 400'd after ~30s. Chased
+down honestly:
+1. **Orchestrator fail-fast** (`fail-fast-port-allocation.patch`, SHIPPED + verified): the waiter
+   `DirectAccessService.WaitForPortAllocationAsync` polled only for success and turned a 1-second
+   relay *rejection* into a 30-second generic *timeout*. Added a bounded `_allocatePortFailures`
+   outcome record (DataStore) written on failed ack (NodeService) and consumed by the waiter,
+   which now returns `(int Port, string? FailureReason)` and fails fast with the real reason.
+2. **Root cause** (relay NodeAgent, separate repo): the relay node's NodeAgent called its **own
+   local relay VM's** `add-port-forward` API with **no Bearer token** → relay VM fail-closes
+   `401`. Not iptables/timeout — auth.
+3. **NodeAgent fix** (`PortForwardingManager.cs`, full file delivered): the node authenticates to
+   its local relay VM using the **relay-obligation token it already holds locally** (delivered at
+   registration via `NodeRegistrationResponse.ObligationStates` → local SQLite), NOT via
+   orchestrator per-command shipping — correct boundary (the node *hosts* that VM). All three
+   relay-VM POSTs (add/remove/flush) now attach the Bearer.
+4. **Casing fix** (folded into the same file): first read used `"AuthToken"` (PascalCase) but
+   `StateJson` is camelCase (`"authToken"`). Fixed by deserializing the shared
+   `RelayObligationState` with `DeCloud.Shared.Json.JsonOptions.Wire` (case-insensitive, matches
+   the writer). **Verified live: "✓ Relay VM forwarding created."**
+5. **JsonOptions unification** (`statejson-shared-jsonoptions.patch`, orchestrator): routed ALL
+   `StateJson` (de)serialization — 2 writers + 4 readers (RelayController ×3, the two resolvers,
+   WgPublicKeyResolver, NodeService, SystemVmObligationService) — through `JsonOptions.Wire`, so
+   the wire format matches on both sides *by construction*, not by hope. Verified (Debian VM
+   provisioned cleanly).
+- **Security invariant (do not relitigate):** the relay VM's fail-closed `401` is CORRECT and was
+  never weakened; every fix *delivered the credential* the boundary demands.
+
+### C. Phase-3 Deploy Customize — 4 of 5 parity gaps (all live-verified); 5th is gated
+Base already had cpu/mem/disk/tier/bandwidth/GPU + one-click + Customize + server price.
+1. **Description cards** (`deploy-description-cards.patch`): per-selector hint copy
+   (`CUSTOMIZE_HINTS`), grounded in real tier semantics (QualityTier inverse, etc.). Verified.
+2. **OS image** (`deploy-os-image.patch`): "Operating system" — agnostic templates get a select
+   from `GET /api/system/images`; OS-pinned templates render read-only. `resolveImageId(pinned,
+   chosen)` (pinned wins). Empty → server applies platform default (`VmService` final fallback),
+   so no default id hardcoded. **Verified live (deployed Debian, not the ubuntu default).**
+3. **Scheduling constraints** (`deploy-scheduling-constraints.patch` +
+   `constraint-vocabulary-operator-types.patch` backend): fully data-driven `ConstraintBuilder`
+   from `GET /api/vms/constraint-vocabulary`. **Backend fork (c):** added `OperatorTargetTypes`
+   (operator → accepted value-type names) derived from each operator's own `AcceptsTargetType`
+   predicate, so the builder filters operators with zero client-side mirror of the rules.
+   Template-imposed constraints read-only; user rows below. **Verified live (deployed onto a
+   GPU-present node with region-in-`eu` — both boolean-scalar and list value shapes).**
+4. **Replication factor** (`deploy-replication-factor.patch`): a "Durability" select over the
+   server-accepted set `{0,1,3,5}` (grounded against `VmService`'s clamp; else → 3), labelled
+   Ephemeral / N copies. **Verified live + deep**: Mongo showed `Spec.ReplicationFactor: 1` and
+   the block-store manifest confirmed (LazysyncStatus, ConfirmedRootCid, 1713 chunks) — actually
+   replicating, the machinery `factor==0` skips.
+5. **Template Variables — grounded, deliberately NOT built (Marketplace-gated).** The
+   platform-vs-user discriminator is **resolver-key membership** in
+   `GET /api/marketplace/platform-variables`, NOT `TemplateVariable.kind` (that's
+   `VariableKind {Static,Dynamic}` = resolution timing; the frontend comment was wrong and was
+   corrected in `deploySubmit.ts`). **Every declared variable in every current template is a
+   platform variable** → the form would render empty today. User-declared variables are a
+   Marketplace-era concept. Building an empty form now = UI for data that doesn't exist.
+- **Recurring latent-bug pattern (fixed each time):** `customSpec` must forward the template's
+  recommended fields (image, bandwidth, GPU, **replication**, **constraints**) or customizing
+  silently reverts them to spec defaults. Each slice forwards its field.
+- **Testing:** pure helpers preferred (`resolveImageId`, `operatorsForTarget`, `valueIsList`,
+  `REPLICATION_VALUES` == server set guard, `CUSTOMIZE_HINTS` completeness). Owner: run
+  `npm test` for the exact count (per-slice additions recorded in the journal; do not trust a
+  single hard number across the session — reconcile by running the suite).
+- **Build discipline:** one `TS6133` unused import (`Constraint` in `useDeploy.ts`) slipped
+  because nothing was compiled here; the owner's build caught it → `fix-unused-constraint-import.patch`.
+  **Run `npm run build` right after applying each FE patch, before eyeballing.**
+
+### D. Marketplace (Phase 5) — plan grounded, not started (recommended next)
+Browse + detail over the template catalogue, feeding the existing deploy flow. Earns "first":
+retires `template-detail.js` (last stale client-side pricing table) and unhardcodes **three**
+`/marketplace/platform-general/deploy` links (`AppShell.tsx:48`, `DashboardPage.tsx:89,148`).
+- Endpoints all exist + `AllowAnonymous`: `GET /templates` (`category`/`requiresGpu`/`tags`/
+  `search`/`featured`/`sortBy`/`limit` → `VmTemplateSummary[]`), `GET /categories`,
+  `GET /templates/{slug}` (full, already wired to deploy), `GET /templates/featured`,
+  `GET /reviews/template/{id}`.
+- Current: `marketplace` route is commented out in `routes.tsx`; deploy sub-route live; no browse
+  or detail page yet.
+- Slices, smallest-first: (1) browse `/app/marketplace` (grid + URL filters + featured);
+  (2) detail `/app/marketplace/:slug` (**pricing via the existing `usePriceEstimate` /
+  `POST /api/system/pricing/calculate` — NEVER a client pricing table**) → Deploy;
+  (3) unhardcode the 3 Deploy links → browse.
+- **Honest caveat:** browse/detail does NOT by itself create variable-declaring templates.
+  Whether it unblocks template Variables (and live-verification of the OS-pinned + locked-
+  constraint tiers) depends on **what's actually in the live catalogue**. If it's only seeded
+  platform templates, those tails wait on template *authoring* (`POST /templates/create` +
+  review flow = My Templates + admin), a larger separate Phase-5 scope. **Check catalogue
+  contents before promising Marketplace clears the Phase-3 backlog.**
 
 ## 3. Hard constraints to honor while building (do not relitigate)
 
-- **Never compute pricing/billing client-side.** Call `POST /api/system/pricing/calculate`.
-- **Three enums (`VmStatus`/`VmPowerState`/`VmAction`) serialize as raw numbers.** Route all
-  status/power/action handling through `features/vms/vmStatus.ts`
-  (`normalizeStatus`/`normalizePowerState`/`vmActionOrdinal`). `VmAction` must be *sent* as an
-  ordinal in request bodies (`{"action":1}`, not `{"action":"Stop"}`).
-- **`QualityTier` is inverted** (Guaranteed=0 best … Burstable=3 worst); `BandwidthTier` is not.
-  A *default* seeds a selection; a *minimum* constrains choices — never conflate them.
-- **Server data lives in TanStack Query only**, keyed by resource; SignalR events patch the
-  cache (`qc.setQueryData`), never parallel `useState`. New broadcast types need
-  reconnect-invalidation in `HubProvider.onreconnected`.
-- **Hooks above early returns**, always (`enabled:` to make a query wait).
-- **Ship components with inline token-driven styles** (Meridian tokens), not class names that
-  may not exist. Read `frontend-design` SKILL before building UI.
-- **Retire, don't deprecate:** a migrated page deletes its legacy div + module + inline handlers
-  + only-its `window.*` exports in the *same* change. But **do NOT delete the stranded
-  direct-access/terminal/domains legacy modules** — they are the only working implementation;
-  they die at Phase 6, after their `/app` replacements ship.
-- **Before writing against any file, read it in `/home/claude/repo`.** Before any bulk delete,
-  grep the range for callers *outside* it.
-- **A write action isn't "done" until its button is clicked against the real API** (the VmAction
-  bug lived invisibly because reads were exercised and writes never were).
+Still-valid invariants from prior sessions, plus what this session added (★):
+- **Never compute pricing/billing client-side.** Call `POST /api/system/pricing/calculate`
+  (reuse `usePriceEstimate`). The stale `template-detail.js` tables are exactly this sin.
+- **Three enums (`VmStatus`/`VmPowerState`/`VmAction`) serialize as raw numbers** → route through
+  `features/vms/vmStatus.ts`; send `VmAction` as an ordinal (`{"action":1}`).
+- **`QualityTier` is inverted** (Guaranteed=0 best … Burstable=3); `BandwidthTier` is not. A
+  *default* seeds; a *minimum* constrains — never conflate.
+- **Server data lives in TanStack Query only**; SignalR patches the cache; new broadcasts need
+  `HubProvider.onreconnected` invalidation. **Hooks above early returns** (`enabled:` to wait).
+- **Inline token-driven styles** (Meridian), not maybe-missing class names. Read `frontend-design`
+  SKILL before UI.
+- **Retire, don't deprecate** — but do NOT delete stranded legacy modules until their `/app`
+  replacement ships (Phase 6).
+- **A write isn't "done" until its button is clicked against the real API.**
+- ★ **`StateJson` (de)serialization goes through `DeCloud.Shared.Json.JsonOptions.Wire`** (camelCase,
+  case-insensitive) on BOTH sides — never hand-roll per-call options.
+- ★ **Relay VM API is fail-closed** (`Bearer RelayObligationState.AuthToken` on every POST). A node
+  authenticates to its OWN local system VM with the token it holds locally (registration-delivered),
+  NOT orchestrator per-command shipping. **Never weaken the 401.**
+- ★ **`customSpec` must forward template-recommended fields** (image / bandwidth / GPU / replication /
+  constraints) or customizing silently reverts them to spec defaults.
+- ★ **The constraint builder is data-driven** from `GET /api/vms/constraint-vocabulary` (now incl.
+  `operatorTargetTypes`). Don't hardcode targets/operators. The one thing the vocab lacks is value
+  *arity* (list vs scalar) → small commented `valueIsList` set; server validates the value.
+- ★ **Replication valid set is `{0,1,3,5}`** (else clamps to 3); `0` = ephemeral (real data loss).
+- ★ **Deploy spec carries `imageId` / `constraints` / `replicationFactor`**; `environmentVariables`
+  is separate. Platform-vs-user variable split = resolver-key membership (§2C.5), not `kind`.
 
-## 4. Decisions / actions taken this session
+## 4. Artifacts (all in /mnt/user-data/outputs)
 
-**Built the two stranded features as `/app` modal-routes (the live regression's fix).**
-All grounded against real backend source in the clone, verified with the real toolchain
-(`tsc -b` clean, `eslint .` 0, `vitest` 122 passing (110→122), `npm run build` succeeds).
-11 files, +890 lines. Patch: `direct-access-and-domains.patch`.
+**Code patches** — orchestrator: `fail-fast-port-allocation.patch`,
+`statejson-shared-jsonoptions.patch`, `constraint-vocabulary-operator-types.patch`.
+Frontend: `direct-access-and-domains.patch`, `ports-rename-and-docs.patch`,
+`deploy-description-cards.patch`, `deploy-os-image.patch`, `deploy-scheduling-constraints.patch`,
+`deploy-replication-factor.patch`, `fix-unused-constraint-import.patch`.
+NodeAgent (separate repo): **`PortForwardingManager.cs`** (full file — the final version incl. the
+JsonOptions.Wire casing fix).
+**Journal patches** (`FRONTEND_REMAKE_IMPLEMENTATION.md` §0/§8/§9): `journal-description-cards`,
+`journal-os-image`, `journal-scheduling-constraints`, `journal-replication`. The **finalized
+journal file** is provided directly (all applied).
 
-**Grounded wire facts (the traps, confirmed against source + the working legacy client):**
-- **`PortProtocol` (TCP=1/UDP=2/Both=3) has NO string converter → serializes NUMERIC**, both
-  read and write. The working `direct-access.js` sends `protocol` as an int and reads it back
-  as one. So we send/tolerate ordinals via a new `portProtocol.ts` normalizer (mirrors
-  `vmStatus.ts`). **There is no ordinal 0** — mapped explicitly, not via a 0-based array.
-- **`CustomDomainStatus` (PendingDns/Active/Paused/Error) DOES carry the converter (Ingress.cs
-  line 243) → serializes as a STRING.** Opposite of PortProtocol, same API. `domainStatus.ts`
-  handles names, stays defensive about ordinals.
-- **direct-access DELETE returns `204 No Content`** (raw, no envelope); **domains DELETE returns
-  `ApiResponse<bool>`** (JSON). The shared `api()` `unwrap()` could not handle 204 (it called
-  `res.json()` on an empty body and threw "Malformed response" because 204 *is* `res.ok`).
+## 5. Open items / owner's next steps
 
-**Files:**
-- `api/client.ts` — **one boundary change:** `unwrap()` now treats `204` as success →
-  `undefined`. Minimal, general, needed by the direct-access DELETE. The 8 client tests still pass.
-- `features/direct-access/` — `portProtocol.ts` (+test), `useDirectAccess.ts` (5 hooks),
-  `DirectAccessModal.tsx` (DNS name, port table w/ connection example + copy, quick-add from
-  `GET .../services`, custom-port form).
-- `features/domains/` — `domainStatus.ts` (+test), `useDomains.ts` (4 hooks),
-  `DomainsModal.tsx` (list w/ status badges, CNAME instructions + copy, add/verify/remove).
-- `app/routes.tsx` — `vms/:id` is now a parent with `access` + `domains` modal-route children.
-- `features/vms/VmDetailPage.tsx` — renders `<Outlet/>`; two entry links added; **the SSH/VNC
-  "Access" card relabelled "Connection"** (the docs' recommended de-ambiguation, done because
-  this was the moment the panel was edited).
-
-**Design decisions honored / made:**
-- Used the design's ratified **modal-route** pattern (URL-driven Radix Dialog, Back closes,
-  reload survives) — established here for the first time (was no child-route pattern before).
-- Reused everything the foundation provides: `api()`, TanStack Query, Radix, Meridian tokens,
-  reusable global classes; quick-add list comes from the backend's own `GET .../services`,
-  not a hardcoded copy. No new dependency, no new endpoint, no client-side pricing/derivation.
-
-**NOT done / owner's step:**
-- **Click-through against a live backend.** No running Orchestrator here. Per the project's own
-  rule, a *write* action isn't proven until its button is clicked against the real API and the
-  Network tab read (this is exactly how the VmAction ordinal bug was found). The wire shapes are
-  grounded from source, but the owner must exercise each button once on a real VM.
-- **Do NOT delete the legacy `direct-access.js` / `custom-domains.js` modules yet.** They ship
-  and prove first; deletion is Phase 6 with the rest of the old app (per DESIGN + IMPL §8). They
-  are currently unreachable anyway (openers deleted 2026-07-24).
-- Custom Domains's `EnableVmIngress`/`disable`/port (the platform-subdomain default ingress) is a
-  *separate* surface from custom domains and was left out of scope — the regression was
-  specifically custom domains + direct-access ports.
-
----
-
-## Addendum — Relay AllocatePort fail-fast (orchestrator, backend; out of original frontend scope)
-
-**How it surfaced:** the new Direct Access UI was the first client to exercise quick-add against a CGNAT VM. Clicking SSH returned a 400 after ~30s: "Relay port allocation failed or timed out." Frontend proved correct end-to-end (right endpoint, `{"serviceName":"ssh"}` body, error surfaced cleanly). The failure is backend/infra.
-
-**Root cause (relay side, NOT in this repo):** orchestrator log shows the relay node `e9277b2c` acknowledged the `AllocatePort` command in ~1s with `Success=False` and no error message (logged as "Unknown error" because the orchestrator does `ack.ErrorMessage ?? "Unknown error"`). The relay's own port allocation failed; the real reason lives only in the relay NodeAgent's logs (separate codebase). Still needs the relay-side log for that command (`IsRelayForwarding=true`) to name the true cause.
-
-**Second defect (orchestrator side, fixed here):** `DirectAccessService.WaitForPortAllocationAsync` polled only for success (`PortMapping.PublicPort > 0`), 60×500ms = 30s. It had no eyes on the failed acknowledgement the orchestrator already received and logged at second 1 (`CommandRegistration` holds no result; `TryCompleteCommand` removes the entry). So a definitive 1s rejection became a 30s generic "timeout" that also discarded the relay's real status.
-
-**Fix (patch: `fail-fast-port-allocation.patch`, 3 files, +104/-8):**
-- `DataStore`: new `_allocatePortFailures` map + `RecordAllocatePortFailure` / `TryConsumeAllocatePortFailure`. Records the *missing* command-outcome signal, scoped to AllocatePort only (the sole command with a waiter, which consumes on read → bounded; 2-min TTL prune for orphaned late acks).
-- `NodeService.ProcessCommandAcknowledgmentAsync`: on a failed ack for an AllocatePort command, record the failure (right where it already logs it).
-- `DirectAccessService.WaitForPortAllocationAsync`: returns `(int Port, string? FailureReason)` (out-params illegal in async). Poll loop checks success first, then the failure record → fails fast (~1s) with the reason. Relay call site now distinguishes "Relay rejected port allocation: {reason}" from "timed out (no response within 30s)". Non-relay hop kept its existing optimistic contract (destructures, discards reason) — deliberately not touched.
-- Race-free: success path never records a failure, so `TryConsume` can't misfire on success.
-
-**NOT done:** not compiled (no dotnet in the build sandbox) — owner must `dotnet build`. Relay-side root cause still open (needs relay NodeAgent log). The non-relay hop's optimistic "Success: in progress on timeout" is untouched and could later surface the reason too.
+- **Build + test after applying FE patches** (`npm run build` + `npm test`) — get the real test
+  count; the sandbox couldn't run either.
+- **Marketplace next** (Workstream D) — start with the browse page; check live catalogue contents
+  to see how much of the Phase-3 tail it unblocks.
+- **template Variables:** build only once a variable-declaring template exists (post-Marketplace
+  or authoring). The mechanism is grounded (§2C.5).
+- **Live-verify the untested tiers:** OS-pinned image (read-only) and locked template constraints —
+  both need a template that pins/constrains, i.e. Marketplace.
+- **Quick checks:** replication price row scaling at factor 3/5; `flush-port-forwards` auth on a
+  relay reconcile (inference-clean — shares the verified `remove` helper).
+- **Still unbuilt (Phase-3 tails):** node-agent metrics push (panel correctly gated on data);
+  terminal + file-browser in-app routes (still on legacy standalone pages).

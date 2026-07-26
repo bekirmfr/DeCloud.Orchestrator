@@ -51,6 +51,7 @@ function Sidebar() {
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {/* MIGRATED → client routes (relative to the /app basename). */}
         <NavLink to="/" end className="nav-link">Overview</NavLink>
+        <NavLink to="/marketplace" className="nav-link">Marketplace</NavLink>
         <NavLink to="/vms" className="nav-link">Virtual Machines</NavLink>
         <NavLink to="/settings/ssh-keys" className="nav-link">SSH Keys</NavLink>
 

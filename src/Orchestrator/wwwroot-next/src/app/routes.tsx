@@ -11,6 +11,7 @@ import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
 import { DeployPage } from "../features/deploy/DeployPage";
+import { MarketplacePage } from "../features/marketplace/MarketplacePage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -44,7 +45,7 @@ export const router = createBrowserRouter(
       errorElement: <RouteError />,
       children: [
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
-        // { path: "marketplace", element: <Marketplace /> },     // Phase 5
+        { path: "marketplace", element: <MarketplacePage /> },    // Phase 5 · browse
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
         {
           path: "vms/:id",                                        // Phase 3 · detail cockpit
