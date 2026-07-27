@@ -186,6 +186,7 @@ export function VmDetailPage() {
         <Link to="ports" className="btn-ghost">Ports &amp; direct access</Link>
         <Link to="domains" className="btn-ghost">Custom domains</Link>
         <a href={`/app/vms/${id}/terminal`} target="_blank" rel="noopener noreferrer" className="btn-ghost">Terminal ↗</a>
+        <a href={`/app/vms/${id}/files`} target="_blank" rel="noopener noreferrer" className="btn-ghost">Files ↗</a>
         <RevealPasswordButton vmId={id} />
       </div>
 

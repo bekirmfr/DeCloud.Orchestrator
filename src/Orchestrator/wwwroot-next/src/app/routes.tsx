@@ -11,6 +11,7 @@ import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
 import { TerminalPage } from "../features/vms/TerminalPage";
+import { FileBrowserPage } from "../features/vms/FileBrowserPage";
 import { DeployPage } from "../features/deploy/DeployPage";
 import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
 import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
@@ -64,6 +65,7 @@ export const router = createBrowserRouter(
           ],
         },
         { path: "vms/:id/terminal", element: <TerminalPage /> },   // full-page terminal (new tab)
+        { path: "vms/:id/files", element: <FileBrowserPage /> },    // full-page file browser (new tab)
         { path: "marketplace/:slug", element: <MarketplaceDetailPage /> },   // Phase 5 · detail
         { path: "marketplace/:slug/deploy", element: <DeployPage /> }, // Phase 3 · deploy
         {
