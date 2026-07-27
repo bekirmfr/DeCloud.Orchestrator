@@ -10,7 +10,7 @@ import { VmsPage } from "../features/vms/VmsPage";
 import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
-import { TerminalModal } from "../features/vms/TerminalModal";
+import { TerminalPage } from "../features/vms/TerminalPage";
 import { DeployPage } from "../features/deploy/DeployPage";
 import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
 import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
@@ -61,9 +61,9 @@ export const router = createBrowserRouter(
           children: [
             { path: "ports", element: <DirectAccessModal /> },   // Smart Port Allocation
             { path: "domains", element: <DomainsModal /> },       // custom domains (central ingress)
-            { path: "terminal", element: <TerminalModal /> },     // in-app SSH terminal (xterm)
           ],
         },
+        { path: "vms/:id/terminal", element: <TerminalPage /> },   // full-page terminal (new tab)
         { path: "marketplace/:slug", element: <MarketplaceDetailPage /> },   // Phase 5 · detail
         { path: "marketplace/:slug/deploy", element: <DeployPage /> }, // Phase 3 · deploy
         {
