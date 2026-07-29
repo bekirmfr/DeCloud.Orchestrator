@@ -13,8 +13,86 @@ import {
 // CreateTemplateRequest field except Artifacts (their own endpoint). Create
 // POSTs CreateTemplateRequest; edit PUTs the full VmTemplate (see useTemplates).
 
+// Minimal working cloud-config the "↓ Starter" button drops into the cloud-init
+// field — ported verbatim from the legacy my-templates.js so authors get the
+// same known-good scaffold.
+const CLOUD_INIT_STARTER = `#cloud-config
+package_update: true
+packages: []
+
+write_files:
+  - path: /usr/local/bin/setup.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      exec >> /var/log/setup.log 2>&1
+      echo "=== Setup started $(date) ==="
+
+      # --- your setup commands here ---
+
+      echo "=== Setup complete $(date) ==="
+
+runcmd:
+  - /usr/local/bin/setup.sh
+`;
+
+// Per-field help shown behind an (i) icon (same token language as the deploy
+// form's Hint copy, just presented as a hover/focus popup to keep this dense
+// form compact).
+const HELP = {
+  name: "Display name shown on the marketplace card.",
+  slug: "URL-safe identifier — lowercase and hyphens. Must be unique across the marketplace.",
+  description: "One-line summary shown on cards and in search results.",
+  longDescription: "Full write-up (Markdown) shown on the template's detail page.",
+  category: "Groups the template in the marketplace, e.g. web, database, ai.",
+  version: "Semantic version of this template (e.g. 1.0.0). Bump it whenever you change the template.",
+  tags: "Comma-separated keywords that help people find the template.",
+  iconUrl: "URL of a square icon image shown on the card.",
+  authorName: "Name credited as the author. Defaults to your wallet address.",
+  authorRevenueWallet: "Wallet that receives revenue for paid templates. Defaults to your wallet.",
+  license: "License the template is published under, e.g. MIT.",
+  sourceUrl: "Link to the source repository or a homepage.",
+  recSpec: "The resources a deployment gets by default. Deployers can adjust down to the minimum below.",
+  recImageId: "Base image the VM boots from, e.g. ubuntu-22.04.",
+  minSpec: "The lowest resources a deployer may pick — the template won't run reliably below this.",
+  requiresGpu: "Tick if the workload needs a GPU to run.",
+  defaultGpuMode: "How the GPU is attached: None, dedicated Passthrough, or shared Proxied.",
+  gpuRequirement: "Free-text note about the GPU needed, e.g. nvidia, 16GB VRAM.",
+  defaultBandwidthTier: "Network tier applied by default. Unmetered has no data cap.",
+  containerImage: "Optional container image, if this template runs a container.",
+  cloudInitTemplate: "cloud-init config that provisions the VM on first boot. Reference user variables as ${NAME}.",
+  defaultAccessUrl: "URL shown to the user to reach the app once deployed. Supports ${DECLOUD_DOMAIN}.",
+  defaultUsername: "Default login username for the deployed app, if any.",
+  useGeneratedPassword: "Generate a random password at deploy and show it to the user once.",
+  envVars: "Environment variables baked into every deployment of this template.",
+  ports: "Ports the app listens on. Public ports are reachable from the internet; others stay internal.",
+  variables: "Values collected from the deployer at deploy time and substituted into cloud-init via ${NAME}.",
+  visibility: "Public appears in the marketplace; Private is visible only to you.",
+  pricingModel: "Free, or a one-time fee charged each time someone deploys it.",
+  templatePrice: "Amount charged per deploy, used when pricing is Per deploy.",
+  estimatedCostPerHour: "Your estimate of the hourly running cost, shown to deployers.",
+};
+
+// (i) icon with a hover/focus popup. Self-contained (no CSS file, no dep).
+function Help({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <span role="button" tabIndex={0} aria-label={text}
+        onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+        style={{ cursor: "help", width: 15, height: 15, borderRadius: "50%", border: "1px solid var(--border)", color: "var(--text-tertiary)", fontSize: 10, fontStyle: "italic", lineHeight: "13px", display: "inline-flex", alignItems: "center", justifyContent: "center", userSelect: "none", flex: "none" }}>i</span>
+      {open && (
+        <span role="tooltip" style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, zIndex: 20, width: 250, padding: "8px 10px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.45, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", fontWeight: 400 }}>{text}</span>
+      )}
+    </span>
+  );
+}
+
 const inputStyle: CSSProperties = { width: "100%" };
 const sectionStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: "var(--space-2)", padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--surface-1)" };
+const headStyle: CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6 };
 
 export function CreateTemplatePage() {
   const { id } = useParams();
@@ -37,6 +115,11 @@ export function CreateTemplatePage() {
   const busy = create.isPending || update.isPending;
   const err = (create.error || update.error) as Error | undefined;
 
+  function insertStarter() {
+    if (form.cloudInitTemplate.trim() && !window.confirm("Replace current cloud-init content with the starter template?")) return;
+    set("cloudInitTemplate", CLOUD_INIT_STARTER);
+  }
+
   async function save() {
     try {
       const result = isEdit && existing.data
@@ -48,22 +131,25 @@ export function CreateTemplatePage() {
   }
 
   // Field helpers return JSX (not components) so inputs don't remount / lose focus.
-  const field = (label: string, node: ReactNode) => <label className="field" style={{ flex: 1 }}><span>{label}</span>{node}</label>;
-  const txt = (label: string, k: keyof TemplateForm, ph = "") =>
-    field(label, <input style={inputStyle} value={form[k] as string} placeholder={ph} onChange={(e) => set(k, e.target.value)} />);
-  const num = (label: string, k: keyof TemplateForm, min = 0) =>
-    field(label, <input style={inputStyle} type="number" min={min} value={form[k] as number} onChange={(e) => set(k, Number(e.target.value))} />);
-  const area = (label: string, k: keyof TemplateForm, rows = 4, ph = "") =>
-    field(label, <textarea style={{ ...inputStyle, minHeight: rows * 22, fontFamily: k === "cloudInitTemplate" ? "var(--font-mono)" : undefined }} value={form[k] as string} placeholder={ph} onChange={(e) => set(k, e.target.value)} />);
-  const chk = (label: string, k: keyof TemplateForm) =>
-    <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      <input type="checkbox" checked={form[k] as boolean} onChange={(e) => set(k, e.target.checked)} /><span>{label}</span>
+  const field = (label: string, node: ReactNode, help?: string) =>
+    <label className="field" style={{ flex: 1 }}>
+      <span style={headStyle}>{label}{help ? <Help text={help} /> : null}</span>{node}
     </label>;
-  const sel = (label: string, k: keyof TemplateForm, opts: [number, string][]) =>
+  const txt = (label: string, k: keyof TemplateForm, ph = "", help?: string) =>
+    field(label, <input style={inputStyle} value={form[k] as string} placeholder={ph} onChange={(e) => set(k, e.target.value)} />, help);
+  const num = (label: string, k: keyof TemplateForm, min = 0, help?: string) =>
+    field(label, <input style={inputStyle} type="number" min={min} value={form[k] as number} onChange={(e) => set(k, Number(e.target.value))} />, help);
+  const chk = (label: string, k: keyof TemplateForm, help?: string) =>
+    <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <input type="checkbox" checked={form[k] as boolean} onChange={(e) => set(k, e.target.checked)} /><span style={headStyle}>{label}{help ? <Help text={help} /> : null}</span>
+    </label>;
+  const sel = (label: string, k: keyof TemplateForm, opts: [number, string][], help?: string) =>
     field(label, <select style={inputStyle} value={form[k] as number} onChange={(e) => set(k, Number(e.target.value))}>
       {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>);
+    </select>, help);
   const row = (children: ReactNode) => <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>{children}</div>;
+  const subLabel = (label: string, help: string) =>
+    <span style={{ ...headStyle, color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{label} <Help text={help} /></span>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", maxWidth: 760 }}>
@@ -74,43 +160,49 @@ export function CreateTemplatePage() {
       {/* Basics */}
       <div style={sectionStyle}>
         <strong>Basics</strong>
-        {row(<>{txt("Name", "name", "My App")}{txt("Slug", "slug", "my-app")}</>)}
-        {area("Description", "description", 2, "One-line summary shown on cards.")}
-        {area("Long description (Markdown)", "longDescription", 5)}
-        {row(<>{txt("Category", "category", "web")}{txt("Version", "version")}{txt("Tags (comma-separated)", "tags", "web, node")}</>)}
-        {txt("Icon URL", "iconUrl", "https://…/icon.png")}
+        {row(<>{txt("Name", "name", "My App", HELP.name)}{txt("Slug", "slug", "my-app", HELP.slug)}</>)}
+        {field("Description", <textarea style={{ ...inputStyle, minHeight: 44 }} value={form.description} placeholder="One-line summary shown on cards." onChange={(e) => set("description", e.target.value)} />, HELP.description)}
+        {field("Long description (Markdown)", <textarea style={{ ...inputStyle, minHeight: 110 }} value={form.longDescription} onChange={(e) => set("longDescription", e.target.value)} />, HELP.longDescription)}
+        {row(<>{txt("Category", "category", "web", HELP.category)}{txt("Version", "version", "", HELP.version)}{txt("Tags (comma-separated)", "tags", "web, node", HELP.tags)}</>)}
+        {txt("Icon URL", "iconUrl", "https://…/icon.png", HELP.iconUrl)}
       </div>
 
       {/* Author & links */}
       <div style={sectionStyle}>
         <strong>Author & links</strong>
-        {row(<>{txt("Author name", "authorName")}{txt("Revenue wallet", "authorRevenueWallet")}</>)}
-        {row(<>{txt("License", "license", "MIT")}{txt("Source URL", "sourceUrl", "https://github.com/…")}</>)}
+        {row(<>{txt("Author name", "authorName", "", HELP.authorName)}{txt("Revenue wallet", "authorRevenueWallet", "", HELP.authorRevenueWallet)}</>)}
+        {row(<>{txt("License", "license", "MIT", HELP.license)}{txt("Source URL", "sourceUrl", "https://github.com/…", HELP.sourceUrl)}</>)}
       </div>
 
       {/* Resources */}
       <div style={sectionStyle}>
         <strong>Resources</strong>
-        <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Recommended spec (the default at deploy).</span>
-        {row(<>{num("vCPU", "recCpu", 1)}{num("Memory (MB)", "recMemMb", 128)}{num("Disk (GB)", "recDiskGb", 1)}{txt("Image ID", "recImageId", "ubuntu-22.04")}</>)}
-        <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Minimum spec (the floor a deployer can't go below).</span>
+        {subLabel("Recommended spec (the default at deploy)", HELP.recSpec)}
+        {row(<>{num("vCPU", "recCpu", 1)}{num("Memory (MB)", "recMemMb", 128)}{num("Disk (GB)", "recDiskGb", 1)}{txt("Image ID", "recImageId", "ubuntu-22.04", HELP.recImageId)}</>)}
+        {subLabel("Minimum spec (the floor a deployer can't go below)", HELP.minSpec)}
         {row(<>{num("vCPU", "minCpu", 1)}{num("Memory (MB)", "minMemMb", 128)}{num("Disk (GB)", "minDiskGb", 1)}</>)}
-        {row(<>{chk("Requires GPU", "requiresGpu")}{sel("GPU mode", "defaultGpuMode", GPU_MODES)}{sel("Bandwidth tier", "defaultBandwidthTier", BANDWIDTH_TIERS)}</>)}
-        {txt("GPU requirement", "gpuRequirement", "e.g. nvidia, 16GB VRAM")}
+        {row(<>{chk("Requires GPU", "requiresGpu", HELP.requiresGpu)}{sel("GPU mode", "defaultGpuMode", GPU_MODES, HELP.defaultGpuMode)}{sel("Bandwidth tier", "defaultBandwidthTier", BANDWIDTH_TIERS, HELP.defaultBandwidthTier)}</>)}
+        {txt("GPU requirement", "gpuRequirement", "e.g. nvidia, 16GB VRAM", HELP.gpuRequirement)}
       </div>
 
       {/* Runtime */}
       <div style={sectionStyle}>
         <strong>Runtime</strong>
-        {txt("Container image", "containerImage", "optional")}
-        {area("Cloud-init template", "cloudInitTemplate", 8, "#cloud-config …")}
-        {row(<>{txt("Default access URL", "defaultAccessUrl", "https://${DECLOUD_DOMAIN}:8080")}{txt("Default username", "defaultUsername")}</>)}
-        {chk("Generate a password at deploy", "useGeneratedPassword")}
+        {txt("Container image", "containerImage", "optional", HELP.containerImage)}
+        <label className="field">
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Cloud-init template <Help text={HELP.cloudInitTemplate} />
+            <button type="button" className="btn-ghost" style={{ marginLeft: "auto", fontSize: "var(--text-xs)", padding: "2px 8px" }} onClick={insertStarter}>↓ Starter</button>
+          </span>
+          <textarea style={{ width: "100%", minHeight: 180, fontFamily: "var(--font-mono)" }} value={form.cloudInitTemplate} placeholder="#cloud-config …" onChange={(e) => set("cloudInitTemplate", e.target.value)} />
+        </label>
+        {row(<>{txt("Default access URL", "defaultAccessUrl", "https://${DECLOUD_DOMAIN}:8080", HELP.defaultAccessUrl)}{txt("Default username", "defaultUsername", "", HELP.defaultUsername)}</>)}
+        {chk("Generate a password at deploy", "useGeneratedPassword", HELP.useGeneratedPassword)}
       </div>
 
       {/* Environment variables */}
       <div style={sectionStyle}>
-        <strong>Default environment variables</strong>
+        <strong style={headStyle}>Default environment variables <Help text={HELP.envVars} /></strong>
         {form.envVars.map((e, i) => (
           <div key={i} style={{ display: "flex", gap: 8 }}>
             <input style={{ flex: 1 }} placeholder="KEY" value={e.key} onChange={(ev) => set("envVars", form.envVars.map((r, j) => j === i ? { ...r, key: ev.target.value } : r))} />
@@ -123,7 +215,7 @@ export function CreateTemplatePage() {
 
       {/* Exposed ports */}
       <div style={sectionStyle}>
-        <strong>Exposed ports</strong>
+        <strong style={headStyle}>Exposed ports <Help text={HELP.ports} /></strong>
         {form.ports.map((p, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <input style={{ width: 90 }} placeholder="port" value={p.port} onChange={(ev) => set("ports", form.ports.map((r, j) => j === i ? { ...r, port: ev.target.value } : r))} />
@@ -138,8 +230,7 @@ export function CreateTemplatePage() {
 
       {/* Template variables */}
       <div style={sectionStyle}>
-        <strong>User variables</strong>
-        <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Collected from the deployer and substituted into cloud-init.</span>
+        <strong style={headStyle}>User variables <Help text={HELP.variables} /></strong>
         {form.variables.map((v, i) => (
           <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <input style={{ width: 150 }} placeholder="NAME" value={v.name} onChange={(ev) => set("variables", form.variables.map((r, j) => j === i ? { ...r, name: ev.target.value } : r))} />
@@ -155,8 +246,8 @@ export function CreateTemplatePage() {
       {/* Pricing & visibility */}
       <div style={sectionStyle}>
         <strong>Pricing & visibility</strong>
-        {row(<>{sel("Visibility", "visibility", VISIBILITIES)}{sel("Pricing model", "pricingModel", PRICING_MODELS)}</>)}
-        {row(<>{num("Template price", "templatePrice")}{num("Est. cost / hour", "estimatedCostPerHour")}</>)}
+        {row(<>{sel("Visibility", "visibility", VISIBILITIES, HELP.visibility)}{sel("Pricing model", "pricingModel", PRICING_MODELS, HELP.pricingModel)}</>)}
+        {row(<>{num("Template price", "templatePrice", 0, HELP.templatePrice)}{num("Est. cost / hour", "estimatedCostPerHour", 0, HELP.estimatedCostPerHour)}</>)}
       </div>
 
       {warnings && (
