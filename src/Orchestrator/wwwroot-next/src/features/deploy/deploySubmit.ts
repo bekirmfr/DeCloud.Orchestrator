@@ -38,6 +38,13 @@ export interface ConstraintVocabulary {
   operatorTargetTypes: Record<string, string[]>;    // operator → accepted type names
 }
 
+export interface TemplatePort {
+  port: number;
+  protocol: string;
+  description?: string;
+  isPublic?: boolean;
+}
+
 export interface VmTemplate {
   id: string;
   slug: string;
@@ -58,6 +65,23 @@ export interface VmTemplate {
   // so customising without them silently downgrades bandwidth/GPU.
   defaultBandwidthTier?: number;
   variables?: TemplateVariable[];
+  status?: string | number;
+  // ── authoring fields (present on the full VmTemplate; My Templates + edit) ──
+  version?: string;
+  tags?: string[];
+  authorName?: string;
+  authorRevenueWallet?: string;
+  license?: string;
+  sourceUrl?: string;
+  gpuRequirement?: string;
+  containerImage?: string;
+  cloudInitTemplate?: string;
+  defaultEnvironmentVariables?: Record<string, string>;
+  exposedPorts?: TemplatePort[];
+  defaultAccessUrl?: string;
+  defaultUsername?: string;
+  useGeneratedPassword?: boolean;
+  visibility?: string | number;
 }
 
 export interface TemplateVariable {

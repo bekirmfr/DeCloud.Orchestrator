@@ -62,7 +62,7 @@ function Sidebar() {
             client-side navigation would be wrong. Swing each one to a /app route
             as its page lands, and delete the legacy page in the same change. */}
         <a className="nav-link" href="/?page=nodes">Nodes</a>
-        <a className="nav-link" href="/?page=my-templates">My Templates</a>
+        <NavLink to="/my-templates" className="nav-link">My Templates</NavLink>
         <a className="nav-link" href="/?page=settings">Settings</a>
 
         {/* Admin — visibility only. Every admin endpoint is enforced server-side

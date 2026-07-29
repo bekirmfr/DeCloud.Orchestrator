@@ -12,6 +12,8 @@ import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
 import { DomainsModal } from "../features/domains/DomainsModal";
 import { TerminalPage } from "../features/vms/TerminalPage";
 import { FileBrowserPage } from "../features/vms/FileBrowserPage";
+import { MyTemplatesPage } from "../features/templates/MyTemplatesPage";
+import { CreateTemplatePage } from "../features/templates/CreateTemplatePage";
 import { DeployPage } from "../features/deploy/DeployPage";
 import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
 import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
@@ -53,6 +55,9 @@ export const router = createBrowserRouter(
         { path: "deploy", element: <DeploySourcePage /> },        // Phase 5 · deployment-source chooser
         { path: "deploy/repository", element: <RepoDeployPage /> }, // Phase 5 · repo deploy (form WIP)
         { path: "marketplace", element: <MarketplacePage /> },    // Phase 5 · browse
+        { path: "my-templates", element: <MyTemplatesPage /> },    // Phase 5 · authoring: my templates
+        { path: "my-templates/new", element: <CreateTemplatePage /> },        // create (form WIP)
+        { path: "my-templates/:id/edit", element: <CreateTemplatePage /> },   // edit (form WIP)
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
         {
           path: "vms/:id",                                        // Phase 3 · detail cockpit
