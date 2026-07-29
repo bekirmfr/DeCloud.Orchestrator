@@ -65,6 +65,6 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 const NUM: Record<number, string> = { 0: "draft", 1: "published", 2: "archived", 3: "pendingreview", 4: "rejected" };
 
 export function templateStatus(status?: string | number): { label: string; tone: string } {
-  const key = typeof status === "number" ? NUM[status] : String(status ?? "").toLowerCase();
+    const key = typeof status === "number" ? (NUM[status] ?? "") : String(status ?? "").toLowerCase();
   return STATUS[key] ?? { label: String(status ?? "—"), tone: "var(--text-secondary)" };
 }

@@ -108,7 +108,10 @@ export function FileBrowserPage() {
     ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch { /* ignore */ } };
     ws.onclose = (e) => setStatus(`disconnected (code ${e.code})`);
     ws.onerror = () => setStatus("connection error");
-    return () => { ws.close(); wsRef.current = null; };
+      return () => { ws.close(); wsRef.current = null; };
+      // list/sendChunks are stable helpers driven by the once-bound socket; adding
+      // them would reconnect on every render. Intentional fixed deps.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, id, username, password]);
 
   function saveBlob(chunksB64: string[], fileName: string) {
