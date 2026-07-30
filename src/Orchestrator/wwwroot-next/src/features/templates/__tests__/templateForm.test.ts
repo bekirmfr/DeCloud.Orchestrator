@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyForm, toPayload, fromTemplate, enumNum } from "../templateForm";
+import { emptyForm, emptyPort, emptyVar, toPayload, fromTemplate, enumNum } from "../templateForm";
 import type { VmTemplate } from "../../deploy/deploySubmit";
 
 describe("templateForm mapping", () => {
@@ -31,8 +31,8 @@ describe("templateForm mapping", () => {
     const p = toPayload({
       ...emptyForm, name: "A", slug: "a",
       envVars: [{ key: "", value: "x" }, { key: "K", value: "v" }],
-      ports: [{ port: "", protocol: "tcp", description: "", isPublic: false }],
-      variables: [{ name: "", description: "", defaultValue: "", required: false }],
+      ports: [{ ...emptyPort, protocol: "tcp" }],
+      variables: [{ ...emptyVar }],
     });
     expect(p.defaultEnvironmentVariables).toEqual({ K: "v" });
     expect(p.exposedPorts).toEqual([]);

@@ -38,11 +38,32 @@ export interface ConstraintVocabulary {
   operatorTargetTypes: Record<string, string[]>;    // operator → accepted type names
 }
 
+export interface ServiceCheck {
+  strategy: number;          // CheckStrategy: 0=TcpPort, 1=HttpGet, 2=ExecCommand
+  httpPath?: string;         // for HttpGet
+  execCommand?: string;      // for ExecCommand (via qemu-guest-agent)
+  timeoutSeconds?: number;   // default 300
+  livenessCheck?: boolean;   // periodic re-check after Ready
+}
+
 export interface TemplatePort {
   port: number;
   protocol: string;
   description?: string;
   isPublic?: boolean;
+  readinessCheck?: ServiceCheck;
+}
+
+export interface TemplateArtifact {
+  name: string;
+  type: number;              // ArtifactType 0..5
+  description?: string;
+  architecture?: string | null; // null=any, "amd64", "arm64"
+  sourceUrl?: string;        // https URL, or a data: URI for inline
+  sha256?: string;           // required for external; server computes for inline
+  content?: string;          // raw text; server wraps as data:{contentType};base64,…
+  contentType?: string;
+  sizeBytes?: number;
 }
 
 export interface VmTemplate {
@@ -78,6 +99,7 @@ export interface VmTemplate {
   cloudInitTemplate?: string;
   defaultEnvironmentVariables?: Record<string, string>;
   exposedPorts?: TemplatePort[];
+  artifacts?: TemplateArtifact[];
   defaultAccessUrl?: string;
   defaultUsername?: string;
   useGeneratedPassword?: boolean;
@@ -93,7 +115,12 @@ export interface TemplateVariable {
   // flag. Platform-vs-user is NOT this field: a variable is platform-managed if
   // its name is a resolver key from GET /api/marketplace/platform-variables, and
   // user-facing (must be collected at deploy) only if it has no resolver.
-  kind?: string;
+  kind?: string | number;
+  // WatcherScope (Noop|Reload|Restart) — Dynamic-only reaction when the value
+  // changes at runtime. Ignored for statics.
+  scope?: string | number;
+  // Override the resolver key used to look up the value; defaults to name.
+  resolverKey?: string;
 }
 
 export interface VmImage {
