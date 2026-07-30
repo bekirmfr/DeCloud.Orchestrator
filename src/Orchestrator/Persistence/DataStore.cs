@@ -211,13 +211,14 @@ public class DataStore
             var usageIndexes = new[]
             {
             new CreateIndexModel<UsageRecord>(
-                Builders<UsageRecord>.IndexKeys
-                    .Ascending(r => r.UserId)
-                    .Descending(r => r.CreatedAt),
+                Builders<UsageRecord>.IndexKeys.Ascending(r => r.UserId).Descending(r => r.CreatedAt),
                 new CreateIndexOptions { Name = "idx_user_timestamp" }),
             new CreateIndexModel<UsageRecord>(
                 Builders<UsageRecord>.IndexKeys.Ascending(r => r.VmId),
-                new CreateIndexOptions { Name = "idx_vm" })
+                new CreateIndexOptions { Name = "idx_vm" }),
+            new CreateIndexModel<UsageRecord>(
+                Builders<UsageRecord>.IndexKeys.Ascending(r => r.SettledOnChain).Descending(r => r.CreatedAt),
+                new CreateIndexOptions { Name = "idx_settled_created" })
             };
             TryCreateIndexesAsync(UsageRecordsCollection!, "usageRecords", usageIndexes).Wait();
 
