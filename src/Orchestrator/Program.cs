@@ -50,8 +50,18 @@ if (!string.IsNullOrEmpty(mongoConnectionString))
         {
             var settings = MongoClientSettings.FromConnectionString(mongoConnectionString);
             settings.ServerApi = new ServerApi(ServerApiVersion.V1);
-            settings.ConnectTimeout = TimeSpan.FromSeconds(10);
-            settings.SocketTimeout = TimeSpan.FromSeconds(10);
+            settings.ConnectTimeout = TimeSpan.FromSeconds(60);
+            // SocketTimeout bounds each socket read, including cursor getMore batches
+            // during the startup state-load (which pulls whole collections). At 10s it
+            // was too tight for this link to Atlas: fetching even ~2500 tiny usageRecords
+            // took ~11.75s wall despite a 2ms server-side query, so the load timed out —
+            // and a failed load is fatal in Production, crash-looping the service. 60s
+            // stops a correct operation from being killed prematurely.
+            // NOTE: the underlying slowness (small fetches taking >10s over the wire) is
+            // a network/cluster problem to fix separately — this only removes the too-tight
+            // ceiling; it does not make the link fast.
+            settings.SocketTimeout = TimeSpan.FromSeconds(60);
+
 
             return new MongoClient(settings);
         });
