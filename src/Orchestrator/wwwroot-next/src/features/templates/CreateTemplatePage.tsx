@@ -7,7 +7,7 @@ import {
   emptyForm, fromTemplate, specError, type TemplateForm,
   GPU_MODES, BANDWIDTH_TIERS, VISIBILITIES, PRICING_MODELS,
   QUALITY_TIERS, VARIABLE_KINDS, WATCHER_SCOPES, ARTIFACT_TYPES, CHECK_STRATEGIES,
-  PROTOCOLS, ARCHITECTURES, IMAGE_OPTIONS,
+  PROTOCOLS, ARCHITECTURES, IMAGE_OPTIONS, CATEGORIES,
   emptyVar, emptyPort, emptyArtifact,
   type EnvRow, type PortRow, type VarRow, type ArtifactRow, type ArtifactMode,
 } from "./templateForm";
@@ -48,7 +48,8 @@ const HELP = {
   slug: "URL-safe identifier — lowercase and hyphens. Must be unique across the marketplace.",
   description: "One-line summary shown on cards and in search results.",
   longDescription: "Full write-up (Markdown) shown on the template's detail page.",
-  category: "Groups the template in the marketplace, e.g. web, database, ai.",
+  category: "Groups the template in the marketplace.",
+  recGpuVramGb: "Minimum GPU memory the workload needs, in GB (e.g. 16, 24). 0 = unspecified.",
   version: "Semantic version of this template (e.g. 1.0.0). Bump it whenever you change the template.",
   tags: "Comma-separated keywords that help people find the template.",
   iconUrl: "URL of a square icon image shown on the card.",
@@ -191,7 +192,7 @@ export function CreateTemplatePage() {
         {row(<>{txt("Name", "name", "My App", HELP.name)}{txt("Slug", "slug", "my-app", HELP.slug)}</>)}
         {field("Description", <textarea style={{ ...inputStyle, minHeight: 44 }} value={form.description} placeholder="One-line summary shown on cards." onChange={(e) => set("description", e.target.value)} />, HELP.description)}
         {field("Long description (Markdown)", <textarea style={{ ...inputStyle, minHeight: 110 }} value={form.longDescription} onChange={(e) => set("longDescription", e.target.value)} />, HELP.longDescription)}
-        {row(<>{txt("Category", "category", "web", HELP.category)}{txt("Version", "version", "", HELP.version)}{txt("Tags (comma-separated)", "tags", "web, node", HELP.tags)}</>)}
+        {row(<>{selStr("Category", "category", CATEGORIES, HELP.category)}{txt("Version", "version", "", HELP.version)}{txt("Tags (comma-separated)", "tags", "web, node", HELP.tags)}</>)}
         {txt("Icon URL", "iconUrl", "https://…/icon.png", HELP.iconUrl)}
       </div>
 
@@ -205,12 +206,18 @@ export function CreateTemplatePage() {
       {/* Resources */}
       <div style={sectionStyle}>
         <strong>Resources</strong>
+        {row(<>{selStr("OS image", "recImageId", IMAGE_OPTIONS, HELP.recImageId)}{sel("Min quality tier", "minQualityTier", QUALITY_TIERS, HELP.minQualityTier)}{sel("Bandwidth tier", "defaultBandwidthTier", BANDWIDTH_TIERS, HELP.defaultBandwidthTier)}</>)}
         {subLabel("Recommended spec (the default at deploy)", HELP.recSpec)}
-        {row(<>{num("vCPU", "recCpu", 1)}{num("Memory (MB)", "recMemMb", 128)}{num("Disk (GB)", "recDiskGb", 1)}{selStr("OS image", "recImageId", IMAGE_OPTIONS, HELP.recImageId)}</>)}
+        {row(<>{num("vCPU", "recCpu", 1)}{num("Memory (MB)", "recMemMb", 128)}{num("Disk (GB)", "recDiskGb", 1)}</>)}
         {subLabel("Minimum spec (the floor a deployer can't go below)", HELP.minSpec)}
-        {row(<>{num("vCPU", "minCpu", 1)}{num("Memory (MB)", "minMemMb", 128)}{num("Disk (GB)", "minDiskGb", 1)}{sel("Min quality tier", "minQualityTier", QUALITY_TIERS, HELP.minQualityTier)}</>)}
-        {row(<>{chk("Requires GPU", "requiresGpu", HELP.requiresGpu)}{sel("GPU mode", "defaultGpuMode", GPU_MODES, HELP.defaultGpuMode)}{sel("Bandwidth tier", "defaultBandwidthTier", BANDWIDTH_TIERS, HELP.defaultBandwidthTier)}</>)}
-        {txt("GPU requirement", "gpuRequirement", "e.g. nvidia, 16GB VRAM", HELP.gpuRequirement)}
+        {row(<>{num("vCPU", "minCpu", 1)}{num("Memory (MB)", "minMemMb", 128)}{num("Disk (GB)", "minDiskGb", 1)}</>)}
+        {chk("Requires GPU", "requiresGpu", HELP.requiresGpu)}
+        {form.requiresGpu && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)", paddingLeft: 22 }}>
+            {row(<>{sel("GPU mode", "defaultGpuMode", GPU_MODES, HELP.defaultGpuMode)}{num("GPU VRAM (GB)", "recGpuVramGb", 0, HELP.recGpuVramGb)}</>)}
+            {txt("GPU requirement", "gpuRequirement", "e.g. nvidia, 16GB VRAM", HELP.gpuRequirement)}
+          </div>
+        )}
       </div>
 
       {/* Runtime */}
@@ -380,7 +387,7 @@ export function CreateTemplatePage() {
 
       {!warnings && (
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn-primary" disabled={busy || !!specErr || !form.name.trim() || !form.slug.trim()} onClick={save}>
+          <button className="btn-primary" disabled={busy || !!specErr || !form.name.trim() || !form.slug.trim() || !form.category} onClick={save}>
             {busy ? "Saving…" : isEdit ? "Save changes" : "Create draft"}
           </button>
           <Link className="btn-ghost" to="/my-templates">Cancel</Link>

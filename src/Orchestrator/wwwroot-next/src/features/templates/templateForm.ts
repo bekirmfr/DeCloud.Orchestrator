@@ -21,6 +21,8 @@ export const ARCHITECTURES: [string, string][] = [["", "Any"], ["amd64", "amd64"
 // Registry image IDs → RecommendedSpec.ImageId (the OS boot image). Empty =
 // OS-agnostic; the platform default (ubuntu-22.04) is applied at deploy.
 export const IMAGE_OPTIONS: [string, string][] = [["ubuntu-22.04", "Ubuntu 22.04"], ["ubuntu-24.04", "Ubuntu 24.04"], ["debian-12", "Debian 12"], ["", "OS-agnostic (platform default)"]];
+// Allowed marketplace categories (value → label), matching the legacy set.
+export const CATEGORIES: [string, string][] = [["", "Select a category…"], ["gaming", "Games"], ["dev-tools", "Dev Tools"], ["ai-ml", "AI/ML"], ["databases", "Databases"], ["web-apps", "Web Apps"], ["privacy-security", "Privacy & Security"]];
 
 const NAME_TO_NUM: Record<string, number> = {
   public: 0, private: 1, free: 0, perdeploy: 1,
@@ -56,7 +58,7 @@ export interface TemplateForm {
   name: string; slug: string; description: string; longDescription: string;
   category: string; version: string; tags: string; iconUrl: string;
   authorName: string; authorRevenueWallet: string; license: string; sourceUrl: string;
-  recCpu: number; recMemMb: number; recDiskGb: number; recImageId: string;
+  recCpu: number; recMemMb: number; recDiskGb: number; recImageId: string; recGpuVramGb: number;
   minCpu: number; minMemMb: number; minDiskGb: number; minQualityTier: number;
   requiresGpu: boolean; defaultGpuMode: number; gpuRequirement: string; defaultBandwidthTier: number;
   containerImage: string; cloudInitTemplate: string;
@@ -73,7 +75,7 @@ export const emptyForm: TemplateForm = {
   name: "", slug: "", description: "", longDescription: "",
   category: "", version: "1.0.0", tags: "", iconUrl: "",
   authorName: "", authorRevenueWallet: "", license: "", sourceUrl: "",
-  recCpu: 1, recMemMb: 1024, recDiskGb: 10, recImageId: "ubuntu-22.04",
+  recCpu: 1, recMemMb: 1024, recDiskGb: 10, recImageId: "ubuntu-22.04", recGpuVramGb: 0,
   minCpu: 1, minMemMb: 512, minDiskGb: 10, minQualityTier: 1,
   requiresGpu: false, defaultGpuMode: 0, gpuRequirement: "", defaultBandwidthTier: 3,
   containerImage: "", cloudInitTemplate: "",
@@ -92,7 +94,7 @@ export function fromTemplate(t: VmTemplate): TemplateForm {
     name: t.name ?? "", slug: t.slug ?? "", description: t.description ?? "", longDescription: t.longDescription ?? "",
     category: t.category ?? "", version: t.version ?? "1.0.0", tags: (t.tags ?? []).join(", "), iconUrl: t.iconUrl ?? "",
     authorName: t.authorName ?? "", authorRevenueWallet: t.authorRevenueWallet ?? "", license: t.license ?? "", sourceUrl: t.sourceUrl ?? "",
-    recCpu: rec?.virtualCpuCores ?? 1, recMemMb: mb(rec?.memoryBytes) || 1024, recDiskGb: gb(rec?.diskBytes) || 10, recImageId: rec?.imageId ?? "",
+    recCpu: rec?.virtualCpuCores ?? 1, recMemMb: mb(rec?.memoryBytes) || 1024, recDiskGb: gb(rec?.diskBytes) || 10, recImageId: rec?.imageId ?? "", recGpuVramGb: gb(rec?.gpuVramBytes),
     minCpu: min?.virtualCpuCores ?? 1, minMemMb: mb(min?.memoryBytes) || 512, minDiskGb: gb(min?.diskBytes) || 10, minQualityTier: enumNum(min?.qualityTier, 1),
     requiresGpu: t.requiresGpu ?? false, defaultGpuMode: enumNum(t.defaultGpuMode, 0), gpuRequirement: t.gpuRequirement ?? "", defaultBandwidthTier: enumNum(t.defaultBandwidthTier, 3),
     containerImage: t.containerImage ?? "", cloudInitTemplate: t.cloudInitTemplate ?? "",
@@ -120,7 +122,7 @@ export function fromTemplate(t: VmTemplate): TemplateForm {
 }
 
 function recSpec(f: TemplateForm): TemplateSpec {
-  return { virtualCpuCores: f.recCpu, memoryBytes: f.recMemMb * 1024 ** 2, diskBytes: f.recDiskGb * 1024 ** 3, imageId: f.recImageId || undefined, gpuMode: f.defaultGpuMode, requiresGpu: f.requiresGpu, qualityTier: f.minQualityTier };
+  return { virtualCpuCores: f.recCpu, memoryBytes: f.recMemMb * 1024 ** 2, diskBytes: f.recDiskGb * 1024 ** 3, imageId: f.recImageId || undefined, gpuMode: f.requiresGpu ? f.defaultGpuMode : 0, requiresGpu: f.requiresGpu, gpuVramBytes: f.requiresGpu && f.recGpuVramGb > 0 ? f.recGpuVramGb * 1024 ** 3 : undefined, qualityTier: f.minQualityTier };
 }
 function minSpec(f: TemplateForm): TemplateSpec {
   return { virtualCpuCores: f.minCpu, memoryBytes: f.minMemMb * 1024 ** 2, diskBytes: f.minDiskGb * 1024 ** 3, qualityTier: f.minQualityTier };
@@ -162,7 +164,7 @@ export function toPayload(f: TemplateForm): Record<string, unknown> {
     iconUrl: clean(f.iconUrl), authorName: clean(f.authorName), authorRevenueWallet: clean(f.authorRevenueWallet),
     license: clean(f.license), sourceUrl: clean(f.sourceUrl),
     recommendedSpec: recSpec(f), minimumSpec: minSpec(f),
-    requiresGpu: f.requiresGpu, defaultGpuMode: f.defaultGpuMode, gpuRequirement: clean(f.gpuRequirement), defaultBandwidthTier: f.defaultBandwidthTier,
+    requiresGpu: f.requiresGpu, defaultGpuMode: f.requiresGpu ? f.defaultGpuMode : 0, gpuRequirement: clean(f.gpuRequirement), defaultBandwidthTier: f.defaultBandwidthTier,
     containerImage: clean(f.containerImage), cloudInitTemplate: f.cloudInitTemplate,
     defaultEnvironmentVariables: Object.fromEntries(f.envVars.filter((e) => e.key.trim()).map((e) => [e.key.trim(), e.value])),
     exposedPorts: f.ports.filter((p) => p.port.trim()).map(portPayload),
