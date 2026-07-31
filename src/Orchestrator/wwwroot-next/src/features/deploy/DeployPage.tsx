@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
   allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
   REPLICATION_FACTORS, REPLICATION_VALUES,
-  CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary,
+  CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary, usePlatformVariables,
   usePriceEstimate, useDebounced,
 } from "./useDeploy";
 import { ConstraintBuilder } from "./ConstraintBuilder";
@@ -119,6 +119,31 @@ export function DeployPage() {
   const navigate = useNavigate();
 
   const { data: template, isLoading, error } = useTemplate(api, slug);
+  const { data: platformVars } = usePlatformVariables(api);
+
+  // User-facing variables to collect at deploy: declared Static variables whose
+  // resolverKey/name has NO platform resolver (dynamics + resolver-backed statics
+  // are filled by the platform). Values ride to the renderer via EnvironmentVariables
+  // → the custom:cloud-init-vars label → UserSuppliedStatics.
+  const userVars = useMemo(() => {
+    const platformStatics = new Set((platformVars?.static ?? []).map((s) => s.toLowerCase()));
+    return (template?.variables ?? []).filter((v) => {
+      const isStatic = v.kind === 0 || String(v.kind).toLowerCase() === "static";
+      if (!isStatic) return false;
+      const key = (v.resolverKey || v.name).toLowerCase();
+      return !platformStatics.has(key);
+    });
+  }, [template?.variables, platformVars?.static]);
+  const [varValues, setVarValues] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (userVars.length === 0) return;
+    setVarValues((prev) => {
+      const next = { ...prev };
+      for (const v of userVars) if (!(v.name in next)) next[v.name] = v.defaultValue ?? "";
+      return next;
+    });
+  }, [userVars]);
+  const missingRequired = userVars.filter((v) => v.required && !(varValues[v.name] ?? "").trim());
   const { data: balance } = useBalance(api);
   const deploy = useDeploy(api);
   const images = useImages(api);
@@ -234,6 +259,14 @@ export function DeployPage() {
   async function onDeploy() {
     const name = vmName.trim();
     if (!name) return;
+    if (missingRequired.length > 0) return;
+    // Collect user-facing variable values (user override or declared default).
+    const environmentVariables: Record<string, string> = {};
+    for (const v of userVars) {
+      const val = (varValues[v.name] ?? v.defaultValue ?? "").trim();
+      if (val) environmentVariables[v.name] = val;
+    }
+    const hasEnv = Object.keys(environmentVariables).length > 0;
     try {
       // One-click: NO customSpec — the server applies template.RecommendedSpec.
       const result: DeployResult = await deploy.mutateAsync({
@@ -241,7 +274,7 @@ export function DeployPage() {
         // One-click sends NO customSpec so the server applies RecommendedSpec
         // *and* its own template defaults. Customise sends a full spec — which
         // is why customSpec above re-applies bandwidth/GPU explicitly.
-        payload: { vmName: name, customSpec: customize ? customSpec : null },
+        payload: { vmName: name, customSpec: customize ? customSpec : null, environmentVariables: hasEnv ? environmentVariables : undefined },
       });
       // Reveal only the human-readable generated password (legacy sniff).
       if (shouldRevealPassword(result.password)) {
@@ -334,6 +367,30 @@ export function DeployPage() {
             <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 6 }}>
               A unique suffix is appended automatically.
             </p>
+
+            {userVars.length > 0 && (
+              <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                <strong style={{ fontSize: "var(--text-sm)" }}>Configuration</strong>
+                {userVars.map((v) => (
+                  <label key={v.name} className="field">
+                    <span>{v.name}{v.required ? " *" : ""}</span>
+                    <input
+                      value={varValues[v.name] ?? ""}
+                      onChange={(e) => setVarValues((prev) => ({ ...prev, [v.name]: e.target.value }))}
+                      placeholder={v.defaultValue || ""}
+                    />
+                    {v.description && (
+                      <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>{v.description}</span>
+                    )}
+                  </label>
+                ))}
+                {missingRequired.length > 0 && (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                    Fill the required fields (*) before deploying.
+                  </p>
+                )}
+              </div>
+            )}
 
             {deploy.error && (
               <p role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: 12 }}>
@@ -490,7 +547,7 @@ export function DeployPage() {
               <button
                 className="btn-primary"
                 onClick={onDeploy}
-                disabled={!vmName.trim() || deploy.isPending || floorErrors.length > 0}
+                disabled={!vmName.trim() || deploy.isPending || floorErrors.length > 0 || missingRequired.length > 0}
               >
                 {deploy.isPending
                   ? "Deploying…"

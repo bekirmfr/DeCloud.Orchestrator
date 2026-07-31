@@ -5,7 +5,7 @@ import type { Api } from "../../api/client";
 // consumer, so they live in features/billing rather than being owned by deploy.
 export { useBalance, runwayDays } from "../billing/useBalance";
 import {
-  resolveTemplate, submitTemplateDeploy, fetchImages, fetchConstraintVocabulary,
+  resolveTemplate, submitTemplateDeploy, fetchImages, fetchConstraintVocabulary, fetchPlatformVariables,
   type VmTemplate, type DeployPayload, type DeployResult,
   type ConstraintVocabulary,
 } from "./deploySubmit";
@@ -24,6 +24,14 @@ export function useImages(api: Api) {
   return useQuery({
     queryKey: ["system-images"],
     queryFn: () => fetchImages(api),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function usePlatformVariables(api: Api) {
+  return useQuery({
+    queryKey: ["platform-variables"],
+    queryFn: () => fetchPlatformVariables(api),
     staleTime: 5 * 60_000,
   });
 }

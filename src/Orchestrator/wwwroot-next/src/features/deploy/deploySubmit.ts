@@ -162,6 +162,17 @@ export async function fetchImages(api: Api): Promise<VmImage[]> {
   return api<VmImage[]>("/api/system/images");
 }
 
+// Resolver keys the platform fills automatically. A template Static variable is
+// user-facing (must be collected at deploy) only if its resolverKey/name is NOT
+// in `static` here; dynamics are always platform-resolved.
+export interface PlatformVariables {
+  static: string[];
+  dynamic: string[];
+}
+export async function fetchPlatformVariables(api: Api): Promise<PlatformVariables> {
+  return api<PlatformVariables>("/api/marketplace/platform-variables");
+}
+
 /** Scheduling-constraint vocabulary. GET /api/vms/constraint-vocabulary. */
 export async function fetchConstraintVocabulary(api: Api): Promise<ConstraintVocabulary> {
   return api<ConstraintVocabulary>("/api/vms/constraint-vocabulary");
