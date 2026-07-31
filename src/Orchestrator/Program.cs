@@ -62,7 +62,6 @@ if (!string.IsNullOrEmpty(mongoConnectionString))
             // ceiling; it does not make the link fast.
             settings.SocketTimeout = TimeSpan.FromSeconds(60);
 
-
             return new MongoClient(settings);
         });
 

@@ -25,6 +25,40 @@ export function useDeleteTemplate(api: Api) {
   });
 }
 
+// ── Lifecycle (slice 3) ──────────────────────────────────────────────────
+// All three take no body and return the updated VmTemplate. Transitions are
+// enforced server-side (409 INVALID_OPERATION on a wrong-status call).
+
+// Draft/Rejected → submit for review (community → PendingReview, else Published).
+export function usePublishTemplate(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      api<VmTemplate>(`/api/marketplace/templates/${templateId}/publish`, { method: "PATCH" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-templates"] }),
+  });
+}
+
+// PendingReview → back to Draft.
+export function useCancelReview(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      api<VmTemplate>(`/api/marketplace/templates/${templateId}/cancel-review`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-templates"] }),
+  });
+}
+
+// Published (community) → new Draft revision (a new template row to edit).
+export function useReviseTemplate(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      api<VmTemplate>(`/api/marketplace/templates/${templateId}/revise`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["my-templates"] }),
+  });
+}
+
 export function useCreateTemplate(api: Api) {
   const qc = useQueryClient();
   return useMutation({
@@ -67,4 +101,13 @@ const NUM: Record<number, string> = { 0: "draft", 1: "published", 2: "archived",
 export function templateStatus(status?: string | number): { label: string; tone: string } {
     const key = typeof status === "number" ? (NUM[status] ?? "") : String(status ?? "").toLowerCase();
   return STATUS[key] ?? { label: String(status ?? "—"), tone: "var(--text-secondary)" };
+}
+
+
+// TemplateStatus as a number regardless of wire form (int or name), for driving
+// which lifecycle actions apply. -1 = unknown.
+const KEY_TO_NUM: Record<string, number> = { draft: 0, published: 1, archived: 2, pendingreview: 3, rejected: 4 };
+export function statusNum(status?: string | number): number {
+  if (typeof status === "number") return status;
+  return KEY_TO_NUM[String(status ?? "").toLowerCase()] ?? -1;
 }
