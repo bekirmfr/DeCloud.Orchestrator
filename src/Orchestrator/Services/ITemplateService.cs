@@ -32,6 +32,14 @@ public interface ITemplateService
     Task<VmTemplate> UpdateTemplateAsync(VmTemplate template, bool isAdmin = false);
 
     /// <summary>
+    /// Authored templates only (RoleCloudInit non-empty): compose the raw role layer over
+    /// base-tenant into CloudInitTemplate and attach the base variable set. No-op otherwise.
+    /// Must be called BEFORE validation. Throws InvalidOperationException on a base-scalar
+    /// collision (caller maps to 400).
+    /// </summary>
+    Task ComposeAuthoredCloudInitAsync(VmTemplate template, CancellationToken ct = default);
+
+    /// <summary>
     /// Restore server-owned fields (author identity, revision link, accrued history,
     /// artifacts, revision counter) from the stored record onto an incoming edit. The single
     /// source of truth for fields the edit form never sends; call before validating an update

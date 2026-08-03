@@ -1,4 +1,5 @@
 using DeCloud.Orchestrator.Services;
+using DeCloud.Orchestrator.Services.CloudInit;
 using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Orchestrator.Models;
@@ -220,71 +221,10 @@ public sealed partial class TenantVmTemplateSeeder
                 BandwidthTier = BandwidthTier.Standard,
             },
 
-            Variables = BuildVariables(),
+            Variables = BaseTenantVariables.Build(),
             Artifacts = BuildArtifacts(),
         };
     }
-
-    /// <summary>
-    /// Declare every <c>__VARNAME__</c> placeholder in the composed cloud-init
-    /// as a Static <see cref="TemplateVariable"/>. The renderer's Pass 1 walks
-    /// this list, looks up each via <see cref="IVariableResolverRegistry"/>,
-    /// and substitutes. The validator (Pass 3) catches any drift between this
-    /// list and the actual placeholders in <c>composed</c>.
-    ///
-    /// <para>
-    /// <b>Source of truth:</b> placeholders found via
-    /// <c>grep -hoE '__[A-Z][A-Z0-9_]+__' base-tenant.yaml general/cloud-init.yaml</c>
-    /// at the time this seeder was written. If a placeholder is added or
-    /// removed in DeCloud.Builds, this list and the resolver registry must be
-    /// updated together — the validator will throw at render time otherwise.
-    /// </para>
-    ///
-    /// <para>
-    /// All entries are Static. Tenant VMs do not currently use the Dynamic
-    /// variable / watcher pattern (that's system-VM only). When tenant VMs
-    /// gain dynamic variables, declare them with <c>Kind = Dynamic</c> and a
-    /// concrete <see cref="WatcherScope"/>.
-    /// </para>
-    /// </summary>
-    private static List<TemplateVariable> BuildVariables() => new()
-    {
-        // Identity (resolved from ctx.Vm)
-        new() { Name = "VM_ID",       Kind = VariableKind.Static, Required = true,
-                Description = "VM unique identifier (UUID)." },
-        new() { Name = "VM_NAME",     Kind = VariableKind.Static, Required = true,
-                Description = "VM display name." },
-        new() { Name = "HOSTNAME",    Kind = VariableKind.Static, Required = true,
-                Description = "Linux hostname for the VM (currently equals VM_NAME)." },
-
-        // Platform context (resolved from ctx.OrchestratorUrl, ctx.Node)
-        new() { Name = "ORCHESTRATOR_URL", Kind = VariableKind.Static, Required = true,
-                Description = "URL the VM uses to reach the orchestrator." },
-
-        // SSH / password block (resolved from ctx.Vm.Spec.SshPublicKey, UserSuppliedStatics)
-        new() { Name = "CA_PUBLIC_KEY", Kind = VariableKind.Static, Required = true,
-                Description = "SSH certificate authority public key." },
-        new() { Name = "SSH_AUTHORIZED_KEYS_BLOCK", Kind = VariableKind.Static,
-                DefaultValue = "# No SSH keys provided",
-                Description =
-                    "YAML chunk listing user SSH public keys. Empty when neither " +
-                    "the VM spec nor user input provided keys." },
-        new() { Name = "PASSWORD_CONFIG_BLOCK", Kind = VariableKind.Static,
-                DefaultValue = "# No password authentication",
-                Description =
-                    "YAML chunk for chpasswd.users (cloud-init 22.3+ format). " +
-                    "Empty when no admin password is set." },
-        new() { Name = "ADMIN_PASSWORD", Kind = VariableKind.Static,
-                DefaultValue = "",
-                Description =
-                    "Plaintext root password. Set via UserSuppliedStatics " +
-                    "[\"ADMIN_PASSWORD\"] at deploy time. Empty for SSH-only deploys." },
-        new() { Name = "SSH_PASSWORD_AUTH", Kind = VariableKind.Static,
-                DefaultValue = "false",
-                Description =
-                    "'true' or 'false' string for cloud-init's ssh_pwauth. " +
-                    "Derived from ADMIN_PASSWORD presence." },
-    };
 
     private static List<TemplateArtifact> BuildArtifacts() => new()
     {

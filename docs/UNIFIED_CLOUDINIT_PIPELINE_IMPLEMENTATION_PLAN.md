@@ -344,6 +344,125 @@ Append-only. Each entry: date, task ID it came up under, decision made, rational
   `package_update`, etc.). System VMs use block scalars inside `write_files`
   items, which already worked correctly (those are list items processed
   by `EmitListConcat`, not top-level scalars).
+- **2026-08-02 / Authored (user) marketplace templates: one pipeline — they are DB-sourced role layers, composed by the EXISTING TemplateComposer at create/update. No composer change; no bespoke versioning.**
+  Forward-looking design decision (implementation follows). This entry records
+  a design that shrank materially across its own grounding — the reversals are
+  kept below, per this log's convention.
+
+  **Problem.** The Phase-5 authoring form stores the user's cloud-init raw in
+  `CloudInitTemplate` and deploys it as-is — it **bypasses the compose
+  pipeline**. So an authored VM misses everything `base-tenant.yaml` provides:
+  the `99-decloud-password-auth.conf` sshd drop-in (the only source of
+  `PermitRootLogin yes`), the chpasswd bootcmd, qemu-guest-agent (orchestrator
+  monitoring), machine-id regeneration (DHCP IP-collision prevention), the SSH
+  CA + root principals, and the provisioning contract. This is *identically* the
+  pre-2026-05-27 AI Chatbot bug ("No suitable authentication method" on the
+  terminal proxy), and it is why the deployed "Hello DeCloud" refused root SSH.
+
+  **Decision — authored templates are role layers in the ONE pipeline.** The
+  user's cloud-init is a *role layer*, no different in kind from
+  `tenant-vms/general` or `tenant-vms/coolify`. It composes over `base-tenant`
+  through the **existing `TemplateComposer.Compose`**, with the **existing**
+  `BaseTenantVariables` set attached so base placeholders resolve, rendered by
+  the **existing** deploy path. The only two things that differ from a seeded
+  role are (1) **role source** — a DB field, not a `DeCloud.Builds` git file —
+  and (2) **compose trigger** — create/update, not startup seed. Base, composer,
+  merge policy, base-vars, storage shape, and render are all shared, unchanged.
+
+  **Decision — NO composer change; the scalar policy is correct as-is.** An
+  earlier iteration of this design proposed loosening `ssh_pwauth` /
+  `manage_etc_hosts` / `hostname` from `ScalarExclusive` to `ScalarRoleWins` so
+  authors could "control their VM policy." Grounding the Builds role layers and
+  the resolver design **withdrew that proposal**:
+  - Every shipped role (relay, dht, coolify, leaderboard, ai-chatbot) is
+    *deliberately silent* on the base scalars — they document removing
+    `hostname/ssh_pwauth/disable_root/manage_etc_hosts/package_*` because "base
+    owns them; the role carries only the workload." Authored templates follow
+    the identical contract.
+  - The intended way for a role to influence a base value is a **TemplateVariable
+    + resolver** (§2.4), not a scalar override. Concretely, `ssh_pwauth` is
+    `__SSH_PASSWORD_AUTH__`, *derived from `ADMIN_PASSWORD` presence* — so
+    key-only hardening is achieved by **not supplying a password** (empty
+    `ADMIN_PASSWORD` → `SSH_PASSWORD_AUTH=false` → `ssh_pwauth: false`; the
+    chpasswd bootcmd is guarded to skip). Authors already have the control that
+    matters, through the intended mechanism.
+  - `disable_root`'s exclusivity is load-bearing: base writes
+    `/etc/ssh/auth_principals/root` and `SshCertificateService` signs certs for
+    principal `vm-{VmId}` **as root**, so `disable_root: true` would break the
+    platform's cert-as-root access. (The base-tenant.yaml comment claiming "role
+    may override" is wrong and contradicts `TemplateComposer.Modes` — fix the
+    comment.)
+  So the composer and its `Modes` map stay exactly as they are. If an author
+  declares a base-owned scalar, `Compose` throws — and that is the **correct**
+  loud failure every role gets, surfaced at save. The authoring Starter/help
+  emit **role-only** cloud-init so authors don't hit it; the throw is the
+  backstop, not a new mechanism.
+
+  **Decision — mechanism (minimal).**
+  - Add `RoleCloudInit` (string) to `VmTemplate` — the raw role, what the form
+    edits. `CloudInitTemplate` becomes the composed output (uniform with seeded).
+  - At `CreateTemplateAsync`/`UpdateTemplateAsync`, when authored (`AuthorId ∉
+    {"system","platform"}`, centralized in one predicate):
+    `Compose(base, RoleCloudInit)` → `CloudInitTemplate`; merge
+    `BaseTenantVariables.Build()` into `Variables`; store. `UpdateTemplateAsync`
+    runs `RestoreServerOwnedFields` first, so `AuthorId` is present for the
+    predicate. A collision surfaces as a validation-style 400 at the endpoint.
+  - **Base access reuses the seeder's fetch**, held for the process lifetime —
+    the seeder already fetches `base-tenant` from `DeCloud.Builds/main` at
+    startup; share that content. NOT a bespoke persisted/TTL/hash provider.
+  - **Render is unchanged.** Base placeholders resolve because `BaseTenantVariables`
+    ride `template.Variables`; the reloaded template at deploy already carries
+    them (grounded: `VmService` reloads the full template; base vars thread via
+    `Variables`; resolvers + `ResolutionContext` supply the values).
+
+  **Decision — base-change propagation mirrors re-seed (not a bespoke system).**
+  Seeded templates absorb a base change on restart: the seeder re-fetches base,
+  re-composes, and `ComputeContentHash` detects the changed composed output →
+  revision bump. Authored templates inherit the same model: **re-compose on
+  edit** (immediate), and a **startup re-compose pass** for idle authored
+  templates (the authored analogue of re-seed). This retires the entire
+  apparatus an earlier iteration built for propagation — see "Superseded" below.
+  Whether the startup pass is unconditional or hash-gated is a build detail;
+  base changes are rare and every deploy of a touched template is already fresh,
+  so idle-template staleness is low-stakes.
+
+  **Superseded within this design's own evolution (kept honest).**
+  - *"Compose at deploy from a cached base"* — reversed: composition is
+    deploy-invariant and belongs upstream (create/update + re-seed-style pass),
+    matching the shipped seed-time model. Compose-at-deploy invented a parallel
+    seam.
+  - *Scalar-split / composer `Modes` change* — withdrawn (above): the policy is
+    correct; authors get control via variable/resolver + the password toggle.
+  - *`BaseLayerProvider` with Mongo-persisted cache, fetch-TTL, `ComposedBaseHash`
+    content-hash stamp, reconcile-on-deploy + conditional persist, and the
+    fetch-latest / main-vs-tag / cache-durability apparatus* — all superseded.
+    Propagation mirrors re-seed; base access mirrors the seeder's fetch. The
+    over-build came from solving idle-template base propagation more elaborately
+    than the platform solves it for its own seeded templates. It does not.
+
+  **Frontend contract (ships WITH the backend).** The form edits `RoleCloudInit`;
+  Starter/help emit role-only cloud-init (no `ssh_pwauth`/`hostname`/`disable_root`/
+  `chpasswd`/`package_update` — base owns them; help notes the platform provides
+  root login, guest agent, monitoring, machine-id, and the CA automatically). A
+  Starter that emits base-owned scalars while compose is live would birth
+  un-saveable templates, so this is same-release, not a follow-up.
+
+  **Out of scope (explicit).** No change to platform-template seeding or the
+  composer. Ad-hoc `request.CustomCloudInit` at deploy (`VmService.cs:281`) has
+  no create step to compose at — a separate, deferred decision (that render site
+  is the only seam if ever wanted). A `base-v*` tag stream remains the documented
+  upgrade path from `main`, adopted when base content stabilizes.
+
+  **Grounding record (project knowledge, 2026-08-02).** `TemplateComposer.Compose`
+  emits role-only keys via `EmitMerged(baseSection:null)`; `CheckScalarCollisions`
+  throws only when both layers declare a `ScalarExclusive` key. Create/update:
+  `CreateTemplateAsync` validates → `SaveTemplateAsync`; `UpdateTemplateAsync`
+  restores server-owned fields → validates → saves; `AuthorId` set by the
+  controller from the authenticated principal. Deploy: `GetAvailableVariables` →
+  `UserSuppliedStatics` (+ ADMIN_PASSWORD/DECLOUD_PASSWORD/SSH_PUBLIC_KEYS) →
+  `ResolutionContext`; resolvers indexed by `(ResolverKey, Kind)`, renderer
+  fallback resolver→user→default→throw. `SystemVmTemplateSeeder.SeedTemplateAsync`
+  revisions by `ComputeContentHash`.
 ---
 
 ## §3. Pre-flight — must complete before Phase 0

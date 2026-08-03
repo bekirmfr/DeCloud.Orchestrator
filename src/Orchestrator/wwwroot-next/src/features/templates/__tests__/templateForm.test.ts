@@ -38,4 +38,24 @@ describe("templateForm mapping", () => {
     expect(p.exposedPorts).toEqual([]);
     expect(p.variables).toEqual([]);
   });
+
+  it("toPayload maps the form's cloud-init to roleCloudInit (composed over base server-side)", () => {
+    const p = toPayload({ ...emptyForm, name: "A", slug: "a", cloudInitTemplate: "#cloud-config\npackages:\n  - nginx\n" });
+    expect(p.roleCloudInit).toBe("#cloud-config\npackages:\n  - nginx\n");
+    expect(p.cloudInitTemplate).toBeUndefined();
+  });
+
+  it("fromTemplate loads roleCloudInit into the editor, with a fallback to cloudInitTemplate for legacy rows", () => {
+    const authored = { id: "1", slug: "s", name: "N", roleCloudInit: "#role", cloudInitTemplate: "#composed" } as unknown as VmTemplate;
+    expect(fromTemplate(authored).cloudInitTemplate).toBe("#role");
+    const legacy = { id: "2", slug: "s2", name: "N2", cloudInitTemplate: "#legacy" } as unknown as VmTemplate;
+    expect(fromTemplate(legacy).cloudInitTemplate).toBe("#legacy");
+  });
+
+  it("fromTemplate hides platform-managed base vars from the editor", () => {
+    const t = { id: "1", slug: "s", name: "N", variables: [
+      { name: "SITE_TITLE", kind: 0 }, { name: "CA_PUBLIC_KEY", kind: 0 }, { name: "VM_ID", kind: 0 },
+    ] } as unknown as VmTemplate;
+    expect(fromTemplate(t).variables.map((v) => v.name)).toEqual(["SITE_TITLE"]);
+  });
 });

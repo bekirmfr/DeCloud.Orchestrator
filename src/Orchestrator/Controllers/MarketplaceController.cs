@@ -209,7 +209,7 @@ public class MarketplaceController : ControllerBase
                     : GpuMode.None,
                 GpuRequirement = request.GpuRequirement,
                 ContainerImage = request.ContainerImage,
-                CloudInitTemplate = request.CloudInitTemplate,
+                RoleCloudInit = request.RoleCloudInit ?? request.CloudInitTemplate,
                 DefaultEnvironmentVariables = request.DefaultEnvironmentVariables ?? new(),
                 ExposedPorts = request.ExposedPorts ?? new(),
                 DefaultAccessUrl = request.DefaultAccessUrl,
@@ -265,6 +265,20 @@ public class MarketplaceController : ControllerBase
                         return BadRequest(ApiResponse<TemplateMutationResult>.Fail("INVALID_ARGUMENT", ex.Message));
                     }
                 }
+            }
+
+            // Authored role → compose over base-tenant BEFORE validation, so validation
+            // sees the deploy-ready CloudInitTemplate (the composer emits the #cloud-config
+            // header + merged base). No-op when the template carries no RoleCloudInit.
+            // A base-scalar collision (author declared ssh_pwauth/hostname/etc.) throws →
+            // surface as a 400 naming the offending scalar.
+            try
+            {
+                await _templateService.ComposeAuthoredCloudInitAsync(template);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<TemplateMutationResult>.Fail("CLOUD_INIT_COLLISION", ex.Message));
             }
 
             var validation = await _templateService.ValidateTemplateAsync(template);
@@ -330,6 +344,19 @@ public class MarketplaceController : ControllerBase
             // sees the stored values rather than the edit form's omitted defaults. Single
             // source of truth, shared with UpdateTemplateAsync.
             _templateService.RestoreServerOwnedFields(template, existing);
+
+            // Authored role → recompose over base-tenant before validation (mirror of
+            // create). No-op when the template carries no RoleCloudInit. A base-scalar
+            // collision throws → surface as a 400 naming the scalar (own try/catch so it
+            // returns BadRequest, not the outer InvalidOperationException→Conflict).
+            try
+            {
+                await _templateService.ComposeAuthoredCloudInitAsync(template);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<TemplateMutationResult>.Fail("CLOUD_INIT_COLLISION", ex.Message));
+            }
 
             var validation = await _templateService.ValidateTemplateAsync(template);
             if (!validation.IsValid)
@@ -1395,6 +1422,13 @@ public class CreateTemplateRequest
     /// </summary>
     public string? ContainerImage { get; set; }
     public string CloudInitTemplate { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Authored role-layer cloud-init: the raw cloud-init the author writes and the form
+    /// sends. Composed over base-tenant at create; the composed result becomes the stored
+    /// CloudInitTemplate. (CloudInitTemplate above is legacy for the authored path.)
+    /// </summary>
+    public string? RoleCloudInit { get; set; }
     public Dictionary<string, string>? DefaultEnvironmentVariables { get; set; }
     public List<TemplatePort>? ExposedPorts { get; set; }
     public string? DefaultAccessUrl { get; set; }

@@ -212,6 +212,9 @@ builder.Services.AddPlatformCommonResolvers();
 builder.Services.AddSystemVmResolvers();
 builder.Services.AddCloudInitRenderer();
 builder.Services.AddCloudInitValidator();
+// Shared base-tenant source for the authored compose path (Phase 0). Minimal
+// fetch + process-memo; no consumer until Phase 2.
+builder.Services.AddSingleton<IBaseTenantSource, BaseTenantSource>();
 
 // Locality (country/region/zone reference data + validation)
 builder.Services.AddLocalityServices();

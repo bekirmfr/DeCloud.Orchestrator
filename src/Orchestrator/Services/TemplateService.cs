@@ -1,3 +1,5 @@
+using DeCloud.Orchestrator.Services;
+using DeCloud.Orchestrator.Services.CloudInit;
 using DeCloud.Shared.Enums;
 using DeCloud.Shared.Models;
 using Orchestrator.Interfaces;
@@ -17,6 +19,7 @@ public class TemplateService : ITemplateService
     private readonly ICentralIngressService _ingressService;
     private readonly IWalletBlocklistService _blocklist;
     private readonly ITosService _tos;
+    private readonly IBaseTenantSource _baseTenantSource;
     private readonly ILogger<TemplateService> _logger;
 
     // Cloud-init variable pattern: ${VARIABLE_NAME}
@@ -33,13 +36,55 @@ public class TemplateService : ITemplateService
         ICentralIngressService ingressService,
         IWalletBlocklistService blocklist,
         ITosService tos,
+        IBaseTenantSource baseTenantSource,
         ILogger<TemplateService> logger)
     {
         _dataStore = dataStore;
         _ingressService = ingressService;
         _blocklist = blocklist;
         _tos = tos;
+        _baseTenantSource = baseTenantSource;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Authored templates only: compose the raw role layer
+    /// (<see cref="VmTemplate.RoleCloudInit"/>) over base-tenant into
+    /// <see cref="VmTemplate.CloudInitTemplate"/>, and attach the base-tenant variable
+    /// declarations so the base placeholders resolve at render. No-op when RoleCloudInit
+    /// is empty — platform/seeded templates set CloudInitTemplate directly and are not
+    /// composed here.
+    ///
+    /// <para>
+    /// Must run BEFORE validation: validation requires a non-empty, deploy-ready
+    /// CloudInitTemplate, which this produces. <see cref="TemplateComposer.Compose"/>
+    /// throws <see cref="InvalidOperationException"/> if the role declares a base-owned
+    /// scalar (ssh_pwauth, hostname, disable_root, ...); the caller surfaces that as a
+    /// 400 naming the offending scalar.
+    /// </para>
+    /// </summary>
+    public async Task ComposeAuthoredCloudInitAsync(VmTemplate template, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(template.RoleCloudInit))
+            return;
+
+        var baseLayer = await _baseTenantSource.GetAsync(ct);
+
+        template.CloudInitTemplate = TemplateComposer.Compose(
+            baseLayer,
+            template.RoleCloudInit,
+            baseName: "base-tenant.yaml",
+            roleName: $"authored/{(string.IsNullOrEmpty(template.Slug) ? "role" : template.Slug)}");
+
+        // Attach base-tenant variable declarations (VM_ID, CA_PUBLIC_KEY, ...) so their
+        // __PLACEHOLDERS__ resolve at render. Author-declared names win over base.
+        var declared = new HashSet<string>(
+            template.Variables.Select(v => v.Name), StringComparer.Ordinal);
+        foreach (var v in BaseTenantVariables.Build())
+        {
+            if (declared.Add(v.Name))
+                template.Variables.Add(v);
+        }
     }
 
 

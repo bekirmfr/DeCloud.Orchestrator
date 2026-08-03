@@ -97,6 +97,7 @@ export interface VmTemplate {
   gpuRequirement?: string;
   containerImage?: string;
   cloudInitTemplate?: string;
+  roleCloudInit?: string;
   defaultEnvironmentVariables?: Record<string, string>;
   exposedPorts?: TemplatePort[];
   artifacts?: TemplateArtifact[];

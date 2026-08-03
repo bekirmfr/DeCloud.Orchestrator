@@ -163,6 +163,17 @@ public class VmTemplate
     public string CloudInitTemplate { get; set; } = string.Empty;
 
     /// <summary>
+    /// Authored (community) templates only: the raw role-layer cloud-init the
+    /// author wrote and the form edits. Null for platform/seeded templates —
+    /// their role lives in DeCloud.Builds git. When set, the create/update path
+    /// composes it over base-tenant via TemplateComposer and stores the composed
+    /// result in <see cref="CloudInitTemplate"/>, so deploy/render stays uniform
+    /// across seeded and authored templates. Its presence is also the
+    /// "authored, compose-managed" signal for the Phase-3 startup re-compose.
+    /// </summary>
+    public string? RoleCloudInit { get; set; }
+
+    /// <summary>
     /// Variables declared by this template (design §2.2).
     ///
     /// <para>

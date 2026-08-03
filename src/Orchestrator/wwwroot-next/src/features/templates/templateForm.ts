@@ -87,6 +87,18 @@ export const emptyForm: TemplateForm = {
 const mb = (bytes?: number | null) => (bytes ? Math.round(bytes / 1024 ** 2) : 0);
 const gb = (bytes?: number | null) => (bytes ? Math.round(bytes / 1024 ** 3) : 0);
 
+/**
+ * Platform-managed variables injected by the server when it composes an authored
+ * template over base-tenant. They round-trip on the stored template but are not
+ * author-authored, so the Variables editor hides them (mirrors the deploy form
+ * hiding platform-bound vars). Compose re-attaches them on save, so stripping
+ * them here is safe.
+ */
+const BASE_TENANT_VAR_NAMES = new Set([
+    "VM_ID", "VM_NAME", "HOSTNAME", "ORCHESTRATOR_URL", "CA_PUBLIC_KEY",
+    "SSH_AUTHORIZED_KEYS_BLOCK", "PASSWORD_CONFIG_BLOCK", "ADMIN_PASSWORD", "SSH_PASSWORD_AUTH",
+]);
+
 /** VmTemplate → form (edit prefill). */
 export function fromTemplate(t: VmTemplate): TemplateForm {
   const rec = t.recommendedSpec, min = t.minimumSpec;
@@ -97,7 +109,7 @@ export function fromTemplate(t: VmTemplate): TemplateForm {
     recCpu: rec?.virtualCpuCores ?? 1, recMemMb: mb(rec?.memoryBytes) || 1024, recDiskGb: gb(rec?.diskBytes) || 10, recImageId: rec?.imageId ?? "", recGpuVramGb: gb(rec?.gpuVramBytes),
     minCpu: min?.virtualCpuCores ?? 1, minMemMb: mb(min?.memoryBytes) || 512, minDiskGb: gb(min?.diskBytes) || 10, minQualityTier: enumNum(min?.qualityTier, 1),
     requiresGpu: t.requiresGpu ?? false, defaultGpuMode: enumNum(t.defaultGpuMode, 0), gpuRequirement: t.gpuRequirement ?? "", defaultBandwidthTier: enumNum(t.defaultBandwidthTier, 3),
-    containerImage: t.containerImage ?? "", cloudInitTemplate: t.cloudInitTemplate ?? "",
+    containerImage: t.containerImage ?? "", cloudInitTemplate: t.roleCloudInit ?? t.cloudInitTemplate ?? "",
     defaultAccessUrl: t.defaultAccessUrl ?? "", defaultUsername: t.defaultUsername ?? "", useGeneratedPassword: t.useGeneratedPassword ?? true,
     visibility: enumNum(t.visibility, 0), pricingModel: enumNum(t.pricingModel, 0), templatePrice: t.templatePrice ?? 0, estimatedCostPerHour: t.estimatedCostPerHour ?? 0,
     envVars: Object.entries(t.defaultEnvironmentVariables ?? {}).map(([key, value]) => ({ key, value })),
@@ -106,7 +118,7 @@ export function fromTemplate(t: VmTemplate): TemplateForm {
       hasReadiness: !!p.readinessCheck, strategy: enumNum(p.readinessCheck?.strategy, 0), httpPath: p.readinessCheck?.httpPath ?? "",
       execCommand: p.readinessCheck?.execCommand ?? "", timeoutSeconds: p.readinessCheck?.timeoutSeconds ?? 300, livenessCheck: p.readinessCheck?.livenessCheck ?? false,
     })),
-    variables: (t.variables ?? []).map((v) => ({
+      variables: (t.variables ?? []).filter((v) => !BASE_TENANT_VAR_NAMES.has(v.name)).map((v) => ({
       name: v.name, kind: enumNum(v.kind, 0), scope: enumNum(v.scope, 2),
       defaultValue: v.defaultValue ?? "", required: v.required ?? false, description: v.description ?? "", resolverKey: v.resolverKey ?? "",
     })),
@@ -165,7 +177,7 @@ export function toPayload(f: TemplateForm): Record<string, unknown> {
     license: clean(f.license), sourceUrl: clean(f.sourceUrl),
     recommendedSpec: recSpec(f), minimumSpec: minSpec(f),
     requiresGpu: f.requiresGpu, defaultGpuMode: f.requiresGpu ? f.defaultGpuMode : 0, gpuRequirement: clean(f.gpuRequirement), defaultBandwidthTier: f.defaultBandwidthTier,
-    containerImage: clean(f.containerImage), cloudInitTemplate: f.cloudInitTemplate,
+    containerImage: clean(f.containerImage), roleCloudInit: f.cloudInitTemplate,
     defaultEnvironmentVariables: Object.fromEntries(f.envVars.filter((e) => e.key.trim()).map((e) => [e.key.trim(), e.value])),
     exposedPorts: f.ports.filter((p) => p.port.trim()).map(portPayload),
     defaultAccessUrl: clean(f.defaultAccessUrl), defaultUsername: clean(f.defaultUsername), useGeneratedPassword: f.useGeneratedPassword,
