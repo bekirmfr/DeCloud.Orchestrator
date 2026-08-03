@@ -424,6 +424,7 @@ public sealed partial class SystemVmTemplateSeeder
                 ReadinessCheck = new ServiceCheck {
                     Strategy = CheckStrategy.HttpGet,
                     HttpPath = "/health",
+                    LivenessCheck = true,
                     TimeoutSeconds = 300 } },
             new() { Port = 51820,
                 Protocol = "udp",

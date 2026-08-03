@@ -21,6 +21,9 @@ Every recommendation below is a *boundary alignment*, not a band-aid.
 - `SYSTEM_VM_RENDERING_ADDENDUM.md` — system-VM-specific specifications inside the umbrella
   plan: per-deployment rendering, lifecycle, P9 channel payload changes.
 - `SYSTEM_VM_RENDERING_HANDOUT.md` — execution-level instructions for the rendering migration.
+- `decision-log-relay-health-detection-heal.md` — relay "up ≠ forwarding" detection gap
+  (G17) and the detection-fix design that makes the existing `reality=Unhealthy` →
+  redeploy heal a wedged relay.
 
 ---
 
@@ -403,6 +406,47 @@ deploy time. Node receives a fully-rendered cloud-init document. Specifications 
 execution plan are in `SYSTEM_VM_RENDERING_ADDENDUM.md` and
 `SYSTEM_VM_RENDERING_HANDOUT.md`.
 
+#### G17. A wedged relay is invisible to detection and excluded from every healer
+A relay VM can be functionally dead — `WG Peers: 0`, `0 B received`, guest agent
+unreachable — while every readiness signal reads green and the reconciler reports
+"converged." The heal *machinery already exists* (`reality=Unhealthy →
+IssueDelete → redeploy`); the entire failure is that a wedged relay never projects
+`reality=Unhealthy`.
+
+**Why reality stays Healthy (detection gap).** `Reality.Healthy` requires the VM
+Running and every service Ready. The relay's services are `System` (CloudInitDone,
+one-shot, latches Ready) and `Relay API` (`HttpGet /health`, **not** a liveness
+check → latches Ready at boot); `WireGuard 51820` has no readiness check at all;
+and `IsFullyReady` **excludes `GuestAgentPing`** by design. Worse, `relay-api.py`'s
+`health_check()` returns `{'status':'healthy'}` **unconditionally** — it proves the
+Python API thread is alive, nothing about WireGuard forwarding. So a relay that
+boots fine and later stops forwarding never leaves `Healthy`. The signal that would
+catch it (`/api/relay/wireguard`: `peer_count`, `latest_handshake`, `rx/tx`) is
+collected by the orchestrator's `RelayHealthMonitor` but only for CGNAT key
+reconciliation, never as a health gate.
+
+**Why nothing heals it (responsibility gap — five layers, each defers).**
+- `VmHealthService` skips system VMs → *"the watchdog's zombie check handles it."*
+- `SystemVmWatchdogService` (zombie check) excludes `role == Relay` → *"orchestrator
+  reconciliation redeploys it."*
+- Orchestrator `NodeService`: *"not the control plane; the node's reconciler owns it."*
+- `SystemVmReconciler`: redeploys only on `reality=Unhealthy` (never happens).
+- `relay-api.py WireGuardWatchdogThread`: restarts on `wg show` returncode
+  (interface exists → returns 0 with 0 peers), and is dead if the VM wedges.
+
+**Symptom history.** A single wedged relay 502s every tenant VM behind it; the
+orchestrator's `EnsurePeerRegisteredAsync` and the node's mesh-enroll both time out
+downstream of the same wedge. (Live incident 2026-08-03, node srv022010.)
+
+**Root cause.** Health is defined as "the process is up," never "the relay is
+forwarding," and the one external signal that catches a wedge (guest agent) is
+excluded — so the relay never reaches Unhealthy, and it is separately excluded from
+the only local healer that acts without that signal.
+
+**Boundary alignment.** Make detection mean "forwarding" so the *existing*
+Unhealthy→redeploy fires — no new healer, consistent with §7. Fix in §6 Round 6.
+Full diagnosis and design: `decision-log-relay-health-detection-heal.md`.
+
 ---
 
 ### 🟠 Severity MEDIUM
@@ -584,6 +628,32 @@ Worth recording the parts the project gets right, so refactors do not regress th
    This is the single largest outstanding architectural item and resolves both G14
    (role-specific blocks in `LibvirtVmManager`) and G16 (no orchestrator-side audit
    record of dispatched cloud-init) in one migration.
+
+### Round 6 — Relay health means "forwarding" (G17)
+
+9. Close the detection gap so the *existing* `SystemVmReconciler` Unhealthy→redeploy
+   heals a wedged relay. No new healer — this is a detection fix, not a mechanism
+   (consistent with §7).
+   - **(applied)** Make the relay `Relay API /health` check a **liveness** check
+     (`LivenessCheck = true` in `SystemVmTemplateSeeder`, matching DHT's `/health`).
+     A relay whose API stops answering re-demotes past the consecutive-miss
+     threshold → `reality=Unhealthy` → redeploy. Safe to ship alone: `/health`
+     still returns 200 until the change below, so no false demotion; catches a
+     *fully* wedged relay immediately.
+   - **(design, cross-repo)** Make `relay-api.py /health` return 503 when the relay
+     is not forwarding, from the `peer_count` / `latest_handshake` data
+     `get_wireguard_status()` already computes. This fixes the *observed* case
+     (API alive, WG dead). The deployed script is the embedded `RelayApiPyDataUri`
+     + `RelayApiPySha256` in `SystemVmTemplateSeeder.Artifacts.cs`, so the change
+     requires: edit source `relay-api.py`, re-encode the data URI, update both
+     constants, bump the relay `TemplateRevision`.
+   - **(defense in depth)** `WireGuardWatchdogThread` checks peer count / handshake
+     recency, not just `wg show` returncode.
+   - **Open item — blocks the 503 change.** Cold-start grace + expected-peers logic
+     (mirror blockstore `/health/mesh`) so a healthy idle relay never flaps into a
+     redeploy loop. This is the one real risk (over-eager healing thrashing a fine
+     relay) and must be settled before the 503 change ships. Full design and the
+     grace-threshold question: `decision-log-relay-health-detection-heal.md`.
 
 ---
 
