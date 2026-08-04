@@ -70,7 +70,7 @@ export function MyTemplatesPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
-                  {canEdit && <Link className="btn-ghost" to={`/my-templates/${t.slug || t.id}/edit`} style={sm}>Edit</Link>}
+                        {canEdit && <Link className="btn-ghost" to={`/my-templates/${t.id}/edit`} style={sm}>Edit</Link>}
                   {canSubmit && (
                     <button className="btn-ghost" style={sm} disabled={busy}
                       onClick={() => { if (window.confirm(`Submit “${t.name}” for review? You won't be able to edit it while it's in review.`)) publish.mutate(t.id); }}>
