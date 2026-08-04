@@ -111,3 +111,39 @@ export function statusNum(status?: string | number): number {
   if (typeof status === "number") return status;
   return KEY_TO_NUM[String(status ?? "").toLowerCase()] ?? -1;
 }
+
+// ── Admin review queue (slice 4) ─────────────────────────────────────────
+// Admin-only (server enforces [Authorize(Roles="Admin")]). Approve/reject
+// require the template to be PendingReview (409 INVALID_OPERATION otherwise);
+// reject requires a non-empty reason (surfaced to the author as RejectionReason).
+
+export function usePendingTemplates(api: Api) {
+  return useQuery({
+    queryKey: ["pending-templates"],
+    queryFn: () => api<VmTemplate[]>("/api/marketplace/templates/pending"),
+  });
+}
+
+export function useApproveTemplate(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateId: string) =>
+      api<VmTemplate>(`/api/marketplace/templates/${templateId}/approve`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pending-templates"] });
+      qc.invalidateQueries({ queryKey: ["my-templates"] });
+    },
+  });
+}
+
+export function useRejectTemplate(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ templateId, reason }: { templateId: string; reason: string }) =>
+      api<VmTemplate>(`/api/marketplace/templates/${templateId}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pending-templates"] });
+      qc.invalidateQueries({ queryKey: ["my-templates"] });
+    },
+  });
+}

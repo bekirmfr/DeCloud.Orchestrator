@@ -75,7 +75,7 @@ function Sidebar() {
               ADMIN
             </span>
             <a className="nav-link" href="/?page=admin-compliance">Compliance</a>
-            <a className="nav-link" href="/?page=admin-templates">Templates</a>
+            <NavLink to="/admin/templates" className="nav-link">Templates</NavLink>
             <a className="nav-link" href="/?page=admin-abuse">Abuse Reports</a>
           </>
         )}
