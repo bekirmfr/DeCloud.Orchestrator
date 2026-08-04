@@ -20,7 +20,7 @@ index 1797f41..14b2809 100644
          },
 diff --git a/src/Orchestrator/wwwroot-next/src/features/templates/AdminTemplateInspectPage.tsx b/src/Orchestrator/wwwroot-next/src/features/templates/AdminTemplateInspectPage.tsx
 new file mode 100644
-index 0000000..a2c8f4d
+index 0000000..3a536ae
 --- /dev/null
 +++ b/src/Orchestrator/wwwroot-next/src/features/templates/AdminTemplateInspectPage.tsx
 @@ -0,0 +1,140 @@
@@ -31,7 +31,7 @@ index 0000000..a2c8f4d
 +import { useApproveTemplate, useRejectTemplate, templateStatus } from "./useTemplates";
 +import {
 +  QUALITY_TIERS, GPU_MODES, BANDWIDTH_TIERS, VARIABLE_KINDS, WATCHER_SCOPES,
-+  ARTIFACT_TYPES, CHECK_STRATEGIES, VISIBILITIES, PRICING_MODELS,
++  ARTIFACT_TYPES, CHECK_STRATEGIES, VISIBILITIES, PRICING_MODELS, enumNum,
 +} from "./templateForm";
 +
 +// Phase 5 · Admin template inspect (read-only). Reviewers land here from the
@@ -40,8 +40,8 @@ index 0000000..a2c8f4d
 +// by id (status-agnostic), never opens the author's editable form, and cannot
 +// mutate the template except via the approve/reject actions.
 +
-+const label = (pairs: [number, string][], v?: number) =>
-+  pairs.find(([n]) => n === v)?.[1] ?? (v == null ? "—" : String(v));
++const label = (pairs: [number, string][], v?: string | number) =>
++  pairs.find(([n]) => n === enumNum(v, NaN))?.[1] ?? (v == null ? "—" : String(v));
 +const mb = (b?: number | null) => (b ? `${Math.round(b / 1024 ** 2)} MB` : "—");
 +const gb = (b?: number | null) => (b ? `${Math.round(b / 1024 ** 3)} GB` : "—");
 +
@@ -126,8 +126,8 @@ index 0000000..a2c8f4d
 +        <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-sm)" }}>
 +          {t.variables.map((v, i) => (
 +            <div key={i} style={{ color: "var(--text-secondary)" }}>
-+              <code style={{ fontFamily: "var(--font-mono)" }}>{v.name}</code> · {label(VARIABLE_KINDS, typeof v.kind === "number" ? v.kind : undefined)}
-+              {typeof v.kind === "number" && v.kind === 1 ? ` · ${label(WATCHER_SCOPES, typeof v.scope === "number" ? v.scope : undefined)}` : v.required ? " · required" : " · optional"}
++              <code style={{ fontFamily: "var(--font-mono)" }}>{v.name}</code> · {label(VARIABLE_KINDS, v.kind)}
++              {enumNum(v.kind, 0) === 1 ? ` · ${label(WATCHER_SCOPES, v.scope)}` : v.required ? " · required" : " · optional"}
 +              {v.defaultValue ? ` · default “${v.defaultValue}”` : ""}{v.description ? ` — ${v.description}` : ""}
 +            </div>
 +          ))}
