@@ -1,7 +1,9 @@
+import { useState } from "react";
+import type { ReactNode, CSSProperties } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import type { ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { useTemplate } from "../deploy/useDeploy";
+import type { TemplateArtifact } from "../deploy/deploySubmit";
 import { useApproveTemplate, useRejectTemplate, templateStatus } from "./useTemplates";
 import {
     QUALITY_TIERS, GPU_MODES, BANDWIDTH_TIERS, VARIABLE_KINDS, WATCHER_SCOPES,
@@ -9,27 +11,104 @@ import {
 } from "./templateForm";
 
 // Phase 5 · Admin template inspect (read-only). Reviewers land here from the
-// queue to read the full template — specs, variables, artifacts, ports, and the
-// cloud-init that will actually run — before approving or rejecting. It fetches
-// by id (status-agnostic), never opens the author's editable form, and cannot
-// mutate the template except via the approve/reject actions.
+// queue to read the full template — specs, variables (as a table), artifacts
+// (full SHA + decode modal), ports, and the cloud-init (role vs composed, as
+// tabs) that will actually run — before approving or rejecting. Fetches by id
+// (status-agnostic), never opens the author's editable form.
 
 const label = (pairs: [number, string][], v?: string | number) =>
     pairs.find(([n]) => n === enumNum(v, NaN))?.[1] ?? (v == null ? "—" : String(v));
 const mb = (b?: number | null) => (b ? `${Math.round(b / 1024 ** 2)} MB` : "—");
 const gb = (b?: number | null) => (b ? `${Math.round(b / 1024 ** 3)} GB` : "—");
+const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
 
-const preStyle = {
-    whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, margin: 0,
+const preStyle: CSSProperties = {
+    whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
     padding: "var(--space-3)", background: "var(--surface-2)", borderRadius: "var(--radius-sm)",
     fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", maxHeight: 360, overflow: "auto",
 };
+const th: CSSProperties = { padding: "6px 10px", fontWeight: "var(--fw-medium)", whiteSpace: "nowrap" };
+const td: CSSProperties = { padding: "6px 10px", verticalAlign: "top" };
+
 const sec = (title: string, body: ReactNode) => (
     <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         <strong style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>{title}</strong>
         {body}
     </section>
 );
+
+// Parse a data: URI into its media type + base64 payload (null for HTTPS URLs).
+function inlineParts(sourceUrl?: string): { mime: string; b64: string } | null {
+    if (!sourceUrl || !sourceUrl.startsWith("data:")) return null;
+    const comma = sourceUrl.indexOf(",");
+    if (comma < 0) return null;
+    const header = sourceUrl.slice(5, comma);          // e.g. "text/x-sh;base64"
+    const mime = header.split(";")[0] || "text/plain";
+    return { mime, b64: sourceUrl.slice(comma + 1) };
+}
+function decodeB64(b64: string): string {
+    try {
+        const bin = atob(b64);
+        return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+    } catch {
+        return "(unable to decode)";
+    }
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+    return (
+        <button onClick={onClick} style={{
+            padding: "6px 12px", background: "none", border: "none", cursor: "pointer",
+            fontSize: "var(--text-sm)", fontWeight: active ? "var(--fw-medium)" : "normal",
+            color: active ? "var(--accent)" : "var(--text-tertiary)",
+            borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
+        }}>{children}</button>
+    );
+}
+
+function ArtifactModal({ artifact, onClose }: { artifact: TemplateArtifact; onClose: () => void }) {
+    const parts = inlineParts(artifact.sourceUrl);
+    const isImage = parts?.mime.startsWith("image/") ?? false;
+    const subHead: CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginBottom: 4 };
+    return (
+        <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-4)", zIndex: 50 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "var(--space-4)", maxWidth: 760, width: "100%", maxHeight: "80vh", overflow: "auto", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-2)" }}>
+                    <strong style={mono}>{artifact.name}</strong>
+                    <button className="btn-ghost" onClick={onClose} aria-label="Close">✕</button>
+                </div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", ...mono, wordBreak: "break-all" }}>
+                    {label(ARTIFACT_TYPES, artifact.type)} · {artifact.sizeBytes ? `${artifact.sizeBytes} bytes` : "size —"} · sha256 {artifact.sha256 || "—"}
+                </div>
+
+                {!parts && (
+                    <div>
+                        <div style={subHead}>External URL — bytes fetched &amp; verified by the node at deploy time</div>
+                        <a href={artifact.sourceUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", wordBreak: "break-all" }}>{artifact.sourceUrl}</a>
+                    </div>
+                )}
+                {parts && isImage && (
+                    <div>
+                        <div style={subHead}>Decoded (image)</div>
+                        <img src={artifact.sourceUrl} alt={artifact.name} style={{ maxWidth: "100%", borderRadius: "var(--radius-sm)" }} />
+                    </div>
+                )}
+                {parts && !isImage && (
+                    <div>
+                        <div style={subHead}>Decoded content</div>
+                        <pre style={preStyle}>{decodeB64(parts.b64)}</pre>
+                    </div>
+                )}
+                {parts && (
+                    <div>
+                        <div style={subHead}>Encoded (data URI)</div>
+                        <pre style={{ ...preStyle, maxHeight: 160 }}>{artifact.sourceUrl}</pre>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
 
 export function AdminTemplateInspectPage() {
     const { id = "" } = useParams();
@@ -38,6 +117,9 @@ export function AdminTemplateInspectPage() {
     const { data: t, isLoading, isError } = useTemplate(api, id);
     const approve = useApproveTemplate(api);
     const reject = useRejectTemplate(api);
+    const [tab, setTab] = useState<"role" | "composed">("role");
+    const [artifact, setArtifact] = useState<TemplateArtifact | null>(null);
+
     const busy = approve.isPending || reject.isPending;
     const err = (approve.error || reject.error) as Error | undefined;
 
@@ -63,6 +145,7 @@ export function AdminTemplateInspectPage() {
 
     const st = templateStatus(t.status);
     const rec = t.recommendedSpec, min = t.minimumSpec;
+    const activeTab = tab === "role" && !t.roleCloudInit ? "composed" : tab;
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 820 }}>
@@ -97,25 +180,43 @@ export function AdminTemplateInspectPage() {
             ))}
 
             {t.variables && t.variables.length > 0 && sec("Variables", (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-sm)" }}>
-                    {t.variables.map((v, i) => (
-                        <div key={i} style={{ color: "var(--text-secondary)" }}>
-                            <code style={{ fontFamily: "var(--font-mono)" }}>{v.name}</code> · {label(VARIABLE_KINDS, v.kind)}
-                            {enumNum(v.kind, 0) === 1 ? ` · ${label(WATCHER_SCOPES, v.scope)}` : v.required ? " · required" : " · optional"}
-                            {v.defaultValue ? ` · default “${v.defaultValue}”` : ""}{v.description ? ` — ${v.description}` : ""}
-                        </div>
-                    ))}
+                <div style={{ overflowX: "auto", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-sm)" }}>
+                        <thead>
+                            <tr style={{ textAlign: "left", color: "var(--text-tertiary)", background: "var(--surface-2)" }}>
+                                <th style={th}>Name</th><th style={th}>Kind</th><th style={th}>Req / scope</th><th style={th}>Default</th><th style={th}>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {t.variables.map((v, i) => {
+                                const kind = enumNum(v.kind, 0);
+                                return (
+                                    <tr key={i} style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                                        <td style={{ ...td, ...mono }}>{v.name}</td>
+                                        <td style={td}>{label(VARIABLE_KINDS, kind)}</td>
+                                        <td style={td}>{kind === 1 ? label(WATCHER_SCOPES, v.scope) : v.required ? "required" : "optional"}</td>
+                                        <td style={{ ...td, ...mono, color: "var(--text-secondary)" }}>{v.defaultValue ?? "—"}</td>
+                                        <td style={{ ...td, color: "var(--text-secondary)" }}>{v.description || "—"}</td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
             ))}
 
             {t.artifacts && t.artifacts.length > 0 && sec("Artifacts", (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-sm)" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {t.artifacts.map((a, i) => {
                         const inline = (a.sourceUrl ?? "").startsWith("data:");
                         return (
-                            <div key={i} style={{ color: "var(--text-secondary)" }}>
-                                <code style={{ fontFamily: "var(--font-mono)" }}>{a.name}</code> · {label(ARTIFACT_TYPES, a.type)} · {inline ? "inline" : "external"}
-                                {a.architecture ? ` · ${a.architecture}` : ""}{a.sha256 ? ` · sha256 ${a.sha256.slice(0, 12)}…` : ""}
+                            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, padding: "8px 10px", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", fontSize: "var(--text-sm)" }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                    <code style={mono}>{a.name}</code>
+                                    <span style={{ color: "var(--text-secondary)" }}>{label(ARTIFACT_TYPES, a.type)} · {inline ? "inline" : "external"}{a.architecture ? ` · ${a.architecture}` : ""}</span>
+                                    <button className="btn-ghost" style={{ fontSize: "var(--text-sm)", marginLeft: "auto" }} onClick={() => setArtifact(a)}>View content</button>
+                                </div>
+                                <div style={{ color: "var(--text-tertiary)", ...mono, fontSize: "var(--text-xs)", wordBreak: "break-all" }}>sha256 {a.sha256 || "—"}</div>
                             </div>
                         );
                     })}
@@ -133,8 +234,17 @@ export function AdminTemplateInspectPage() {
                 </div>
             ))}
 
-            {t.roleCloudInit && sec("Role cloud-init (authored)", <pre style={preStyle}>{t.roleCloudInit}</pre>)}
-            {sec("Composed cloud-init (what runs)", <pre style={preStyle}>{t.cloudInitTemplate || "—"}</pre>)}
+            {sec("Cloud-init", (
+                <div>
+                    <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)", marginBottom: "var(--space-2)" }}>
+                        {t.roleCloudInit && <TabBtn active={activeTab === "role"} onClick={() => setTab("role")}>Role (authored)</TabBtn>}
+                        <TabBtn active={activeTab === "composed"} onClick={() => setTab("composed")}>Composed (what runs)</TabBtn>
+                    </div>
+                    <pre style={preStyle}>{activeTab === "role" ? t.roleCloudInit : (t.cloudInitTemplate || "—")}</pre>
+                </div>
+            ))}
+
+            {artifact && <ArtifactModal artifact={artifact} onClose={() => setArtifact(null)} />}
         </div>
     );
 }
