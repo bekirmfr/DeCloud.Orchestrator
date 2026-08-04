@@ -24,6 +24,9 @@ Every recommendation below is a *boundary alignment*, not a band-aid.
 - `decision-log-relay-health-detection-heal.md` — relay "up ≠ forwarding" detection gap
   (G17) and the detection-fix design that makes the existing `reality=Unhealthy` →
   redeploy heal a wedged relay.
+- `decision-log-relay-redeploy-mesh-stranding.md` — relay redeploy strands the relay
+  host's own DHT/BlockStore from the mesh: stale relay IP (G18) + validate-before-refetch
+  self-heal (G19).
 
 ---
 
@@ -447,6 +450,54 @@ the only local healer that acts without that signal.
 Unhealthy→redeploy fires — no new healer, consistent with §7. Fix in §6 Round 6.
 Full diagnosis and design: `decision-log-relay-health-detection-heal.md`.
 
+#### G18. Relay redeploy strands the relay host's own DHT/BlockStore out of the mesh (stale relay IP)
+A relay VM redeploy gives the new VM a new `virbr0` DHCP lease (observed
+`192.168.122.119` → `.251`), but `PortForwardingManager.GetRelayVmIpAsync` returns
+`relayVm.Spec.IpAddress` — a value stored on the VM spec, **not** a live `virsh
+domifaddr` lookup — so it keeps returning the old IP. The relay-host enrollment
+path (`NodeRelayConfigProvider.TryGetAsync` Path 2) then HTTP-probes the dead IP,
+returns null, and `GetWgConfig` answers 202 forever. The relay-host's own DHT/BS
+never (re)enrol → no `wg-mesh` → cross-node DHT/BlockStore peering is dead (each DHT
+sees only its co-located blockstore; `routingTable=0`, bootstrap `"isolated"`). The
+relay's *identity* (WG keypair, relay_id) is correctly preserved across redeploy;
+only the ephemeral bridge IP moves. `Spec.IpAddress` is re-hydrated from libvirt on
+node-agent *restart* but never refreshed between restarts (confirmed: a node-agent
+restart flips `GetWgConfig` from 202 to success).
+
+**Scope.** `GetRelayVmIpAsync` also feeds the 2-hop tenant port-forward create/
+remove/flush paths, so a stale relay IP silently breaks tenant port-forwarding
+through a freshly-redeployed relay too — not only mesh enrollment.
+
+**Trigger.** A storage-wiping `decloud vm cleanup <relay>` forces a full rebuild
+(new lease); but any redeploy (reschedule, host reboot, lease expiry) can move the
+IP, so the cleanup merely made a latent fragility reliable.
+
+**Boundary alignment.** Resolve the relay's current bridge IP live in
+`GetRelayVmIpAsync` (correctness); give the relay a stable virbr0 address to remove
+the failure mode (durable). Fix in §6 Round 7. Full diagnosis:
+`decision-log-relay-redeploy-mesh-stranding.md`.
+
+#### G19. Mesh self-heal cannot recover an empty `wg-mesh.env` (validate-before-refetch)
+`wg-mesh-watchdog.timer` re-runs `wg-mesh-enroll.sh` every 2 min when `wg-mesh` is
+down. That script *does* re-fetch live `wg-config` from the NodeAgent — but its
+required-var validation (`WG_RELAY_ENDPOINT/PUBKEY/TUNNEL_IP/API` non-empty →
+`exit 1`) runs **before** the re-fetch block. So a stale-but-non-empty env
+self-heals (validation passes → re-fetch refreshes), but an *empty* env — which G18
+produces when boot-time `wg-config-fetch.sh` times out under the stale IP — hits
+`exit 1` before the re-fetch and is unrecoverable. Confirmed live: the watchdog
+looped on `Missing required env: WG_RELAY_ENDPOINT` every 2 min; running the full
+`wg-config-fetch.sh` (writes a complete env, then enrols) healed it immediately.
+
+**Composition with G18.** G18 produces the empty env at the DHT's single boot
+window; G19 makes it permanent. Fixing only G18 still leaves any future boot-time
+config blip stranding a VM forever via G19; fixing only G19 lets the watchdog
+recover but keeps churning the env on every redeploy via G18. Both are needed.
+
+**Boundary alignment.** Attempt the NodeAgent wg-config/state fetch *before* the
+required-var validation (the re-fetch already exists — it just sits behind the gate
+that stops it). Fix in §6 Round 7. Full diagnosis:
+`decision-log-relay-redeploy-mesh-stranding.md`.
+
 ---
 
 ### 🟠 Severity MEDIUM
@@ -654,6 +705,24 @@ Worth recording the parts the project gets right, so refactors do not regress th
      redeploy loop. This is the one real risk (over-eager healing thrashing a fine
      relay) and must be settled before the 503 change ships. Full design and the
      grace-threshold question: `decision-log-relay-health-detection-heal.md`.
+
+### Round 7 — Relay redeploy must not strand the mesh (G18, G19)
+
+10. Make relay redeploys safe for the relay host's own system VMs. Two linked fixes;
+    each is independently useful but both are needed to close the failure mode.
+    - **G18 — resolve the relay IP live.** `PortForwardingManager.GetRelayVmIpAsync`
+      returns the relay's *current* bridge IP (live `domifaddr`/lease lookup) instead
+      of the cached `relayVm.Spec.IpAddress`. Repairs relay-host mesh enrollment AND
+      the 2-hop tenant port-forward paths in one change. Durable follow-up: a stable
+      virbr0 address for the relay (static/reserved lease keyed on the relay
+      obligation) so the IP never churns across redeploys.
+    - **G19 — reorder enroll's fetch before validation.** In `wg-mesh-enroll.sh`, move
+      the NodeAgent `wg-config` (+ obligation-state keypair) fetch ahead of the
+      required-var validation, so an empty `wg-mesh.env` is filled and only then
+      validated — letting the watchdog recover a stranded VM without manual steps.
+    - **Operational.** Prefer a non-storage-wiping redeploy for system VMs; a storage
+      wipe forces a new bridge lease and is what exposed G18.
+    Full diagnosis: `decision-log-relay-redeploy-mesh-stranding.md`.
 
 ---
 
