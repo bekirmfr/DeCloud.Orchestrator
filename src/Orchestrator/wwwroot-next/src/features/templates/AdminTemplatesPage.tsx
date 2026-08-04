@@ -59,7 +59,7 @@ export function AdminTemplatesPage() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
-                <Link className="btn-ghost" to={`/my-templates/${t.slug || t.id}/edit`} style={sm}>Inspect</Link>
+                <Link className="btn-ghost" to={`/admin/templates/${t.id}`} style={sm}>Inspect</Link>
                 <button className="btn-ghost" style={sm} disabled={busy}
                   onClick={() => { if (window.confirm(`Approve and publish “${t.name}”?`)) approve.mutate(t.id); }}>
                   Approve

@@ -15,6 +15,7 @@ import { FileBrowserPage } from "../features/vms/FileBrowserPage";
 import { MyTemplatesPage } from "../features/templates/MyTemplatesPage";
 import { CreateTemplatePage } from "../features/templates/CreateTemplatePage";
 import { AdminTemplatesPage } from "../features/templates/AdminTemplatesPage";
+import { AdminTemplateInspectPage } from "../features/templates/AdminTemplateInspectPage";
 import { DeployPage } from "../features/deploy/DeployPage";
 import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
 import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
@@ -83,6 +84,7 @@ export const router = createBrowserRouter(
           element: <AdminGuard />,
           children: [
             { path: "templates", element: <AdminTemplatesPage /> },   // Phase 5 · review queue
+            { path: "templates/:id", element: <AdminTemplateInspectPage /> },   // Phase 5 · read-only inspect
             // { path: "compliance", element: <Compliance /> },   // Phase 5
           ],
         },
