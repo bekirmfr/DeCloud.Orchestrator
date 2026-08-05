@@ -1,5 +1,4 @@
-﻿using DeCloud.Shared.Contracts;
-using DeCloud.Shared.Enums;
+﻿using DeCloud.Shared.Enums;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Bson.Serialization.Options;
@@ -182,25 +181,6 @@ public class ScoringWeightsConfig
 /// </summary>
 public static class SchedulingConfigExtensions
 {
-    /// <summary>
-    /// Calculate points required per vCPU for a tier
-    /// Formula: (MinimumBenchmark / BurstableBaseline) × (BurstableOvercommit / TierOvercommit)
-    /// </summary>
-    public static double GetPointsPerVCpu(
-        this TierConfiguration tierConfig,
-        int baselineBenchmark,
-        double baselineOvercommitRatio)
-    {
-        if (baselineBenchmark <= 0)
-            throw new ArgumentException("Baseline benchmark must be positive", nameof(baselineBenchmark));
-
-        if (baselineOvercommitRatio <= 0)
-            throw new ArgumentException("Baseline overcommit ratio must be positive", nameof(baselineOvercommitRatio));
-
-        return ((double)tierConfig.MinimumBenchmark / baselineBenchmark) *
-               (baselineOvercommitRatio / tierConfig.CpuOvercommitRatio);
-    }
-
     /// <summary>
     /// Validate scoring weights sum to 1.0
     /// </summary>

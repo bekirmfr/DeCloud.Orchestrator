@@ -94,14 +94,28 @@ User → Orchestrator (Central Brain) → Node Agents (Distributed Workers)
 
 ### Quality Tiers
 
-| Tier | Overcommit | Use Case |
-|---|---|---|
-| Guaranteed | 1:1 | Production databases, critical workloads |
-| Standard | 1.5:1 | Web apps, APIs |
-| Balanced | 2:1 | Development environments |
-| Burstable | 4:1 | Batch jobs, testing |
+| Tier | CPU overcommit | Price multiplier | Use Case |
+|---|---|---|---|
+| Guaranteed | 1.0:1 | 2.5× | Production databases, critical workloads |
+| Standard | 1.6:1 | 1.0× | Web apps, APIs |
+| Balanced | 2.7:1 | 0.6× | Development environments |
+| Burstable | 4.0:1 | 0.4× | Batch jobs, testing |
 
-CPU compute points are calculated via sysbench benchmarking, normalized against a reference baseline. Formula: `computePoints = (nodePerformance / baselinePerformance) × coreCount`.
+CPU compute points are calculated via sysbench benchmarking, normalized against a reference baseline:
+
+```
+pointsPerCore   = cappedBenchmarkScore / baselineBenchmark
+totalComputePoints = pointsPerCore × physicalCores × baselineOvercommitRatio
+```
+
+The `baselineOvercommitRatio` factor (the Burstable tier's 4.0×) is part of the
+formula — omitting it under-reports node capacity roughly four-fold. Example:
+benchmark 8100, baseline 1000, 8 physical cores → 8.1 × 8 × 4.0 = **259 points**.
+
+Authoritative values live in `SchedulingConfig` (MongoDB, versioned); the tier
+figures above are the shipped v2 defaults. See `SCHEDULING.md` for the per-vCPU
+cost formula and `HARDWARE-RESOURCE-ALLOCATION.md` §4.2 for how a node's
+evaluation is produced and when it goes stale.
 
 ---
 
@@ -1083,7 +1097,12 @@ Normalized against a reference baseline. Points scale linearly with core count a
 
 **Resource discovery:** CPU (cores, model, frequency), RAM, GPU (model, VRAM, IOMMU group, passthrough eligibility), storage (disks, available space), network bandwidth (ethtool or sysfs reported speed, falls back to 1000 Mbps conservative default).
 
-**Quality tier allocation:** `computePoints = (nodePerformance / baselinePerformance) × coreCount`. Used for scheduling, billing, and marketplace display.
+**Quality tier allocation:** `computePoints = (cappedBenchmark / baseline) × physicalCores × baselineOvercommitRatio`. Used for scheduling, billing, and marketplace display. The overcommit factor is not optional — see §1 Quality Tiers.
+
+**Per-VM cost:** a VM's `ComputePointCost` is assigned by the orchestrator at
+scheduling time and travels to the node on the CreateVm payload. The node reads
+it to size cgroup shares; it does not recompute it. One implementation of the
+per-vCPU formula exists, in `DeCloud.Shared.Contracts`.
 
 ---
 

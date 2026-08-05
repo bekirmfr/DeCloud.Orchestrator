@@ -444,6 +444,12 @@ disk and identity hold resources.
 Synthetic unit: `physicalCores x (benchmarkScore / baseline) x overcommitRatio`.
 Percent is primary mode (self-adjusts when platform config changes).
 
+A VM's `ComputePointCost` is assigned by the orchestrator in
+`VmService.TryScheduleVmAsync` *before* scheduling, admission is checked against
+it, and it travels to the node on the CreateVm payload. The node reads it and
+derives cgroup shares from it — it does not recompute it. See SCHEDULING.md
+"Quality tiers" for the formula and the system-VM exception.
+
 ### Memory
 
 Operator limit replaces volatile `AllocatableBytes`. 90% default

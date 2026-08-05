@@ -390,10 +390,18 @@ tiers at registration based on its benchmark score.
 
 | Tier | CPU overcommit | Storage overcommit | Benchmark floor | Price multiplier |
 |---|---|---|---|---|
-| Burstable | 4.0× | 2.5× | 1 000 | 0.5× |
-| Balanced | 2.7× | 2.0× | 1 500 | 0.7× |
+| Burstable | 4.0× | 2.5× | 1 000 | 0.4× |
+| Balanced | 2.7× | 2.0× | 1 500 | 0.6× |
 | Standard | 1.6× | 1.5× | 2 500 | 1.0× |
-| Guaranteed | 1.0× | 1.0× | 4 000 | 1.8× |
+| Guaranteed | 1.0× | 1.0× | 4 000 | 2.5× |
+
+> **Price multipliers changed in `SchedulingConfig` v1 → v2.** The stored values
+> (1.8 / 1.0 / 0.7 / 0.5) disagreed with what `HourlyRateCalculator` actually
+> billed (2.5 / 1.0 / 0.6 / 0.4). The migration adopted the **billed** values
+> deliberately — no bill changed; the advertisement corrected itself. Nodes
+> evaluated before that migration still carry the old multipliers in their
+> stored `TierCapabilities`; see "Evaluation staleness" in
+> `HARDWARE-RESOURCE-ALLOCATION.md` §4.2.
 
 `Burstable` is the baseline tier; all nodes that pass the performance
 evaluation qualify for it. A node qualifies for a higher tier when its
@@ -405,6 +413,24 @@ Compute points per vCPU:
 pointsPerVCpu = (tierMinBenchmark / baselineBenchmark)
               × (baselineOvercommitRatio / tierCpuOvercommitRatio)
 ```
+
+**One implementation.** `TierConfigurationExtensions.GetPointsPerVCpu` in
+`DeCloud.Shared.Contracts`, beside the `TierConfiguration` type it extends.
+The first division must be in floating point — both operands are `int`, and an
+integer division there silently collapses Balanced to Burstable (1500/1000 → 1)
+and under-weights Standard by 20% (2500/1000 → 2), while Guaranteed and
+Burstable divide exactly and look correct. The node agent carried its own copy
+of this expression with that defect until 2026-08-05. Do not re-implement this
+formula anywhere.
+
+**Who assigns `ComputePointCost`.** The orchestrator, in
+`VmService.TryScheduleVmAsync`, *before* scheduling — admission is checked
+against that value and it ships on the CreateVm payload. System VMs are an
+explicit exception: `isSystemVmScheduling` preserves the declared cost from the
+spec (Relay: 1 / 2 / 4 / 13) rather than deriving it from the tier table. The
+node agent **reads** this value and derives cgroup shares from it; it does not
+recompute it. A node that recomputes will disagree with the scheduler that
+admitted the VM and will silently override the system-VM exception.
 
 ---
 
@@ -488,14 +514,14 @@ audit-logged, and updateable without a deploy. Defaults are conservative.
 | Parameter | Default | Effect |
 |---|---|---|
 | `BaselineBenchmark` | 1 000 | Reference benchmark for "1 point per core" |
-| `BaselineOvercommitRatio` | 4.0 | Burstable-tier overcommit, used in capacity calculation |
+| `BaselineOvercommitRatio` | 4.0 | **Derived, not stored** — it *is* `Tiers[Burstable].CpuOvercommitRatio`. Set the Burstable tier; this follows. |
 | `MaxPerformanceMultiplier` | 20.0 | Caps benchmark advantage of exceptionally fast hardware |
 | `Tiers[t].MinimumBenchmark` | varies | Node benchmark floor for tier eligibility |
 | `Tiers[t].CpuOvercommitRatio` | varies | Logical CPU capacity multiplier |
 | `Tiers[t].StorageOvercommitRatio` | varies | qcow2 thin-provisioning multiplier |
 | `Tiers[t].PriceMultiplier` | varies | Tenant pays this × baseline rate |
-| `Limits.MaxUtilizationPercent` | 90.0 | Reject if VM placement would push node above this |
-| `Limits.MinFreeMemoryMb` | 512 | Always-free RAM reservation |
+| `Limits.MaxUtilizationPercent` | 100.0 | Reject if VM placement would push node above this. 100% means "fill to the operator's stated allocation" — with operator-controlled allocation the holdback is already baked into `TotalResources`. |
+| `Limits.MinFreeMemoryMb` | 256 | Always-free RAM reservation |
 | `Limits.MaxLoadAverage` | 8.0 | Reject nodes above this 1-minute load |
 | `Weights.Capacity` | 0.40 | Scoring weight |
 | `Weights.Load` | 0.25 | Scoring weight |

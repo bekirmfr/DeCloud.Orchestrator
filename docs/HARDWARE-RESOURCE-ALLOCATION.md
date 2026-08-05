@@ -180,6 +180,70 @@ yet known until evaluate. `SchedulingReady = false` by default.
 - Resolves `node.AllocatedResources = TotalResources × AllocationConfig percentages`
 - Seeds system VM obligations (Relay, DHT, BlockStore)
 
+#### What `PerformanceEvaluation` is
+
+A **verdict the orchestrator issues about a node**, not cached state. Derived
+from two inputs — the node's reported `HardwareInventory` (benchmark, CPU model,
+physical cores) and the orchestrator's `SchedulingConfig` (baseline, cap, tiers)
+— and what it holds is decisions: `IsAcceptable` / `RejectionReason` (may this
+node join at all), `EligibleTiers` / `HighestTier` (what may be scheduled here),
+`TierCapabilities[].PriceMultiplier` (what it earns), and `TotalComputePoints`
+(the denominator for every cgroup share and capacity check on that node).
+
+#### Why it is NOT on the heartbeat's version-negotiation channel
+
+`SchedulingConfig` rides that channel: one global document, monotonic `Version`,
+authored by an admin, identical for every consumer — a broadcast.
+`PerformanceEvaluation` is per-node, has no version field, is authored by nobody,
+and the node **supplies half its input**. It is a feedback loop, not a broadcast.
+
+Pinning the verdict to explicit lifecycle moments is also a stability property.
+Node benchmarks vary materially between runs — one node measured
+8100 / 7077 / 7352 / 7393 on identical hardware, a ~13% spread. If evaluation
+recomputed automatically on inventory change, `TotalComputePoints` would move
+with that noise, and a node near a tier floor would gain and lose tier
+eligibility — and its price multiplier — on measurement jitter.
+
+**Open question, deliberately unanswered:** nothing re-evaluates on genuine
+hardware degradation (thermal throttling, a failing disk, noisy VPS neighbours).
+A node keeps its original verdict indefinitely. That is the cost of the
+stability choice, not an oversight.
+
+#### Evaluation staleness (known gap)
+
+A stored evaluation records the config it was computed against only implicitly
+(`BaselineBenchmark`). When an admin changes `SchedulingConfig`, the new config
+reaches every node within ~20 s via heartbeat version negotiation, while every
+stored `PerformanceEvaluation` silently remains computed against the old one —
+new config, old verdict, and nothing detects the mismatch.
+
+Observed in production (2026-08-05): a node's stored `TierCapabilities` still
+carried the pre-v2 price multipliers (1.8 / 1.0 / 0.7 / 0.5) long after the
+config migrated to v2 (2.5 / 1.0 / 0.6 / 0.4).
+
+Suggested fix (**not implemented**): add `SchedulingConfigVersion` to
+`NodePerformanceEvaluation` so staleness is detectable, and re-evaluate affected
+nodes orchestrator-side when the config version increments — the same shape as
+`MigrateConfigAsync`. Not node-side polling.
+
+#### Node-side consumption and the initialization gate
+
+The node needs **both** `SchedulingConfig` and `PerformanceEvaluation` before it
+can create any VM. `INodeStateService.IsFullyInitialized` expresses this, and
+`LibvirtVmManager.CreateVmAsync` refuses before doing any disk work when it is
+false. `CommandProcessorService.HandleCreateVmAsync` carries the same check for
+the orchestrator-command path.
+
+The two hydrate asymmetrically: `SchedulingConfig` self-heals on the next
+heartbeat; `PerformanceEvaluation` is fetched once at startup and does not.
+`AuthenticationManager` therefore re-fetches a missing evaluation on its 30 s
+registered-state loop, **before** the scheduling-ready and logged-out early
+returns — a node that has lost its evaluation must be able to repair it
+regardless of login state, because logout does not clear system-VM obligations.
+
+Rationale and the incident that produced these guards:
+`CONTEXT-dht-deploy-loop-MSI-2026-08-04.md`.
+
 ### 4.3 Allocate
 
 `NodeService.AllocateNodeAsync()`:

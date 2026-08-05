@@ -183,6 +183,10 @@ User → Orchestrator (coordinator) → Node Agents (VM hosts)
 | Collaboration features | Shared VMs, infrastructure templates (Phase 3) |
 | Lightweight node support | Non-KVM nodes — design TBD |
 | Alpine Linux system VMs | 50 MB base image, 40× smaller |
+| Node evaluation staleness | A stored `NodePerformanceEvaluation` records no `SchedulingConfigVersion`. When admin config changes, the new config reaches nodes in ~20 s via heartbeat while every stored verdict silently stays computed against the old one. Fix: version the evaluation and re-evaluate orchestrator-side on config change. Observed: nodes carrying pre-v2 price multipliers after the v1→v2 migration. |
+| Re-evaluation on hardware degradation | Nothing re-evaluates a node whose hardware genuinely degrades (thermal throttling, failing disk, noisy VPS neighbours). Deliberate — automatic re-evaluation would make tier eligibility and pricing flap on ~13% benchmark jitter — but the accuracy cost is unaddressed. |
+| VmRepository encryption is a false control | Both constructor branches build an identical `SqliteConnection`, the key is discarded, and the config key is misspelt (`Orchestrator:` vs `OrchestratorClient:`). Fixing the key alone would swap a true warning for a false assurance. Implement properly or remove the pretence. Exposure is modest — the password field is already wallet-encrypted browser-side. |
+| libvirt default network churn | Investigate whether taps still orphan from virbr0 once the fixed-width `virsh net-info` parse is corrected (2026-08-05). The re-attacher masked a self-inflicted destroy/recreate cycle for an unknown period. |
 | CentralIngress surgical route updates (Step 0) | Replaces O(n) `POST /load` rebuild with per-route `@id`-based admin API operations; extends single-host ceiling from ~1,000 toward ~5,000 VMs. Internal refactor, no infrastructure change. Spec in `STEP_0_CHANGES.md`. |
 
 ---
@@ -478,6 +482,10 @@ Neither pressure exists today. Step 0 alone addresses the operational pain point
 4. **Authoritative source** — Orchestrator maintains truth, nodes report current state
 5. **Graceful degradation** — system continues working if components fail
 6. **Centralized lifecycle** — all VM state transitions through `VmLifecycleManager`: validate → persist → effects (best-effort, individually guarded)
+7. **Absent state is not a negative decision** — missing data means "unknown, wait", never "no". Treating an unfetched value as a decision caused an endless VM-deploy loop (missing `PerformanceEvaluation` read as a number) and a relay tunnel torn down on every restart (missing CGNAT data read as "no relay needed"). Guard on the invariant that exists (`IsFullyInitialized`), and refuse before doing expensive work rather than failing in the middle of it.
+8. **One quantity, one implementation** — a formula copied between orchestrator and node will drift. A hand-copied tier-cost expression lost a `(double)` cast and diverged 17–38% from the scheduler that admitted the VM. Shared quantities live in `DeCloud.Shared`, beside the type they operate on; derived values (e.g. `BaselineOvercommitRatio` = Burstable's ratio) are computed, not stored twice.
+9. **A repair that fires unconditionally will mask the fault it repairs** — a fixed-width string match on `virsh net-info` never matched, so every agent start destroyed and recreated virbr0, orphaned every tap, then re-attached them. The repair worked so well the damage went unnoticed. Detection must be verified independently of the recovery it triggers.
+10. **Instrumentation is load-bearing** — during one investigation a diagnostic bundle reported the wrong process's uptime, `strings` silently missed UTF-16 .NET literals, and journald discarded the only window that mattered. The bug took hours; the untrustworthy tooling took longer. Logs that state something untrue are defects with the same weight as the code they describe.
 
 ### Major Realizations
 
@@ -494,7 +502,8 @@ Neither pressure exists today. Step 0 alone addresses the operational pain point
 - **systemctl in bootcmd hangs on D-Bus** — `systemctl start qemu-guest-agent` in migration `bootcmd` blocks indefinitely before D-Bus is ready; remove it — the `qemu-guest-agent.service` symlink in `multi-user.target.wants` handles startup automatically
 - **drive-backup temporal incoherence** — `drive-backup sync=full/top` reads clusters unfrozen over tens of seconds; coupled ext4 metadata structures captured at different wall-clock moments produce temporal incoherence that `qemu-img check` cannot detect; use blockdev-snapshot instead
 - **blockdev-snapshot requires no backing-file in overlay header** — `qemu-img create -f qcow2` must NOT use `-b`; QEMU already holds write lock on disk.qcow2 and cannot open it as backing file via blockdev-add
-- **sysbench reliable** — provides consistent CPU performance normalization across hardware
+- **sysbench reliable, but not repeatable** — consistent enough to normalize across hardware, yet the same node measured 8100 / 7077 / 7352 / 7393 across restarts (~13% spread). Node evaluation is therefore pinned at explicit lifecycle moments, not recomputed on every inventory refresh; otherwise capacity, tier eligibility and pricing would flap on measurement noise
+- **Log volume is a retention budget** — at Debug the node agent emitted ~7.2 journal entries/s idle, leaving ~2 h of history and destroying the evidence for a rare crash. Dropping transport chatter and logging reconciler decisions on change rather than per cycle cut this ~700×. Keep the reconciliation matrix verbose; silence what repeats unchanged
 - **apt-get update dominant** — 190s of 343s cloud-init time is package list fetch; disabling it cuts boot by ~55%
 - **TCP_QUICKACK critical for RPC** — 40ms delayed ACK kills GPU proxy throughput; must re-arm before every `read()`
 - **Lazy loading breaks module registration** — `CUDA_MODULE_LOADING=EAGER` mandatory for PyTorch
