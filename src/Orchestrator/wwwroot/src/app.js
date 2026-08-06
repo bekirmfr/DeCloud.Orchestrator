@@ -20,12 +20,6 @@ import {
     refreshBalanceDisplay,
     isInitialized as isPaymentInitialized
 } from './payment.js';
-import {
-    initializeMarketplace,
-    loadNodes as loadNodesFromMarketplace,
-    searchNodes,
-    clearNodeFilters
-} from './marketplace.js';
 import { initMarketplaceTemplates } from './marketplace-templates.js';
 import { initMyTemplates } from './my-templates.js';
 import './template-detail.js';
@@ -135,8 +129,6 @@ let appKitUnsubscribers = [];
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[App] Initializing DeCloud v' + __APP_VERSION__);
 
-    // Initialize marketplace module with config
-    initializeMarketplace(CONFIG.orchestratorUrl, escapeHtml);
 
     const sessionRestored = await restoreSession();
     if (!sessionRestored) {
@@ -809,9 +801,7 @@ function showPage(pageName) {
         selectedNav.classList.add('active');
     }
 
-    if (pageName === 'nodes') {
-        loadNodes();
-    } else if (pageName === 'marketplace-templates') {
+    if (pageName === 'marketplace-templates') {
         initMarketplaceTemplates();
     } else if (pageName === 'my-templates') {
         initMyTemplates();
@@ -925,9 +915,6 @@ async function handleBalanceCardClick() {
     showBalanceModal();
 }
 
-async function loadNodes() {
-    await loadNodesFromMarketplace();
-}
 
 
 // ============================================
@@ -1269,7 +1256,6 @@ function saveSettings() {
     if (orchestratorUrl && orchestratorUrl !== CONFIG.orchestratorUrl) {
         CONFIG.orchestratorUrl = orchestratorUrl;
         localStorage.setItem('orchestratorUrl', orchestratorUrl);
-        initializeMarketplace(orchestratorUrl, escapeHtml);
         showToast('Settings saved. Please reconnect your wallet.', 'success');
         setTimeout(() => disconnect(), 2000);
     } else {
@@ -1359,9 +1345,6 @@ window.showToast = showToast;
 window.ethersSigner = () => ethersSigner;
 window.handleBalanceCardClick = handleBalanceCardClick;
 window.loadUserBalance = loadUserBalance;
-window.loadNodes = loadNodes;
-window.searchNodes = searchNodes;
-window.clearNodeFilters = clearNodeFilters;
 window.handleDeployTosGate = handleDeployTosGate;
 
 // Custom-domain helpers — implemented in custom-domains.js but referenced

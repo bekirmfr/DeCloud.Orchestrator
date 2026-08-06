@@ -115,15 +115,6 @@
                     </svg>
                     My Templates
                 </a>
-                <a class="nav-item" data-page="nodes" onclick="showPage('nodes')">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="4" y="4" width="6" height="6" rx="1" />
-                        <rect x="14" y="4" width="6" height="6" rx="1" />
-                        <rect x="4" y="14" width="6" height="6" rx="1" />
-                        <rect x="14" y="14" width="6" height="6" rx="1" />
-                    </svg>
-                    Nodes
-                </a>
 
                 <div class="nav-label" style="margin-top: 24px;">Configuration</div>
                 <!-- SSH Keys migrated to the new app (/app). Link hands off. -->
@@ -234,109 +225,6 @@
             </div>
 
             <!-- Nodes Page -->
-            <div id="page-nodes" class="page">
-                <header class="page-header">
-                    <div>
-                        <h1 class="page-title">Nodes</h1>
-                        <p class="page-subtitle">Explore the decentralized compute network</p>
-                    </div>
-                    <div class="header-actions">
-                        <button class="btn btn-secondary" onclick="loadNodes()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                 stroke-width="2">
-                                <path d="M23 4v6h-6M1 20v-6h6" />
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                            </svg>
-                            Refresh
-                        </button>
-                    </div>
-                </header>
-
-                <!-- Search & Filters -->
-                <div class="marketplace-filters card">
-                    <div class="card-body">
-                        <div class="filter-row">
-                            <div class="filter-group filter-group-wide">
-                                <label class="form-label">Search Tags</label>
-                                <input type="text" class="form-input" id="mp-filter-tags"
-                                       placeholder="e.g. gpu, high-memory, nvme (comma-separated)">
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Region</label>
-                                <input type="text" class="form-input" id="mp-filter-region" placeholder="e.g. us-east">
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Sort By</label>
-                                <select class="form-input" id="mp-filter-sort">
-                                    <option value="uptime">Uptime</option>
-                                    <option value="price">Price</option>
-                                    <option value="capacity">Capacity</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="filter-row">
-                            <div class="filter-group">
-                                <label class="form-label">Max Price (USDC/point/hr)</label>
-                                <input type="number" class="form-input" id="mp-filter-price" placeholder="e.g. 0.05"
-                                       step="0.001" min="0">
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Min Uptime %</label>
-                                <input type="number" class="form-input" id="mp-filter-uptime" placeholder="e.g. 95"
-                                       min="0" max="100">
-                            </div>
-                            <div class="filter-group">
-                                <label class="form-label">Min Compute Points</label>
-                                <input type="number" class="form-input" id="mp-filter-capacity" placeholder="e.g. 10"
-                                       min="0">
-                            </div>
-                            <div class="filter-group filter-checkbox-group">
-                                <label class="filter-checkbox-label">
-                                    <input type="checkbox" id="mp-filter-gpu"> Requires GPU
-                                </label>
-                                <label class="filter-checkbox-label">
-                                    <input type="checkbox" id="mp-filter-online" checked> Online
-                                </label>
-                                <label class="filter-checkbox-label">
-                                    <input type="checkbox" id="mp-filter-scheduling-ready" checked> Accepting deployments
-                                </label>
-                            </div>
-                            <div class="filter-group filter-actions">
-                                <button class="btn btn-primary" onclick="searchNodes()">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                         stroke-width="2">
-                                        <circle cx="11" cy="11" r="8" />
-                                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                                    </svg>
-                                    Search
-                                </button>
-                                <button class="btn btn-secondary" onclick="clearNodeFilters()">Clear</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Featured Nodes -->
-                <div id="mp-featured-section">
-                    <h3 class="mp-section-title">Featured Nodes</h3>
-                    <div class="mp-nodes-grid" id="mp-featured-nodes">
-                        <p class="text-muted" style="text-align: center; padding: 40px; grid-column: 1 / -1;">
-                            Loading
-                            featured nodes...
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Search Results -->
-                <div id="mp-results-section" style="display: none;">
-                    <div class="mp-results-header">
-                        <h3 class="mp-section-title">Search Results</h3>
-                        <span class="mp-results-count" id="mp-results-count"></span>
-                    </div>
-                    <div class="mp-nodes-grid" id="mp-search-results">
-                    </div>
-                </div>
-            </div>
 
             <!-- Settings Page -->
             <div id="page-settings" class="page">
