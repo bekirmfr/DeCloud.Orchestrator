@@ -148,8 +148,8 @@ export function NodesPage() {
       </div>
 
       <div style={{ display: "flex", gap: 2, borderBottom: "1px solid var(--border-subtle)" }}>
-        <TabBtn active={tab === "mine"} onClick={() => setTab("mine")}>My nodes</TabBtn>
         <TabBtn active={tab === "search"} onClick={() => setTab("search")}>Search</TabBtn>
+        <TabBtn active={tab === "mine"} onClick={() => setTab("mine")}>My nodes</TabBtn>
       </div>
 
       {tab === "mine" ? <MyNodes wallet={wallet} /> : <NodeSearch />}
