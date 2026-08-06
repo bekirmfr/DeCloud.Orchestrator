@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   useMyTemplates, useDeleteTemplate, templateStatus, statusNum,
-  usePublishTemplate, useCancelReview, useReviseTemplate,
+  usePublishTemplate, useCancelReview, useReviseTemplate, useMyTemplateEarnings,
 } from "./useTemplates";
 
 // Phase 5 · My Templates. Slice 1: list + status + delete + create/edit entry.
@@ -22,6 +22,7 @@ export function MyTemplatesPage() {
   const publish = usePublishTemplate(api);
   const cancel = useCancelReview(api);
   const revise = useReviseTemplate(api);
+  const { data: earnings } = useMyTemplateEarnings(api);
 
   const busy = del.isPending || publish.isPending || cancel.isPending || revise.isPending;
   const actionErr = (publish.error || cancel.error || revise.error || del.error) as Error | undefined;
@@ -56,6 +57,7 @@ export function MyTemplatesPage() {
           {templates.map((t) => {
             const st = templateStatus(t.status);
             const s = statusNum(t.status);
+            const e = earnings?.[t.id];
             const canEdit = s === 0 || s === 4;        // Draft or Rejected
             const canSubmit = s === 0 || s === 4;      // → submit/resubmit for review
             return (
@@ -68,6 +70,11 @@ export function MyTemplatesPage() {
                   <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {t.category ? `${t.category} · ` : ""}{t.description}
                   </div>
+                  {e && e.net > 0 && (
+                    <div style={{ color: "var(--success)", fontSize: "var(--text-sm)", marginTop: 2 }}>
+                      Earned {e.net.toFixed(2)} USDC · {e.deploys} paid {e.deploys === 1 ? "deploy" : "deploys"}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
                         {canEdit && <Link className="btn-ghost" to={`/my-templates/${t.id}/edit`} style={sm}>Edit</Link>}

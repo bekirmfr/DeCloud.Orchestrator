@@ -1936,6 +1936,57 @@ public class DataStore
         }
     }
 
+    /// <summary>
+    /// Per-template earnings for the given author revenue wallets, summed from the
+    /// settlement ledger (usageRecords). Template fees are written by
+    /// SettleTemplateFeeAsync with a zero-length period (PeriodStart == PeriodEnd),
+    /// which separates them from compute settlements crediting the same wallet.
+    /// Attribution is VmId → VirtualMachine.TemplateId; VMs are retained after
+    /// deletion (soft-delete), so historical fees resolve too. Returns net
+    /// (NodeShare) and gross (TotalCost) keyed by template id.
+    /// </summary>
+    public async Task<Dictionary<string, TemplateEarnings>> GetTemplateFeeEarningsAsync(HashSet<string> revenueWallets)
+    {
+        var result = new Dictionary<string, TemplateEarnings>();
+        if (!_useMongoDB || revenueWallets.Count == 0) return result;
+
+        try
+        {
+            var fees = await UsageRecordsCollection!
+                .Find(r => revenueWallets.Contains(r.NodeId) && r.PeriodStart == r.PeriodEnd)
+                .ToListAsync();
+            if (fees.Count == 0) return result;
+
+            var vmIds = fees.Select(f => f.VmId).Distinct().ToList();
+            var vms = await VmsCollection!
+                .Find(v => vmIds.Contains(v.Id))
+                .ToListAsync();
+
+            var vmToTemplate = new Dictionary<string, string>();
+            foreach (var v in vms)
+                if (!string.IsNullOrEmpty(v.TemplateId)) vmToTemplate[v.Id] = v.TemplateId!;
+
+            foreach (var f in fees)
+            {
+                if (!vmToTemplate.TryGetValue(f.VmId, out var templateId)) continue;
+                if (!result.TryGetValue(templateId, out var e))
+                {
+                    e = new TemplateEarnings();
+                    result[templateId] = e;
+                }
+                e.Net += f.NodeShare;
+                e.Gross += f.TotalCost;
+                e.Deploys++;
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to compute template fee earnings");
+            return result;
+        }
+    }
+
     public async Task<bool> DeleteTemplateAsync(string templateId)
     {
         if (!_useMongoDB) return false;

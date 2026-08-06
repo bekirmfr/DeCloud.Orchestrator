@@ -195,6 +195,26 @@ public class TemplateService : ITemplateService
         }
     }
 
+    public async Task<Dictionary<string, TemplateEarnings>> GetTemplateEarningsAsync(string authorId)
+    {
+        var templates = await GetTemplatesByAuthorAsync(authorId);
+        if (templates.Count == 0) return new Dictionary<string, TemplateEarnings>();
+
+        // Wallets that receive this author's template fees (defaults to the author id).
+        var wallets = templates
+            .Select(t => string.IsNullOrEmpty(t.AuthorRevenueWallet) ? authorId : t.AuthorRevenueWallet!)
+            .Where(w => !string.IsNullOrEmpty(w))
+            .ToHashSet();
+
+        var earnings = await _dataStore.GetTemplateFeeEarningsAsync(wallets);
+
+        // Keep only this author's own templates (guards against a shared revenue wallet).
+        var mine = templates.Select(t => t.Id).ToHashSet();
+        return earnings
+            .Where(kv => mine.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+
 
     // ════════════════════════════════════════════════════════════════════════
     // Template Management

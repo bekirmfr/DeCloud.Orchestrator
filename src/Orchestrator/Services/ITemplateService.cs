@@ -24,6 +24,9 @@ public interface ITemplateService
     /// </summary>
     Task<List<VmTemplate>> GetTemplatesByAuthorAsync(string authorId);
 
+    /// <summary>Per-template earnings for an author (net/gross/deploys), from the settlement ledger.</summary>
+    Task<Dictionary<string, TemplateEarnings>> GetTemplateEarningsAsync(string authorId);
+
     // ════════════════════════════════════════════════════════════════════════
     // Template Management (Any authenticated user)
     // ════════════════════════════════════════════════════════════════════════

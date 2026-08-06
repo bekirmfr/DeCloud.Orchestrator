@@ -171,6 +171,31 @@ public class MarketplaceController : ControllerBase
     }
 
     /// <summary>
+    /// Per-template earnings for the authenticated author, keyed by template id.
+    /// Net = your cut after the platform fee; gross = what deployers paid. Computed
+    /// from the settlement ledger (usageRecords), not a stored counter.
+    /// </summary>
+    [HttpGet("templates/my/earnings")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<Dictionary<string, TemplateEarnings>>>> GetMyTemplateEarnings()
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (userId == null)
+                return Unauthorized(ApiResponse<Dictionary<string, TemplateEarnings>>.Fail("UNAUTHORIZED", "Authentication required"));
+
+            var earnings = await _templateService.GetTemplateEarningsAsync(userId);
+            return Ok(ApiResponse<Dictionary<string, TemplateEarnings>>.Ok(earnings));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get template earnings");
+            return StatusCode(500, ApiResponse<Dictionary<string, TemplateEarnings>>.Fail("INTERNAL_ERROR", "Failed to retrieve earnings"));
+        }
+    }
+
+    /// <summary>
     /// Create a new community template (any authenticated user)
     /// </summary>
     [HttpPost("templates/create")]

@@ -147,3 +147,20 @@ export function useRejectTemplate(api: Api) {
     },
   });
 }
+
+// ── Per-template earnings (from the settlement ledger) ────────────────────
+// GET /templates/my/earnings → { templateId: { net, gross, deploys } }. Net is
+// the author's cut after the platform fee (the truthful "you earned"); gross is
+// what deployers paid. Computed server-side from settled template-fee records.
+export interface TemplateEarnings {
+  net: number;
+  gross: number;
+  deploys: number;
+}
+
+export function useMyTemplateEarnings(api: Api) {
+  return useQuery({
+    queryKey: ["my-template-earnings"],
+    queryFn: () => api<Record<string, TemplateEarnings>>("/api/marketplace/templates/my/earnings"),
+  });
+}
