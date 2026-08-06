@@ -1,15 +1,15 @@
+import { useState } from "react";
 import type { ReactNode, CSSProperties } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   useBalance, useDepositInfo, runwayDays, formatRunway, LOW_RUNWAY_DAYS,
 } from "./useBalance";
+import { depositUSDC, withdrawEarnings, readOnChain, type TxProgress } from "./paymentClient";
 
-// Phase 6 · Wallet (Slice 1, read-only). Balance, runway, pending deposits and
-// recent usage from GET /payment/balance, plus the deposit target from
-// /payment/deposit-info. Deposit/withdraw are on-chain (escrow.deposit /
-// withdrawBalance / nodeWithdraw) and not yet ported to React — those buttons
-// bridge to the classic app (same as the deploy fund-gate). Slice 2 builds the
-// native ethers flow. See DEPLOY_MIGRATION.md.
+// Phase 6 · Wallet. Balance/runway/usage (read-only, Slice 1) + native on-chain
+// deposit & earnings-withdraw (Slice 2, via paymentClient — see its header for
+// the safety guards). The wallet is the final confirmation gate.
 
 const card: CSSProperties = {
   padding: "var(--space-4)", border: "1px solid var(--border)",
@@ -19,6 +19,10 @@ const card: CSSProperties = {
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
 const trunc = (s?: string) => (s ? `${s.slice(0, 6)}…${s.slice(-4)}` : "—");
 const dt = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
+const rejected = (e: unknown) => {
+  const c = (e as { code?: unknown })?.code;
+  return c === "ACTION_REJECTED" || c === 4001;
+};
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -28,7 +32,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     </section>
   );
 }
-
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -39,15 +42,68 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 export function WalletPage() {
-  const { api } = useAuth();
+  const { api, wallet, getSigner } = useAuth();
+  const qc = useQueryClient();
   const { data: bal, isLoading, isError } = useBalance(api);
   const { data: info } = useDepositInfo(api);
+  const connected = wallet.kind === "connected";
+
+  // On-chain reads: pending payout (withdrawable earnings) — needs wallet + config.
+  const { data: onchain } = useQuery({
+    queryKey: ["onchain-balances", info?.escrowContractAddress, wallet.kind === "connected" ? wallet.address : null],
+    queryFn: async () => readOnChain(await getSigner(), info!),
+    enabled: !!info && connected,
+    staleTime: 20_000,
+  });
+
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const sym = bal?.tokenSymbol ?? "USDC";
   const money = (n?: number) => `${(n ?? 0).toFixed(2)} ${sym}`;
   const days = runwayDays(bal?.balance, bal?.hourlyBurnRate);
   const lowRunway = days != null && days < LOW_RUNWAY_DAYS;
   const explorerTx = (hash: string) => (info?.explorerUrl ? `${info.explorerUrl}/tx/${hash}` : undefined);
+  const pendingPayout = onchain?.pendingPayout ?? 0;
+
+  function refresh() {
+    qc.invalidateQueries({ queryKey: ["balance"] });
+    qc.invalidateQueries({ queryKey: ["onchain-balances"] });
+  }
+
+  async function onDeposit() {
+    if (!info) return;
+    setBusy(true); setErr(null); setProgress(null);
+    try {
+      const signer = await getSigner();
+      const onP = (p: TxProgress) => setProgress(p.message);
+      await depositUSDC(signer, info, amount.trim(), onP);
+      setDepositOpen(false); setAmount(""); setProgress(null);
+      refresh();
+    } catch (e) {
+      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Deposit failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onWithdrawEarnings() {
+    if (!info) return;
+    if (!window.confirm(`Withdraw your ${money(pendingPayout)} in earnings to your wallet?`)) return;
+    setBusy(true); setErr(null); setProgress(null);
+    try {
+      await withdrawEarnings(await getSigner(), info, (p) => setProgress(p.message));
+      setProgress(null);
+      refresh();
+    } catch (e) {
+      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Withdrawal failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 760 }}>
@@ -60,6 +116,8 @@ export function WalletPage() {
 
       {isLoading && <p style={{ color: "var(--text-secondary)" }}>Loading…</p>}
       {isError && <p style={{ color: "var(--danger)" }}>Couldn't load your balance.</p>}
+      {err && <p style={{ color: "var(--danger)" }}>{err}</p>}
+      {progress && !depositOpen && <p style={{ color: "var(--text-accent)" }}>{progress}</p>}
 
       {bal && (
         <>
@@ -77,9 +135,7 @@ export function WalletPage() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
-                {/* LEGACY BRIDGE: on-chain deposit/withdraw not yet in React (Slice 2). */}
-                <a className="btn-primary" href="/">Deposit</a>
-                <a className="btn-ghost" href="/">Withdraw</a>
+                <button className="btn-primary" disabled={!connected || !info || busy} onClick={() => { setErr(null); setDepositOpen(true); }}>Deposit</button>
               </div>
             </div>
 
@@ -90,10 +146,23 @@ export function WalletPage() {
               <Stat label="Total" value={money(bal.totalBalance)} />
             </div>
 
-            <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>
-              Deposit and withdraw run on-chain and currently open the classic app.
-            </p>
+            {!connected && <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Connect your wallet to deposit or withdraw.</p>}
           </section>
+
+          {connected && (
+            <Section title="Earnings">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+                <div>
+                  <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Withdrawable payout</span>
+                  <div style={{ fontSize: "var(--text-md)" }}>{money(pendingPayout)}</div>
+                </div>
+                <button className="btn-ghost" disabled={busy || pendingPayout <= 0} onClick={onWithdrawEarnings}>Withdraw earnings</button>
+              </div>
+              <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>
+                Node and template revenue, held in the escrow until you withdraw. Withdraws the full balance.
+              </p>
+            </Section>
+          )}
 
           {bal.pendingDepositsList && bal.pendingDepositsList.length > 0 && (
             <Section title="Pending deposits">
@@ -141,10 +210,32 @@ export function WalletPage() {
             <div style={{ display: "flex", gap: 8 }}><span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Minimum deposit</span><span>{money(info.minDeposit)}</span></div>
             <div style={{ display: "flex", gap: 8 }}><span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Confirmations</span><span>{info.requiredConfirmations}</span></div>
           </div>
-          <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>
-            Deposits are USDC sent to the escrow on {info.chainName}. Use the Deposit button, or send {sym} to the address above.
-          </p>
         </Section>
+      )}
+
+      {depositOpen && info && (
+        <div onClick={() => !busy && setDepositOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-4)", zIndex: 50 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ ...card, maxWidth: 440, width: "100%" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <strong>Deposit {sym}</strong>
+              <button className="btn-ghost" disabled={busy} onClick={() => setDepositOpen(false)} aria-label="Close">✕</button>
+            </div>
+            <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+              Sends {sym} to the escrow on {info.chainName}. You'll confirm the transaction(s) in your wallet.
+            </p>
+            <input
+              type="number" min={info.minDeposit} step="any" placeholder={`Amount (min ${info.minDeposit})`}
+              value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy}
+              style={{ padding: "var(--space-2)", fontSize: "var(--text-md)" }}
+            />
+            {progress && <p style={{ margin: 0, color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>{progress}</p>}
+            {err && <p style={{ margin: 0, color: "var(--danger)", fontSize: "var(--text-sm)" }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button className="btn-ghost" disabled={busy} onClick={() => setDepositOpen(false)}>Cancel</button>
+              <button className="btn-primary" disabled={busy || !amount.trim()} onClick={onDeposit}>{busy ? "Working…" : "Deposit"}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

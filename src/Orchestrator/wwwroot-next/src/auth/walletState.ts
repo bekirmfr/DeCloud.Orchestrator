@@ -4,7 +4,7 @@
 import { createAppKit } from "@reown/appkit";
 import { EthersAdapter } from "@reown/appkit-adapter-ethers";
 import { polygonAmoy, polygon, mainnet, arbitrum } from "@reown/appkit/networks";
-import { BrowserProvider } from "ethers";
+import { BrowserProvider, type Signer } from "ethers";
 import type { WalletState } from "./types";
 import { EXPECTED_CHAIN_ID } from "./types";
 
@@ -25,6 +25,8 @@ export interface WalletAdapter {
     disconnect(): Promise<void>;
     switchChain(chainId: number): Promise<void>;
     signMessage(message: string): Promise<string>;
+    /** Ethers signer for on-chain writes (escrow deposit/withdraw). Re-acquired on account switch. */
+    getSigner(): Promise<Signer>;
 }
 
 export function createWalletAdapter(siweConfig: unknown): WalletAdapter {
@@ -101,5 +103,7 @@ export function createWalletAdapter(siweConfig: unknown): WalletAdapter {
             const s = await ensureSigner();
             return s.signMessage(message);
         },
+
+        getSigner: ensureSigner,
     };
 }

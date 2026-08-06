@@ -24,6 +24,8 @@ export interface AuthContextValue {
     /** Sign an arbitrary message with the connected wallet (for client-side
      *  encryption like the VM-password reveal). Delegates to the wallet adapter. */
     signMessage(message: string): Promise<string>;
+    /** Ethers signer for on-chain writes (escrow deposit/withdraw). Delegates to the wallet adapter. */
+    getSigner(): Promise<import("ethers").Signer>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -196,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         switchToExpectedChain: () => adapterRef.current!.switchChain(EXPECTED_CHAIN_ID),
         signMessage: (message: string) => adapterRef.current!.signMessage(message),
+        getSigner: () => adapterRef.current!.getSigner(),
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

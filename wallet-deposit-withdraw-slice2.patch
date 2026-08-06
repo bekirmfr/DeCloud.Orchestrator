@@ -1,24 +1,20 @@
 diff --git a/src/Orchestrator/wwwroot-next/src/auth/AuthProvider.tsx b/src/Orchestrator/wwwroot-next/src/auth/AuthProvider.tsx
-index a6fe820..fe6562a 100644
+index 656081d..fe6562a 100644
 --- a/src/Orchestrator/wwwroot-next/src/auth/AuthProvider.tsx
 +++ b/src/Orchestrator/wwwroot-next/src/auth/AuthProvider.tsx
-@@ -21,6 +21,11 @@ export interface AuthContextValue {
-     signIn(): Promise<void>;
-     signOut(): Promise<void>;
-     switchToExpectedChain(): Promise<void>;
-+    /** Sign an arbitrary message with the connected wallet (for client-side
-+     *  encryption like the VM-password reveal). Delegates to the wallet adapter. */
-+    signMessage(message: string): Promise<string>;
+@@ -24,6 +24,8 @@ export interface AuthContextValue {
+     /** Sign an arbitrary message with the connected wallet (for client-side
+      *  encryption like the VM-password reveal). Delegates to the wallet adapter. */
+     signMessage(message: string): Promise<string>;
 +    /** Ethers signer for on-chain writes (escrow deposit/withdraw). Delegates to the wallet adapter. */
 +    getSigner(): Promise<import("ethers").Signer>;
  }
  
  const AuthContext = createContext<AuthContextValue | null>(null);
-@@ -192,6 +197,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
-             dispatch({ type: "SIGN_OUT" });
+@@ -196,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
          },
          switchToExpectedChain: () => adapterRef.current!.switchChain(EXPECTED_CHAIN_ID),
-+        signMessage: (message: string) => adapterRef.current!.signMessage(message),
+         signMessage: (message: string) => adapterRef.current!.signMessage(message),
 +        getSigner: () => adapterRef.current!.getSigner(),
      };
  
@@ -256,10 +252,10 @@ index 9195e7b..b3dfa50 100644
  }
 diff --git a/src/Orchestrator/wwwroot-next/src/features/billing/paymentClient.ts b/src/Orchestrator/wwwroot-next/src/features/billing/paymentClient.ts
 new file mode 100644
-index 0000000..49a62c0
+index 0000000..18e1912
 --- /dev/null
 +++ b/src/Orchestrator/wwwroot-next/src/features/billing/paymentClient.ts
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,182 @@
 +import { Contract, parseUnits, formatUnits, type Signer } from "ethers";
 +import type { DepositInfoResponse } from "./useBalance";
 +
@@ -297,16 +293,36 @@ index 0000000..49a62c0
 +  txHash?: string;
 +}
 +
-+function contracts(signer: Signer, config: DepositInfoResponse) {
++// ethers v6 types Contract methods dynamically (possibly-undefined), so we cast
++// to explicit shapes. Overrides carry the EIP-1559 gas fields.
++type Overrides = { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
++interface ContractTx { hash: string; wait(): Promise<unknown> }
++interface UsdcContract {
++  approve(spender: string, amount: bigint, overrides?: Overrides): Promise<ContractTx>;
++  allowance(owner: string, spender: string): Promise<bigint>;
++  balanceOf(account: string): Promise<bigint>;
++  decimals(): Promise<bigint>;
++}
++interface EscrowContract {
++  deposit(amount: bigint, overrides?: Overrides): Promise<ContractTx>;
++  withdrawBalance(amount: bigint, overrides?: Overrides): Promise<ContractTx>;
++  userBalances(addr: string): Promise<bigint>;
++  nodePendingPayouts(addr: string): Promise<bigint>;
++  nodeWithdraw(amount: bigint | number): Promise<ContractTx>;
++  frozen(): Promise<boolean>;
++  replacementContract(): Promise<string>;
++}
++
++function contracts(signer: Signer, config: DepositInfoResponse): { usdc: UsdcContract; escrow: EscrowContract } {
 +  return {
-+    usdc: new Contract(config.usdcTokenAddress, USDC_ABI, signer),
-+    escrow: new Contract(config.escrowContractAddress, ESCROW_ABI, signer),
++    usdc: new Contract(config.usdcTokenAddress, USDC_ABI, signer) as unknown as UsdcContract,
++    escrow: new Contract(config.escrowContractAddress, ESCROW_ABI, signer) as unknown as EscrowContract,
 +  };
 +}
 +
 +/** Never transact against a migrated contract — funds would be stranded. */
-+async function assertNotFrozen(escrow: Contract): Promise<void> {
-+  const frozen: boolean = await escrow.frozen();
++async function assertNotFrozen(escrow: EscrowContract): Promise<void> {
++  const frozen = await escrow.frozen();
 +  if (!frozen) return;
 +  let replacement = "";
 +  try { replacement = await escrow.replacementContract(); } catch { /* best-effort */ }
@@ -325,7 +341,7 @@ index 0000000..49a62c0
 +}
 +
 +/** EIP-1559 gas with Polygon floors. Ported verbatim from payment.js getGasPrice. */
-+async function gasOverrides(signer: Signer): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
++async function gasOverrides(signer: Signer): Promise<Overrides> {
 +  const MIN = parseUnits("30", "gwei");
 +  const FALLBACK_MAX = parseUnits("50", "gwei");
 +  const FALLBACK_PRIO = parseUnits("30", "gwei");
@@ -367,12 +383,12 @@ index 0000000..49a62c0
 +
 +  onProgress({ message: "Checking USDC balance…" });
 +  const owner = await signer.getAddress();
-+  const held: bigint = await usdc.balanceOf(owner);
++  const held = await usdc.balanceOf(owner);
 +  if (held < amountWei) {
 +    throw new Error(`Insufficient USDC — you have ${formatUnits(held, decimals)}, need ${amount}.`);
 +  }
 +
-+  const allowance: bigint = await usdc.allowance(owner, config.escrowContractAddress);
++  const allowance = await usdc.allowance(owner, config.escrowContractAddress);
 +  if (allowance < amountWei) {
 +    onProgress({ message: "Approve USDC spend — confirm in your wallet." });
 +    const approveTx = await usdc.approve(config.escrowContractAddress, amountWei, gas);
@@ -413,10 +429,10 @@ index 0000000..49a62c0
 +  const { usdc, escrow } = contracts(signer, config);
 +  const addr = await signer.getAddress();
 +  const decimals = Number(await usdc.decimals());
-+  const [ub, pp] = (await Promise.all([
++  const [ub, pp] = await Promise.all([
 +    escrow.userBalances(addr),
 +    escrow.nodePendingPayouts(addr),
-+  ])) as [bigint, bigint];
++  ]);
 +  return {
 +    userBalance: Number(formatUnits(ub, decimals)),
 +    pendingPayout: Number(formatUnits(pp, decimals)),
