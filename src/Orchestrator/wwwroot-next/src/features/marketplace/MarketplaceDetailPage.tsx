@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { type CSSProperties } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { useTemplate } from "../deploy/useDeploy";
@@ -46,6 +46,8 @@ function ReviewRow({ r }: { r: MarketplaceReview }) {
 export function MarketplaceDetailPage() {
   const { api } = useAuth();
   const { slug } = useParams();
+  const [params] = useSearchParams();
+  const node = params.get("node");
 
   // Hooks above guards (Rules of Hooks); reviews wait on the template id.
   const { data: template, isLoading, isError } = useTemplate(api, slug ?? "");
@@ -83,7 +85,7 @@ export function MarketplaceDetailPage() {
             </div>
           </div>
         </div>
-        <Link className="btn-primary" to={`/marketplace/${template.slug}/deploy`}>Deploy</Link>
+        <Link className="btn-primary" to={`/marketplace/${template.slug}/deploy${node ? `?node=${node}` : ""}`}>Deploy</Link>
       </div>
 
       {/* Description */}

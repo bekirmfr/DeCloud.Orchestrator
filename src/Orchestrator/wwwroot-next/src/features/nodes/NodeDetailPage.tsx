@@ -43,7 +43,7 @@ export function NodeDetailPage() {
           {owner && <div style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 4 }}>{n.id}</div>}
           {n.description && <p style={{ margin: "var(--space-1) 0 0", color: "var(--text-secondary)" }}>{n.description}</p>}
         </div>
-        <Link className="btn-primary" to={`/marketplace/platform-general/deploy?node=${n.id}`} style={{ whiteSpace: "nowrap" }}>Deploy here</Link>
+        <Link className="btn-primary" to={`/deploy?node=${n.id}`} style={{ whiteSpace: "nowrap" }}>Deploy here</Link>
       </div>
 
       {owner ? (

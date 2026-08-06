@@ -29,9 +29,11 @@ function Badges({ t }: { t: VmTemplateSummary }) {
 }
 
 function TemplateCard({ t }: { t: VmTemplateSummary }) {
+  const [params] = useSearchParams();
+  const node = params.get("node");
   return (
     <Link
-      to={`/marketplace/${t.slug}`}
+      to={`/marketplace/${t.slug}${node ? `?node=${node}` : ""}`}
       className="card"
       style={{
         display: "flex", flexDirection: "column", gap: "var(--space-2)",

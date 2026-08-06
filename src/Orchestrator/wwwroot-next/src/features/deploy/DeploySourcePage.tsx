@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { type CSSProperties } from "react";
 
 // Phase 5 · "Deploy" now opens a source chooser instead of hard-launching one
@@ -46,6 +46,9 @@ const card: CSSProperties = {
 };
 
 export function DeploySourcePage() {
+  const [params] = useSearchParams();
+  const node = params.get("node");
+  const q = node ? `?node=${node}` : "";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 900 }}>
       <div>
@@ -57,7 +60,7 @@ export function DeploySourcePage() {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--space-3)" }}>
         {SOURCES.map((s) => (
-          <Link key={s.title} to={s.to} className="card" style={card}>
+          <Link key={s.title} to={`${s.to}${q}`} className="card" style={card}>
             <span style={{ fontSize: 30 }}>{s.emoji}</span>
             <strong style={{ fontSize: "var(--text-md)" }}>{s.title}</strong>
             <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.4, flex: 1 }}>

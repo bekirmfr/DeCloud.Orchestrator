@@ -1,0 +1,117 @@
+diff --git a/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx b/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx
+index 3f7b265..3ae54c4 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/DeployPage.tsx
+@@ -10,6 +10,7 @@ import {
+ } from "./useDeploy";
+ import { ConstraintBuilder } from "./ConstraintBuilder";
+ import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
++import { useNode } from "../nodes/useNodes";
+ import { saveEncryptedPassword } from "../vms/walletPassword";
+ import type { AppError } from "../../api/errors";
+ 
+@@ -118,6 +119,7 @@ export function DeployPage() {
+   const [searchParams] = useSearchParams();
+   const pinnedNodeId = searchParams.get("node") || undefined;
+   const { api } = useAuth();
++  const pinnedNode = useNode(api, pinnedNodeId ?? "");
+   const navigate = useNavigate();
+ 
+   const { data: template, isLoading, error } = useTemplate(api, slug);
+@@ -302,7 +304,8 @@ export function DeployPage() {
+         )}
+         {pinnedNodeId && (
+           <p style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", marginTop: 8 }}>
+-            Deploying to node <code style={{ fontFamily: "var(--font-mono)" }}>{pinnedNodeId}</code>
++            Deploying to <strong>{pinnedNode.data?.name ?? "node"}</strong>{" "}
++            <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>{pinnedNodeId.slice(0, 8)}…{pinnedNodeId.slice(-4)}</code>
+           </p>
+         )}
+       </header>
+diff --git a/src/Orchestrator/wwwroot-next/src/features/deploy/DeploySourcePage.tsx b/src/Orchestrator/wwwroot-next/src/features/deploy/DeploySourcePage.tsx
+index 7365cda..f941228 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/deploy/DeploySourcePage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/deploy/DeploySourcePage.tsx
+@@ -1,4 +1,4 @@
+-import { Link } from "react-router-dom";
++import { Link, useSearchParams } from "react-router-dom";
+ import { type CSSProperties } from "react";
+ 
+ // Phase 5 · "Deploy" now opens a source chooser instead of hard-launching one
+@@ -46,6 +46,9 @@ const card: CSSProperties = {
+ };
+ 
+ export function DeploySourcePage() {
++  const [params] = useSearchParams();
++  const node = params.get("node");
++  const q = node ? `?node=${node}` : "";
+   return (
+     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 900 }}>
+       <div>
+@@ -57,7 +60,7 @@ export function DeploySourcePage() {
+ 
+       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--space-3)" }}>
+         {SOURCES.map((s) => (
+-          <Link key={s.title} to={s.to} className="card" style={card}>
++          <Link key={s.title} to={`${s.to}${q}`} className="card" style={card}>
+             <span style={{ fontSize: 30 }}>{s.emoji}</span>
+             <strong style={{ fontSize: "var(--text-md)" }}>{s.title}</strong>
+             <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.4, flex: 1 }}>
+diff --git a/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplaceDetailPage.tsx b/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplaceDetailPage.tsx
+index 9e48695..677421b 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplaceDetailPage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplaceDetailPage.tsx
+@@ -1,4 +1,4 @@
+-import { Link, useParams } from "react-router-dom";
++import { Link, useParams, useSearchParams } from "react-router-dom";
+ import { type CSSProperties } from "react";
+ import { useAuth } from "../../auth/AuthProvider";
+ import { useTemplate } from "../deploy/useDeploy";
+@@ -46,6 +46,8 @@ function ReviewRow({ r }: { r: MarketplaceReview }) {
+ export function MarketplaceDetailPage() {
+   const { api } = useAuth();
+   const { slug } = useParams();
++  const [params] = useSearchParams();
++  const node = params.get("node");
+ 
+   // Hooks above guards (Rules of Hooks); reviews wait on the template id.
+   const { data: template, isLoading, isError } = useTemplate(api, slug ?? "");
+@@ -83,7 +85,7 @@ export function MarketplaceDetailPage() {
+             </div>
+           </div>
+         </div>
+-        <Link className="btn-primary" to={`/marketplace/${template.slug}/deploy`}>Deploy</Link>
++        <Link className="btn-primary" to={`/marketplace/${template.slug}/deploy${node ? `?node=${node}` : ""}`}>Deploy</Link>
+       </div>
+ 
+       {/* Description */}
+diff --git a/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplacePage.tsx b/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplacePage.tsx
+index 7fde85e..1e38504 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplacePage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/marketplace/MarketplacePage.tsx
+@@ -29,9 +29,11 @@ function Badges({ t }: { t: VmTemplateSummary }) {
+ }
+ 
+ function TemplateCard({ t }: { t: VmTemplateSummary }) {
++  const [params] = useSearchParams();
++  const node = params.get("node");
+   return (
+     <Link
+-      to={`/marketplace/${t.slug}`}
++      to={`/marketplace/${t.slug}${node ? `?node=${node}` : ""}`}
+       className="card"
+       style={{
+         display: "flex", flexDirection: "column", gap: "var(--space-2)",
+diff --git a/src/Orchestrator/wwwroot-next/src/features/nodes/NodeDetailPage.tsx b/src/Orchestrator/wwwroot-next/src/features/nodes/NodeDetailPage.tsx
+index 3e9b667..80c1215 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/nodes/NodeDetailPage.tsx
++++ b/src/Orchestrator/wwwroot-next/src/features/nodes/NodeDetailPage.tsx
+@@ -43,7 +43,7 @@ export function NodeDetailPage() {
+           {owner && <div style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 4 }}>{n.id}</div>}
+           {n.description && <p style={{ margin: "var(--space-1) 0 0", color: "var(--text-secondary)" }}>{n.description}</p>}
+         </div>
+-        <Link className="btn-primary" to={`/marketplace/platform-general/deploy?node=${n.id}`} style={{ whiteSpace: "nowrap" }}>Deploy here</Link>
++        <Link className="btn-primary" to={`/deploy?node=${n.id}`} style={{ whiteSpace: "nowrap" }}>Deploy here</Link>
+       </div>
+ 
+       {owner ? (

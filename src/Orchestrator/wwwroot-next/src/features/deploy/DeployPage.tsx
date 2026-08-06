@@ -10,6 +10,7 @@ import {
 } from "./useDeploy";
 import { ConstraintBuilder } from "./ConstraintBuilder";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
+import { useNode } from "../nodes/useNodes";
 import { saveEncryptedPassword } from "../vms/walletPassword";
 import type { AppError } from "../../api/errors";
 
@@ -118,6 +119,7 @@ export function DeployPage() {
   const [searchParams] = useSearchParams();
   const pinnedNodeId = searchParams.get("node") || undefined;
   const { api } = useAuth();
+  const pinnedNode = useNode(api, pinnedNodeId ?? "");
   const navigate = useNavigate();
 
   const { data: template, isLoading, error } = useTemplate(api, slug);
@@ -302,7 +304,8 @@ export function DeployPage() {
         )}
         {pinnedNodeId && (
           <p style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", marginTop: 8 }}>
-            Deploying to node <code style={{ fontFamily: "var(--font-mono)" }}>{pinnedNodeId}</code>
+            Deploying to <strong>{pinnedNode.data?.name ?? "node"}</strong>{" "}
+            <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>{pinnedNodeId.slice(0, 8)}…{pinnedNodeId.slice(-4)}</code>
           </p>
         )}
       </header>
