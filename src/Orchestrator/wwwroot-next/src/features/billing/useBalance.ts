@@ -69,3 +69,26 @@ export function formatRunway(days: number): string {
 
 /** Below this, the runway panel warns. Roughly "top up this week". */
 export const LOW_RUNWAY_DAYS = 3;
+
+// ── Deposit config ────────────────────────────────────────────────────────
+// GET /api/payment/deposit-info → the on-chain deposit target + chain metadata
+// (escrow address, USDC token, chain, explorer, minimum, confirmation depth).
+// Config, so it's cached hard. The Wallet page shows it; the native deposit flow
+// (Slice 2) will use the addresses to build the ethers txs.
+export interface DepositInfoResponse {
+  escrowContractAddress: string;
+  usdcTokenAddress: string;
+  chainId: string;
+  chainName: string;
+  explorerUrl: string;
+  minDeposit: number;
+  requiredConfirmations: number;
+}
+
+export function useDepositInfo(api: Api) {
+  return useQuery({
+    queryKey: ["deposit-info"],
+    queryFn: () => api<DepositInfoResponse>("/api/payment/deposit-info"),
+    staleTime: Infinity,
+  });
+}

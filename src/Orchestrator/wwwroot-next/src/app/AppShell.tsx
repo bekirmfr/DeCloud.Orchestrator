@@ -53,6 +53,7 @@ function Sidebar() {
         <NavLink to="/" end className="nav-link">Overview</NavLink>
         <NavLink to="/marketplace" className="nav-link">Marketplace</NavLink>
         <NavLink to="/vms" className="nav-link">Virtual Machines</NavLink>
+        <NavLink to="/wallet" className="nav-link">Wallet</NavLink>
         <NavLink to="/settings/ssh-keys" className="nav-link">SSH Keys</NavLink>
 
         <hr style={{ border: 0, borderTop: "1px solid var(--border-subtle)", margin: "8px 0" }} />

@@ -6,6 +6,7 @@ import { canAccessAdmin } from "./guards";
 import { RouteError } from "./RouteError";
 import { SshKeysPage } from "../features/ssh-keys/SshKeysPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
+import { WalletPage } from "../features/billing/WalletPage";
 import { VmsPage } from "../features/vms/VmsPage";
 import { VmDetailPage } from "../features/vms/VmDetailPage";
 import { DirectAccessModal } from "../features/direct-access/DirectAccessModal";
@@ -58,6 +59,7 @@ export const router = createBrowserRouter(
       errorElement: <RouteError />,
       children: [
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
+        { path: "wallet", element: <WalletPage /> },              // Phase 6 · wallet (read-only)
         { path: "deploy", element: <DeploySourcePage /> },        // Phase 5 · deployment-source chooser
         { path: "deploy/repository", element: <RepoDeployPage /> }, // Phase 5 · repo deploy (form WIP)
         { path: "marketplace", element: <MarketplacePage /> },    // Phase 5 · browse
