@@ -37,7 +37,7 @@ function Row({ n, onRemove, busy }: { n: OrchNode; onRemove: () => void; busy: b
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
-        <Link className="btn-ghost" to={`/nodes/${n.id}`} style={sm}>Inspect</Link>
+        <Link className="btn-ghost" to={`/admin/nodes/${n.id}`} style={sm}>Inspect</Link>
         <button className="btn-ghost" style={{ ...sm, color: "var(--danger)" }} disabled={busy} onClick={onRemove}>Remove</button>
       </div>
     </div>

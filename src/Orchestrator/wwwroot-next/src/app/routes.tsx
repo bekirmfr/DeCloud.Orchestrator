@@ -24,6 +24,7 @@ import { MarketplaceDetailPage } from "../features/marketplace/MarketplaceDetail
 import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { AdminNodesPage } from "../features/nodes/AdminNodesPage";
+import { AdminNodeInspectPage } from "../features/nodes/AdminNodeInspectPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -91,6 +92,7 @@ export const router = createBrowserRouter(
             { path: "templates", element: <AdminTemplatesPage /> },   // Phase 5 · review queue
             { path: "templates/:id", element: <AdminTemplateInspectPage /> },   // Phase 5 · read-only inspect
             { path: "nodes", element: <AdminNodesPage /> },   // Phase 5 · admin node manager
+            { path: "nodes/:id", element: <AdminNodeInspectPage /> },   // Phase 5 · admin node inspect
             // { path: "compliance", element: <Compliance /> },   // Phase 5
           ],
         },

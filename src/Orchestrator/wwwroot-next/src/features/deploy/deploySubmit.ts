@@ -137,6 +137,7 @@ export interface DeployPayload {
   vmName: string;
   environmentVariables?: Record<string, string>;
   customSpec?: TemplateSpec | null;   // omit/null → server uses RecommendedSpec
+  nodeId?: string;                    // pin the VM to a specific node (DeployTemplateRequest.NodeId)
 }
 
 // CreateVmResponse (positional record on the wire → camelCase fields).
@@ -197,6 +198,7 @@ export async function submitTemplateDeploy(
         vmName: payload.vmName,
         environmentVariables: payload.environmentVariables || {},
         customSpec: payload.customSpec ?? null,
+        nodeId: payload.nodeId ?? null,
       }),
     });
   } catch (e) {

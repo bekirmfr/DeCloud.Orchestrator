@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
@@ -115,6 +115,8 @@ function PasswordReveal({ vmId, vmName, password, onDone }: { vmId: string; vmNa
 
 export function DeployPage() {
   const { slug = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const pinnedNodeId = searchParams.get("node") || undefined;
   const { api } = useAuth();
   const navigate = useNavigate();
 
@@ -274,7 +276,7 @@ export function DeployPage() {
         // One-click sends NO customSpec so the server applies RecommendedSpec
         // *and* its own template defaults. Customise sends a full spec — which
         // is why customSpec above re-applies bandwidth/GPU explicitly.
-        payload: { vmName: name, customSpec: customize ? customSpec : null, environmentVariables: hasEnv ? environmentVariables : undefined },
+        payload: { vmName: name, customSpec: customize ? customSpec : null, environmentVariables: hasEnv ? environmentVariables : undefined, nodeId: pinnedNodeId },
       });
       // Reveal only the human-readable generated password (legacy sniff).
       if (shouldRevealPassword(result.password)) {
@@ -297,6 +299,11 @@ export function DeployPage() {
         <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Deploy {template.name}</h1>
         {template.description && (
           <p style={{ color: "var(--text-secondary)", marginTop: 4 }}>{template.description}</p>
+        )}
+        {pinnedNodeId && (
+          <p style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", marginTop: 8 }}>
+            Deploying to node <code style={{ fontFamily: "var(--font-mono)" }}>{pinnedNodeId}</code>
+          </p>
         )}
       </header>
 
