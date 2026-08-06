@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Api } from "../../api/client";
 import { sameAddress } from "../../auth/deriveStatus";
 
@@ -114,6 +114,27 @@ export function useNode(api: Api, id: string) {
     queryKey: ["node", id],
     queryFn: () => api<OrchNode>(`/api/nodes/${id}`),
     enabled: !!id,
+  });
+}
+
+// ── Admin (slice 3) ──────────────────────────────────────────────────────
+// Whole fleet, unfiltered. Shares the ["nodes","all"] fetch with useMyNodes
+// (which applies a wallet-filter select over the same cached array).
+export function useAllNodes(api: Api) {
+  return useQuery({
+    queryKey: ["nodes", "all"],
+    queryFn: () => api<OrchNode[]>("/api/nodes"),
+  });
+}
+
+// Hard-remove a node. DELETE /api/nodes/{id} is [Authorize(Roles="Admin")].
+// (Deregister is node-self only — it checks a node_id JWT claim — so it is not
+// an admin action and isn't exposed here.)
+export function useRemoveNode(api: Api) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (nodeId: string) => api<unknown>(`/api/nodes/${nodeId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["nodes"] }),
   });
 }
 

@@ -1,0 +1,156 @@
+diff --git a/src/Orchestrator/wwwroot-next/src/app/AppShell.tsx b/src/Orchestrator/wwwroot-next/src/app/AppShell.tsx
+index abad0b4..70272e2 100644
+--- a/src/Orchestrator/wwwroot-next/src/app/AppShell.tsx
++++ b/src/Orchestrator/wwwroot-next/src/app/AppShell.tsx
+@@ -76,6 +76,7 @@ function Sidebar() {
+             </span>
+             <a className="nav-link" href="/?page=admin-compliance">Compliance</a>
+             <NavLink to="/admin/templates" className="nav-link">Templates</NavLink>
++            <NavLink to="/admin/nodes" className="nav-link">Nodes</NavLink>
+             <a className="nav-link" href="/?page=admin-abuse">Abuse Reports</a>
+           </>
+         )}
+diff --git a/src/Orchestrator/wwwroot-next/src/app/routes.tsx b/src/Orchestrator/wwwroot-next/src/app/routes.tsx
+index 5862a8f..5a40f0f 100644
+--- a/src/Orchestrator/wwwroot-next/src/app/routes.tsx
++++ b/src/Orchestrator/wwwroot-next/src/app/routes.tsx
+@@ -23,6 +23,7 @@ import { MarketplacePage } from "../features/marketplace/MarketplacePage";
+ import { MarketplaceDetailPage } from "../features/marketplace/MarketplaceDetailPage";
+ import { NodesPage } from "../features/nodes/NodesPage";
+ import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
++import { AdminNodesPage } from "../features/nodes/AdminNodesPage";
+ 
+ // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
+ // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
+@@ -89,6 +90,7 @@ export const router = createBrowserRouter(
+           children: [
+             { path: "templates", element: <AdminTemplatesPage /> },   // Phase 5 · review queue
+             { path: "templates/:id", element: <AdminTemplateInspectPage /> },   // Phase 5 · read-only inspect
++            { path: "nodes", element: <AdminNodesPage /> },   // Phase 5 · admin node manager
+             // { path: "compliance", element: <Compliance /> },   // Phase 5
+           ],
+         },
+diff --git a/src/Orchestrator/wwwroot-next/src/features/nodes/AdminNodesPage.tsx b/src/Orchestrator/wwwroot-next/src/features/nodes/AdminNodesPage.tsx
+new file mode 100644
+index 0000000..d181519
+--- /dev/null
++++ b/src/Orchestrator/wwwroot-next/src/features/nodes/AdminNodesPage.tsx
+@@ -0,0 +1,80 @@
++import { Link } from "react-router-dom";
++import { useAuth } from "../../auth/AuthProvider";
++import { useAllNodes, useRemoveNode, nodeStatus, type OrchNode } from "./useNodes";
++
++// Phase 5 · Admin node manager (slice 3). Whole-fleet list with the one
++// admin-callable node action: hard remove (DELETE /api/nodes/{id}, admin-only).
++// Deregister is node-self (node_id JWT claim) and suspend has no endpoint, so
++// neither is offered here — Remove is the honest extent of admin node control.
++// Admin-gated by AdminGuard + canAccessAdmin; the endpoint enforces the role.
++
++const sm = { fontSize: "var(--text-sm)" } as const;
++const short = (s?: string) => (s ? `${s.slice(0, 6)}…${s.slice(-4)}` : "—");
++const ago = (iso?: string) => {
++  if (!iso) return "—";
++  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
++  if (s < 90) return `${Math.round(s)}s ago`;
++  if (s < 5400) return `${Math.round(s / 60)}m ago`;
++  if (s < 129600) return `${Math.round(s / 3600)}h ago`;
++  return `${Math.round(s / 86400)}d ago`;
++};
++
++function Row({ n, onRemove, busy }: { n: OrchNode; onRemove: () => void; busy: boolean }) {
++  const st = nodeStatus(n.status);
++  return (
++    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", padding: "var(--space-3)", border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--surface-1)" }}>
++      <div style={{ flex: 1, minWidth: 0 }}>
++        <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
++          <strong style={{ fontSize: "var(--text-md)" }}>{n.name}</strong>
++          <span style={{ color: st.tone, fontSize: "var(--text-xs)", fontWeight: "var(--fw-medium)" }}>● {st.label}</span>
++          <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>{short(n.walletAddress)}</span>
++        </div>
++        <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap", color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 4 }}>
++          <span>Uptime {n.uptimePercentage == null ? "—" : `${n.uptimePercentage.toFixed(1)}%`}</span>
++          <span>VMs {n.totalVmsHosted ?? "—"}</span>
++          {n.publicIp && <span style={{ fontFamily: "var(--font-mono)" }}>{n.publicIp}</span>}
++          <span>Heartbeat {ago(n.lastHeartbeat)}</span>
++        </div>
++      </div>
++      <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
++        <Link className="btn-ghost" to={`/nodes/${n.id}`} style={sm}>Inspect</Link>
++        <button className="btn-ghost" style={{ ...sm, color: "var(--danger)" }} disabled={busy} onClick={onRemove}>Remove</button>
++      </div>
++    </div>
++  );
++}
++
++export function AdminNodesPage() {
++  const { api } = useAuth();
++  const { data: nodes, isLoading, isError } = useAllNodes(api);
++  const remove = useRemoveNode(api);
++  const err = remove.error as Error | undefined;
++
++  function onRemove(n: OrchNode) {
++    if (window.confirm(`Remove node “${n.name}” from the network? This is a hard delete and can't be undone.`)) {
++      remove.mutate(n.id);
++    }
++  }
++
++  return (
++    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 900 }}>
++      <div>
++        <h1 style={{ margin: 0 }}>Nodes</h1>
++        <p style={{ margin: "var(--space-1) 0 0", color: "var(--text-secondary)" }}>
++          Every registered node. Remove hard-deletes a node from the network.
++        </p>
++      </div>
++
++      {err && <p style={{ color: "var(--danger)" }}>{err.message || "Remove failed."}</p>}
++      {isLoading && <p style={{ color: "var(--text-secondary)" }}>Loading…</p>}
++      {isError && <p style={{ color: "var(--danger)" }}>Couldn't load nodes.</p>}
++      {nodes && nodes.length === 0 && <p style={{ color: "var(--text-secondary)" }}>No nodes registered.</p>}
++
++      {nodes && nodes.length > 0 && (
++        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
++          {nodes.map((n) => <Row key={n.id} n={n} busy={remove.isPending} onRemove={() => onRemove(n)} />)}
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/src/Orchestrator/wwwroot-next/src/features/nodes/useNodes.ts b/src/Orchestrator/wwwroot-next/src/features/nodes/useNodes.ts
+index 207db08..123c91d 100644
+--- a/src/Orchestrator/wwwroot-next/src/features/nodes/useNodes.ts
++++ b/src/Orchestrator/wwwroot-next/src/features/nodes/useNodes.ts
+@@ -1,4 +1,4 @@
+-import { useQuery } from "@tanstack/react-query";
++import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import type { Api } from "../../api/client";
+ import { sameAddress } from "../../auth/deriveStatus";
+ 
+@@ -117,6 +117,27 @@ export function useNode(api: Api, id: string) {
+   });
+ }
+ 
++// ── Admin (slice 3) ──────────────────────────────────────────────────────
++// Whole fleet, unfiltered. Shares the ["nodes","all"] fetch with useMyNodes
++// (which applies a wallet-filter select over the same cached array).
++export function useAllNodes(api: Api) {
++  return useQuery({
++    queryKey: ["nodes", "all"],
++    queryFn: () => api<OrchNode[]>("/api/nodes"),
++  });
++}
++
++// Hard-remove a node. DELETE /api/nodes/{id} is [Authorize(Roles="Admin")].
++// (Deregister is node-self only — it checks a node_id JWT claim — so it is not
++// an admin action and isn't exposed here.)
++export function useRemoveNode(api: Api) {
++  const qc = useQueryClient();
++  return useMutation({
++    mutationFn: (nodeId: string) => api<unknown>(`/api/nodes/${nodeId}`, { method: "DELETE" }),
++    onSuccess: () => qc.invalidateQueries({ queryKey: ["nodes"] }),
++  });
++}
++
+ export interface NodeSearchCriteria {
+   region: string;
+   requiresGpu: boolean;
