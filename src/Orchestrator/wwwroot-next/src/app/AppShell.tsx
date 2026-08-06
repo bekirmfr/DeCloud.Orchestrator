@@ -61,7 +61,7 @@ function Sidebar() {
             on load). Plain <a>, not NavLink: these leave the SPA entirely, so a
             client-side navigation would be wrong. Swing each one to a /app route
             as its page lands, and delete the legacy page in the same change. */}
-        <a className="nav-link" href="/?page=nodes">Nodes</a>
+        <NavLink to="/nodes" className="nav-link">Nodes</NavLink>
         <NavLink to="/my-templates" className="nav-link">My Templates</NavLink>
         <a className="nav-link" href="/?page=settings">Settings</a>
 

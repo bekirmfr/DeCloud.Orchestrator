@@ -21,6 +21,8 @@ import { DeploySourcePage } from "../features/deploy/DeploySourcePage";
 import { RepoDeployPage } from "../features/deploy/RepoDeployPage";
 import { MarketplacePage } from "../features/marketplace/MarketplacePage";
 import { MarketplaceDetailPage } from "../features/marketplace/MarketplaceDetailPage";
+import { NodesPage } from "../features/nodes/NodesPage";
+import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -61,6 +63,8 @@ export const router = createBrowserRouter(
         { path: "my-templates/new", element: <CreateTemplatePage /> },        // create (form WIP)
         { path: "my-templates/:id/edit", element: <CreateTemplatePage /> },   // edit (form WIP)
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
+        { path: "nodes", element: <NodesPage /> },                // Phase 5 · my nodes + search
+        { path: "nodes/:id", element: <NodeDetailPage /> },        // Phase 5 · node detail
         {
           path: "vms/:id",                                        // Phase 3 · detail cockpit
           element: <VmDetailPage />,
