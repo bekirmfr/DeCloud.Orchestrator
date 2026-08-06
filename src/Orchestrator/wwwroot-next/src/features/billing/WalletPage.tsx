@@ -187,7 +187,7 @@ export function WalletPage() {
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
                     <span style={{ ...mono, color: "var(--text-secondary)" }}>{trunc(u.vmId)}</span>
                     <span style={{ color: "var(--text-tertiary)" }}>{u.duration}</span>
-                    <span style={{ color: "var(--text-secondary)" }}>{money(u.cost)}</span>
+                    <span style={{ color: "var(--text-secondary)" }}>{(u.cost ?? 0).toFixed(4)} {sym}</span>
                     <span style={{ color: "var(--text-tertiary)" }}>{dt(u.createdAt)}</span>
                   </div>
                 ))}
