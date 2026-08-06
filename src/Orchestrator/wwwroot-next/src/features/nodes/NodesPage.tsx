@@ -136,7 +136,7 @@ function NodeSearch() {
 export function NodesPage() {
   const { session } = useAuth();
   const wallet = session.kind === "authenticated" ? session.address : undefined;
-  const [tab, setTab] = useState<"mine" | "search">("mine");
+    const [tab, setTab] = useState<"mine" | "search">("search");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 820 }}>
