@@ -244,27 +244,6 @@ public class Node
     /// Set in ProcessHeartbeatAsync; null until first heartbeat.
     /// </summary>
     public string? LatestHeartbeatSettingsHash { get; set; }
-
-    /// <summary>
-    /// Returns a copy of this node with owner-private fields cleared, for
-    /// returning to callers who are neither the node's owner nor an admin.
-    /// A node's earnings and credentials must never cross tenants.
-    /// This is a shallow copy: only the top-level owner-private fields below
-    /// are reassigned, so the shared cached instance in DataStore.ActiveNodes
-    /// is never mutated.
-    /// NOTE: any NEW owner-private field added to this model MUST be cleared here.
-    /// </summary>
-    public Node WithoutOwnerPrivateData()
-    {
-        var copy = (Node)MemberwiseClone();
-        copy.PendingPayout = 0m;      // earnings (pending payout)
-        copy.TotalEarned = 0m;        // earnings (lifetime)
-        copy.ApiKeyHash = null;       // credential hash
-        copy.CurrentJti = null;       // active token id
-        copy.ApiKeyCreatedAt = null;  // owner-private key metadata
-        copy.ApiKeyLastUsedAt = null; // owner-private key metadata
-        return copy;
-    }
 }
 
 /// <summary>

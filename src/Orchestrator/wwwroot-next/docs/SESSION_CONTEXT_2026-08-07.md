@@ -115,6 +115,28 @@ on-chain reality. Patches: `template-earnings-backend` (5 files, incl. `Template
   balance modal — one deposit experience, no duplicated on-chain logic. Driven by owner feedback
   that "all the legacy UI felt much better."
 
+### F. Node earnings scoping (security) + Settings page + light-theme fix
+Three follow-on pieces after the docs were squared:
+- **Node earnings/credentials scoping (server-side security).** `GET /api/nodes/{id}` **and**
+  `GET /api/nodes` returned the full `Node` to any authenticated caller — leaking every operator's
+  earnings (`PendingPayout`/`TotalEarned`) *and* credentials (`ApiKeyHash`/`CurrentJti`/key
+  timestamps). `Node.WithoutOwnerPrivateData()` = cache-safe **shallow copy** (never mutate the
+  shared `ActiveNodes` reference the hot path returns) with those cleared; controller scopes both
+  endpoints to owner (wallet claim vs `Node.WalletAddress`, case-insensitive) / admin. UI gate is
+  now defense-in-depth. **Fail-open on future fields** is the stated residual (a DTO would fail
+  closed but needs a coordinated FE change). `node-earnings-owner-scoping.patch` (+41/−2).
+- **Settings (`/app/settings`)** — the last supporting page. `useTheme` writes `index.html`'s
+  pre-paint contract (`dc-theme`; Light/Dark/System). Language deferred (no i18n layer → no fake
+  selector). New `features/settings/{SettingsPage.tsx,useTheme.ts}` + `settings-page-wiring.patch`
+  (cut against the owner's current `routes.tsx`/`AppShell.tsx` — drifted from my clone).
+- **Light-theme regression fixed — VERIFIED.** Not hardcoded dark styles: (1) `color-scheme` was
+  never pinned, so native controls (checkboxes, steppers, select chrome, un-styled input/select
+  backgrounds) followed the OS not `data-theme`; (2) only `.field input/textarea` was themed, so
+  `<select>` + repeatable-row inputs fell to raw native rendering. Fixed in the base layer:
+  `color-scheme` pinned to `data-theme`, and `select`/bare inputs themed globally.
+  `theme-native-controls-fix.patch` (+42/−0). **Lesson: an un-styled native control follows the
+  OS `color-scheme`, not `data-theme` — pin it.**
+
 ## 3. Hard constraints to honor while building (do not relitigate)
 
 Still-valid invariants from prior sessions (see `SESSION_CONTEXT_2026-07-25.md` §3), plus what
@@ -170,6 +192,9 @@ this session added (★):
   `wallet-deposit-withdraw-slice2.patch`, full `paymentClient.ts`, `sidebar-balance-profile.patch`,
   `wallet-modals-polish.patch`.
 - **Build fixes:** `build-fix-tsc-eslint.patch`, `build-fix-help-record.patch`.
+- **Security / Settings / theme (workstream F):** `node-earnings-owner-scoping.patch`;
+  `SettingsPage.tsx` + `useTheme.ts` (new) + `settings-page-wiring.patch`;
+  `theme-native-controls-fix.patch`.
 - **Docs (this task):** updated `FRONTEND_REMAKE_IMPLEMENTATION.md`, `FRONTEND_REMAKE_DESIGN.md`,
   `BACKEND_SERVING_SPEC.md`, and this file.
 - *(The outputs dir also carries prior-session artifacts — marketplace/deploy/terminal/relay
@@ -183,8 +208,9 @@ this session added (★):
 - **Atlas link latency — chase the root cause** (highest-impact). The index + timeout stopped the
   crash; the slow link itself is unexplained. A `{NodeId:1,PeriodStart:1}` index on `usageRecords`
   would also speed the earnings scan.
-- **Settings** is the last un-migrated Phase-5 page.
-- **Backend hardening (flagged, not fixed):** `GET /api/nodes/{id}` earnings over-exposure.
+- **Settings** shipped (theme toggle live; language deferred to i18n) — pending owner build-verify.
+- **✅ Node earnings/credentials over-exposure — RESOLVED** server-side (workstream F); residual is
+  fail-open on future owner-private fields.
 - **Wire when wanted:** `withdrawBalance` (unused-deposit withdrawal, ABI present); repo-deploy
   `?node=` pinning; `templateForm` unit tests owed.
 - **HardwareInventory shape** — get it (from `DeCloud.Shared`) to show CPU/GPU on node detail.

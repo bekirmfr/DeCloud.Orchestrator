@@ -28,22 +28,21 @@ public class NodesController : ControllerBase
         _logger = logger;
     }
 
-    // --- Owner-aware response scoping ------------------------------------
-    // GET /api/nodes and GET /api/nodes/{id} return the full Node model, which
-    // carries owner-private earnings and credentials. Scope those to the node's
-    // owner (wallet match) or an admin; every other caller gets a copy with the
-    // owner-private fields cleared. This server-side check is the real boundary
-    // — any UI owner-gating is defense-in-depth, not the control.
-    private bool CallerMaySeeOwnerPrivate(Node node)
+    // --- Owner-aware response projection ---------------------------------
+    // GET /api/nodes and GET /api/nodes/{id} project the internal Node model to
+    // NodeView, a fail-closed DTO. The Node model embeds secrets (system-VM auth
+    // tokens + ed25519/WireGuard private keys, the CGNAT relay token + WireGuard
+    // config, the relay private key, the API-key hash) that must never reach a
+    // browser — NodeView never carries them, for anyone. The node's operator
+    // (wallet match) or an admin additionally gets the operational tier (network,
+    // resource pools, role health, earnings); see NodeView.From.
+    private bool CallerOwnsOrAdmin(Node node)
     {
         if (User.IsInRole("Admin")) return true;
         var wallet = User.FindFirst("wallet")?.Value;
         return !string.IsNullOrEmpty(wallet)
             && string.Equals(wallet, node.WalletAddress, StringComparison.OrdinalIgnoreCase);
     }
-
-    private Node ScopeForCaller(Node node)
-        => CallerMaySeeOwnerPrivate(node) ? node : node.WithoutOwnerPrivateData();
 
     /// <summary>
     /// Update resource allocation percentages for this node.
@@ -368,7 +367,7 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpGet]
     [Authorize]
-    public async Task<ActionResult<ApiResponse<List<Node>>>> GetAll([FromQuery] string? status)
+    public async Task<ActionResult<ApiResponse<List<NodeView>>>> GetAll([FromQuery] string? status)
     {
         NodeStatus? statusFilter = null;
         if (!string.IsNullOrEmpty(status) && Enum.TryParse<NodeStatus>(status, true, out var parsedStatus))
@@ -377,8 +376,8 @@ public class NodesController : ControllerBase
         }
 
         var nodes = await _dataStore.GetAllNodesAsync(statusFilter);
-        var scoped = nodes.Select(ScopeForCaller).ToList();
-        return Ok(ApiResponse<List<Node>>.Ok(scoped));
+        var views = nodes.Select(n => NodeView.From(n, CallerOwnsOrAdmin(n))).ToList();
+        return Ok(ApiResponse<List<NodeView>>.Ok(views));
     }
 
     /// <summary>
@@ -452,16 +451,16 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpGet("{nodeId}")]
     [Authorize]
-    public async Task<ActionResult<ApiResponse<Node>>> Get(string nodeId)
+    public async Task<ActionResult<ApiResponse<NodeView>>> Get(string nodeId)
     {
         var node = await _dataStore.GetNodeAsync(nodeId);
 
         if (node == null)
         {
-            return NotFound(ApiResponse<Node>.Fail("NOT_FOUND", "Node not found"));
+            return NotFound(ApiResponse<NodeView>.Fail("NOT_FOUND", "Node not found"));
         }
 
-        return Ok(ApiResponse<Node>.Ok(ScopeForCaller(node)));
+        return Ok(ApiResponse<NodeView>.Ok(NodeView.From(node, CallerOwnsOrAdmin(node))));
     }
 
     /// <summary>
