@@ -66,7 +66,7 @@ function Sidebar() {
             as its page lands, and delete the legacy page in the same change. */}
         <NavLink to="/nodes" className="nav-link">Nodes</NavLink>
         <NavLink to="/my-templates" className="nav-link">My Templates</NavLink>
-        <a className="nav-link" href="/?page=settings">Settings</a>
+        <NavLink to="/settings" className="nav-link">Settings</NavLink>
 
         {/* Admin — visibility only. Every admin endpoint is enforced server-side
             with [Authorize(Roles="Admin")], and routes.tsx guards the /app admin

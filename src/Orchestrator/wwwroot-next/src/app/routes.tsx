@@ -27,6 +27,7 @@ import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { AdminNodesPage } from "../features/nodes/AdminNodesPage";
 import { AdminNodeInspectPage } from "../features/nodes/AdminNodeInspectPage";
 import { ProfilePage } from "../features/profile/ProfilePage";
+import { SettingsPage } from "../features/settings/SettingsPage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -85,6 +86,7 @@ export const router = createBrowserRouter(
         { path: "vms/:id/files", element: <FileBrowserPage /> },    // full-page file browser (new tab)
         { path: "marketplace/:slug", element: <MarketplaceDetailPage /> },   // Phase 5 · detail
         { path: "marketplace/:slug/deploy", element: <DeployPage /> }, // Phase 3 · deploy
+        { path: "settings", element: <SettingsPage /> },          // Phase 5 · settings (theme + account links)
         {
           path: "settings/ssh-keys", // ← FIRST migrated page (Phase 2)
           element: <SshKeysPage />,

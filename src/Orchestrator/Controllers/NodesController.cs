@@ -28,6 +28,23 @@ public class NodesController : ControllerBase
         _logger = logger;
     }
 
+    // --- Owner-aware response scoping ------------------------------------
+    // GET /api/nodes and GET /api/nodes/{id} return the full Node model, which
+    // carries owner-private earnings and credentials. Scope those to the node's
+    // owner (wallet match) or an admin; every other caller gets a copy with the
+    // owner-private fields cleared. This server-side check is the real boundary
+    // — any UI owner-gating is defense-in-depth, not the control.
+    private bool CallerMaySeeOwnerPrivate(Node node)
+    {
+        if (User.IsInRole("Admin")) return true;
+        var wallet = User.FindFirst("wallet")?.Value;
+        return !string.IsNullOrEmpty(wallet)
+            && string.Equals(wallet, node.WalletAddress, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private Node ScopeForCaller(Node node)
+        => CallerMaySeeOwnerPrivate(node) ? node : node.WithoutOwnerPrivateData();
+
     /// <summary>
     /// Update resource allocation percentages for this node.
     /// JWT-authenticated — no wallet signature required.
@@ -360,7 +377,8 @@ public class NodesController : ControllerBase
         }
 
         var nodes = await _dataStore.GetAllNodesAsync(statusFilter);
-        return Ok(ApiResponse<List<Node>>.Ok(nodes));
+        var scoped = nodes.Select(ScopeForCaller).ToList();
+        return Ok(ApiResponse<List<Node>>.Ok(scoped));
     }
 
     /// <summary>
@@ -443,7 +461,7 @@ public class NodesController : ControllerBase
             return NotFound(ApiResponse<Node>.Fail("NOT_FOUND", "Node not found"));
         }
 
-        return Ok(ApiResponse<Node>.Ok(node));
+        return Ok(ApiResponse<Node>.Ok(ScopeForCaller(node)));
     }
 
     /// <summary>
