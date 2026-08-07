@@ -57,6 +57,12 @@
      LIGHT MODE (default)
      ====================================================================== */
 
+  /* Native form controls (checkboxes, number steppers, select chrome, the
+     default background of un-styled inputs/selects) follow color-scheme, so
+     pin it to the app theme rather than letting the OS decide — otherwise an
+     OS dark theme paints those controls dark on a light app. */
+  color-scheme: light;
+
   /* Surfaces (canvas -> raised) */
   --canvas:      #EDEFEE;
   --surface-1:   #F6F7F6;
@@ -109,6 +115,7 @@
    ========================================================================== */
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --canvas:      #0E1113;
   --surface-1:   #15191C;
   --surface-2:   #1B2024;
@@ -146,6 +153,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --canvas:#0E1113; --surface-1:#15191C; --surface-2:#1B2024;
     --text-primary:#EBEEED; --text-secondary:#9AA4A8; --text-tertiary:#79838A; --text-disabled:#545D62;
     --border:#2A3236; --border-subtle:#1E2528; --border-strong:#3A4247;

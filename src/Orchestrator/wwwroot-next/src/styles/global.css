@@ -168,6 +168,40 @@ button {
             color: var(--text-tertiary);
         }
 
+/* ---- Native form controls: theme them explicitly ----
+   Only .field input/textarea were styled, so <select>s and inputs built without
+   .field (the Nodes filter bar, the repeatable list rows — env vars, ports,
+   user variables, artifacts) fell through to raw native rendering, which
+   follows the OS color-scheme and looked dark on a light app. Give them the
+   same themed surface as .field inputs; color-scheme (design-tokens.css) fixes
+   the remaining native chrome (number steppers, the option list, checkbox box). */
+select,
+textarea,
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="url"],
+input[type="email"],
+input[type="password"] {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    font: inherit;
+    background: var(--canvas);
+    color: var(--text-primary);
+    resize: vertical;
+}
+
+    input::placeholder {
+        color: var(--text-tertiary);
+    }
+
+/* Checked state uses the brand accent instead of the UA default. */
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: var(--accent);
+}
+
 /* ── Markdown (rendered template descriptions, etc.) ──────────────────────
    Untrusted third-party content is rendered by react-markdown (React tree, NO
    innerHTML) with raw HTML DISABLED, so these styles only ever target
