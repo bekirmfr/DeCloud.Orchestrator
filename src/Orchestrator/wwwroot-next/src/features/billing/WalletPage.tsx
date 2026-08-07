@@ -5,7 +5,8 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
   useBalance, useDepositInfo, runwayDays, formatRunway, LOW_RUNWAY_DAYS,
 } from "./useBalance";
-import { depositUSDC, withdrawEarnings, readOnChain, type TxProgress } from "./paymentClient";
+import { withdrawEarnings, readOnChain } from "./paymentClient";
+import { DepositModal } from "./DepositModal";
 
 // Phase 6 · Wallet. Balance/runway/usage (read-only, Slice 1) + native on-chain
 // deposit & earnings-withdraw (Slice 2, via paymentClient — see its header for
@@ -57,7 +58,6 @@ export function WalletPage() {
   });
 
   const [depositOpen, setDepositOpen] = useState(false);
-  const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -72,22 +72,6 @@ export function WalletPage() {
   function refresh() {
     qc.invalidateQueries({ queryKey: ["balance"] });
     qc.invalidateQueries({ queryKey: ["onchain-balances"] });
-  }
-
-  async function onDeposit() {
-    if (!info) return;
-    setBusy(true); setErr(null); setProgress(null);
-    try {
-      const signer = await getSigner();
-      const onP = (p: TxProgress) => setProgress(p.message);
-      await depositUSDC(signer, info, amount.trim(), onP);
-      setDepositOpen(false); setAmount(""); setProgress(null);
-      refresh();
-    } catch (e) {
-      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Deposit failed.");
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function onWithdrawEarnings() {
@@ -213,30 +197,7 @@ export function WalletPage() {
         </Section>
       )}
 
-      {depositOpen && info && (
-        <div onClick={() => !busy && setDepositOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-4)", zIndex: 50 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ ...card, maxWidth: 440, width: "100%" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <strong>Deposit {sym}</strong>
-              <button className="btn-ghost" disabled={busy} onClick={() => setDepositOpen(false)} aria-label="Close">✕</button>
-            </div>
-            <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-              Sends {sym} to the escrow on {info.chainName}. You'll confirm the transaction(s) in your wallet.
-            </p>
-            <input
-              type="number" min={info.minDeposit} step="any" placeholder={`Amount (min ${info.minDeposit})`}
-              value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy}
-              style={{ padding: "var(--space-2)", fontSize: "var(--text-md)" }}
-            />
-            {progress && <p style={{ margin: 0, color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>{progress}</p>}
-            {err && <p style={{ margin: 0, color: "var(--danger)", fontSize: "var(--text-sm)" }}>{err}</p>}
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn-ghost" disabled={busy} onClick={() => setDepositOpen(false)}>Cancel</button>
-              <button className="btn-primary" disabled={busy || !amount.trim()} onClick={onDeposit}>{busy ? "Working…" : "Deposit"}</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {depositOpen && <DepositModal onClose={() => setDepositOpen(false)} />}
     </div>
   );
 }

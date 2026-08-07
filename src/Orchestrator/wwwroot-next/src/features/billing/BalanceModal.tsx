@@ -1,27 +1,18 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import { useBalance, useDepositInfo } from "./useBalance";
-import { depositUSDC, withdrawEarnings, readOnChain, type TxProgress } from "./paymentClient";
+import { withdrawEarnings, readOnChain, type TxProgress } from "./paymentClient";
+import { DepositModal, ModalHeader, StatRow, overlay, modalCard, modalBody, infoCard, bigBtn } from "./DepositModal";
 
-// Compact balance popover opened from the sidebar card. Minimal info + the two
-// on-chain actions (reusing paymentClient), plus a link to the full Wallet page.
+// Compact balance popover from the sidebar card. Minimal info + the two on-chain
+// actions; Deposit opens the shared DepositModal. Full detail lives at /wallet.
 
 const rejected = (e: unknown) => {
   const c = (e as { code?: unknown })?.code;
   return c === "ACTION_REJECTED" || c === 4001;
 };
-
-function Row({ k, v, tone }: { k: string; v: ReactNode; tone?: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)" }}>
-      <span style={{ color: "var(--text-tertiary)" }}>{k}</span>
-      <span style={{ color: tone ?? "var(--text-secondary)" }}>{v}</span>
-    </div>
-  );
-}
 
 export function BalanceModal({ onClose }: { onClose: () => void }) {
   const { api, wallet, getSigner } = useAuth();
@@ -37,7 +28,7 @@ export function BalanceModal({ onClose }: { onClose: () => void }) {
     staleTime: 20_000,
   });
 
-  const [amount, setAmount] = useState("");
+  const [depositOpen, setDepositOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -46,68 +37,58 @@ export function BalanceModal({ onClose }: { onClose: () => void }) {
   const money = (x?: number) => `${(x ?? 0).toFixed(2)} ${sym}`;
   const pendingPayout = onchain?.pendingPayout ?? 0;
 
-  async function run(fn: () => Promise<unknown>) {
+  async function onWithdraw() {
+    if (!info) return;
     setBusy(true); setErr(null); setProgress(null);
     try {
-      await fn();
+      await withdrawEarnings(await getSigner(), info, (p: TxProgress) => setProgress(p.message));
       qc.invalidateQueries({ queryKey: ["balance"] });
       qc.invalidateQueries({ queryKey: ["onchain-balances"] });
     } catch (e) {
-      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Action failed.");
+      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Withdrawal failed.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div onClick={() => !busy && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-4)", zIndex: 60 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "var(--space-4)", maxWidth: 420, width: "100%", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <strong>Balance</strong>
-          <button className="btn-ghost" disabled={busy} onClick={onClose} aria-label="Close">✕</button>
-        </div>
-
-        <div>
-          <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Available balance</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontSize: "var(--text-xl)", fontFamily: "var(--font-display)", fontWeight: 600 }}>{(bal?.balance ?? 0).toFixed(2)}</span>
-            <span style={{ color: "var(--text-secondary)" }}>{sym}</span>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-2)" }}>
-          <Row k="Confirmed" v={money(bal?.confirmedBalance)} />
-          <Row k="Unpaid usage" v={money(bal?.unpaidUsage)} tone={(bal?.unpaidUsage ?? 0) > 0 ? "var(--warning)" : undefined} />
-          {connected && <Row k="Pending earnings" v={money(pendingPayout)} />}
-        </div>
-
-        {connected && info ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="number" min={info.minDeposit} step="any" placeholder={`Amount (min ${info.minDeposit})`}
-                value={amount} onChange={(e) => setAmount(e.target.value)} disabled={busy}
-                style={{ flex: 1, padding: "var(--space-2)" }}
-              />
-              <button className="btn-primary" disabled={busy || !amount.trim()}
-                onClick={() => run(async () => { await depositUSDC(await getSigner(), info, amount.trim(), (p: TxProgress) => setProgress(p.message)); setAmount(""); })}>
-                Deposit
-              </button>
+    <>
+      <div onClick={() => !busy && onClose()} style={overlay}>
+        <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+          <ModalHeader icon="💵" title="Balance" onClose={onClose} busy={busy} />
+          <div style={modalBody}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", letterSpacing: "var(--track-eyebrow)", textTransform: "uppercase" }}>Available balance</div>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: "var(--text-xl)", fontFamily: "var(--font-display)", fontWeight: 600 }}>{(bal?.balance ?? 0).toFixed(2)}</span>
+                <span style={{ color: "var(--text-secondary)" }}>{sym}</span>
+              </div>
             </div>
-            <button className="btn-ghost" disabled={busy || pendingPayout <= 0}
-              onClick={() => run(async () => withdrawEarnings(await getSigner(), info, (p: TxProgress) => setProgress(p.message)))}>
-              Withdraw earnings
-            </button>
+
+            <div style={infoCard}>
+              <StatRow label="Confirmed" value={money(bal?.confirmedBalance)} />
+              <StatRow label="Unpaid usage" value={money(bal?.unpaidUsage)} tone={(bal?.unpaidUsage ?? 0) > 0 ? "var(--warning)" : undefined} />
+              {connected && <StatRow label="Pending earnings" value={money(pendingPayout)} />}
+            </div>
+
+            {connected ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+                <button className="btn-primary" style={bigBtn} disabled={busy} onClick={() => setDepositOpen(true)}>+ Deposit</button>
+                <button className="btn-ghost" style={bigBtn} disabled={busy || pendingPayout <= 0} onClick={onWithdraw}>Withdraw earnings</button>
+              </div>
+            ) : (
+              <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)", textAlign: "center" }}>Connect your wallet to deposit or withdraw.</p>
+            )}
+
+            {progress && <p style={{ margin: 0, color: "var(--text-accent)", fontSize: "var(--text-sm)", textAlign: "center" }}>{progress}</p>}
+            {err && <p style={{ margin: 0, color: "var(--danger)", fontSize: "var(--text-sm)", textAlign: "center" }}>{err}</p>}
+
+            <Link to="/wallet" onClick={onClose} style={{ color: "var(--accent)", fontSize: "var(--text-sm)", textAlign: "center" }}>View full wallet →</Link>
           </div>
-        ) : (
-          <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Connect your wallet to deposit or withdraw.</p>
-        )}
-
-        {progress && <p style={{ margin: 0, color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>{progress}</p>}
-        {err && <p style={{ margin: 0, color: "var(--danger)", fontSize: "var(--text-sm)" }}>{err}</p>}
-
-        <Link to="/wallet" onClick={onClose} style={{ color: "var(--accent)", fontSize: "var(--text-sm)", textAlign: "center" }}>View full wallet →</Link>
+        </div>
       </div>
-    </div>
+
+      {depositOpen && <DepositModal onClose={() => setDepositOpen(false)} />}
+    </>
   );
 }
