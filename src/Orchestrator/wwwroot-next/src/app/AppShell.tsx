@@ -1,6 +1,8 @@
 import { Outlet, NavLink, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 import { canAccessAdmin } from "./guards";
+import { SidebarBalance } from "../features/billing/SidebarBalance";
+import { ProfileMenu } from "../features/profile/ProfileMenu";
 
 // The authenticated layout, rendered INSIDE StatusGate (so it only mounts when
 // the app surface is chosen). Sidebar + header + routed content.
@@ -82,22 +84,17 @@ function Sidebar() {
           </>
         )}
       </nav>
+
+      <SidebarBalance />
     </aside>
   );
 }
 
 function Header() {
-  const { wallet } = useAuth();
-  // TODO: balance + runway (poll until the balance SignalR emit lands, §6.9),
-  // theme toggle. Wallet address chip below.
-  const address = wallet.kind === "connected" ? wallet.address : undefined;
   return (
     <header style={{ display: "flex", justifyContent: "flex-end", gap: 16, padding: "12px 28px", borderBottom: "1px solid var(--border-subtle)" }}>
-      {/* TODO: <Balance /> · runway indicator */}
-      <span className="mono" style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
-        {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ""}
-      </span>
-      {/* TODO: theme toggle (reuse the pre-paint theme approach) */}
+      {/* TODO: balance chip + runway indicator, theme toggle */}
+      <ProfileMenu />
     </header>
   );
 }

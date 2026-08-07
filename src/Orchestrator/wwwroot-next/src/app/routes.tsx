@@ -26,6 +26,7 @@ import { NodesPage } from "../features/nodes/NodesPage";
 import { NodeDetailPage } from "../features/nodes/NodeDetailPage";
 import { AdminNodesPage } from "../features/nodes/AdminNodesPage";
 import { AdminNodeInspectPage } from "../features/nodes/AdminNodeInspectPage";
+import { ProfilePage } from "../features/profile/ProfilePage";
 
 // React Router v7. base is '/app/' (Vite), so route paths are relative to /app.
 // The whole tree lives behind StatusGate → AppShell. Add pages here as they're
@@ -60,6 +61,7 @@ export const router = createBrowserRouter(
       children: [
         { index: true, element: <DashboardPage /> },              // Phase 3 · operate+fund home
         { path: "wallet", element: <WalletPage /> },              // Phase 6 · wallet (read-only)
+        { path: "profile", element: <ProfilePage /> },            // Phase 6 · profile
         { path: "deploy", element: <DeploySourcePage /> },        // Phase 5 · deployment-source chooser
         { path: "deploy/repository", element: <RepoDeployPage /> }, // Phase 5 · repo deploy (form WIP)
         { path: "marketplace", element: <MarketplacePage /> },    // Phase 5 · browse
