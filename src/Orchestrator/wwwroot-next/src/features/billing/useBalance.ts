@@ -62,9 +62,9 @@ export function runwayDays(balance: number | undefined, hourlyRate: number | und
  */
 export function formatRunway(days: number): string {
   if (days < 1) return "Less than a day";
-  if (days < 2) return "About a day";
+  if (days < 2) return "One day";
   if (days > 365) return "Over a year";
-  return `About ${Math.floor(days)} days`;
+  return `${Math.floor(days)} days`;
 }
 
 /** Below this, the runway panel warns. Roughly "top up this week". */
