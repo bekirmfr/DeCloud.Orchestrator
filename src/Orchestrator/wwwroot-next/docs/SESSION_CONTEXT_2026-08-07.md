@@ -117,14 +117,19 @@ on-chain reality. Patches: `template-earnings-backend` (5 files, incl. `Template
 
 ### F. Node earnings scoping (security) + Settings page + light-theme fix
 Three follow-on pieces after the docs were squared:
-- **Node earnings/credentials scoping (server-side security).** `GET /api/nodes/{id}` **and**
-  `GET /api/nodes` returned the full `Node` to any authenticated caller — leaking every operator's
-  earnings (`PendingPayout`/`TotalEarned`) *and* credentials (`ApiKeyHash`/`CurrentJti`/key
-  timestamps). `Node.WithoutOwnerPrivateData()` = cache-safe **shallow copy** (never mutate the
-  shared `ActiveNodes` reference the hot path returns) with those cleared; controller scopes both
-  endpoints to owner (wallet claim vs `Node.WalletAddress`, case-insensitive) / admin. UI gate is
-  now defense-in-depth. **Fail-open on future fields** is the stated residual (a DTO would fail
-  closed but needs a coordinated FE change). `node-earnings-owner-scoping.patch` (+41/−2).
+- **Node endpoints over-exposed secrets → fail-closed `NodeView` DTO.** `GET /api/nodes/{id}`
+  and `GET /api/nodes` serialized the internal `Node` model straight out. First pass — a field-
+  scrub (`Node.WithoutOwnerPrivateData()`, cache-safe shallow copy) cleared earnings + API-key
+  fields. **Production testing then showed it was fail-open**: the same response still leaked a
+  non-owner the node's system-VM auth tokens + ed25519/WireGuard **private keys**
+  (`SystemVmObligations`), the CGNAT relay token/config (`CgnatInfo`), and the relay private key
+  (`RelayInfo`). Root cause = returning the internal model; the leak was the model *shape*, not a
+  field. Fix = **`NodeView`** (+ `RelayView`/`DhtView`/`BlockStoreView`): fail-closed projection,
+  a field ships only if listed, secrets in **no** tier (not owner/admin — keys live on the node),
+  owner/admin get the operational tier, non-owners the marketplace tier. **Verified in
+  production.** `NodeView.cs` + `node-view-dto.patch` (removes the scrub, net −40) **supersede**
+  both scrub patches (`node-earnings-owner-scoping.patch`, `node-secret-subobjects-scrub.patch`).
+  **Lesson: never return the internal persistence model from an API — project to a DTO.**
 - **Settings (`/app/settings`)** — the last supporting page. `useTheme` writes `index.html`'s
   pre-paint contract (`dc-theme`; Light/Dark/System). Language deferred (no i18n layer → no fake
   selector). New `features/settings/{SettingsPage.tsx,useTheme.ts}` + `settings-page-wiring.patch`
@@ -192,7 +197,9 @@ this session added (★):
   `wallet-deposit-withdraw-slice2.patch`, full `paymentClient.ts`, `sidebar-balance-profile.patch`,
   `wallet-modals-polish.patch`.
 - **Build fixes:** `build-fix-tsc-eslint.patch`, `build-fix-help-record.patch`.
-- **Security / Settings / theme (workstream F):** `node-earnings-owner-scoping.patch`;
+- **Security / Settings / theme (workstream F):** node secret over-exposure fixed with a
+  fail-closed DTO — `NodeView.cs` + `node-view-dto.patch` (the real fix), which **supersede** the
+  two interim scrubs `node-earnings-owner-scoping.patch` + `node-secret-subobjects-scrub.patch`;
   `SettingsPage.tsx` + `useTheme.ts` (new) + `settings-page-wiring.patch`;
   `theme-native-controls-fix.patch`.
 - **Docs (this task):** updated `FRONTEND_REMAKE_IMPLEMENTATION.md`, `FRONTEND_REMAKE_DESIGN.md`,
@@ -209,8 +216,8 @@ this session added (★):
   crash; the slow link itself is unexplained. A `{NodeId:1,PeriodStart:1}` index on `usageRecords`
   would also speed the earnings scan.
 - **Settings** shipped (theme toggle live; language deferred to i18n) — pending owner build-verify.
-- **✅ Node earnings/credentials over-exposure — RESOLVED** server-side (workstream F); residual is
-  fail-open on future owner-private fields.
+- **✅ Node secret over-exposure — RESOLVED** via the fail-closed `NodeView` DTO (workstream F),
+  verified in production; the two interim scrub patches are superseded.
 - **Wire when wanted:** `withdrawBalance` (unused-deposit withdrawal, ABI present); repo-deploy
   `?node=` pinning; `templateForm` unit tests owed.
 - **HardwareInventory shape** — get it (from `DeCloud.Shared`) to show CPU/GPU on node detail.

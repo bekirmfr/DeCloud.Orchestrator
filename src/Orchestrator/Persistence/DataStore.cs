@@ -1937,6 +1937,41 @@ public class DataStore
     }
 
     /// <summary>
+    /// Author's templates for the My Templates LIST view. Same query as
+    /// GetTemplatesByAuthorAsync but with the heavy fields projected OUT
+    /// server-side — inlined Artifacts (tens of kB on seeded platform templates),
+    /// CloudInitTemplate, LongDescription, AiAssessment — so a list that only
+    /// renders name/status/counts doesn't drag ~1 MB across the wire. Returns
+    /// PARTIAL VmTemplate objects (those fields empty); display only — never
+    /// re-save one of these, or the projected-out fields would be wiped. Full
+    /// documents come from GetTemplatesByAuthorAsync.
+    /// </summary>
+    public async Task<List<VmTemplate>> GetAuthorTemplateListAsync(string authorId)
+    {
+        if (!_useMongoDB) return new List<VmTemplate>();
+
+        try
+        {
+            var lean = Builders<VmTemplate>.Projection
+                .Exclude(t => t.Artifacts)
+                .Exclude(t => t.CloudInitTemplate)
+                .Exclude(t => t.LongDescription)
+                .Exclude(t => t.AiAssessment);
+
+            return await TemplatesCollection!
+                .Find(t => t.AuthorId == authorId)
+                .SortByDescending(t => t.UpdatedAt)
+                .Project<VmTemplate>(lean)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list templates for author: {AuthorId}", authorId);
+            return new List<VmTemplate>();
+        }
+    }
+
+    /// <summary>
     /// Per-template earnings for the given author revenue wallets, summed from the
     /// settlement ledger (usageRecords). Template fees are written by
     /// SettleTemplateFeeAsync with a zero-length period (PeriodStart == PeriodEnd),

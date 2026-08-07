@@ -160,7 +160,7 @@ public class MarketplaceController : ControllerBase
             if (userId == null)
                 return Unauthorized(ApiResponse<List<VmTemplate>>.Fail("UNAUTHORIZED", "Authentication required"));
 
-            var templates = await _templateService.GetTemplatesByAuthorAsync(userId);
+            var templates = await _templateService.GetAuthorTemplateListAsync(userId);
             return Ok(ApiResponse<List<VmTemplate>>.Ok(templates));
         }
         catch (Exception ex)

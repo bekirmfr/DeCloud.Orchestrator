@@ -24,6 +24,14 @@ public interface ITemplateService
     /// </summary>
     Task<List<VmTemplate>> GetTemplatesByAuthorAsync(string authorId);
 
+    /// <summary>
+    /// Lightweight author template LIST for the My Templates view — the heavy
+    /// fields (inlined artifacts, cloud-init, long description, AI assessment)
+    /// are projected out server-side. Returns partial documents; display only,
+    /// never re-saved. Use GetTemplatesByAuthorAsync when full docs are needed.
+    /// </summary>
+    Task<List<VmTemplate>> GetAuthorTemplateListAsync(string authorId);
+
     /// <summary>Per-template earnings for an author (net/gross/deploys), from the settlement ledger.</summary>
     Task<Dictionary<string, TemplateEarnings>> GetTemplateEarningsAsync(string authorId);
 

@@ -182,6 +182,19 @@ public class TemplateService : ITemplateService
         }
     }
 
+    public async Task<List<VmTemplate>> GetAuthorTemplateListAsync(string authorId)
+    {
+        try
+        {
+            return await _dataStore.GetAuthorTemplateListAsync(authorId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list templates for author: {AuthorId}", authorId);
+            return new List<VmTemplate>();
+        }
+    }
+
     public async Task<List<VmTemplate>> GetTemplatesByAuthorAsync(string authorId)
     {
         try
