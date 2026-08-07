@@ -1,0 +1,91 @@
+diff --git a/src/Orchestrator/wwwroot-next/src/styles/global.css b/src/Orchestrator/wwwroot-next/src/styles/global.css
+index be6aeff..1bb533a 100644
+--- a/src/Orchestrator/wwwroot-next/src/styles/global.css
++++ b/src/Orchestrator/wwwroot-next/src/styles/global.css
+@@ -224,6 +224,86 @@ input[type="radio"] {
+ .md td { padding: 4px 8px; border-bottom: 1px solid var(--border-subtle); }
+ .md img { max-width: 100%; border-radius: var(--radius-sm); }
+ 
++/* ==========================================================================
++   Meridian component layer — the visual language from the Meridian reference,
++   ported so pages compose from it instead of hand-rolling flat markup. Class
++   vocabulary matches the app's re-skinned pages. Role tokens only; light/dark
++   follow the tokens. See meridian-reference.html.
++   ========================================================================== */
++
++/* Headings use the display face with tight tracking — the single biggest lift.
++   Pages keep their own margins; these set family / size / tracking only. */
++h1, h2, h3 {
++    font-family: var(--font-display);
++    letter-spacing: var(--track-snug);
++    line-height: var(--lh-snug);
++    color: var(--text-primary);
++}
++h1 { font-size: var(--text-2xl); font-weight: var(--fw-semibold); letter-spacing: var(--track-tight); }
++h2 { font-size: var(--text-xl);  font-weight: var(--fw-medium); }
++h3 { font-size: var(--text-lg);  font-weight: var(--fw-medium); }
++
++/* Mono, tabular figures for anything numeric — balances, prices, specs, ids —
++   so columns of numbers align and read as precise data. */
++.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
++
++/* Section eyebrow: mono, uppercase, tracked, led by a short accent tick. */
++.eyebrow {
++    display: inline-flex; align-items: center; gap: var(--space-3);
++    font-family: var(--font-mono); font-size: var(--text-xs);
++    text-transform: uppercase; letter-spacing: var(--track-eyebrow);
++    color: var(--text-accent);
++}
++.eyebrow::before { content: ""; width: 24px; height: 1px; background: var(--accent); }
++.eyebrow.muted { color: var(--text-tertiary); }
++.eyebrow.muted::before { background: var(--border-strong); }
++
++/* Card, with an optional header row and body rows. */
++.card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-card); }
++.card-h,
++.card-row {
++    display: flex; align-items: center; justify-content: space-between;
++    gap: var(--space-3); padding: var(--space-4) var(--space-5);
++    border-bottom: 1px solid var(--border-subtle);
++}
++.card-row:last-child { border-bottom: 0; }
++.card-title { font-family: var(--font-display); font-weight: var(--fw-medium); font-size: var(--text-md); color: var(--text-primary); }
++.card-cap   { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-tertiary); }
++
++/* Status dot with a soft halo — the signature "alive" indicator. */
++.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
++.status-dot.ok   { background: var(--success-solid); box-shadow: 0 0 0 3px var(--success-soft); }
++.status-dot.warn { background: var(--warning-solid); box-shadow: 0 0 0 3px var(--warning-soft); }
++.status-dot.err  { background: var(--danger);         box-shadow: 0 0 0 3px var(--danger-soft); }
++.status-dot.idle { background: var(--text-disabled);  box-shadow: 0 0 0 3px var(--surface-1); }
++
++/* Tinted badges for tiers / short status labels. */
++.badge { display: inline-block; font-family: var(--font-mono); font-size: var(--text-xs); padding: 3px 8px; border-radius: var(--radius-sm); }
++.badge.accent  { background: var(--accent-soft);  color: var(--text-accent); }
++.badge.ok      { background: var(--success-soft); color: var(--success); }
++.badge.warn    { background: var(--warning-soft); color: var(--warning); }
++.badge.danger  { background: var(--danger-soft);  color: var(--danger); }
++.badge.neutral { background: var(--surface-1);    color: var(--text-secondary); border: 1px solid var(--border-subtle); }
++
++/* Progress / runway track. */
++.track { height: 6px; background: var(--border-subtle); border-radius: var(--radius-pill); overflow: hidden; }
++.track > .track-fill { height: 100%; background: var(--accent); border-radius: var(--radius-pill); }
++
++/* Stat: a big display figure over a small mono label (summary numbers). */
++.stat .n { font-family: var(--font-display); font-weight: var(--fw-semibold); font-size: var(--text-2xl); letter-spacing: var(--track-snug); }
++.stat .l { font-size: var(--text-xs); color: var(--text-tertiary); margin-top: 2px; }
++
++/* Ink button — dark fill, complements .btn-primary (accent) and .btn-ghost. */
++.btn-ink {
++    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
++    padding: var(--space-2) var(--space-4); border: 1px solid var(--text-primary);
++    border-radius: var(--radius); background: var(--text-primary); color: var(--canvas);
++    font-family: var(--font-display); font-weight: var(--fw-medium); cursor: pointer;
++    transition: opacity var(--dur-fast) var(--ease);
++}
++.btn-ink:hover { opacity: 0.9; }
++.btn-ink:disabled { opacity: 0.55; cursor: default; }
++
+ /* ==========================================================================
+    Meridian component layer — the visual language from the Meridian reference,
+    ported so pages compose from it instead of hand-rolling flat markup.
