@@ -130,6 +130,24 @@ Three follow-on pieces after the docs were squared:
   production.** `NodeView.cs` + `node-view-dto.patch` (removes the scrub, net −40) **supersede**
   both scrub patches (`node-earnings-owner-scoping.patch`, `node-secret-subobjects-scrub.patch`).
   **Lesson: never return the internal persistence model from an API — project to a DTO.**
+
+### G. Template read-path latency + author view page (from the Atlas investigation)
+- **`vmTemplates` ~48.9 kB/doc** — seeded platform/system templates inline artifact content
+  (`data:` URIs) + a big composed `CloudInitTemplate` (base provisioning lib inlined) + a
+  `RoleCloudInit` layer. My Templates list returned **full** docs → ~1 MB over the ~95 KB/s link
+  to render name/status/counts. Fix: separate `GetAuthorTemplateListAsync` that server-side
+  exclude-projects `Artifacts`/`CloudInitTemplate`/`RoleCloudInit`/`LongDescription`/`AiAssessment`,
+  wired only to the display endpoint. **A NEW method, not a change to `GetTemplatesByAuthorAsync`**
+  — that one also feeds revise (returns the doc) + archive (re-saves it), so truncating would wipe
+  blobs (the caller check caught it). Browse was already projected. Verified in prod. `RoleCloudInit`
+  was missed on the first cut — it's a composition-work field not in my checkout (drift).
+  `template-mytemplates-projection.patch`.
+- **Author view page** `/my-templates/:id` (`MyTemplateViewPage`) — read-only detail of the
+  author's own template at any status (by-id fetch is status-agnostic → drafts open), full card
+  action set. Read-only body extracted from `AdminTemplateInspectPage` into shared
+  `TemplateInspectSections` (NodeSections pattern; admin inspect ~250→~70 lines). `+ View` button
+  on the card. `mytemplates-view-button.patch` + new/refactored TSX files. Owed: rejection-reason
+  banner (pending FE `VmTemplate` field confirmation).
 - **Settings (`/app/settings`)** — the last supporting page. `useTheme` writes `index.html`'s
   pre-paint contract (`dc-theme`; Light/Dark/System). Language deferred (no i18n layer → no fake
   selector). New `features/settings/{SettingsPage.tsx,useTheme.ts}` + `settings-page-wiring.patch`
@@ -212,9 +230,12 @@ this session added (★):
 
 - **Build + testnet-verify after applying** — especially `paymentClient.ts` (fund-moving; the
   sandbox can't build). `npm run build` + `npm test`; get the real test count.
-- **Atlas link latency — chase the root cause** (highest-impact). The index + timeout stopped the
-  crash; the slow link itself is unexplained. A `{NodeId:1,PeriodStart:1}` index on `usageRecords`
-  would also speed the earnings scan.
+- **Atlas link latency — chase the root cause** (highest-impact). ~1.1 MB in 11.7 s ≈ **~95 KB/s**,
+  dial-up-slow — slows every ~1 MB query, not just the crash one. Measure first: Atlas **tier**
+  (shared M0/M2/M5 throttles throughput) and orchestrator↔cluster **region/path** (RTT vs
+  throughput). Mitigations shipped, not cures: the `usageRecords` index; the My Templates list
+  projection (workstream G). A `{NodeId:1,PeriodStart:1}` index on `usageRecords` would also speed
+  the earnings scan.
 - **Settings** shipped (theme toggle live; language deferred to i18n) — pending owner build-verify.
 - **✅ Node secret over-exposure — RESOLVED** via the fail-closed `NodeView` DTO (workstream F),
   verified in production; the two interim scrub patches are superseded.
