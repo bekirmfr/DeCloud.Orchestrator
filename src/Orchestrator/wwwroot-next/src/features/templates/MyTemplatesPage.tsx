@@ -17,7 +17,7 @@ const sm = { fontSize: "var(--text-sm)" } as const;
 const dotClass = (s: number) => (s === 1 ? "ok" : s === 3 ? "warn" : s === 4 ? "err" : "idle");
 const badgeClass = (s: number) => (s === 1 ? "ok" : s === 3 ? "warn" : s === 4 ? "danger" : "neutral");
 
-export function MyTemplatesPage() {
+export function MyTemplatesPage({ embedded = false }: { embedded?: boolean }) {
     const { api } = useAuth();
     const navigate = useNavigate();
     const { data: templates, isLoading, isError } = useMyTemplates(api);
@@ -42,8 +42,8 @@ export function MyTemplatesPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", maxWidth: 900 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: "var(--space-3)" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                    <span className="eyebrow">Marketplace · authoring</span>
-                    <h1 style={{ margin: 0 }}>My Templates</h1>
+                    {!embedded && <span className="eyebrow">Marketplace · authoring</span>}
+                    {!embedded && <h1 style={{ margin: 0 }}>My Templates</h1>}
                     <p style={{ margin: 0, color: "var(--text-secondary)", maxWidth: 540 }}>
                         Templates you've authored. Drafts and in-review templates are deployable only by you, for testing.
                     </p>

@@ -30,6 +30,9 @@ export function ProfileMenu() {
               <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)", color: "var(--text-secondary)", wordBreak: "break-all" }}>{address}</div>
             </div>
             <Link to="/profile" onClick={() => setOpen(false)} className="nav-link" style={{ fontSize: "var(--text-sm)" }}>Profile</Link>
+            <Link to="/settings/ssh-keys" onClick={() => setOpen(false)} className="nav-link" style={{ fontSize: "var(--text-sm)" }}>SSH Keys</Link>
+            <Link to="/settings" onClick={() => setOpen(false)} className="nav-link" style={{ fontSize: "var(--text-sm)" }}>Settings</Link>
+            <hr style={{ border: 0, borderTop: "1px solid var(--border-subtle)", margin: "4px 0" }} />
             <button
               onClick={() => { setOpen(false); void signOut(); }}
               className="nav-link"
