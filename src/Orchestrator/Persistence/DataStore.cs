@@ -1955,6 +1955,7 @@ public class DataStore
             var lean = Builders<VmTemplate>.Projection
                 .Exclude(t => t.Artifacts)
                 .Exclude(t => t.CloudInitTemplate)
+                .Exclude(t => t.RoleCloudInit)
                 .Exclude(t => t.LongDescription)
                 .Exclude(t => t.AiAssessment);
 

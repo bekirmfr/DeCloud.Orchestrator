@@ -14,6 +14,7 @@ import { DomainsModal } from "../features/domains/DomainsModal";
 import { TerminalPage } from "../features/vms/TerminalPage";
 import { FileBrowserPage } from "../features/vms/FileBrowserPage";
 import { MyTemplatesPage } from "../features/templates/MyTemplatesPage";
+import { MyTemplateViewPage } from "../features/templates/MyTemplateViewPage";
 import { CreateTemplatePage } from "../features/templates/CreateTemplatePage";
 import { AdminTemplatesPage } from "../features/templates/AdminTemplatesPage";
 import { AdminTemplateInspectPage } from "../features/templates/AdminTemplateInspectPage";
@@ -69,6 +70,7 @@ export const router = createBrowserRouter(
         { path: "my-templates", element: <MyTemplatesPage /> },    // Phase 5 · authoring: my templates
         { path: "my-templates/new", element: <CreateTemplatePage /> },        // create (form WIP)
         { path: "my-templates/:id/edit", element: <CreateTemplatePage /> },   // edit (form WIP)
+        { path: "my-templates/:id", element: <MyTemplateViewPage /> },
         { path: "vms", element: <VmsPage /> },                    // Phase 3 · list
         { path: "nodes", element: <NodesPage /> },                // Phase 5 · my nodes + search
         { path: "nodes/:id", element: <NodeDetailPage /> },        // Phase 5 · node detail

@@ -77,6 +77,7 @@ export function MyTemplatesPage() {
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
+                        <Link className="btn-ghost" to={`/my-templates/${t.id}`} style={sm}>View</Link>
                         {canEdit && <Link className="btn-ghost" to={`/my-templates/${t.id}/edit`} style={sm}>Edit</Link>}
                   {canSubmit && (
                     <button className="btn-ghost" style={sm} disabled={busy}
