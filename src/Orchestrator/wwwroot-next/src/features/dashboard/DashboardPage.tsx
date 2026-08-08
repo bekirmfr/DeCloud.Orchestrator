@@ -3,7 +3,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { useVms, type VmSummary } from "../vms/useVms";
 import { vmStatusBadge, normalizeStatus, type BadgeTone } from "../vms/vmStatus";
 import { useBalance, runwayDays, formatRunway, LOW_RUNWAY_DAYS } from "../billing/useBalance";
-import { useMyNodes } from "../nodes/useNodes";
+import { useMyNodes, useAllNodes } from "../nodes/useNodes";
 import { useMyTemplates, statusNum } from "../templates/useTemplates";
 import { useUserRealtime } from "../../realtime/useUserRealtime";
 import { useMediaQuery, MOBILE_QUERY } from "../../app/useMediaQuery";
@@ -14,9 +14,9 @@ import type { AppError } from "../../api/errors";
 // summaries. Status is LIVE (SubscribeToUser); balance/runway POLLS (§6.9).
 // Composes from the Meridian layer (.card / .mono / .track / .status-dot).
 //
-// NOTE: workload rows show name / status / spec only — VmSummary has no region,
-// tier, or per-VM hourly rate (add to VmSummaryDto server-side to match the
-// reference's richer row).
+// NOTE: rows show name / locality (host node region · name, mapped from the
+// fleet by vm.nodeId) / status / spec. Still missing vs the reference: tier
+// (gpuMode/qualityTier) and per-VM hourly rate — add those to VmSummaryDto.
 
 const DOT: Record<BadgeTone, string> = { active: "ok", transitional: "warn", inert: "idle", error: "err" };
 const gib = (b: number) => Math.round(b / 1024 ** 3);
@@ -45,12 +45,18 @@ export function DashboardPage() {
     const { data: vms, isLoading, error } = useVms(api, 1);
     const { data: balance } = useBalance(api);
     const { data: nodes } = useMyNodes(api, address || undefined);
+    // Whole fleet, from the SAME ["nodes","all"] cache useMyNodes populated — no
+    // extra fetch. A workload runs on someone else's node, so the host isn't in
+    // "my nodes"; map by id to show its locality on the row.
+    const { data: allNodes } = useAllNodes(api);
     const { data: templates } = useMyTemplates(api);
 
     const sym = balance?.tokenSymbol ?? "USDC";
     const days = runwayDays(balance?.balance, balance?.hourlyBurnRate);
     const lowRunway = days != null && days < LOW_RUNWAY_DAYS;
     const runwayFill = days == null ? 100 : Math.max(3, Math.min(100, (days / 30) * 100));
+
+    const nodeById = new Map((allNodes ?? []).map((n) => [n.id, n] as const));
 
     const active = (vms?.items ?? []).filter((v) => {
         const s = normalizeStatus(v.status);
@@ -90,17 +96,26 @@ export function DashboardPage() {
                         </div>
                     )}
 
-                    {active.map((vm) => (
-                        <div key={vm.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "1 1 180px" }}>
-                                <StatusDot status={vm.status} />
-                                <Link to={`/vms/${vm.id}`} style={{ color: "var(--text-accent)", fontWeight: "var(--fw-medium)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vm.name}</Link>
-                                {vm.complianceHold && <span style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>held</span>}
+                    {active.map((vm) => {
+                        const host = vm.nodeId ? nodeById.get(vm.nodeId) : undefined;
+                        const locality = host ? [host.locality?.region, host.name].filter(Boolean).join(" · ") : null;
+                        return (
+                            <div key={vm.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, flex: "1 1 200px" }}>
+                                    <StatusDot status={vm.status} />
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                            <Link to={`/vms/${vm.id}`} style={{ color: "var(--text-accent)", fontWeight: "var(--fw-medium)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vm.name}</Link>
+                                            {vm.complianceHold && <span style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>held</span>}
+                                        </div>
+                                        {locality && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 1 }}>{locality}</div>}
+                                    </div>
+                                </div>
+                                <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{vmStatusBadge(vm.status).label}</span>
+                                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginLeft: "auto" }}>{vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB</span>
                             </div>
-                            <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{vmStatusBadge(vm.status).label}</span>
-                            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginLeft: "auto" }}>{vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB</span>
-                        </div>
-                    ))}
+                        );
+                    })}
 
                     {vms && vms.totalCount > active.length && (
                         <div style={{ padding: "12px 18px" }}>
