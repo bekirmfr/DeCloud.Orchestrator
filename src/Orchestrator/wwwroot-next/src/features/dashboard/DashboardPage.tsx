@@ -3,182 +3,185 @@ import { useAuth } from "../../auth/AuthProvider";
 import { useVms, type VmSummary } from "../vms/useVms";
 import { vmStatusBadge, normalizeStatus, type BadgeTone } from "../vms/vmStatus";
 import { useBalance, runwayDays, formatRunway, LOW_RUNWAY_DAYS } from "../billing/useBalance";
+import { useMyNodes } from "../nodes/useNodes";
+import { useMyTemplates, statusNum } from "../templates/useTemplates";
 import { useUserRealtime } from "../../realtime/useUserRealtime";
+import { useMediaQuery, MOBILE_QUERY } from "../../app/useMediaQuery";
 import type { AppError } from "../../api/errors";
 
-// Phase 3 · step 4 — the DASHBOARD: operate + fund home (DESIGN §2).
-// Running workloads and their runway, with Deploy promoted to a primary action
-// instead of buried three levels deep. Status is LIVE (SubscribeToUser);
-// balance/runway POLLS, because the hub has no BalanceUpdated emit yet (§6.9).
+// Phase 3 · the DASHBOARD: operate + fund home (DESIGN §2). Two-column on desktop
+// (workloads left, balance right), stacked on mobile; plus Nodes / Templates
+// summaries. Status is LIVE (SubscribeToUser); balance/runway POLLS (§6.9).
+// Composes from the Meridian layer (.card / .mono / .track / .status-dot).
+//
+// NOTE: workload rows show name / status / spec only — VmSummary has no region,
+// tier, or per-VM hourly rate (add to VmSummaryDto server-side to match the
+// reference's richer row).
 
-const TONE: Record<BadgeTone, string> = {
-  active: "var(--success-solid)",
-  transitional: "var(--warning-solid)",
-  inert: "var(--text-disabled)",
-  error: "var(--danger)",
-};
-
-/** Status dot with a soft halo — the Meridian `.sdot` primitive, inlined. */
-function StatusDot({ status }: { status: VmSummary["status"] }) {
-  const { tone } = vmStatusBadge(status);
-  const c = TONE[tone];
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 8, height: 8, borderRadius: "50%", display: "inline-block",
-        background: c, boxShadow: `0 0 0 3px color-mix(in srgb, ${c} 22%, transparent)`,
-        flexShrink: 0,
-      }}
-    />
-  );
-}
-
-function Card({ title, count, children }: { title: string; count?: string; children: React.ReactNode }) {
-  return (
-    <section style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--radius-card)" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
-        <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 500, fontSize: "14.5px" }}>{title}</h2>
-        {count && <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-tertiary)" }}>{count}</span>}
-      </header>
-      {children}
-    </section>
-  );
-}
-
+const DOT: Record<BadgeTone, string> = { active: "ok", transitional: "warn", inert: "idle", error: "err" };
 const gib = (b: number) => Math.round(b / 1024 ** 3);
 
-export function DashboardPage() {
-  const { api, wallet } = useAuth();
+function StatusDot({ status }: { status: VmSummary["status"] }) {
+    return <span aria-hidden className={`status-dot ${DOT[vmStatusBadge(status).tone]}`} style={{ marginTop: 1 }} />;
+}
 
-  // OwnerId IS the wallet address on the VM record, and the server broadcasts
-  // to user:{OwnerId} — so this is the right subscription key.
-  const userId = wallet.kind === "connected" ? wallet.address : "";
-  useUserRealtime(userId);
-
-  const { data: vms, isLoading, error } = useVms(api, 1);
-  const { data: balance } = useBalance(api);
-
-  const days = runwayDays(balance?.balance, balance?.hourlyBurnRate);
-  const lowRunway = days != null && days < LOW_RUNWAY_DAYS;
-
-  // "Active" = anything not inert/terminal — what's actually costing money or
-  // on its way to. Uses the same normaliser as everything else.
-  const active = (vms?.items ?? []).filter((v) => {
-    const s = normalizeStatus(v.status);
-    return s !== "Deleted" && s !== "Stopped" && s !== "Suspended";
-  });
-
-  // Zero burn is ambiguous, so resolve it here rather than in formatRunway:
-  // nothing deployed is a normal empty state; workloads running with no burn
-  // means they aren't being billed (rate never stamped, or billing paused) —
-  // a genuinely different thing, and worth saying out loud.
-  const runwayLabel = !balance
-    ? "—"
-    : days != null
-      ? formatRunway(days)
-      : active.length > 0
-        ? "Not currently billed"
-        : "No active workloads";
-
-  return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Overview</h1>
-        {/* Deploy promoted: primary and always available (DESIGN §2). */}
-        <Link className="btn-primary" to="/deploy">Deploy a workload</Link>
-      </header>
-
-      {/* ── Money ─────────────────────────────────────────────────────── */}
-      <Card title="Balance">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "var(--space-4)", padding: "18px" }}>
-          <div>
-            <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Available</div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xl)", marginTop: 2 }}>
-              {balance ? `${balance.balance.toFixed(2)} ${balance.tokenSymbol}` : "—"}
-            </div>
-            {!!balance?.pendingDeposits && (
-              <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 2 }}>
-                +{balance.pendingDeposits.toFixed(2)} confirming
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Burn rate</div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xl)", marginTop: 2 }}>
-              {balance ? `${balance.hourlyBurnRate.toFixed(4)}/hr` : "—"}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Runway</div>
-            <div style={{
-              fontFamily: "var(--font-mono)", fontSize: "var(--text-xl)", marginTop: 2,
-              color: lowRunway ? "var(--danger)" : "var(--text-primary)",
-            }}>
-              {runwayLabel}
-            </div>
-          </div>
+function CardHead({ title, cap }: { title: string; cap?: string }) {
+    return (
+        <div className="card-h">
+            <span className="card-title">{title}</span>
+            {cap && <span className="card-cap">{cap}</span>}
         </div>
+    );
+}
 
-        {lowRunway && (
-          <div role="alert" style={{ padding: "12px 18px", borderTop: "1px solid var(--border-subtle)", background: "var(--warning-soft)", color: "var(--warning)", fontSize: "var(--text-sm)" }}>
-            Your workloads will stop when the balance runs out.{" "}
-            {/* LEGACY BRIDGE (v1) — the on-chain deposit flow is not ported to
-                React yet. See features/deploy/DEPLOY_MIGRATION.md. */}
-            <a href="/" style={{ color: "inherit", textDecoration: "underline" }}>Add funds in the classic app</a>.
-          </div>
-        )}
-      </Card>
+export function DashboardPage() {
+    const { api, wallet } = useAuth();
+    const mobile = useMediaQuery(MOBILE_QUERY);
 
-      {/* ── Workloads ─────────────────────────────────────────────────── */}
-      <Card title="Running workloads" count={vms ? `${active.length} of ${vms.totalCount}` : undefined}>
-        {isLoading && <p style={{ padding: 18, color: "var(--text-secondary)" }}>Loading…</p>}
+    // OwnerId IS the wallet address; the server broadcasts to user:{OwnerId}.
+    const address = wallet.kind === "connected" ? wallet.address : "";
+    useUserRealtime(address);
 
-        {error && (
-          <p role="alert" style={{ padding: 18, color: "var(--danger)" }}>
-            {(error as AppError)?.message ?? "Couldn't load your workloads."}
-          </p>
-        )}
+    const { data: vms, isLoading, error } = useVms(api, 1);
+    const { data: balance } = useBalance(api);
+    const { data: nodes } = useMyNodes(api, address || undefined);
+    const { data: templates } = useMyTemplates(api);
 
-        {!isLoading && !error && active.length === 0 && (
-          <div style={{ padding: "28px 18px", textAlign: "center" }}>
-            <p style={{ color: "var(--text-secondary)" }}>Nothing running yet.</p>
-            <Link className="btn-primary" to="/deploy" style={{ marginTop: 12 }}>
-              Deploy your first workload
-            </Link>
-          </div>
-        )}
+    const sym = balance?.tokenSymbol ?? "USDC";
+    const days = runwayDays(balance?.balance, balance?.hourlyBurnRate);
+    const lowRunway = days != null && days < LOW_RUNWAY_DAYS;
+    const runwayFill = days == null ? 100 : Math.max(3, Math.min(100, (days / 30) * 100));
 
-        {active.map((vm) => (
-          <div key={vm.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr auto", gap: 12, alignItems: "center", padding: "15px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-              <StatusDot status={vm.status} />
-              <Link to={`/vms/${vm.id}`} style={{ color: "var(--text-accent)", fontWeight: "var(--fw-medium)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {vm.name}
-              </Link>
-              {vm.complianceHold && (
-                <span style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>held</span>
-              )}
+    const active = (vms?.items ?? []).filter((v) => {
+        const s = normalizeStatus(v.status);
+        return s !== "Deleted" && s !== "Stopped" && s !== "Suspended";
+    });
+
+    const runwayLabel = !balance
+        ? "—"
+        : days != null ? formatRunway(days)
+            : active.length > 0 ? "Not currently billed"
+                : "No active workloads";
+
+    const nodeCount = nodes?.length ?? 0;
+    const nodesReady = (nodes ?? []).filter((n) => n.isSchedulingReady).length;
+    const tplCount = templates?.length ?? 0;
+    const tplPublished = (templates ?? []).filter((t) => statusNum(t.status) === 1).length;
+
+    return (
+        <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
+            <div>
+                <span className="eyebrow muted">Dashboard</span>
+                <h1 style={{ margin: "var(--space-2) 0 0" }}>Overview</h1>
             </div>
-            <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-              {vmStatusBadge(vm.status).label}
-            </div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-secondary)", textAlign: "right" }}>
-              {vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB
-            </div>
-          </div>
-        ))}
 
-        {vms && vms.totalCount > active.length && (
-          <div style={{ padding: "12px 18px" }}>
-            <Link to="/vms" style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>
-              View all {vms.totalCount} virtual machines →
-            </Link>
-          </div>
-        )}
-      </Card>
-    </section>
-  );
+            {/* Primary row: workloads (wide) + balance (narrow); stacks on mobile. */}
+            <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1.7fr 1fr", gap: "var(--space-4)", alignItems: "start" }}>
+                {/* ── Running workloads ─────────────────────────────────────────── */}
+                <section className="card">
+                    <CardHead title="Running workloads" cap={vms ? `${active.length} of ${vms.totalCount}` : undefined} />
+
+                    {isLoading && <p style={{ padding: 18, color: "var(--text-secondary)" }}>Loading…</p>}
+                    {error && <p role="alert" style={{ padding: 18, color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load your workloads."}</p>}
+                    {!isLoading && !error && active.length === 0 && (
+                        <div style={{ padding: "28px 18px", textAlign: "center" }}>
+                            <p style={{ color: "var(--text-secondary)" }}>Nothing running yet.</p>
+                            <Link className="btn-primary" to="/marketplace/platform-general/deploy" style={{ marginTop: 12, display: "inline-block" }}>Deploy your first workload</Link>
+                        </div>
+                    )}
+
+                    {active.map((vm) => (
+                        <div key={vm.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "1 1 180px" }}>
+                                <StatusDot status={vm.status} />
+                                <Link to={`/vms/${vm.id}`} style={{ color: "var(--text-accent)", fontWeight: "var(--fw-medium)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vm.name}</Link>
+                                {vm.complianceHold && <span style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>held</span>}
+                            </div>
+                            <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{vmStatusBadge(vm.status).label}</span>
+                            <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginLeft: "auto" }}>{vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB</span>
+                        </div>
+                    ))}
+
+                    {vms && vms.totalCount > active.length && (
+                        <div style={{ padding: "12px 18px" }}>
+                            <Link to="/vms" style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>View all {vms.totalCount} virtual machines →</Link>
+                        </div>
+                    )}
+                </section>
+
+                {/* ── Balance ───────────────────────────────────────────────────── */}
+                <section className="card">
+                    <CardHead title="Balance" cap="escrow" />
+                    <div style={{ padding: "var(--space-4) 18px", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+                        <div>
+                            <span className="mono" style={{ fontSize: 30, fontWeight: 500, letterSpacing: "var(--track-snug)" }}>{balance ? balance.balance.toFixed(2) : "—"}</span>
+                            <span style={{ color: "var(--text-secondary)", marginLeft: 8 }}>{sym}</span>
+                            {!!balance?.pendingDeposits && <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 2 }}>+{balance.pendingDeposits.toFixed(2)} confirming</div>}
+                        </div>
+
+                        <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)", color: lowRunway ? "var(--warning)" : "var(--text-secondary)", marginBottom: 7 }}>
+                                <span>Runway at current usage</span>
+                                <span>{runwayLabel}</span>
+                            </div>
+                            {days != null && (
+                                <div className="track"><div className="track-fill" style={{ width: `${runwayFill}%`, background: lowRunway ? "var(--warning-solid)" : "var(--accent)" }} /></div>
+                            )}
+                        </div>
+
+                        <Link className="btn-ghost" to="/wallet" style={{ width: "100%", justifyContent: "center" }}>Add funds</Link>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
+                            <Tile label="Burn rate" value={balance ? `${balance.hourlyBurnRate.toFixed(4)}/hr` : "—"} />
+                            <Tile label="Unpaid usage" value={balance ? `${balance.unpaidUsage.toFixed(2)} ${sym}` : "—"} tone={(balance?.unpaidUsage ?? 0) > 0 ? "var(--warning)" : undefined} />
+                        </div>
+                    </div>
+
+                    {lowRunway && (
+                        <div role="alert" style={{ padding: "12px 18px", borderTop: "1px solid var(--border-subtle)", background: "var(--warning-soft)", color: "var(--warning)", fontSize: "var(--text-sm)" }}>
+                            Your workloads will stop when the balance runs out. <Link to="/wallet" style={{ color: "inherit", textDecoration: "underline" }}>Add funds</Link>.
+                        </div>
+                    )}
+                </section>
+            </div>
+
+            {/* Secondary row: nodes + templates summaries; stacks on mobile. */}
+            <div style={{ display: "grid", gridTemplateColumns: mobile ? "1fr" : "1fr 1fr", gap: "var(--space-4)" }}>
+                <SummaryCard
+                    title="My Nodes" to="/nodes" linkLabel="Manage nodes →"
+                    value={String(nodeCount)} sub={nodeCount === 0 ? "You aren't running any nodes" : `${nodesReady} scheduling-ready`}
+                    empty={nodeCount === 0}
+                />
+                <SummaryCard
+                    title="My Templates" to="/marketplace?tab=mine" linkLabel="Open My Templates →"
+                    value={String(tplCount)} sub={tplCount === 0 ? "You haven't authored any templates" : `${tplPublished} published`}
+                    empty={tplCount === 0}
+                />
+            </div>
+        </section>
+    );
+}
+
+function Tile({ label, value, tone }: { label: string; value: string; tone?: string }) {
+    return (
+        <div style={{ background: "var(--surface-1)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", padding: "var(--space-3)" }}>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>{label}</div>
+            <div className="mono" style={{ fontSize: "var(--text-md)", fontWeight: 500, marginTop: 3, color: tone ?? "var(--text-primary)" }}>{value}</div>
+        </div>
+    );
+}
+
+function SummaryCard({ title, value, sub, to, linkLabel, empty }: { title: string; value: string; sub: string; to: string; linkLabel: string; empty: boolean }) {
+    return (
+        <section className="card">
+            <CardHead title={title} />
+            <div style={{ padding: "var(--space-4) 18px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "var(--space-3)", flexWrap: "wrap" }}>
+                <div>
+                    <div className="mono" style={{ fontSize: "var(--text-2xl)", fontWeight: 600, letterSpacing: "var(--track-snug)", color: empty ? "var(--text-tertiary)" : "var(--text-primary)" }}>{value}</div>
+                    <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginTop: 2 }}>{sub}</div>
+                </div>
+                <Link to={to} style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", whiteSpace: "nowrap" }}>{linkLabel}</Link>
+            </div>
+        </section>
+    );
 }

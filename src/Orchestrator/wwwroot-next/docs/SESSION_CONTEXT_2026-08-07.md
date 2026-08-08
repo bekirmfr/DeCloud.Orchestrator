@@ -160,6 +160,26 @@ Three follow-on pieces after the docs were squared:
   `theme-native-controls-fix.patch` (+42/−0). **Lesson: an un-styled native control follows the
   OS `color-scheme`, not `data-theme` — pin it.**
 
+### H. Meridian design system + shell/IA rework + responsive shell
+The pages were flat next to `meridian-reference.html` because the reference's visual language was
+never in the app. **(1)** Ported the **Meridian component layer** into `global.css`: display-face
+`h1/h2/h3` (Space Grotesk, already loaded via `@fontsource`), `.eyebrow`, `.card`/`.card-h`/
+`.card-row`, haloed `.status-dot` (ok/warn/err/idle), tinted `.badge`, `.track`, `.stat`, `.mono`
+(tabular), `.btn-ink`. Vocabulary matches the pages. Re-skinned **My Templates** + **Wallet**
+(screenshot-verified). **(2) Shell → top bar** (`AppShell`): replaced the sidebar with the
+reference's horizontal bar (wordmark+dot + nav left; balance chip + ProfileMenu + Deploy right).
+**(3) Nav IA regrouped** (owner spec): top-level **Overview · Marketplace · Nodes · Virtual
+Machines · Admin ▾**; **Wallet** off-nav (balance chip → modal → full wallet); **SSH Keys +
+Settings** → ProfileMenu; **My Templates** → Marketplace tab (`?tab=mine`, `embedded` prop;
+`/my-templates`→redirect); Admin → dropdown. **(4) Mobile:** inline styles can't carry `@media`,
+so responsiveness branches in JS — new **`useMediaQuery`** hook; under 880 px the top bar → a
+hamburger + slide-in drawer. **Shell is responsive; per-page responsiveness owed** (Deploy/template
+form/Marketplace/Wallet/Nodes/VMs) + the landing (separate SSG surface). Build-verified (unused
+`ReactNode` import caught); device/click verification of the top bar + drawer still owed.
+**★ New constraint: never assume an inline-styled layout is responsive — branch on `useMediaQuery`
+or use fluid `flex-wrap`/`auto-fit` grids; compose from the Meridian `global.css` layer, not
+hand-rolled inline card/label styles.**
+
 ## 3. Hard constraints to honor while building (do not relitigate)
 
 Still-valid invariants from prior sessions (see `SESSION_CONTEXT_2026-07-25.md` §3), plus what
@@ -239,6 +259,9 @@ this session added (★):
 - **Settings** shipped (theme toggle live; language deferred to i18n) — pending owner build-verify.
 - **✅ Node secret over-exposure — RESOLVED** via the fail-closed `NodeView` DTO (workstream F),
   verified in production; the two interim scrub patches are superseded.
+- **Per-page mobile responsiveness owed** (workstream H fixed only the shell). Each page needs a
+  pass for fixed widths / wide rows / long mono / form grids — Deploy + template form first. Not
+  render-verifiable in the sandbox; test on a device. Landing (SSG) is a separate surface.
 - **Wire when wanted:** `withdrawBalance` (unused-deposit withdrawal, ABI present); repo-deploy
   `?node=` pinning; `templateForm` unit tests owed.
 - **HardwareInventory shape** — get it (from `DeCloud.Shared`) to show CPU/GPU on node detail.

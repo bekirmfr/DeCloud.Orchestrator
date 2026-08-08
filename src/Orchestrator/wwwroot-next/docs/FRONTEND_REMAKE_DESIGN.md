@@ -100,6 +100,8 @@ AUTHENTICATED (client-rendered SPA)
       └─ /app/admin/nodes/:id           Node inspect (full + remove)
 ```
 
+**Shell & nav — reworked to a top bar (2026-08-07).** The routes above are unchanged, but the shell is **no longer a sidebar**: `AppShell` is the Meridian reference's horizontal **top bar** (wordmark + glowing dot + nav on the left; balance chip + ProfileMenu + Deploy on the right; content in a centred column). Nav IA regrouped — top-level nav is **Overview · Marketplace · Nodes · Virtual Machines · Admin ▾**. Relocated *off* the nav: **Wallet** (reached via the balance chip → `BalanceModal` → "View full wallet"); **SSH Keys** + **Settings** (under the ProfileMenu dropdown); **My Templates** (now the **Marketplace "My Templates" tab**, `?tab=mine`, mirroring the Nodes tabs — `/my-templates` list redirects there). Admin pages sit under the **Admin ▾** dropdown. **Responsive:** the app is inline-styled (no `@media`), so under 880 px the top bar collapses to a hamburger → slide-in drawer via a `useMediaQuery` hook — the *shell* is responsive; per-page responsiveness is still owed (§14).
+
 **Modal-vs-route rule** (write it down so future pages inherit it): *a resource you can link to gets a URL (deep-linkable, back-safe, reload-safe); a transient action is an overlay — a modal-route when the back button should close it and the URL should survive reload, a plain local-state overlay for quick confirms that shouldn't survive reload (e.g. the one-time password reveal).*
 
 **Admin guard consolidation:** the scattered imperative `if (!tokenHasAdminRole) showPage('dashboard')` becomes one guard on the `/app/admin` layout (non-admin → `/app`). Server still enforces; visibility-only.
