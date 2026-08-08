@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode, CSSProperties } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   useMyNodes, useNodeSearch, nodeStatus, SORT_OPTIONS,
@@ -136,7 +136,13 @@ function NodeSearch() {
 export function NodesPage() {
   const { session } = useAuth();
   const wallet = session.kind === "authenticated" ? session.address : undefined;
-    const [tab, setTab] = useState<"mine" | "search">("search");
+    const [params, setParams] = useSearchParams();
+  const tab: "mine" | "search" = params.get("tab") === "mine" ? "mine" : "search";
+  const setTab = (t: "mine" | "search") => {
+    const next = new URLSearchParams(params);
+    if (t === "mine") next.set("tab", "mine"); else next.delete("tab");
+    setParams(next, { replace: true });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 820 }}>
