@@ -75,7 +75,7 @@ export function DashboardPage() {
     const nodeCount = nodes?.length ?? 0;
     const nodesReady = (nodes ?? []).filter((n) => n.isSchedulingReady).length;
     const nodesHosted = (nodes ?? []).reduce((a, n) => a + (n.totalVmsHosted ?? 0), 0);
-    const nodesEarned = Object.values(nodeEarnings ?? {}).reduce((a, e) => a + (e.total ?? 0), 0);
+    const nodesUnsettled = Object.values(nodeEarnings ?? {}).reduce((a, e) => a + (e.pending ?? 0), 0);
     const tplCount = templates?.length ?? 0;
     const tplPublished = (templates ?? []).filter((t) => statusNum(t.status) === 1).length;
     const tplDeploys = Object.values(tplEarnings ?? {}).reduce((a, e) => a + (e.deploys ?? 0), 0);
@@ -190,7 +190,7 @@ export function DashboardPage() {
                     stats={[
                         { label: "Scheduling-ready", value: `${nodesReady} of ${nodeCount}` },
                         { label: "VMs hosted", value: String(nodesHosted) },
-                        { label: "Earned", value: `${nodesEarned.toFixed(2)} ${sym}` },
+                        { label: "Unsettled", value: `${nodesUnsettled.toFixed(2)} ${sym}` },
                     ]}
                 />
                 <SummaryCard
