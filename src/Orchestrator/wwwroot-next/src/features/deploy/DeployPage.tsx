@@ -2,11 +2,11 @@ import { useState, useMemo, useEffect } from "react";
 import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
-  useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
-  allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
-  REPLICATION_FACTORS, REPLICATION_VALUES,
-  CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary, usePlatformVariables,
-  usePriceEstimate, useDebounced,
+    useTemplate, useImages, useBalance, useDeploy, runwayDays, fundGateBlocks, specFloorErrors,
+    allowedQualityTiers, allowedBandwidthTiers, QUALITY_TIERS, BANDWIDTH_TIERS, GPU_MODES,
+    REPLICATION_FACTORS, REPLICATION_VALUES,
+    CUSTOMIZE_HINTS, resolveImageId, useConstraintVocabulary, usePlatformVariables,
+    usePriceEstimate, useDebounced,
 } from "./useDeploy";
 import { ConstraintBuilder } from "./ConstraintBuilder";
 import { shouldRevealPassword, type DeployResult, type TemplateSpec, type Constraint } from "./deploySubmit";
@@ -22,34 +22,34 @@ import type { AppError } from "../../api/errors";
 
 
 function Card({ title, children }: { title?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-card)", padding: "var(--space-5)", background: "var(--surface-1)" }}>
-      {title && <h2 style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "var(--space-3)" }}>{title}</h2>}
-      {children}
-    </div>
-  );
+    return (
+        <div style={{ border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-card)", padding: "var(--space-5)", background: "var(--surface-1)" }}>
+            {title && <h2 style={{ fontFamily: "var(--font-display)", fontSize: "var(--text-md)", fontWeight: 600, marginBottom: "var(--space-3)" }}>{title}</h2>}
+            {children}
+        </div>
+    );
 }
 
 /** Label/value line used by the cost breakdown. Local to this page — the VM
  *  cockpit has its own; sharing one would couple two unrelated layouts. */
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "4px 0" }}>
-      <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{k}</span>
-      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{v}</span>
-    </div>
-  );
+    return (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "4px 0" }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{k}</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{v}</span>
+        </div>
+    );
 }
 
 // Per-selector help text ("description cards" parity — copy lives in
 // CUSTOMIZE_HINTS). Sits inside the .field flex column, so it stacks under the
 // control with the field's own gap.
 function Hint({ children }: { children: React.ReactNode }) {
-  return (
-    <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>
-      {children}
-    </span>
-  );
+    return (
+        <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>
+            {children}
+        </span>
+    );
 }
 
 /**
@@ -58,528 +58,530 @@ function Hint({ children }: { children: React.ReactNode }) {
  * hash-equivalent; this is the single moment the user can copy it.
  */
 function PasswordReveal({ vmId, vmName, password, onDone }: { vmId: string; vmName: string; password: string; onDone: () => void }) {
-  const { api, signMessage } = useAuth();
-  const [copied, setCopied] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [saveErr, setSaveErr] = useState("");
+    const { api, signMessage } = useAuth();
+    const [copied, setCopied] = useState(false);
+    const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+    const [saveErr, setSaveErr] = useState("");
 
-  async function save() {
-    setSaveState("saving"); setSaveErr("");
-    try {
-      await saveEncryptedPassword(api, vmId, password, signMessage);
-      setSaveState("saved");
-    } catch (e) {
-      setSaveState("error");
-      setSaveErr((e as Error)?.message || "Couldn’t save — you can still copy the password now.");
+    async function save() {
+        setSaveState("saving"); setSaveErr("");
+        try {
+            await saveEncryptedPassword(api, vmId, password, signMessage);
+            setSaveState("saved");
+        } catch (e) {
+            setSaveState("error");
+            setSaveErr((e as Error)?.message || "Couldn’t save — you can still copy the password now.");
+        }
     }
-  }
 
-  return (
-    <div className="dialog-overlay" style={{ display: "grid", placeItems: "center" }}>
-      <div className="dialog-content" style={{ position: "static", transform: "none" }}>
-        <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Save your password</h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-          This is <strong>{vmName}</strong>’s root password. Copy it now, or save it encrypted to your
-          account so you can reveal it later (with a wallet signature) — for example to open a terminal.
-        </p>
-        <code style={{ display: "block", padding: "var(--space-3)", background: "var(--canvas)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", fontFamily: "var(--font-mono)", fontSize: 14, wordBreak: "break-all" }}>
-          {password}
-        </code>
-        {saveState === "saved" && (
-          <p style={{ color: "var(--success)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
-            Saved — you can reveal it later from the VM page.
-          </p>
-        )}
-        {saveState === "error" && (
-          <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{saveErr}</p>
-        )}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: "var(--space-3)" }}>
-          <button
-            className="btn-ghost"
-            onClick={() => { navigator.clipboard?.writeText(password); setCopied(true); }}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-          {saveState !== "saved" && (
-            <button className="btn-ghost" onClick={save} disabled={saveState === "saving"}>
-              {saveState === "saving" ? "Sign in wallet…" : "Save encrypted (sign)"}
-            </button>
-          )}
-          <button className="btn-primary" onClick={onDone}>
-            {saveState === "saved" ? "Continue" : "I’ve saved it — continue"}
-          </button>
+    return (
+        <div className="dialog-overlay" style={{ display: "grid", placeItems: "center" }}>
+            <div className="dialog-content" style={{ position: "static", transform: "none" }}>
+                <h2 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Save your password</h2>
+                <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+                    This is <strong>{vmName}</strong>’s root password. Copy it now, or save it encrypted to your
+                    account so you can reveal it later (with a wallet signature) — for example to open a terminal.
+                </p>
+                <code style={{ display: "block", padding: "var(--space-3)", background: "var(--canvas)", border: "1px solid var(--border-strong)", borderRadius: "var(--radius)", fontFamily: "var(--font-mono)", fontSize: 14, wordBreak: "break-all" }}>
+                    {password}
+                </code>
+                {saveState === "saved" && (
+                    <p style={{ color: "var(--success)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>
+                        Saved — you can reveal it later from the VM page.
+                    </p>
+                )}
+                {saveState === "error" && (
+                    <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: "var(--space-2)" }}>{saveErr}</p>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", marginTop: "var(--space-3)" }}>
+                    <button
+                        className="btn-ghost"
+                        onClick={() => { navigator.clipboard?.writeText(password); setCopied(true); }}
+                    >
+                        {copied ? "Copied" : "Copy"}
+                    </button>
+                    {saveState !== "saved" && (
+                        <button className="btn-ghost" onClick={save} disabled={saveState === "saving"}>
+                            {saveState === "saving" ? "Sign in wallet…" : "Save encrypted (sign)"}
+                        </button>
+                    )}
+                    <button className="btn-primary" onClick={onDone}>
+                        {saveState === "saved" ? "Continue" : "I’ve saved it — continue"}
+                    </button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 }
 
 export function DeployPage() {
-  const { slug = "" } = useParams();
-  const [searchParams] = useSearchParams();
-  const pinnedNodeId = searchParams.get("node") || undefined;
-  const { api } = useAuth();
-  const pinnedNode = useNode(api, pinnedNodeId ?? "");
-  const navigate = useNavigate();
+    const { slug = "" } = useParams();
+    const [searchParams] = useSearchParams();
+    const pinnedNodeId = searchParams.get("node") || undefined;
+    const { api } = useAuth();
+    const pinnedNode = useNode(api, pinnedNodeId ?? "");
+    const navigate = useNavigate();
 
-  const { data: template, isLoading, error } = useTemplate(api, slug);
-  const { data: platformVars } = usePlatformVariables(api);
+    const { data: template, isLoading, error } = useTemplate(api, slug);
+    const { data: platformVars } = usePlatformVariables(api);
 
-  // User-facing variables to collect at deploy: declared Static variables whose
-  // resolverKey/name has NO platform resolver (dynamics + resolver-backed statics
-  // are filled by the platform). Values ride to the renderer via EnvironmentVariables
-  // → the custom:cloud-init-vars label → UserSuppliedStatics.
-  const userVars = useMemo(() => {
-    const platformStatics = new Set((platformVars?.static ?? []).map((s) => s.toLowerCase()));
-    return (template?.variables ?? []).filter((v) => {
-      const isStatic = v.kind === 0 || String(v.kind).toLowerCase() === "static";
-      if (!isStatic) return false;
-      const key = (v.resolverKey || v.name).toLowerCase();
-      return !platformStatics.has(key);
-    });
-  }, [template?.variables, platformVars?.static]);
-  const [varValues, setVarValues] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (userVars.length === 0) return;
-    setVarValues((prev) => {
-      const next = { ...prev };
-      for (const v of userVars) if (!(v.name in next)) next[v.name] = v.defaultValue ?? "";
-      return next;
-    });
-  }, [userVars]);
-  const missingRequired = userVars.filter((v) => v.required && !(varValues[v.name] ?? "").trim());
-  const { data: balance } = useBalance(api);
-  const deploy = useDeploy(api);
-  const images = useImages(api);
-  const vocab = useConstraintVocabulary(api);
+    // User-facing variables to collect at deploy: declared Static variables whose
+    // resolverKey/name has NO platform resolver (dynamics + resolver-backed statics
+    // are filled by the platform). Values ride to the renderer via EnvironmentVariables
+    // → the custom:cloud-init-vars label → UserSuppliedStatics.
+    const userVars = useMemo(() => {
+        const platformStatics = new Set((platformVars?.static ?? []).map((s) => s.toLowerCase()));
+        return (template?.variables ?? []).filter((v) => {
+            const isStatic = v.kind === 0 || String(v.kind).toLowerCase() === "static";
+            if (!isStatic) return false;
+            const key = (v.resolverKey || v.name).toLowerCase();
+            return !platformStatics.has(key);
+        });
+    }, [template?.variables, platformVars?.static]);
+    const [varValues, setVarValues] = useState<Record<string, string>>({});
+    useEffect(() => {
+        if (userVars.length === 0) return;
+        setVarValues((prev) => {
+            const next = { ...prev };
+            for (const v of userVars) if (!(v.name in next)) next[v.name] = v.defaultValue ?? "";
+            return next;
+        });
+    }, [userVars]);
+    const missingRequired = userVars.filter((v) => v.required && !(varValues[v.name] ?? "").trim());
+    const { data: balance } = useBalance(api);
+    const deploy = useDeploy(api);
+    const images = useImages(api);
+    const vocab = useConstraintVocabulary(api);
 
-  const [vmName, setVmName] = useState("");
-  const [customize, setCustomize] = useState(false);
-  // Spec inputs live in human units (cores / GB); converted on submit.
-  const [cpu, setCpu] = useState<number | null>(null);
-  const [memGb, setMemGb] = useState<number | null>(null);
-  const [diskGb, setDiskGb] = useState<number | null>(null);
-  const [replication, setReplication] = useState<number | null>(null);
-  const [tier, setTier] = useState<number | null>(null);
-  const [bwTier, setBwTier] = useState<number | null>(null);
-  const [gpuMode, setGpuMode] = useState<number | null>(null);
-  const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
-  const [osImage, setOsImage] = useState<string>("");   // "" = platform default (server fills)
-  const [userConstraints, setUserConstraints] = useState<Constraint[]>([]);
-  const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
+    const [vmName, setVmName] = useState("");
+    const [customize, setCustomize] = useState(false);
+    // Spec inputs live in human units (cores / GB); converted on submit.
+    const [cpu, setCpu] = useState<number | null>(null);
+    const [memGb, setMemGb] = useState<number | null>(null);
+    const [diskGb, setDiskGb] = useState<number | null>(null);
+    const [replication, setReplication] = useState<number | null>(null);
+    const [tier, setTier] = useState<number | null>(null);
+    const [bwTier, setBwTier] = useState<number | null>(null);
+    const [gpuMode, setGpuMode] = useState<number | null>(null);
+    const [gpuVramGb, setGpuVramGb] = useState<number | null>(null);
+    const [osImage, setOsImage] = useState<string>("");   // "" = platform default (server fills)
+    const [userConstraints, setUserConstraints] = useState<Constraint[]>([]);
+    const [revealed, setRevealed] = useState<{ vmId: string; password: string } | null>(null);
 
-  // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
-  // Rules of Hooks: the hook count has to be identical on every render. The
-  // early returns below run only while the template loads, so any hook placed
-  // after them is skipped on the loading render and called on the loaded one —
-  // React then throws #310 ("rendered more hooks than during the previous
-  // render"). It presents as intermittent because a cached template skips the
-  // loading render entirely. Hence `template` is optional here and narrowed
-  // only after the guards.
-  const rec = template?.recommendedSpec;
-  const gbOf = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
+    // ── EVERYTHING ABOVE THE EARLY RETURNS MUST BE UNCONDITIONAL ────────────
+    // Rules of Hooks: the hook count has to be identical on every render. The
+    // early returns below run only while the template loads, so any hook placed
+    // after them is skipped on the loading render and called on the loaded one —
+    // React then throws #310 ("rendered more hooks than during the previous
+    // render"). It presents as intermittent because a cached template skips the
+    // loading render entirely. Hence `template` is optional here and narrowed
+    // only after the guards.
+    const rec = template?.recommendedSpec;
+    const gbOf = (b?: number) => (b ? Math.round(b / 1024 ** 3) : 0);
 
-  // Seeded from RecommendedSpec until the user edits a field.
-  const effCpu = cpu ?? rec?.virtualCpuCores ?? 1;
-  const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
-  const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
-  // Valid set {0,1,3,5}; seed from the template's recommendation, else ephemeral.
-  const effReplication = replication ?? rec?.replicationFactor ?? 0;
+    // Seeded from RecommendedSpec until the user edits a field.
+    const effCpu = cpu ?? rec?.virtualCpuCores ?? 1;
+    const effMemGb = memGb ?? gbOf(rec?.memoryBytes) ?? 1;
+    const effDiskGb = diskGb ?? gbOf(rec?.diskBytes) ?? 10;
+    // Valid set {0,1,3,5}; seed from the template's recommendation, else ephemeral.
+    const effReplication = replication ?? rec?.replicationFactor ?? 0;
 
-  const qualityOptions = allowedQualityTiers(template?.minimumSpec?.qualityTier);
-  const bandwidthOptions = allowedBandwidthTiers(template?.minimumSpec?.bandwidthTier);
-  const effTier = tier ?? rec?.qualityTier ?? qualityOptions[qualityOptions.length - 1] ?? 1;
-  const effBwTier = bwTier ?? rec?.bandwidthTier ?? template?.defaultBandwidthTier ?? bandwidthOptions[0] ?? 0;
-  const effGpuMode = gpuMode ?? rec?.gpuMode ?? template?.defaultGpuMode ?? 0;
-  const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
-  // Legacy rule: the GPU section appears only when the template needs one.
-  const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
-  // Pinned template image wins over the user's pick; "" → omit (server default).
-  const effImageId = resolveImageId(rec?.imageId, osImage);
-  // Template-imposed constraints (read-only) travel with RecommendedSpec; the
-  // user's own are appended. Both must be forwarded in customSpec (customising
-  // otherwise drops the template's, same rule as bandwidth/GPU/image).
-  const lockedConstraints = rec?.constraints ?? [];
-  const allConstraints = [...lockedConstraints, ...userConstraints];
+    const qualityOptions = allowedQualityTiers(template?.minimumSpec?.qualityTier);
+    const bandwidthOptions = allowedBandwidthTiers(template?.minimumSpec?.bandwidthTier);
+    const effTier = tier ?? rec?.qualityTier ?? qualityOptions[qualityOptions.length - 1] ?? 1;
+    const effBwTier = bwTier ?? rec?.bandwidthTier ?? template?.defaultBandwidthTier ?? bandwidthOptions[0] ?? 0;
+    const effGpuMode = gpuMode ?? rec?.gpuMode ?? template?.defaultGpuMode ?? 0;
+    const effGpuVramGb = gpuVramGb ?? gbOf(rec?.gpuVramBytes) ?? 4;
+    // Legacy rule: the GPU section appears only when the template needs one.
+    const showGpu = !!template?.requiresGpu || (template?.defaultGpuMode ?? 0) !== 0;
+    // Pinned template image wins over the user's pick; "" → omit (server default).
+    const effImageId = resolveImageId(rec?.imageId, osImage);
+    // Template-imposed constraints (read-only) travel with RecommendedSpec; the
+    // user's own are appended. Both must be forwarded in customSpec (customising
+    // otherwise drops the template's, same rule as bandwidth/GPU/image).
+    const lockedConstraints = rec?.constraints ?? [];
+    const allConstraints = [...lockedConstraints, ...userConstraints];
 
-  const customSpec: TemplateSpec = {
-    virtualCpuCores: effCpu,
-    memoryBytes: effMemGb * 1024 ** 3,
-    diskBytes: effDiskGb * 1024 ** 3,
-    replicationFactor: effReplication,
-    // Carry the rest of RecommendedSpec forward, then re-apply the template
-    // defaults the server would have applied itself had we sent no customSpec.
-    ...(effImageId ? { imageId: effImageId } : {}),
-    qualityTier: effTier,
-    bandwidthTier: effBwTier,
-    gpuMode: effGpuMode,
-    ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
-    ...(allConstraints.length ? { constraints: allConstraints } : {}),
-  };
+    const customSpec: TemplateSpec = {
+        virtualCpuCores: effCpu,
+        memoryBytes: effMemGb * 1024 ** 3,
+        diskBytes: effDiskGb * 1024 ** 3,
+        replicationFactor: effReplication,
+        // Carry the rest of RecommendedSpec forward, then re-apply the template
+        // defaults the server would have applied itself had we sent no customSpec.
+        ...(effImageId ? { imageId: effImageId } : {}),
+        qualityTier: effTier,
+        bandwidthTier: effBwTier,
+        gpuMode: effGpuMode,
+        ...(showGpu && effGpuMode !== 0 ? { gpuVramBytes: effGpuVramGb * 1024 ** 3, requiresGpu: true } : {}),
+        ...(allConstraints.length ? { constraints: allConstraints } : {}),
+    };
 
-  // Price the spec that would actually be deployed — the recommended one when
-  // not customising. Debounced so typing in a number field doesn't fire per
-  // keystroke; the JSON doubles as the query key and the request body. Null
-  // until the template arrives, which the query treats as disabled.
-  const specJson = template ? JSON.stringify(customSpec) : null;
-  const debouncedSpecJson = useDebounced(specJson, 400);
-  const { data: price } = usePriceEstimate(api, debouncedSpecJson);
+    // Price the spec that would actually be deployed — the recommended one when
+    // not customising. Debounced so typing in a number field doesn't fire per
+    // keystroke; the JSON doubles as the query key and the request body. Null
+    // until the template arrives, which the query treats as disabled.
+    const specJson = template ? JSON.stringify(customSpec) : null;
+    const debouncedSpecJson = useDebounced(specJson, 400);
+    const { data: price } = usePriceEstimate(api, debouncedSpecJson);
 
-  /** Drop every spec edit so the eff* values fall back to RecommendedSpec. */
-  function resetSpec() {
-    setCpu(null); setMemGb(null); setDiskGb(null);
-    setReplication(null);
-    setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
-    setOsImage("");
-    setUserConstraints([]);
-  }
-
-  /**
-   * Leaving Customize must RESET, not just hide. One-click sends no customSpec,
-   * so the server deploys RecommendedSpec — but the price estimate is built from
-   * the eff* values. Keeping stale edits behind a collapsed panel would show a
-   * cost the deploy wouldn't actually incur.
-   */
-  function toggleCustomize() {
-    if (customize) resetSpec();
-    setCustomize(!customize);
-  }
-
-  // ── Hooks done. Guards and plain derivations from here. ─────────────────
-  if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
-  if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
-  if (!template) return null;
-
-  const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
-
-  // Runway and the fund gate run off the SERVER-COMPUTED cost. The template's
-  // own estimatedCostPerHour is frequently unset (platform-general has none),
-  // which is why the page used to say "no hourly cost estimate" for a VM that
-  // does in fact cost money.
-  const costPerHour = price?.hourlyTotal ?? template.estimatedCostPerHour;
-  const days = runwayDays(balance?.balance, costPerHour);
-  const blocked = fundGateBlocks(balance?.balance, costPerHour);
-
-  async function onDeploy() {
-    const name = vmName.trim();
-    if (!name) return;
-    if (missingRequired.length > 0) return;
-    // Collect user-facing variable values (user override or declared default).
-    const environmentVariables: Record<string, string> = {};
-    for (const v of userVars) {
-      const val = (varValues[v.name] ?? v.defaultValue ?? "").trim();
-      if (val) environmentVariables[v.name] = val;
+    /** Drop every spec edit so the eff* values fall back to RecommendedSpec. */
+    function resetSpec() {
+        setCpu(null); setMemGb(null); setDiskGb(null);
+        setReplication(null);
+        setTier(null); setBwTier(null); setGpuMode(null); setGpuVramGb(null);
+        setOsImage("");
+        setUserConstraints([]);
     }
-    const hasEnv = Object.keys(environmentVariables).length > 0;
-    try {
-      // One-click: NO customSpec — the server applies template.RecommendedSpec.
-      const result: DeployResult = await deploy.mutateAsync({
-        templateId: template!.id,
-        // One-click sends NO customSpec so the server applies RecommendedSpec
-        // *and* its own template defaults. Customise sends a full spec — which
-        // is why customSpec above re-applies bandwidth/GPU explicitly.
-        payload: { vmName: name, customSpec: customize ? customSpec : null, environmentVariables: hasEnv ? environmentVariables : undefined, nodeId: pinnedNodeId },
-      });
-      // Reveal only the human-readable generated password (legacy sniff).
-      if (shouldRevealPassword(result.password)) {
-        setRevealed({ vmId: result.vmId, password: result.password });
-      } else {
-        navigate(`/vms/${result.vmId}`);
-      }
-    } catch {
-      // Error surfaced below via deploy.error — nothing to do here.
+
+    /**
+     * Leaving Customize must RESET, not just hide. One-click sends no customSpec,
+     * so the server deploys RecommendedSpec — but the price estimate is built from
+     * the eff* values. Keeping stale edits behind a collapsed panel would show a
+     * cost the deploy wouldn't actually incur.
+     */
+    function toggleCustomize() {
+        if (customize) resetSpec();
+        setCustomize(!customize);
     }
-  }
 
-  return (
-    <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", maxWidth: 720 }}>
-      <div>
-        <Link to="/vms" style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>← VMs</Link>
-      </div>
+    // ── Hooks done. Guards and plain derivations from here. ─────────────────
+    if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading template…</p>;
+    if (error) return <p role="alert" style={{ color: "var(--danger)" }}>{(error as AppError)?.message ?? "Couldn't load this template."}</p>;
+    if (!template) return null;
 
-      <header>
-        <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Deploy {template.name}</h1>
-        {template.description && (
-          <p style={{ color: "var(--text-secondary)", marginTop: 4 }}>{template.description}</p>
-        )}
-        {pinnedNodeId && (
-          <p style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", marginTop: 8 }}>
-            Deploying to <strong>{pinnedNode.data?.name ?? "node"}</strong>{" "}
-            <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>{pinnedNodeId.slice(0, 8)}…{pinnedNodeId.slice(-4)}</code>
-          </p>
-        )}
-      </header>
+    const floorErrors = customize ? specFloorErrors(customSpec, template.minimumSpec) : [];
 
-      {/* Hard fund gate — intercept BEFORE the form (design §: don't let someone
+    // Runway and the fund gate run off the SERVER-COMPUTED cost. The template's
+    // own estimatedCostPerHour is frequently unset (platform-general has none),
+    // which is why the page used to say "no hourly cost estimate" for a VM that
+    // does in fact cost money.
+    const costPerHour = price?.hourlyTotal ?? template.estimatedCostPerHour;
+    const days = runwayDays(balance?.balance, costPerHour);
+    const blocked = fundGateBlocks(balance?.balance, costPerHour);
+
+    async function onDeploy() {
+        const name = vmName.trim();
+        if (!name) return;
+        if (missingRequired.length > 0) return;
+        // Collect user-facing variable values (user override or declared default).
+        const environmentVariables: Record<string, string> = {};
+        for (const v of userVars) {
+            const val = (varValues[v.name] ?? v.defaultValue ?? "").trim();
+            if (val) environmentVariables[v.name] = val;
+        }
+        const hasEnv = Object.keys(environmentVariables).length > 0;
+        try {
+            // One-click: NO customSpec — the server applies template.RecommendedSpec.
+            const result: DeployResult = await deploy.mutateAsync({
+                templateId: template!.id,
+                // One-click sends NO customSpec so the server applies RecommendedSpec
+                // *and* its own template defaults. Customise sends a full spec — which
+                // is why customSpec above re-applies bandwidth/GPU explicitly.
+                payload: { vmName: name, customSpec: customize ? customSpec : null, environmentVariables: hasEnv ? environmentVariables : undefined, nodeId: pinnedNodeId },
+            });
+            // Reveal only the human-readable generated password (legacy sniff).
+            if (shouldRevealPassword(result.password)) {
+                setRevealed({ vmId: result.vmId, password: result.password });
+            } else {
+                navigate(`/vms/${result.vmId}`);
+            }
+        } catch {
+            // Error surfaced below via deploy.error — nothing to do here.
+        }
+    }
+
+    return (
+        <section style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)", maxWidth: 720 }}>
+            <div>
+                <Link to="/vms" style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)" }}>← VMs</Link>
+            </div>
+
+            <header>
+                <h1 style={{ fontFamily: "var(--font-display)", fontWeight: 600 }}>Deploy {template.name}</h1>
+                {template.description && (
+                    <p style={{ color: "var(--text-secondary)", marginTop: 4 }}>{template.description}</p>
+                )}
+                {pinnedNodeId && (
+                    <p style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", marginTop: 8 }}>
+                        Deploying to <strong>{pinnedNode.data?.name ?? "node"}</strong>{" "}
+                        <code style={{ fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>{pinnedNodeId.slice(0, 8)}…{pinnedNodeId.slice(-4)}</code>
+                    </p>
+                )}
+            </header>
+
+            {/* Hard fund gate — intercept BEFORE the form (design §: don't let someone
           configure a deploy they can't pay for). Server also enforces. */}
-      {blocked ? (
-        <Card title="Add funds to deploy">
-          <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
-            Your available balance is {balance?.balance?.toFixed(2) ?? "0.00"} {balance?.tokenSymbol ?? "USDC"}.
-            Running this template costs about {costPerHour?.toFixed(4)} USDC/hour, so there’s no runway yet.
-          </p>
-          {/* LEGACY BRIDGE (v1, tracked debt — see DEPLOY_MIGRATION.md): the
+            {blocked ? (
+                <Card title="Add funds to deploy">
+                    <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
+                        Your available balance is {balance?.balance?.toFixed(2) ?? "0.00"} {balance?.tokenSymbol ?? "USDC"}.
+                        Running this template costs about {costPerHour?.toFixed(4)} USDC/hour, so there’s no runway yet.
+                    </p>
+                    {/* LEGACY BRIDGE (v1, tracked debt — see DEPLOY_MIGRATION.md): the
               on-chain deposit flow is not ported to React. Send the user to the
               legacy app's top-up rather than fork an ethers escrow deposit. */}
-          <a className="btn-primary" href="/" style={{ marginTop: "var(--space-3)", display: "inline-block" }}>
-            Add funds in the classic app
-          </a>
-        </Card>
-      ) : (
-        <>
-          <Card title="What you’ll get">
-            {/* The EFFECTIVE spec — what will actually be deployed — so editing a
+                    <a className="btn-primary" href="/" style={{ marginTop: "var(--space-3)", display: "inline-block" }}>
+                        Add funds in the classic app
+                    </a>
+                </Card>
+            ) : (
+                <>
+                    <Card title="What you’ll get">
+                        {/* The EFFECTIVE spec — what will actually be deployed — so editing a
                 Customize field updates this summary and the price together. */}
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>
-              {effCpu} vCPU · {effMemGb} GB RAM · {effDiskGb} GB disk
-            </p>
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 4 }}>
-              {QUALITY_TIERS[effTier]?.split(" — ")[0] ?? "Standard"} ·{" "}
-              {BANDWIDTH_TIERS[effBwTier]?.split(" — ")[0] ?? "Unmetered"} bandwidth
-              {showGpu && effGpuMode !== 0 ? ` · ${GPU_MODES[effGpuMode]?.split(" — ")[0]} GPU` : ""}
-            </p>
-            {price && (
-              <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--border-subtle)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Estimated cost</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--fw-medium)" }}>
-                    {price.hourlyTotal.toFixed(4)} {price.currency}/hr
-                  </span>
-                </div>
-                <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 4, fontFamily: "var(--font-mono)" }}>
-                  ≈ {price.dailyTotal.toFixed(2)}/day · {price.monthlyTotal.toFixed(2)}/month
-                </p>
-                {/* The estimator prices at PLATFORM DEFAULT rates (nodePricing: null).
+                        <p style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>
+                            {effCpu} vCPU · {effMemGb} GB RAM · {effDiskGb} GB disk
+                        </p>
+                        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 4 }}>
+                            {QUALITY_TIERS[effTier]?.split(" — ")[0] ?? "Standard"} ·{" "}
+                            {BANDWIDTH_TIERS[effBwTier]?.split(" — ")[0] ?? "Unmetered"} bandwidth
+                            {showGpu && effGpuMode !== 0 ? ` · ${GPU_MODES[effGpuMode]?.split(" — ")[0]} GPU` : ""}
+                        </p>
+                        {price && (
+                            <div style={{ marginTop: "var(--space-3)", paddingTop: "var(--space-3)", borderTop: "1px solid var(--border-subtle)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                                    <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>Estimated cost</span>
+                                    <span style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--fw-medium)" }}>
+                                        {price.hourlyTotal.toFixed(4)} {price.currency}/hr
+                                    </span>
+                                </div>
+                                <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 4, fontFamily: "var(--font-mono)" }}>
+                                    ≈ {price.dailyTotal.toFixed(2)}/day · {price.monthlyTotal.toFixed(2)}/month
+                                </p>
+                                {/* The estimator prices at PLATFORM DEFAULT rates (nodePricing: null).
                     A node whose operator set higher rates bills more — never below floor. */}
-                <p style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 4 }}>
-                  At platform default rates. The node you land on may charge more.
-                </p>
-              </div>
-            )}
+                                <p style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)", marginTop: 4 }}>
+                                    At platform default rates. The node you land on may charge more.
+                                </p>
+                            </div>
+                        )}
 
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 8 }}>
-              {days != null
-                ? `Runs about ${days < 1 ? "less than a day" : `${Math.floor(days)} days`} on your current balance.`
-                : "Estimating cost…"}
-            </p>
-          </Card>
+                        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginTop: 8 }}>
+                            {days != null
+                                ? `Runs about ${days < 1 ? "less than a day" : `${Math.floor(days)} days`} on your current balance.`
+                                : "Estimating cost…"}
+                        </p>
+                    </Card>
 
-          <Card>
-            <label className="field">
-              <span>Name your VM</span>
-              <input
-                value={vmName}
-                onChange={(e) => setVmName(e.target.value)}
-                placeholder="my-vm"
-                maxLength={40}
-              />
-            </label>
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 6 }}>
-              A unique suffix is appended automatically.
-            </p>
+                    <Card>
+                        <label className="field">
+                            <span>Name your VM</span>
+                            <input
+                                value={vmName}
+                                onChange={(e) => setVmName(e.target.value)}
+                                placeholder="my-vm"
+                                maxLength={40}
+                            />
+                        </label>
+                        <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 6 }}>
+                            A unique suffix is appended automatically.
+                        </p>
 
-            {userVars.length > 0 && (
-              <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-                <strong style={{ fontSize: "var(--text-sm)" }}>Configuration</strong>
-                {userVars.map((v) => (
-                  <label key={v.name} className="field">
-                    <span>{v.name}{v.required ? " *" : ""}</span>
-                    <input
-                      value={varValues[v.name] ?? ""}
-                      onChange={(e) => setVarValues((prev) => ({ ...prev, [v.name]: e.target.value }))}
-                      placeholder={v.defaultValue || ""}
-                    />
-                    {v.description && (
-                      <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>{v.description}</span>
-                    )}
-                  </label>
-                ))}
-                {missingRequired.length > 0 && (
-                  <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
-                    Fill the required fields (*) before deploying.
-                  </p>
-                )}
-              </div>
-            )}
+                        {userVars.length > 0 && (
+                            <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+                                <strong style={{ fontSize: "var(--text-sm)" }}>Configuration</strong>
+                                {userVars.map((v) => (
+                                    <label key={v.name} className="field">
+                                        <span>{v.name}{v.required ? " *" : ""}</span>
+                                        <input
+                                            value={varValues[v.name] ?? ""}
+                                            onChange={(e) => setVarValues((prev) => ({ ...prev, [v.name]: e.target.value }))}
+                                            placeholder={v.defaultValue || ""}
+                                        />
+                                        {v.description && (
+                                            <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", lineHeight: 1.4 }}>{v.description}</span>
+                                        )}
+                                    </label>
+                                ))}
+                                {missingRequired.length > 0 && (
+                                    <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
+                                        Fill the required fields (*) before deploying.
+                                    </p>
+                                )}
+                            </div>
+                        )}
 
-            {deploy.error && (
-              <p role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: 12 }}>
-                {(deploy.error as AppError)?.message ?? "Deployment failed."}
-              </p>
-            )}
+                        {deploy.error && (
+                            <p role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: 12 }}>
+                                {(deploy.error as AppError)?.message ?? "Deployment failed."}
+                            </p>
+                        )}
 
-            <div style={{ marginTop: "var(--space-4)" }}>
-              <button
-                className="btn-ghost"
-                onClick={toggleCustomize}
-                aria-expanded={customize}
-                style={{ fontSize: "var(--text-sm)" }}
-              >
-                {customize ? "Use recommended settings" : "Customize resources"}
-              </button>
-            </div>
+                        <div style={{ marginTop: "var(--space-4)" }}>
+                            <button
+                                className="btn-ghost"
+                                onClick={toggleCustomize}
+                                aria-expanded={customize}
+                                style={{ fontSize: "var(--text-sm)" }}
+                            >
+                                {customize ? "Use recommended settings" : "Customize resources"}
+                            </button>
+                        </div>
 
-            {customize && (
-              <div style={{ marginTop: "var(--space-4)", display: "grid", gap: "var(--space-3)" }}>
-                <label className="field">
-                  <span>vCPU</span>
-                  <input type="number" min={1} max={32} value={effCpu}
-                    onChange={(e) => setCpu(Number(e.target.value))} />
-                  <Hint>{CUSTOMIZE_HINTS.cpu}</Hint>
-                </label>
-                <label className="field">
-                  <span>Memory (GB)</span>
-                  <input type="number" min={1} max={128} value={effMemGb}
-                    onChange={(e) => setMemGb(Number(e.target.value))} />
-                  <Hint>{CUSTOMIZE_HINTS.memory}</Hint>
-                </label>
-                <label className="field">
-                  <span>Disk (GB)</span>
-                  <input type="number" min={10} max={2000} value={effDiskGb}
-                    onChange={(e) => setDiskGb(Number(e.target.value))} />
-                  <Hint>{CUSTOMIZE_HINTS.disk}</Hint>
-                </label>
+                        {customize && (
+                            <div style={{ marginTop: "var(--space-4)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))", gap: "var(--space-3)", alignItems: "start" }}>
+                                <label className="field">
+                                    <span>vCPU</span>
+                                    <input type="number" min={1} max={32} value={effCpu}
+                                        onChange={(e) => setCpu(Number(e.target.value))} />
+                                    <Hint>{CUSTOMIZE_HINTS.cpu}</Hint>
+                                </label>
+                                <label className="field">
+                                    <span>Memory (GB)</span>
+                                    <input type="number" min={1} max={128} value={effMemGb}
+                                        onChange={(e) => setMemGb(Number(e.target.value))} />
+                                    <Hint>{CUSTOMIZE_HINTS.memory}</Hint>
+                                </label>
+                                <label className="field">
+                                    <span>Disk (GB)</span>
+                                    <input type="number" min={10} max={2000} value={effDiskGb}
+                                        onChange={(e) => setDiskGb(Number(e.target.value))} />
+                                    <Hint>{CUSTOMIZE_HINTS.disk}</Hint>
+                                </label>
 
-                <label className="field">
-                  <span>Durability</span>
-                  <select value={effReplication} onChange={(e) => setReplication(Number(e.target.value))}>
-                    {REPLICATION_VALUES.map((r) => (
-                      <option key={r} value={r}>{REPLICATION_FACTORS[r]}</option>
-                    ))}
-                  </select>
-                  <Hint>{CUSTOMIZE_HINTS.replication}</Hint>
-                </label>
+                                <label className="field">
+                                    <span>Durability</span>
+                                    <select value={effReplication} onChange={(e) => setReplication(Number(e.target.value))}>
+                                        {REPLICATION_VALUES.map((r) => (
+                                            <option key={r} value={r}>{REPLICATION_FACTORS[r]}</option>
+                                        ))}
+                                    </select>
+                                    <Hint>{CUSTOMIZE_HINTS.replication}</Hint>
+                                </label>
 
-                <label className="field">
-                  <span>Operating system</span>
-                  {rec?.imageId ? (
-                    <>
-                      <input
-                        type="text"
-                        readOnly
-                        value={images.data?.find((im) => im.id === rec?.imageId)?.name ?? rec?.imageId ?? ""}
-                      />
-                      <Hint>Set by this template — its setup is specific to this OS.</Hint>
-                    </>
-                  ) : (
-                    <>
-                      <select value={osImage} onChange={(e) => setOsImage(e.target.value)}>
-                        <option value="">Recommended default</option>
-                        {(images.data ?? []).map((im) => (
-                          <option key={im.id} value={im.id}>
-                            {im.name || `${im.osName ?? ""} ${im.version ?? ""}`.trim() || im.id}
-                          </option>
-                        ))}
-                      </select>
-                      <Hint>{CUSTOMIZE_HINTS.os}</Hint>
-                    </>
-                  )}
-                </label>
+                                <label className="field">
+                                    <span>Operating system</span>
+                                    {rec?.imageId ? (
+                                        <>
+                                            <input
+                                                type="text"
+                                                readOnly
+                                                value={images.data?.find((im) => im.id === rec?.imageId)?.name ?? rec?.imageId ?? ""}
+                                            />
+                                            <Hint>Set by this template — its setup is specific to this OS.</Hint>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <select value={osImage} onChange={(e) => setOsImage(e.target.value)}>
+                                                <option value="">Recommended default</option>
+                                                {(images.data ?? []).map((im) => (
+                                                    <option key={im.id} value={im.id}>
+                                                        {im.name || `${im.osName ?? ""} ${im.version ?? ""}`.trim() || im.id}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <Hint>{CUSTOMIZE_HINTS.os}</Hint>
+                                        </>
+                                    )}
+                                </label>
 
-                <label className="field">
-                  <span>Performance tier</span>
-                  <select value={effTier} onChange={(e) => setTier(Number(e.target.value))}>
-                    {qualityOptions.map((t) => (
-                      <option key={t} value={t}>{QUALITY_TIERS[t]}</option>
-                    ))}
-                  </select>
-                  <Hint>{CUSTOMIZE_HINTS.tier}</Hint>
-                </label>
+                                <label className="field">
+                                    <span>Performance tier</span>
+                                    <select value={effTier} onChange={(e) => setTier(Number(e.target.value))}>
+                                        {qualityOptions.map((t) => (
+                                            <option key={t} value={t}>{QUALITY_TIERS[t]}</option>
+                                        ))}
+                                    </select>
+                                    <Hint>{CUSTOMIZE_HINTS.tier}</Hint>
+                                </label>
 
-                <label className="field">
-                  <span>Bandwidth</span>
-                  <select value={effBwTier} onChange={(e) => setBwTier(Number(e.target.value))}>
-                    {bandwidthOptions.map((t) => (
-                      <option key={t} value={t}>{BANDWIDTH_TIERS[t]}</option>
-                    ))}
-                  </select>
-                  <Hint>{CUSTOMIZE_HINTS.bandwidth}</Hint>
-                </label>
+                                <label className="field">
+                                    <span>Bandwidth</span>
+                                    <select value={effBwTier} onChange={(e) => setBwTier(Number(e.target.value))}>
+                                        {bandwidthOptions.map((t) => (
+                                            <option key={t} value={t}>{BANDWIDTH_TIERS[t]}</option>
+                                        ))}
+                                    </select>
+                                    <Hint>{CUSTOMIZE_HINTS.bandwidth}</Hint>
+                                </label>
 
-                {showGpu && (
-                  <>
-                    <label className="field">
-                      <span>GPU</span>
-                      <select value={effGpuMode} onChange={(e) => setGpuMode(Number(e.target.value))}>
-                        {[0, 1, 2].map((m) => (
-                          <option key={m} value={m}>{GPU_MODES[m]}</option>
-                        ))}
-                      </select>
-                      <Hint>{CUSTOMIZE_HINTS.gpu}</Hint>
-                    </label>
-                    {effGpuMode !== 0 && (
-                      <label className="field">
-                        {/* Passthrough dedicates the whole GPU, so VRAM is only a
+                                {showGpu && (
+                                    <>
+                                        <label className="field">
+                                            <span>GPU</span>
+                                            <select value={effGpuMode} onChange={(e) => setGpuMode(Number(e.target.value))}>
+                                                {[0, 1, 2].map((m) => (
+                                                    <option key={m} value={m}>{GPU_MODES[m]}</option>
+                                                ))}
+                                            </select>
+                                            <Hint>{CUSTOMIZE_HINTS.gpu}</Hint>
+                                        </label>
+                                        {effGpuMode !== 0 && (
+                                            <label className="field">
+                                                {/* Passthrough dedicates the whole GPU, so VRAM is only a
                             scheduling/billing estimate; Proxied enforces it as a quota. */}
-                        <span>
-                          {effGpuMode === 1 ? "Min. VRAM (GB) — estimate only" : "VRAM (GB)"}
-                        </span>
-                        <input type="number" min={1} max={80} value={effGpuVramGb}
-                          onChange={(e) => setGpuVramGb(Number(e.target.value))} />
-                      </label>
-                    )}
-                  </>
-                )}
+                                                <span>
+                                                    {effGpuMode === 1 ? "Min. VRAM (GB) — estimate only" : "VRAM (GB)"}
+                                                </span>
+                                                <input type="number" min={1} max={80} value={effGpuVramGb}
+                                                    onChange={(e) => setGpuVramGb(Number(e.target.value))} />
+                                            </label>
+                                        )}
+                                    </>
+                                )}
 
-                <ConstraintBuilder
-                  vocab={vocab.data}
-                  locked={lockedConstraints}
-                  value={userConstraints}
-                  onChange={setUserConstraints}
-                />
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                    <ConstraintBuilder
+                                        vocab={vocab.data}
+                                        locked={lockedConstraints}
+                                        value={userConstraints}
+                                        onChange={setUserConstraints}
+                                    />
+                                </div>
 
-                {template.minimumSpec && (
-                  <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)" }}>
-                    Minimum for this template: {template.minimumSpec.virtualCpuCores ?? 1} vCPU ·{" "}
-                    {gbOf(template.minimumSpec.memoryBytes)} GB · {gbOf(template.minimumSpec.diskBytes)} GB
-                  </p>
-                )}
+                                {template.minimumSpec && (
+                                    <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", gridColumn: "1 / -1" }}>
+                                        Minimum for this template: {template.minimumSpec.virtualCpuCores ?? 1} vCPU ·{" "}
+                                        {gbOf(template.minimumSpec.memoryBytes)} GB · {gbOf(template.minimumSpec.diskBytes)} GB
+                                    </p>
+                                )}
 
-                {price && (
-                  <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)" }}>
-                    <Row k="CPU" v={`${price.cpuCost.toFixed(4)} ${price.currency}/hr`} />
-                    <Row k="Memory" v={`${price.memoryCost.toFixed(4)} ${price.currency}/hr`} />
-                    <Row k="Storage" v={`${price.storageCost.toFixed(4)} ${price.currency}/hr`} />
-                    <Row k="Bandwidth" v={`${price.bandwidthCost.toFixed(4)} ${price.currency}/hr`} />
-                    {price.gpuCost > 0 && <Row k="GPU" v={`${price.gpuCost.toFixed(4)} ${price.currency}/hr`} />}
-                    {price.replicationCost > 0 && <Row k="Replication" v={`${price.replicationCost.toFixed(4)} ${price.currency}/hr`} />}
-                    <Row k="Total" v={`${price.hourlyTotal.toFixed(4)} ${price.currency}/hr`} />
-                  </div>
-                )}
+                                {price && (
+                                    <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)", gridColumn: "1 / -1" }}>
+                                        <Row k="CPU" v={`${price.cpuCost.toFixed(4)} ${price.currency}/hr`} />
+                                        <Row k="Memory" v={`${price.memoryCost.toFixed(4)} ${price.currency}/hr`} />
+                                        <Row k="Storage" v={`${price.storageCost.toFixed(4)} ${price.currency}/hr`} />
+                                        <Row k="Bandwidth" v={`${price.bandwidthCost.toFixed(4)} ${price.currency}/hr`} />
+                                        {price.gpuCost > 0 && <Row k="GPU" v={`${price.gpuCost.toFixed(4)} ${price.currency}/hr`} />}
+                                        {price.replicationCost > 0 && <Row k="Replication" v={`${price.replicationCost.toFixed(4)} ${price.currency}/hr`} />}
+                                        <Row k="Total" v={`${price.hourlyTotal.toFixed(4)} ${price.currency}/hr`} />
+                                    </div>
+                                )}
 
-                {floorErrors.map((err) => (
-                  <p key={err} role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)" }}>{err}</p>
-                ))}
-              </div>
+                                {floorErrors.map((err) => (
+                                    <p key={err} role="alert" style={{ color: "var(--danger)", fontSize: "var(--text-sm)", gridColumn: "1 / -1" }}>{err}</p>
+                                ))}
+                            </div>
+                        )}
+
+                        <div style={{ display: "flex", gap: 8, marginTop: "var(--space-4)" }}>
+                            <button
+                                className="btn-primary"
+                                onClick={onDeploy}
+                                disabled={!vmName.trim() || deploy.isPending || floorErrors.length > 0 || missingRequired.length > 0}
+                            >
+                                {deploy.isPending
+                                    ? "Deploying…"
+                                    : customize
+                                        ? "Deploy with these settings"
+                                        : "Deploy with recommended settings"}
+                            </button>
+                        </div>
+                        {/* TODO (later): template Variables (user-facing env vars). Needs the
+                platform-vs-user variable discriminator grounded first. */}
+                    </Card>
+                </>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: "var(--space-4)" }}>
-              <button
-                className="btn-primary"
-                onClick={onDeploy}
-                disabled={!vmName.trim() || deploy.isPending || floorErrors.length > 0 || missingRequired.length > 0}
-              >
-                {deploy.isPending
-                  ? "Deploying…"
-                  : customize
-                    ? "Deploy with these settings"
-                    : "Deploy with recommended settings"}
-              </button>
-            </div>
-            {/* TODO (later): template Variables (user-facing env vars). Needs the
-                platform-vs-user variable discriminator grounded first. */}
-          </Card>
-        </>
-      )}
-
-      {revealed && (
-        <PasswordReveal
-          vmId={revealed.vmId}
-          vmName={vmName.trim()}
-          password={revealed.password}
-          onDone={() => navigate(`/vms/${revealed.vmId}`)}
-        />
-      )}
-    </section>
-  );
+            {revealed && (
+                <PasswordReveal
+                    vmId={revealed.vmId}
+                    vmName={vmName.trim()}
+                    password={revealed.password}
+                    onDone={() => navigate(`/vms/${revealed.vmId}`)}
+                />
+            )}
+        </section>
+    );
 }

@@ -180,6 +180,27 @@ form/Marketplace/Wallet/Nodes/VMs) + the landing (separate SSG surface). Build-v
 or use fluid `flex-wrap`/`auto-fit` grids; compose from the Meridian `global.css` layer, not
 hand-rolled inline card/label styles.**
 
+### I. Node earnings — three-layer model + reconciliation (2026-08-08)
+Node earnings read 0 on every node view while templates read fine, because the views read
+`Node.PendingPayout`/`TotalEarned` — **document fields that are never written** in the backend.
+**Three accounting layers, don't conflate them:** (1) **ledger — unsettled** (per-node, node-only) =
+`GetNodePendingPayoutAsync` = Σ `NodeShare` over `UnsettledUsage` where `!SettledOnChain`
+(in-memory, no Atlas); (2) **escrow — settled/withdrawable** (per-*address*, node+template combined) =
+`readOnChain` → `escrow.nodePendingPayouts(addr)`, shown in the Wallet as "Withdrawable"; (3) **node
+doc fields — dead** (always 0). **★ Only UNSETTLED is reliable per-node** — settled records are
+marked `SettledOnChain` then pruned (`StatePruningService`), so ledger `settled`/`total` decay to 0.
+Built `GET /api/nodes/my/earnings` (owner-scoped `{nodeId:{pending,settled,total}}`) + `useMyNodeEarnings`;
+**FE uses `pending` only, labeled "Unsettled"** on the card / detail / Overview; NodeDetailPage was
+wired off the dead fields; `NodeSections.NodeEarnings` went presentational (`{unsettled}`); admin
+inspect shows "—" (endpoint owner-scoped). Wallet shows **Withdrawable (escrow)** + **Unsettled
+(accruing, node ledger)** side by side. **Escrow withdrawable stays address-level in the Wallet —
+not forced per-node** (can't attribute; combines templates). Owner-verified: card/Overview 1.90 =
+MSI pending 1.8984; Wallet withdrawable 13.36. **★ Constraint: node earnings = settlement ledger,
+not the doc; per-node only *unsettled* is cheaply knowable; *withdrawable*/*lifetime* are on-chain
+(address-level) or an Atlas query; never label three different accounting layers the same.**
+Open: optional API trim (drop unreliable `settled`/`total`); rename the `NodeEarnings` type vs the
+component; admin-scoped earnings endpoint.
+
 ## 3. Hard constraints to honor while building (do not relitigate)
 
 Still-valid invariants from prior sessions (see `SESSION_CONTEXT_2026-07-25.md` §3), plus what
