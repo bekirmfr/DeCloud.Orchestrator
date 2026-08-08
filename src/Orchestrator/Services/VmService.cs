@@ -581,7 +581,8 @@ public class VmService : IVmService
                 UpdatedAt: v.UpdatedAt,
                 TemplateId: v.TemplateId,
                 Services: v.Services,
-                ComplianceHold: v.ComplianceHold
+                ComplianceHold: v.ComplianceHold,
+                HourlyRateCrypto: v.BillingInfo?.HourlyRateCrypto ?? 0m
             );
         });
 

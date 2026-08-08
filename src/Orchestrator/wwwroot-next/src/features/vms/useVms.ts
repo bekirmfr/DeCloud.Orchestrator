@@ -13,7 +13,8 @@ export interface VmSpec {
   virtualCpuCores: number;
   memoryBytes: number;
   diskBytes: number;
-  // (gpuMode, qualityTier, etc. exist server-side; add when a view needs them)
+  gpuMode?: string | number;      // GpuMode enum (0 = None) — already serialized in `spec`
+  qualityTier?: string | number;  // QualityTier enum — already serialized in `spec`
 }
 
 export interface VmSummary {
@@ -28,6 +29,7 @@ export interface VmSummary {
   updatedAt: string;
   templateId?: string | null;
   complianceHold: boolean;
+  hourlyRateCrypto?: number;   // per-VM burn (0 until a node is scheduled)
 }
 
 export interface PagedResult<T> {

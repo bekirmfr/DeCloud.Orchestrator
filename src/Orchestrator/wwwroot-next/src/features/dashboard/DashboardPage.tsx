@@ -5,6 +5,7 @@ import { vmStatusBadge, normalizeStatus, type BadgeTone } from "../vms/vmStatus"
 import { useBalance, runwayDays, formatRunway, LOW_RUNWAY_DAYS } from "../billing/useBalance";
 import { useMyNodes, useAllNodes } from "../nodes/useNodes";
 import { useMyTemplates, statusNum } from "../templates/useTemplates";
+import { QUALITY_TIERS, enumNum } from "../templates/templateForm";
 import { useUserRealtime } from "../../realtime/useUserRealtime";
 import { useMediaQuery, MOBILE_QUERY } from "../../app/useMediaQuery";
 import type { AppError } from "../../api/errors";
@@ -99,6 +100,10 @@ export function DashboardPage() {
                     {active.map((vm) => {
                         const host = vm.nodeId ? nodeById.get(vm.nodeId) : undefined;
                         const locality = host ? [host.locality?.region, host.name].filter(Boolean).join(" · ") : null;
+                        const badge = vmStatusBadge(vm.status);
+                        const gpuOn = enumNum(vm.spec.gpuMode, 0) !== 0;
+                        const tier = gpuOn ? "GPU" : (QUALITY_TIERS.find(([n]) => n === enumNum(vm.spec.qualityTier, 0))?.[1] ?? null);
+                        const rate = vm.hourlyRateCrypto;
                         return (
                             <div key={vm.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "14px 18px", borderBottom: "1px solid var(--border-subtle)" }}>
                                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, flex: "1 1 200px" }}>
@@ -106,13 +111,18 @@ export function DashboardPage() {
                                     <div style={{ minWidth: 0 }}>
                                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                             <Link to={`/vms/${vm.id}`} style={{ color: "var(--text-accent)", fontWeight: "var(--fw-medium)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{vm.name}</Link>
+                                            {/* dot conveys "running"; only spell out transitional/error states */}
+                                            {badge.tone !== "active" && <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{badge.label}</span>}
                                             {vm.complianceHold && <span style={{ fontSize: "var(--text-xs)", color: "var(--warning)" }}>held</span>}
                                         </div>
                                         {locality && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 1 }}>{locality}</div>}
                                     </div>
                                 </div>
-                                <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>{vmStatusBadge(vm.status).label}</span>
-                                <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginLeft: "auto" }}>{vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                    {tier && <span className={`badge ${gpuOn ? "accent" : "neutral"}`}>{tier}</span>}
+                                    <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>{vm.spec.virtualCpuCores} vCPU · {gib(vm.spec.memoryBytes)} GB</span>
+                                    {rate != null && rate > 0 && <span className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", minWidth: 88, textAlign: "right" }}>≈ {rate.toFixed(4)}/hr</span>}
+                                </div>
                             </div>
                         );
                     })}
@@ -192,8 +202,8 @@ function SummaryCard({ title, value, sub, to, linkLabel, empty }: { title: strin
             <CardHead title={title} />
             <div style={{ padding: "var(--space-4) 18px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "var(--space-3)", flexWrap: "wrap" }}>
                 <div>
-                    <div className="mono" style={{ fontSize: "var(--text-2xl)", fontWeight: 600, letterSpacing: "var(--track-snug)", color: empty ? "var(--text-tertiary)" : "var(--text-primary)" }}>{value}</div>
-                    <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginTop: 2 }}>{sub}</div>
+                    {!empty && <div className="mono" style={{ fontSize: "var(--text-2xl)", fontWeight: 600, letterSpacing: "var(--track-snug)" }}>{value}</div>}
+                    <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginTop: empty ? 0 : 2 }}>{sub}</div>
                 </div>
                 <Link to={to} style={{ color: "var(--text-accent)", fontSize: "var(--text-sm)", whiteSpace: "nowrap" }}>{linkLabel}</Link>
             </div>

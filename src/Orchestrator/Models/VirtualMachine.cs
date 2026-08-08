@@ -651,7 +651,8 @@ public record VmSummaryDto(
     DateTime UpdatedAt,
     string? TemplateId = null,
     List<VmServiceModel>? Services = null,
-    bool ComplianceHold = false
+    bool ComplianceHold = false,
+    decimal HourlyRateCrypto = 0m
 );
 
 public record VmDetailResponse(
