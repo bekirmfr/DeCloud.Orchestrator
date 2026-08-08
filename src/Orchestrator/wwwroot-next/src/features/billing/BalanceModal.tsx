@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import { useBalance, useDepositInfo } from "./useBalance";
-import { withdrawEarnings, readOnChain, type TxProgress } from "./paymentClient";
+import { withdrawEarnings, readOnChain, addUsdcToWallet, type TxProgress } from "./paymentClient";
 import { DepositModal, ModalHeader, StatRow, overlay, modalCard, modalBody, infoCard, bigBtn } from "./DepositModal";
 
 // Compact balance popover from the sidebar card. Minimal info + the two on-chain
@@ -51,6 +51,19 @@ export function BalanceModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function onAddUsdc() {
+    if (!info) return;
+    setBusy(true); setErr(null); setProgress(null);
+    try {
+      const added = await addUsdcToWallet(await getSigner(), info, sym);
+      setProgress(added ? "USDC added to your wallet." : "The token may already be in your wallet.");
+    } catch (e) {
+      setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Couldn't add the token.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <div onClick={() => !busy && onClose()} style={overlay}>
@@ -75,6 +88,7 @@ export function BalanceModal({ onClose }: { onClose: () => void }) {
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                 <button className="btn-primary" style={bigBtn} disabled={busy} onClick={() => setDepositOpen(true)}>+ Deposit</button>
                 <button className="btn-ghost" style={bigBtn} disabled={busy || pendingPayout <= 0} onClick={onWithdraw}>Withdraw earnings</button>
+                <button className="btn-ghost" style={bigBtn} disabled={busy || !info} onClick={onAddUsdc}>Add USDC to wallet</button>
               </div>
             ) : (
               <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)", textAlign: "center" }}>Connect your wallet to deposit or withdraw.</p>

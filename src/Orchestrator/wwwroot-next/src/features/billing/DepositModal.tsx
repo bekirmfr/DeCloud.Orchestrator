@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/AuthProvider";
 import { useBalance, useDepositInfo } from "./useBalance";
-import { depositUSDC, type TxProgress } from "./paymentClient";
+import { depositUSDC, readWalletUsdc, type TxProgress } from "./paymentClient";
 
 // Shared, polished deposit modal — used by the Wallet page and the sidebar
 // balance modal. Structure mirrors the legacy deposit modal (info card → amount
@@ -35,11 +35,19 @@ export function ModalHeader({ icon, title, onClose, busy }: { icon: string; titl
 }
 
 export function DepositModal({ onClose }: { onClose: () => void }) {
-  const { api, getSigner } = useAuth();
+  const { api, wallet, getSigner } = useAuth();
   const qc = useQueryClient();
   const { data: info } = useDepositInfo(api);
   const { data: bal } = useBalance(api);
   const sym = bal?.tokenSymbol ?? "USDC";
+  const connected = wallet.kind === "connected";
+
+  const { data: walletUsdc } = useQuery({
+      queryKey: ["wallet-usdc", info?.usdcTokenAddress, connected ? wallet.address : null],
+      queryFn: async () => readWalletUsdc(await getSigner(), info!),
+      enabled: !!info && connected,
+      staleTime: 15_000,
+  });
 
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,6 +80,9 @@ export function DepositModal({ onClose }: { onClose: () => void }) {
         <div style={modalBody}>
           {info && (
             <div style={infoCard}>
+              {connected && (
+                <div style={infoRow}><span style={infoLabel}>In your wallet</span><strong className="mono">{(walletUsdc ?? 0).toFixed(2)} {sym}</strong></div>
+              )}
               <div style={infoRow}><span style={infoLabel}>Network</span><strong>{info.chainName}</strong></div>
               <div style={infoRow}><span style={infoLabel}>Contract</span>
                 {info.explorerUrl

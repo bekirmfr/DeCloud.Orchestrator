@@ -5,7 +5,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
     useBalance, useDepositInfo, runwayDays, formatRunway, LOW_RUNWAY_DAYS,
 } from "./useBalance";
-import { withdrawEarnings, readOnChain } from "./paymentClient";
+import { withdrawEarnings, readOnChain, addUsdcToWallet } from "./paymentClient";
 import { useMyNodeEarnings } from "../nodes/useNodes";
 import { DepositModal } from "./DepositModal";
 
@@ -94,6 +94,19 @@ export function WalletPage() {
         }
     }
 
+    async function onAddUsdc() {
+        if (!info) return;
+        setBusy(true); setErr(null); setProgress(null);
+        try {
+            const added = await addUsdcToWallet(await getSigner(), info, sym);
+            setProgress(added ? "USDC added to your wallet." : "The token may already be in your wallet.");
+        } catch (e) {
+            setErr(rejected(e) ? "Cancelled in wallet." : (e as Error).message || "Couldn't add the token.");
+        } finally {
+            setBusy(false);
+        }
+    }
+
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 760 }}>
             <div>
@@ -125,6 +138,7 @@ export function WalletPage() {
                             </div>
                             <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
                                 <button className="btn-primary" disabled={!connected || !info || busy} onClick={() => { setErr(null); setDepositOpen(true); }}>Deposit</button>
+                                {connected && <button className="btn-ghost" disabled={!info || busy} onClick={onAddUsdc}>Add USDC to wallet</button>}
                             </div>
                         </div>
 

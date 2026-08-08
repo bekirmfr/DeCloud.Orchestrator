@@ -181,3 +181,44 @@ export async function readOnChain(
     pendingPayout: Number(formatUnits(pp, decimals)),
   };
 }
+
+/** The connected wallet's spendable USDC — NOT the escrow deposit balance. */
+export async function readWalletUsdc(
+    signer: Signer,
+    config: DepositInfoResponse,
+): Promise<number> {
+    const { usdc } = contracts(signer, config);
+    const addr = await signer.getAddress();
+    const decimals = Number(await usdc.decimals());
+    return Number(formatUnits(await usdc.balanceOf(addr), decimals));
+}
+
+/**
+ * Register the USDC token in the user's wallet (EIP-747 wallet_watchAsset) so it
+ * shows up in their asset list. This adds VISIBILITY, not funds: the wallet shows
+ * a confirmation the user accepts or rejects — we cannot add anything without it.
+ * Returns true if the wallet reports the token was added.
+ */
+export async function addUsdcToWallet(
+    signer: Signer,
+    config: DepositInfoResponse,
+    symbol = "USDC",
+): Promise<boolean> {
+    // ethers' Provider type doesn't declare send(); the BrowserProvider under it
+    // does, and forwards object params straight to the wallet's EIP-1193 request().
+    const provider = signer.provider as unknown as
+        | { send(method: string, params: Record<string, unknown>): Promise<unknown> }
+        | null;
+    if (!provider || typeof provider.send !== "function") {
+        throw new Error("Your wallet doesn't support adding tokens automatically.");
+    }
+    const { usdc } = contracts(signer, config);
+    let decimals = 6;
+    try { decimals = Number(await usdc.decimals()); } catch { /* USDC is 6dp */ }
+    // wallet_watchAsset params are an OBJECT, not the usual array (EIP-747).
+    const added = await provider.send("wallet_watchAsset", {
+        type: "ERC20",
+        options: { address: config.usdcTokenAddress, symbol, decimals },
+    });
+    return added === true;
+}
