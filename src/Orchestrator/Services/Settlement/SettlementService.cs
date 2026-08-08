@@ -2,6 +2,7 @@
 using Orchestrator.Models;
 using Orchestrator.Models.Payment;
 using Orchestrator.Persistence;
+using static Orchestrator.Services.Settlement.ISettlementService;
 
 namespace Orchestrator.Services.Settlement;
 
@@ -301,6 +302,20 @@ public class SettlementService : ISettlementService
 
         return Task.FromResult(pendingPayout);
     }
+
+    /// <summary>
+    /// Node earnings split by settlement state (the node's NodeShare of usage):
+    /// pending (recorded, not yet settled on-chain) and settled. Total is the
+    /// sum. Computed from the in-memory usage cache — no Mongo scan.
+    /// </summary>
+    public Task<NodeEarnings> GetNodeEarningsAsync(string nodeId)
+    {
+        var forNode = _dataStore.UnsettledUsage.Values.Where(u => u.NodeId == nodeId).ToList();
+        var pending = forNode.Where(u => !u.SettledOnChain).Sum(u => u.NodeShare);
+        var settled = forNode.Where(u => u.SettledOnChain).Sum(u => u.NodeShare);
+        return Task.FromResult(new NodeEarnings(pending, settled));
+    }
+
 
     /// <summary>
     /// Get settlement history for a node

@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Orchestrator.Interfaces;
 using Orchestrator.Models;
 using Orchestrator.Persistence;
+using Orchestrator.Services.Settlement;
+//using static Orchestrator.Services.Settlement.ISettlementService;
 
 namespace Orchestrator.Controllers;
 
@@ -13,19 +15,46 @@ public class NodesController : ControllerBase
 {
     private readonly INodeService _nodeService;
     private readonly DataStore _dataStore;
+    private readonly ISettlementService _settlement;
     private readonly IVmService _vmService;
     private readonly ILogger<NodesController> _logger;
 
     public NodesController(
         INodeService nodeService,
         DataStore dataStore,
+        ISettlementService settlementService,
         IVmService vmService,
         ILogger<NodesController> logger)
     {
         _nodeService = nodeService;
         _dataStore = dataStore;
+        _settlement = settlementService;
         _vmService = vmService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Per-node earnings for the caller's OWN nodes: { nodeId: { pending, settled, total } }.
+    /// Node earnings live in the settlement ledger (NodeShare of usage), not on the
+    /// node document (whose PendingPayout/TotalEarned are never written) — this is the
+    /// only place the frontend can read a real number.
+    /// </summary>
+    [HttpGet("my/earnings")]
+    public async Task<ActionResult<ApiResponse<Dictionary<string, NodeEarnings>>>> GetMyNodeEarnings()
+    {
+        var wallet = User.FindFirst("wallet")?.Value;
+        if (string.IsNullOrEmpty(wallet))
+            return Unauthorized(ApiResponse<Dictionary<string, NodeEarnings>>.Fail("UNAUTHORIZED", "No wallet claim on token."));
+
+        var mine = _dataStore.ActiveNodes.Values
+            .Where(n => string.Equals(n.WalletAddress, wallet, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var result = new Dictionary<string, NodeEarnings>();
+        foreach (var n in mine)
+            result[n.Id] = await _settlement.GetNodeEarningsAsync(n.Id);
+
+        return Ok(ApiResponse<Dictionary<string, NodeEarnings>>.Ok(result));
     }
 
     // --- Owner-aware response projection ---------------------------------

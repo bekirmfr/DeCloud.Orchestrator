@@ -3,7 +3,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { useVms, type VmSummary } from "../vms/useVms";
 import { vmStatusBadge, normalizeStatus, type BadgeTone } from "../vms/vmStatus";
 import { useBalance, runwayDays, formatRunway, LOW_RUNWAY_DAYS } from "../billing/useBalance";
-import { useMyNodes, useAllNodes } from "../nodes/useNodes";
+import { useMyNodes, useAllNodes, useMyNodeEarnings } from "../nodes/useNodes";
 import { useMyTemplates, statusNum, useMyTemplateEarnings } from "../templates/useTemplates";
 import { QUALITY_TIERS, enumNum } from "../templates/templateForm";
 import { useUserRealtime } from "../../realtime/useUserRealtime";
@@ -50,6 +50,7 @@ export function DashboardPage() {
     // extra fetch. A workload runs on someone else's node, so the host isn't in
     // "my nodes"; map by id to show its locality on the row.
     const { data: allNodes } = useAllNodes(api);
+    const { data: nodeEarnings } = useMyNodeEarnings(api);
     const { data: templates } = useMyTemplates(api);
     const { data: tplEarnings } = useMyTemplateEarnings(api);
 
@@ -74,7 +75,7 @@ export function DashboardPage() {
     const nodeCount = nodes?.length ?? 0;
     const nodesReady = (nodes ?? []).filter((n) => n.isSchedulingReady).length;
     const nodesHosted = (nodes ?? []).reduce((a, n) => a + (n.totalVmsHosted ?? 0), 0);
-    const nodesEarned = (nodes ?? []).reduce((a, n) => a + (n.totalEarned ?? 0), 0);
+    const nodesEarned = Object.values(nodeEarnings ?? {}).reduce((a, e) => a + (e.total ?? 0), 0);
     const tplCount = templates?.length ?? 0;
     const tplPublished = (templates ?? []).filter((t) => statusNum(t.status) === 1).length;
     const tplDeploys = Object.values(tplEarnings ?? {}).reduce((a, e) => a + (e.deploys ?? 0), 0);

@@ -100,10 +100,25 @@ public interface ISettlementService
     Task<decimal> GetNodePendingPayoutAsync(string nodeId);
 
     /// <summary>
+    /// Node earnings split by settlement state (NodeShare of usage): Pending
+    /// (not yet settled on-chain) and Settled. Total = Pending + Settled.
+    /// </summary>
+    Task<NodeEarnings> GetNodeEarningsAsync(string nodeId);
+
+
+    /// <summary>
     /// Get settlement history for a node
     /// </summary>
     Task<List<UsageRecord>> GetNodeSettlementHistoryAsync(
         string nodeId,
         DateTime? fromDate = null,
         DateTime? toDate = null);
+}
+
+/// <summary>
+/// A node operator's earnings, split by settlement state. Total = Pending + Settled.
+/// </summary>
+public record NodeEarnings(decimal Pending, decimal Settled)
+{
+    public decimal Total => Pending + Settled;
 }

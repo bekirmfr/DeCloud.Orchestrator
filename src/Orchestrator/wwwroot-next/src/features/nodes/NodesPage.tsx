@@ -3,8 +3,8 @@ import type { ReactNode, CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import {
-  useMyNodes, useNodeSearch, nodeStatus, SORT_OPTIONS,
-  type OrchNode, type NodeAdvertisement, type NodeSearchCriteria,
+  useMyNodes, useMyNodeEarnings, useNodeSearch, nodeStatus, SORT_OPTIONS,
+  type OrchNode, type NodeEarnings, type NodeAdvertisement, type NodeSearchCriteria,
 } from "./useNodes";
 
 // Phase 5 · Nodes (slice 1). Tabbed: "My nodes" (owner view over the fleet) and
@@ -38,7 +38,7 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
   );
 }
 
-function MyNodeCard({ n }: { n: OrchNode }) {
+function MyNodeCard({ n, earn }: { n: OrchNode; earn?: NodeEarnings }) {
   const st = nodeStatus(n.status);
   return (
     <Link to={`/nodes/${n.id}`} style={{ ...card, display: "block", textDecoration: "none", color: "inherit" }}>
@@ -55,8 +55,8 @@ function MyNodeCard({ n }: { n: OrchNode }) {
         <span>Heartbeat {ago(n.lastHeartbeat)}</span>
       </div>
       <div style={{ ...metaRow, marginTop: 4 }}>
-        <span>Earned {usdc(n.totalEarned)}</span>
-        <span>Pending payout {usdc(n.pendingPayout)}</span>
+        <span>Earned {usdc(earn?.total)}</span>
+        <span>Pending payout {usdc(earn?.pending)}</span>
         {n.agentVersion && <span>Agent v{n.agentVersion}</span>}
         {n.architecture && <span>{n.architecture}</span>}
       </div>
@@ -67,13 +67,14 @@ function MyNodeCard({ n }: { n: OrchNode }) {
 function MyNodes({ wallet }: { wallet?: string }) {
   const { api } = useAuth();
   const { data: nodes, isLoading, isError } = useMyNodes(api, wallet);
+  const { data: earnings } = useMyNodeEarnings(api);
   if (!wallet) return <p style={{ color: "var(--text-secondary)" }}>Connect a wallet to see your nodes.</p>;
   if (isLoading) return <p style={{ color: "var(--text-secondary)" }}>Loading…</p>;
   if (isError) return <p style={{ color: "var(--danger)" }}>Couldn't load your nodes.</p>;
   if (!nodes || nodes.length === 0) return <p style={{ color: "var(--text-secondary)" }}>No nodes registered to this wallet.</p>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      {nodes.map((n) => <MyNodeCard key={n.id} n={n} />)}
+      {nodes.map((n) => <MyNodeCard key={n.id} n={n} earn={earnings?.[n.id]} />)}
     </div>
   );
 }

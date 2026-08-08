@@ -165,3 +165,16 @@ export function useNodeSearch(api: Api, c: NodeSearchCriteria, enabled: boolean)
     enabled,
   });
 }
+
+// Per-node earnings from the settlement ledger (NodeShare of usage), for the
+// caller's OWN nodes: { nodeId: { pending, settled, total } }. The node
+// document's PendingPayout/TotalEarned are never written — this is the real
+// source (mirrors the template /my/earnings endpoint).
+export interface NodeEarnings { pending: number; settled: number; total: number }
+
+export function useMyNodeEarnings(api: Api) {
+    return useQuery({
+        queryKey: ["my-node-earnings"],
+        queryFn: () => api<Record<string, NodeEarnings>>("/api/nodes/my/earnings"),
+    });
+}
