@@ -50,7 +50,7 @@ interface EscrowContract {
   withdrawBalance(amount: bigint, overrides?: Overrides): Promise<ContractTx>;
   userBalances(addr: string): Promise<bigint>;
   nodePendingPayouts(addr: string): Promise<bigint>;
-  nodeWithdraw(amount: bigint | number): Promise<ContractTx>;
+  nodeWithdraw(amount: bigint | number, overrides?: Overrides): Promise<ContractTx>;
   frozen(): Promise<boolean>;
   replacementContract(): Promise<string>;
 }
@@ -155,8 +155,9 @@ export async function withdrawEarnings(
   const { escrow } = contracts(signer, config);
   await assertNetwork(signer, config);
   await assertNotFrozen(escrow);
+  const gas = await gasOverrides(signer); 
   onProgress({ message: "Withdraw earnings — confirm in your wallet." });
-  const tx = await escrow.nodeWithdraw(0);
+  const tx = await escrow.nodeWithdraw(0, gas);
   onProgress({ message: "Waiting for confirmation…", txHash: tx.hash });
   await tx.wait();
   onProgress({ message: "Withdrawal confirmed.", txHash: tx.hash });
