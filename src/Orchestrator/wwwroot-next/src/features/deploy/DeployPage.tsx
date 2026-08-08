@@ -454,11 +454,13 @@ export function DeployPage() {
                                     <span>Operating system</span>
                                     {rec?.imageId ? (
                                         <>
-                                            <input
-                                                type="text"
-                                                readOnly
-                                                value={images.data?.find((im) => im.id === rec?.imageId)?.name ?? rec?.imageId ?? ""}
-                                            />
+                                            {/* Template pins the OS (its cloud-init is OS-specific, and
+                                              * resolveImageId makes the pinned image win) — a disabled
+                                              * select keeps it visually consistent with the other fields
+                                              * while conveying it can't be changed. */}
+                                            <select disabled value={rec.imageId}>
+                                                <option value={rec.imageId}>{images.data?.find((im) => im.id === rec?.imageId)?.name ?? rec?.imageId ?? ""}</option>
+                                            </select>
                                             <Hint>Set by this template — its setup is specific to this OS.</Hint>
                                         </>
                                     ) : (
