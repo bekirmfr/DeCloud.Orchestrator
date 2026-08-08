@@ -6,17 +6,16 @@ import {
     useBalance, useDepositInfo, runwayDays, formatRunway, LOW_RUNWAY_DAYS,
 } from "./useBalance";
 import { withdrawEarnings, readOnChain } from "./paymentClient";
+import { useMyNodeEarnings } from "../nodes/useNodes";
 import { DepositModal } from "./DepositModal";
 
 // Phase 6 · Wallet. Balance/runway/usage (read-only, Slice 1) + native on-chain
 // deposit & earnings-withdraw (Slice 2, via paymentClient — see its header for
 // the safety guards). The wallet is the final confirmation gate.
-//
-// Presentation uses the Meridian layer (.card / .card-h / .mono / .track); the
-// data + on-chain wiring below is unchanged.
 
-const bodyPad: CSSProperties = {
-    padding: "var(--space-4) var(--space-5)",
+const card: CSSProperties = {
+    padding: "var(--space-4)", border: "1px solid var(--border)",
+    borderRadius: "var(--radius)", background: "var(--surface-1)",
     display: "flex", flexDirection: "column", gap: "var(--space-3)",
 };
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -27,35 +26,19 @@ const rejected = (e: unknown) => {
     return c === "ACTION_REJECTED" || c === 4001;
 };
 
-/** A titled card: header (title + optional mono caption) over a padded body. */
-function Card({ title, cap, children }: { title: string; cap?: string; children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
     return (
-        <section className="card">
-            <div className="card-h">
-                <span className="card-title">{title}</span>
-                {cap && <span className="card-cap">{cap}</span>}
-            </div>
-            <div style={bodyPad}>{children}</div>
+        <section style={card}>
+            <strong style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>{title}</strong>
+            {children}
         </section>
     );
 }
-
-/** Reference mini-tile: a mono figure over a small label. */
-function Tile({ label, value, tone }: { label: string; value: string; tone?: string }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
     return (
-        <div style={{ background: "var(--surface-1)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius)", padding: "var(--space-3)" }}>
-            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>{label}</div>
-            <div className="mono" style={{ fontSize: "var(--text-lg)", fontWeight: 500, marginTop: 3, color: tone ?? "var(--text-primary)" }}>{value}</div>
-        </div>
-    );
-}
-
-/** A label → value line in the deposit-details card. */
-function Line({ label, children }: { label: string; children: ReactNode }) {
-    return (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>{label}</span>
-            <span>{children}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>{label}</span>
+            <span style={{ color: tone ?? "var(--text-primary)", fontSize: "var(--text-md)" }}>{value}</span>
         </div>
     );
 }
@@ -86,9 +69,10 @@ export function WalletPage() {
     const lowRunway = days != null && days < LOW_RUNWAY_DAYS;
     const explorerTx = (hash: string) => (info?.explorerUrl ? `${info.explorerUrl}/tx/${hash}` : undefined);
     const pendingPayout = onchain?.pendingPayout ?? 0;
-
-    // Track fill: runway as a fraction of a 30-day target (min 3% so it's visible).
-    const runwayFill = days == null ? 100 : Math.max(3, Math.min(100, (days / 30) * 100));
+    // Accruing node revenue not yet settled on-chain — will move to the escrow
+    // (withdrawable) at the next settlement. Node share only; per-node reliable.
+    const { data: nodeEarnings } = useMyNodeEarnings(api);
+    const unsettledEarnings = Object.values(nodeEarnings ?? {}).reduce((a, e) => a + (e.pending ?? 0), 0);
 
     function refresh() {
         qc.invalidateQueries({ queryKey: ["balance"] });
@@ -113,7 +97,6 @@ export function WalletPage() {
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)", maxWidth: 760 }}>
             <div>
-                <div className="eyebrow muted" style={{ marginBottom: "var(--space-2)" }}>Billing · wallet</div>
                 <h1 style={{ margin: 0 }}>Wallet</h1>
                 <p style={{ margin: "var(--space-1) 0 0", color: "var(--text-secondary)" }}>
                     Your deposit balance funds running VMs. Top up before your runway runs out.
@@ -127,104 +110,103 @@ export function WalletPage() {
 
             {bal && (
                 <>
-                    {/* Balance hero — the reference Balance card. */}
-                    <Card title="Balance" cap={info ? `${info.chainName} · escrow` : "escrow"}>
-                        <div>
-                            <span className="mono" style={{ fontSize: 32, fontWeight: 500, letterSpacing: "var(--track-snug)" }}>{(bal.balance ?? 0).toFixed(2)}</span>
-                            <span style={{ color: "var(--text-secondary)", marginLeft: 8 }}>{sym}</span>
-                        </div>
-
-                        <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--text-sm)", color: lowRunway ? "var(--warning)" : "var(--text-secondary)", marginBottom: 7 }}>
-                                <span>Runway at current usage</span>
-                                <span>{days == null ? "No active spend" : `~${formatRunway(days)}`}</span>
-                            </div>
-                            {days != null && (
-                                <div className="track">
-                                    <div className="track-fill" style={{ width: `${runwayFill}%`, background: lowRunway ? "var(--warning-solid)" : "var(--accent)" }} />
+                    <section style={card}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "var(--space-3)", flexWrap: "wrap" }}>
+                            <div>
+                                <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Available balance</span>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                                    <span style={{ fontSize: "var(--text-xl)", fontFamily: "var(--font-display)", fontWeight: 600 }}>{(bal.balance ?? 0).toFixed(2)}</span>
+                                    <span style={{ color: "var(--text-secondary)" }}>{sym}</span>
                                 </div>
-                            )}
-                            {bal.hourlyBurnRate > 0 && (
-                                <div className="mono" style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 7 }}>{bal.hourlyBurnRate.toFixed(4)} {sym}/hr</div>
-                            )}
+                                <div style={{ marginTop: 4, fontSize: "var(--text-sm)", color: lowRunway ? "var(--warning)" : "var(--text-secondary)" }}>
+                                    {days == null ? "No active spend" : `Runway: ${formatRunway(days)}`}
+                                    {bal.hourlyBurnRate > 0 ? ` · ${bal.hourlyBurnRate.toFixed(4)} ${sym}/hr` : ""}
+                                </div>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, whiteSpace: "nowrap" }}>
+                                <button className="btn-primary" disabled={!connected || !info || busy} onClick={() => { setErr(null); setDepositOpen(true); }}>Deposit</button>
+                            </div>
                         </div>
 
-                        <button className="btn-primary" style={{ width: "100%", justifyContent: "center" }}
-                            disabled={!connected || !info || busy}
-                            onClick={() => { setErr(null); setDepositOpen(true); }}>
-                            Deposit
-                        </button>
-                        {!connected && <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)", textAlign: "center" }}>Connect your wallet to deposit or withdraw.</p>}
-
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "var(--space-2)" }}>
-                            <Tile label="Confirmed" value={money(bal.confirmedBalance)} />
-                            <Tile label="Pending deposits" value={money(bal.pendingDeposits)} />
-                            <Tile label="Unpaid usage" value={money(bal.unpaidUsage)} tone={bal.unpaidUsage > 0 ? "var(--warning)" : undefined} />
-                            <Tile label="Total" value={money(bal.totalBalance)} />
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "var(--space-3)", borderTop: "1px solid var(--border-subtle)", paddingTop: "var(--space-3)" }}>
+                            <Stat label="Confirmed" value={money(bal.confirmedBalance)} />
+                            <Stat label="Pending deposits" value={money(bal.pendingDeposits)} />
+                            <Stat label="Unpaid usage" value={money(bal.unpaidUsage)} tone={bal.unpaidUsage > 0 ? "var(--warning)" : undefined} />
+                            <Stat label="Total" value={money(bal.totalBalance)} />
                         </div>
-                    </Card>
+
+                        {!connected && <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Connect your wallet to deposit or withdraw.</p>}
+                    </section>
 
                     {connected && (
-                        <Card title="Earnings" cap="escrow payout">
+                        <Section title="Earnings">
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-                                <div>
-                                    <div style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Withdrawable payout</div>
-                                    <div className="mono" style={{ fontSize: "var(--text-lg)", fontWeight: 500, marginTop: 2 }}>{money(pendingPayout)}</div>
+                                <div style={{ display: "flex", gap: "var(--space-5)", flexWrap: "wrap" }}>
+                                    <div>
+                                        <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Withdrawable payout</span>
+                                        <div style={{ fontSize: "var(--text-md)" }}>{money(pendingPayout)}</div>
+                                    </div>
+                                    <div>
+                                        <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>Unsettled (accruing)</span>
+                                        <div style={{ fontSize: "var(--text-md)", color: "var(--text-secondary)" }}>{money(unsettledEarnings)}</div>
+                                    </div>
                                 </div>
                                 <button className="btn-ghost" disabled={busy || pendingPayout <= 0} onClick={onWithdrawEarnings}>Withdraw earnings</button>
                             </div>
-                            <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>
-                                Node and template revenue, held in the escrow until you withdraw. Withdraws the full balance.
+                            <p style={{ margin: 0, color: "var(--text-tertiary)", fontSize: "var(--text-xs)", lineHeight: 1.5 }}>
+                                <strong style={{ fontWeight: "var(--fw-medium)", color: "var(--text-secondary)" }}>Withdrawable</strong> is settled node &amp; template revenue held in the escrow — withdraws the full balance.{" "}
+                                <strong style={{ fontWeight: "var(--fw-medium)", color: "var(--text-secondary)" }}>Unsettled</strong> is your nodes&rsquo; share of recent usage, moved to withdrawable after the next on-chain settlement.
                             </p>
-                        </Card>
+                        </Section>
                     )}
 
                     {bal.pendingDepositsList && bal.pendingDepositsList.length > 0 && (
-                        <Card title="Pending deposits">
+                        <Section title="Pending deposits">
                             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                                 {bal.pendingDepositsList.map((d, i) => (
                                     <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
                                         <span style={{ ...mono, color: "var(--text-secondary)" }}>
                                             {explorerTx(d.txHash) ? <a href={explorerTx(d.txHash)} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{trunc(d.txHash)}</a> : trunc(d.txHash)}
                                         </span>
-                                        <span className="mono" style={{ color: "var(--text-secondary)" }}>{money(d.amount)}</span>
-                                        <span className="mono" style={{ color: "var(--text-tertiary)" }}>{d.confirmations}/{d.requiredConfirmations} confirmations</span>
+                                        <span style={{ color: "var(--text-secondary)" }}>{money(d.amount)}</span>
+                                        <span style={{ color: "var(--text-tertiary)" }}>{d.confirmations}/{d.requiredConfirmations} confirmations</span>
                                     </div>
                                 ))}
                             </div>
-                        </Card>
+                        </Section>
                     )}
 
                     {bal.recentUsage && bal.recentUsage.length > 0 && (
-                        <Card title="Recent usage">
+                        <Section title="Recent usage">
                             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
                                 {bal.recentUsage.map((u, i) => (
                                     <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", fontSize: "var(--text-sm)", flexWrap: "wrap" }}>
                                         <span style={{ ...mono, color: "var(--text-secondary)" }}>{trunc(u.vmId)}</span>
                                         <span style={{ color: "var(--text-tertiary)" }}>{u.duration}</span>
-                                        <span className="mono" style={{ color: "var(--text-secondary)" }}>{(u.cost ?? 0).toFixed(4)} {sym}</span>
+                                        <span style={{ color: "var(--text-secondary)" }}>{(u.cost ?? 0).toFixed(4)} {sym}</span>
                                         <span style={{ color: "var(--text-tertiary)" }}>{dt(u.createdAt)}</span>
                                     </div>
                                 ))}
                             </div>
-                        </Card>
+                        </Section>
                     )}
                 </>
             )}
 
             {info && (
-                <Card title="Deposit details" cap={info.chainName}>
+                <Section title="Deposit details">
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
-                        <Line label="Escrow address">
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Escrow address</span>
                             <span style={{ ...mono, wordBreak: "break-all" }}>
                                 {info.explorerUrl ? <a href={`${info.explorerUrl}/address/${info.escrowContractAddress}`} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{info.escrowContractAddress}</a> : info.escrowContractAddress}
                             </span>
-                        </Line>
-                        <Line label="Network">{info.chainName}</Line>
-                        <Line label="Minimum deposit"><span className="mono">{money(info.minDeposit)}</span></Line>
-                        <Line label="Confirmations"><span className="mono">{info.requiredConfirmations}</span></Line>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}><span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Network</span><span>{info.chainName}</span></div>
+                        <div style={{ display: "flex", gap: 8 }}><span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Minimum deposit</span><span>{money(info.minDeposit)}</span></div>
+                        <div style={{ display: "flex", gap: 8 }}><span style={{ color: "var(--text-tertiary)", minWidth: 130 }}>Confirmations</span><span>{info.requiredConfirmations}</span></div>
                     </div>
-                </Card>
+                </Section>
             )}
 
             {depositOpen && <DepositModal onClose={() => setDepositOpen(false)} />}
