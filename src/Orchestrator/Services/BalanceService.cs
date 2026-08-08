@@ -51,12 +51,21 @@ public class BalanceService : IBalanceService
             throw new Exception($"User {userId} not found");
         }
 
-        // 2. Get confirmed balance from blockchain
-        var confirmedBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
+        // 2. Get the on-chain escrow balance. NOTE: escrow.userBalances already
+        // reflects a deposit the moment its tx is MINED (1 conf) — it is NOT gated
+        // on requiredConfirmations.
+        var onChainBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
 
-        // 3. Get pending deposits from blockchain events
+        // 3. Get pending deposits (mined but < requiredConfirmations).
         var pendingDeposits = await _blockchainService.GetPendingDepositsAsync(user.WalletAddress);
         var pendingAmount = pendingDeposits.Sum(d => d.Amount);
+
+        // Those pending deposits are ALREADY inside onChainBalance, so the truly
+        // confirmed portion is the on-chain balance minus what is still pending.
+        // Without this, the same deposit is counted in BOTH confirmed and pending,
+        // and Total = confirmed + pending double-counts it until the deposit passes
+        // requiredConfirmations and leaves the pending set.
+        var confirmedBalance = Math.Max(0m, onChainBalance - pendingAmount);
 
         // 4. Get unpaid usage from settlement service
         var unpaidUsage = await _settlementService.GetUnpaidUsageAsync(userId);
@@ -129,13 +138,16 @@ public class BalanceService : IBalanceService
         }
 
         // Get all components
-        var confirmedBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
+        var onChainBalance = await _blockchainService.GetEscrowBalanceAsync(user.WalletAddress);
         var pendingDeposits = await _blockchainService.GetPendingDepositsAsync(user.WalletAddress);
         var unpaidUsage = await _settlementService.GetUnpaidUsageAsync(userId);
         var unpaidRecords = await _settlementService.GetUnpaidUsageRecordsAsync(userId);
         var currentBlock = await _blockchainService.GetCurrentBlockAsync();
 
         var pendingAmount = pendingDeposits.Sum(d => d.Amount);
+        // See GetBalanceInfoAsync: pending deposits are already inside the on-chain
+        // balance; subtract them so confirmed and pending don't double-count.
+        var confirmedBalance = Math.Max(0m, onChainBalance - pendingAmount);
         var availableBalance = confirmedBalance - unpaidUsage;
         var totalBalance = confirmedBalance + pendingAmount - unpaidUsage;
 
